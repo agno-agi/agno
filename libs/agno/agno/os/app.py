@@ -100,6 +100,8 @@ class AgentOS:
                     workflow.os_id = self.os_id
                 if not workflow.workflow_id:
                     workflow.workflow_id = generate_id(workflow.name)
+    
+    
 
     def _auto_discover_apps(self) -> List[BaseApp]:
         """Auto-discover apps from agents, teams, and workflows."""
@@ -114,73 +116,53 @@ class AgentOS:
         }
 
         # Helper function to add unique components
-        def add_unique_component(component_type: str, component_id: str):
+        def _add_unique_component(component_type: str, component_id: str):
             if component_id not in seen_components[component_type]:
                 seen_components[component_type].add(component_id)
                 return True
             return False
+        
+        def _auto_discover_entity_apps(entity: Union[Agent, Team]) -> List[BaseApp]:
+            if entity.db:
+                # Memory app
+                if _add_unique_component("memory", f"{entity.db.memory_table_name}"):
+                    discovered_apps.append(MemoryApp(db=entity.db))
+
+                # Session app
+                if entity.db.session_table_name:
+                    if _add_unique_component("session", f"{entity.db.session_table_name}"):
+                        discovered_apps.append(SessionApp(db=entity.db))
+
+                # Metrics app
+                if entity.db.metrics_table_name:
+                    if _add_unique_component("metrics", f"{entity.db.metrics_table_name}"):
+                        discovered_apps.append(MetricsApp(db=entity.db))
+
+                # Eval app
+                if entity.db.eval_table_name:
+                    if _add_unique_component("eval", f"{entity.db.eval_table_name}"):
+                        discovered_apps.append(EvalApp(db=entity.db))
+
+            # Knowledge app
+            if entity.knowledge:
+                if not entity.knowledge.contents_db:
+                    log_warning("Knowledge contents_db is required to use knowledge inside AgentOS.")
+                    return
+                db = entity.knowledge.contents_db
+                if _add_unique_component("knowledge", f"{db.knowledge_table_name}"):
+                    discovered_apps.append(KnowledgeApp(knowledge=agent.knowledge))
 
         # Process agents
         if self.agents:
             for agent in self.agents:
-                if hasattr(agent, "db") and agent.db:
-                    db_id = id(agent.db)
-
-                    # Memory app
-                    if add_unique_component("memory", str(db_id)):
-                        discovered_apps.append(MemoryApp(db=agent.db))
-
-                    # Session app
-                    if agent.db.session_table_name:
-                        if add_unique_component("session", str(db_id)):
-                            discovered_apps.append(SessionApp(db=agent.db))
-
-                    # Metrics app
-                    if agent.db.metrics_table_name:
-                        if add_unique_component("metrics", str(db_id)):
-                            discovered_apps.append(MetricsApp(db=agent.db))
-
-                    # Eval app
-                    if agent.db.eval_table_name:
-                        if add_unique_component("eval", str(db_id)):
-                            discovered_apps.append(EvalApp(db=agent.db))
-
-                # Knowledge app
-                if hasattr(agent, "knowledge") and agent.knowledge:
-                    knowledge_id = id(agent.knowledge)
-                    if add_unique_component("knowledge", str(knowledge_id)):
-                        discovered_apps.append(KnowledgeApp(knowledge=agent.knowledge))
+                _auto_discover_entity_apps(agent)
 
         # Process teams
         if self.teams:
             for team in self.teams:
-                if hasattr(team, "db") and team.db:
-                    db_id = id(team.db)
-
-                    # Memory app
-                    if add_unique_component("memory", str(db_id)):
-                        discovered_apps.append(MemoryApp(db=team.db))
-
-                    # Session app
-                    if team.db.session_table_name:
-                        if add_unique_component("session", str(db_id)):
-                            discovered_apps.append(SessionApp(db=team.db))
-
-                    # Metrics app
-                    if team.db.metrics_table_name:
-                        if add_unique_component("metrics", str(db_id)):
-                            discovered_apps.append(MetricsApp(db=team.db))
-
-                    # Eval app
-                    if team.db.eval_table_name:
-                        if add_unique_component("eval", str(db_id)):
-                            discovered_apps.append(EvalApp(db=team.db))
-
-                # Knowledge app
-                if hasattr(team, "knowledge") and team.knowledge:
-                    knowledge_id = id(team.knowledge)
-                    if add_unique_component("knowledge", str(knowledge_id)):
-                        discovered_apps.append(KnowledgeApp(knowledge=team.knowledge))
+                _auto_discover_entity_apps(team)
+                for member in team.members:
+                    _auto_discover_entity_apps(member)
 
         # Process workflows
         # TODO: Implement workflow app discovery

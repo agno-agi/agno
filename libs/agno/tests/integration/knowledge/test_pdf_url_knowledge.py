@@ -3,7 +3,7 @@ import os
 import pytest
 
 from agno.agent import Agent
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.lancedb.lance_db import LanceDb
 
 
@@ -24,47 +24,45 @@ def setup_vector_db():
 def prepare_knowledge_base(vector_db):
     """Prepare a PDF URL knowledge base with test data."""
     # Create knowledge base
-    knowledge_base = PDFUrlKnowledgeBase(
+    knowledge = Knowledge(
         vector_db=vector_db,
     )
 
     # Load Thai recipes PDF with Thai cuisine metadata
-    knowledge_base.load_document(
+    knowledge.add_content(
         url="https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
         metadata={"cuisine": "Thai", "source": "Thai Cookbook"},
-        recreate=True,
     )
 
     # Load Cape recipes PDF with Cape cuisine metadata
-    knowledge_base.load_document(
+    knowledge.add_content(
         url="https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
         metadata={"cuisine": "Cape", "source": "Cape Cookbook"},
     )
 
-    return knowledge_base
+    return knowledge
 
 
 async def aprepare_knowledge_base(vector_db):
     """Asynchronously prepare a PDF URL knowledge base with test data."""
     # Create knowledge base
-    knowledge_base = PDFUrlKnowledgeBase(
+    knowledge = Knowledge(
         vector_db=vector_db,
     )
 
     # Load Thai recipes PDF with Thai cuisine metadata
-    await knowledge_base.aload_document(
+    await knowledge.async_add_content(
         url="https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
         metadata={"cuisine": "Thai", "source": "Thai Cookbook"},
-        recreate=True,
     )
 
     # Load Cape recipes PDF with Cape cuisine metadata
-    await knowledge_base.aload_document(
+    await knowledge.async_add_content(
         url="https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
         metadata={"cuisine": "Cape", "source": "Cape Cookbook"},
     )
 
-    return knowledge_base
+    return knowledge
 
 
 def test_pdf_url_knowledge_base():
@@ -74,22 +72,23 @@ def test_pdf_url_knowledge_base():
     )
 
     # Create knowledge base
-    knowledge_base = PDFUrlKnowledgeBase(
+    knowledge = Knowledge(
+        vector_db=vector_db,
+    )
+
+    knowledge.add_contents(
         urls=[
             "https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
             "https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
         ],
-        vector_db=vector_db,
     )
-
-    knowledge_base.load(recreate=True)
 
     assert vector_db.exists()
 
     assert vector_db.get_count() == 13  # 3 from the first pdf and 10 from the second pdf
 
     # Create and use the agent
-    agent = Agent(knowledge=knowledge_base)
+    agent = Agent(knowledge=knowledge)
     response = agent.run("Show me how to make Tom Kha Gai", markdown=True)
 
     tool_calls = []
@@ -112,21 +111,22 @@ async def test_pdf_url_knowledge_base_async():
     )
 
     # Create knowledge base
-    knowledge_base = PDFUrlKnowledgeBase(
-        urls=[
-            "https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
-            "https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
-        ],
+    knowledge = Knowledge(
         vector_db=vector_db,
     )
 
-    await knowledge_base.aload(recreate=True)
+    await knowledge.async_add_contents(
+        urls=[
+            "https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
+            "https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
+        ]
+    )
 
     assert await vector_db.async_exists()
     assert await vector_db.async_get_count() == 13  # 3 from first pdf and 10 from second pdf
 
     # Create and use the agent
-    agent = Agent(knowledge=knowledge_base)
+    agent = Agent(knowledge=knowledge)
     response = await agent.arun("What ingredients do I need for Tom Kha Gai?", markdown=True)
 
     tool_calls = []
@@ -146,21 +146,19 @@ async def test_pdf_url_knowledge_base_async():
 # for the one with new knowledge filter DX- filters at initialize
 def test_pdf_url_knowledge_base_with_metadata_path(setup_vector_db):
     """Test loading PDF URLs with metadata using the new path structure."""
-    kb = PDFUrlKnowledgeBase(
-        urls=[
-            {
-                "url": "https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
-                "metadata": {"cuisine": "Thai", "source": "Thai Cookbook", "region": "Southeast Asia"},
-            },
-            {
-                "url": "https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
-                "metadata": {"cuisine": "Cape", "source": "Cape Cookbook", "region": "South Africa"},
-            },
-        ],
+    kb = Knowledge(
         vector_db=setup_vector_db,
     )
 
-    kb.load(recreate=True)
+    kb.add_content(
+        url="https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
+        metadata={"cuisine": "Thai", "source": "Thai Cookbook", "region": "Southeast Asia"},
+    )
+
+    kb.add_content(
+        url="https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
+        metadata={"cuisine": "Cape", "source": "Cape Cookbook", "region": "South Africa"},
+    )
 
     # Verify documents were loaded with metadata
     agent = Agent(knowledge=kb)
@@ -176,21 +174,19 @@ def test_pdf_url_knowledge_base_with_metadata_path(setup_vector_db):
 
 def test_pdf_url_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
     """Test loading PDF URLs with metadata using the new path structure and invalid filters."""
-    kb = PDFUrlKnowledgeBase(
-        urls=[
-            {
-                "url": "https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
-                "metadata": {"cuisine": "Thai", "source": "Thai Cookbook", "region": "Southeast Asia"},
-            },
-            {
-                "url": "https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
-                "metadata": {"cuisine": "Cape", "source": "Cape Cookbook", "region": "South Africa"},
-            },
-        ],
+    kb = Knowledge(
         vector_db=setup_vector_db,
     )
 
-    kb.load(recreate=True)
+    kb.add_content(
+        url="https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
+        metadata={"cuisine": "Thai", "source": "Thai Cookbook", "region": "Southeast Asia"},
+    )
+
+    kb.add_content(
+        url="https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
+        metadata={"cuisine": "Cape", "source": "Cape Cookbook", "region": "South Africa"},
+    )
 
     # Initialize agent with invalid filters
     agent = Agent(knowledge=kb, knowledge_filters={"nonexistent_filter": "value"})
@@ -246,21 +242,18 @@ def test_pdf_url_knowledge_base_with_metadata_path_invalid_filter(setup_vector_d
 @pytest.mark.asyncio
 async def test_async_pdf_url_knowledge_base_with_metadata_path(setup_vector_db):
     """Test async loading of PDF URLs with metadata using the new path structure."""
-    kb = PDFUrlKnowledgeBase(
-        urls=[
-            {
-                "url": "https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
-                "metadata": {"cuisine": "Thai", "source": "Thai Cookbook", "region": "Southeast Asia"},
-            },
-            {
-                "url": "https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
-                "metadata": {"cuisine": "Cape", "source": "Cape Cookbook", "region": "South Africa"},
-            },
-        ],
+    kb = Knowledge(
         vector_db=setup_vector_db,
     )
 
-    await kb.aload(recreate=True)
+    kb.add_content(
+        url="https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
+        metadata={"cuisine": "Thai", "source": "Thai Cookbook", "region": "Southeast Asia"},
+    )
+    kb.add_content(
+        url="https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
+        metadata={"cuisine": "Cape", "source": "Cape Cookbook", "region": "South Africa"},
+    )
 
     agent = Agent(knowledge=kb)
     response = await agent.arun("Tell me about Thai recipes", knowledge_filters={"cuisine": "Thai"}, markdown=True)
@@ -276,21 +269,18 @@ async def test_async_pdf_url_knowledge_base_with_metadata_path(setup_vector_db):
 @pytest.mark.asyncio
 async def test_async_pdf_url_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
     """Test async loading of PDF URLs with metadata using the new path structure and invalid filters."""
-    kb = PDFUrlKnowledgeBase(
-        urls=[
-            {
-                "url": "https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
-                "metadata": {"cuisine": "Thai", "source": "Thai Cookbook", "region": "Southeast Asia"},
-            },
-            {
-                "url": "https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
-                "metadata": {"cuisine": "Cape", "source": "Cape Cookbook", "region": "South Africa"},
-            },
-        ],
+    kb = Knowledge(
         vector_db=setup_vector_db,
     )
 
-    await kb.aload(recreate=True)
+    kb.add_content(
+        url="https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
+        metadata={"cuisine": "Thai", "source": "Thai Cookbook", "region": "Southeast Asia"},
+    )
+    kb.add_content(
+        url="https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
+        metadata={"cuisine": "Cape", "source": "Cape Cookbook", "region": "South Africa"},
+    )
 
     # Initialize agent with invalid filters
     agent = Agent(knowledge=kb, knowledge_filters={"nonexistent_filter": "value"})

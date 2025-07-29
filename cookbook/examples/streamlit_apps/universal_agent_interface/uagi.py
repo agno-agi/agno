@@ -6,8 +6,8 @@ from typing import List, Optional
 from agents import get_agent
 from agno.agent import Agent
 from agno.db.sqlite import SqliteStorage
-from agno.knowledge import AgentKnowledge
 from agno.knowledge.embedder.openai import OpenAIEmbedder
+from agno.knowledge.knowledge import Knowledge
 from agno.memory import Memory
 from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.models.anthropic import Claude
@@ -43,7 +43,7 @@ uagi_memory = Memory(
     db=SqliteMemoryDb(table_name="uagi_memory", db_file=str(MEMORY_PATH))
 )
 uagi_storage = SqliteStorage(db_file=str(STORAGE_PATH), table_name="uagi_sessions")
-uagi_knowledge = AgentKnowledge(
+uagi_knowledge = Knowledge(
     vector_db=LanceDb(
         table_name="uagi_knowledge",
         uri=str(KNOWLEDGE_PATH),

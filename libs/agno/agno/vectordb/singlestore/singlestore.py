@@ -125,17 +125,15 @@ class SingleStore(VectorDb):
             logger.error(e)
             return False
 
-    def doc_exists(self, document: Document) -> bool:
+    def content_hash_exists(self, content_hash: str) -> bool:
         """
         Validating if the document exists or not
 
         Args:
             document (Document): Document to validate
         """
-        columns = [self.table.c.name, self.table.c.content_hash]
         with self.Session.begin() as sess:
-            cleaned_content = document.content.replace("\x00", "\ufffd")
-            stmt = select(*columns).where(self.table.c.content_hash == md5(cleaned_content.encode()).hexdigest())
+            stmt = select(self.table.c.name).where(self.table.c.content_hash == content_hash)
             result = sess.execute(stmt).first()
             return result is not None
 
@@ -163,7 +161,13 @@ class SingleStore(VectorDb):
             result = sess.execute(stmt).first()
             return result is not None
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None, batch_size: int = 10) -> None:
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        batch_size: int = 10,
+    ) -> None:
         """
         Insert documents into the table.
 
@@ -177,8 +181,8 @@ class SingleStore(VectorDb):
             for document in documents:
                 document.embed(embedder=self.embedder)
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                content_hash = md5(cleaned_content.encode()).hexdigest()
-                _id = document.id or content_hash
+                record_id = md5(cleaned_content.encode()).hexdigest()
+                _id = document.id or record_id
 
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
@@ -207,7 +211,24 @@ class SingleStore(VectorDb):
         """Indicate that upsert functionality is available."""
         return True
 
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None, batch_size: int = 20) -> None:
+    def upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        batch_size: int = 20,
+    ) -> None:
+        if self.content_hash_exists(content_hash):
+            self._delete_by_content_hash(content_hash)
+        self._upsert(content_hash=content_hash, documents=documents, filters=filters, batch_size=batch_size)
+
+    def _upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        batch_size: int = 20,
+    ) -> None:
         """
         Upsert (insert or update) documents in the table.
 
@@ -221,8 +242,8 @@ class SingleStore(VectorDb):
             for document in documents:
                 document.embed(embedder=self.embedder)
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                content_hash = md5(cleaned_content.encode()).hexdigest()
-                _id = document.id or content_hash
+                record_id = md5(cleaned_content.encode()).hexdigest()
+                _id = document.id or record_id
 
                 meta_data_json = json.dumps(document.meta_data)
                 usage_json = json.dumps(document.usage)
@@ -470,9 +491,6 @@ class SingleStore(VectorDb):
     async def async_create(self) -> None:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
-    async def async_doc_exists(self, document: Document) -> bool:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
-
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
@@ -492,3 +510,27 @@ class SingleStore(VectorDb):
 
     async def async_name_exists(self, name: str) -> bool:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    def _delete_by_content_hash(self, content_hash: str) -> bool:
+        """
+        Delete documents by their content hash.
+
+        Args:
+            content_hash (str): The content hash to delete.
+
+        Returns:
+            bool: True if documents were deleted, False otherwise.
+        """
+        from sqlalchemy import delete
+
+        try:
+            with self.Session.begin() as sess:
+                stmt = delete(self.table).where(self.table.c.content_hash == content_hash)
+                result = sess.execute(stmt)
+                log_info(
+                    f"Deleted {result.rowcount} records with content_hash '{content_hash}' from table '{self.table.name}'."
+                )
+                return result.rowcount > 0
+        except Exception as e:
+            logger.error(f"Error deleting documents with content_hash {content_hash}: {e}")
+            return False

@@ -287,12 +287,7 @@ class CouchbaseSearch(VectorDb):
         self._create_collection_and_scope()
         self._create_fts_index()
 
-    def doc_exists(self, document: Document) -> bool:
-        """Check if a document exists in the bucket based on its content."""
-        doc_id = md5(document.content.encode("utf-8")).hexdigest()
-        return self.id_exists(doc_id)
-
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
         Insert documents into the Couchbase bucket. Fails if any document already exists.
 
@@ -305,7 +300,7 @@ class CouchbaseSearch(VectorDb):
         docs_to_insert: Dict[str, Any] = {}
         for document in documents:
             try:
-                doc_data = self.prepare_doc(document)
+                doc_data = self.prepare_doc(content_hash, document)
                 if filters:
                     doc_data["filters"] = filters
                 # For insert_multi, the key of the dict is the document ID,
@@ -367,7 +362,19 @@ class CouchbaseSearch(VectorDb):
         if errors_occurred:
             logger.warning("Some errors occurred during the insert operation. Please check logs for details.")
 
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert_available(self) -> bool:
+        """Check if upsert is available in Couchbase."""
+        return True
+
+    def _upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Update existing documents or insert new ones into the Couchbase bucket.
+        """
+        if self.content_hash_exists(content_hash):
+            self._delete_by_content_hash(content_hash)
+        self.insert(content_hash=content_hash, documents=documents, filters=filters)
+
+    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
         Update existing documents or insert new ones into the Couchbase bucket.
 
@@ -380,7 +387,7 @@ class CouchbaseSearch(VectorDb):
         docs_to_upsert: Dict[str, Any] = {}
         for document in documents:
             try:
-                doc_data = self.prepare_doc(document)
+                doc_data = self.prepare_doc(content_hash, document)
                 if filters:
                     doc_data["filters"] = filters
                 # For upsert_multi, the key of the dict is the document ID,
@@ -544,7 +551,7 @@ class CouchbaseSearch(VectorDb):
         except Exception:
             return False
 
-    def prepare_doc(self, document: Document) -> Dict[str, Any]:
+    def prepare_doc(self, content_hash: str, document: Document) -> Dict[str, Any]:
         """
         Prepare a document for insertion into Couchbase.
 
@@ -580,6 +587,7 @@ class CouchbaseSearch(VectorDb):
             "meta_data": document.meta_data,  # Ensure meta_data is never None
             "embedding": document.embedding,
             "content_id": document.content_id,
+            "content_hash": content_hash,
         }
 
     def get_count(self) -> int:
@@ -617,6 +625,24 @@ class CouchbaseSearch(VectorDb):
             return result.exists
         except Exception as e:
             logger.error(f"Error checking document existence: {e}")
+            return False
+
+    def content_hash_exists(self, content_hash: str) -> bool:
+        """Check if a document exists in the bucket based on its content hash."""
+        try:
+            # Use N1QL query to check if document with given content_hash exists
+            query = f"SELECT content_hash FROM {self.bucket_name}.{self.scope_name}.{self.collection_name} WHERE content_hash = $content_hash LIMIT 1"
+            result = self.scope.query(
+                query,
+                QueryOptions(
+                    named_parameters={"content_hash": content_hash}, scan_consistency=QueryScanConsistency.REQUEST_PLUS
+                ),
+            )
+            for row in result.rows():
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Error checking document content_hash existence: {e}")
             return False
 
     # === ASYNC SUPPORT USING acouchbase ===
@@ -808,10 +834,6 @@ class CouchbaseSearch(VectorDb):
                     raise TimeoutError("Timeout waiting for FTS index to become ready")
                 await asyncio.sleep(1)
 
-    async def async_doc_exists(self, document: Document) -> bool:
-        doc_id = md5(document.content.encode("utf-8")).hexdigest()
-        return await self.async_id_exists(doc_id)
-
     async def async_id_exists(self, id: str) -> bool:
         try:
             async_collection_instance = await self.get_async_collection()
@@ -837,7 +859,9 @@ class CouchbaseSearch(VectorDb):
             logger.error(f"[async] Error checking document name existence: {e}")
             return False
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         logger.info(f"[async] Inserting {len(documents)} documents")
 
         async_collection_instance = await self.get_async_collection()
@@ -846,7 +870,7 @@ class CouchbaseSearch(VectorDb):
         for document in documents:
             try:
                 # User edit: self.prepare_doc is no longer awaited with to_thread
-                doc_data = self.prepare_doc(document)
+                doc_data = self.prepare_doc(content_hash, document)
                 if filters:
                     doc_data["filters"] = filters
                 doc_id = doc_data.pop("_id")  # Remove _id as it's used as key
@@ -890,7 +914,17 @@ class CouchbaseSearch(VectorDb):
         logger.info(f"[async] Finished processing {processed_doc_count} documents.")
         logger.info(f"[async] Total successfully inserted: {total_inserted_count}, Total failed: {total_failed_count}.")
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Upsert documents asynchronously."""
+        if self.content_hash_exists(content_hash):
+            self._delete_by_content_hash(content_hash)
+        await self._async_upsert(content_hash=content_hash, documents=documents, filters=filters)
+
+    async def _async_upsert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         logger.info(f"[async] Upserting {len(documents)} documents")
 
         async_collection_instance = await self.get_async_collection()
@@ -899,7 +933,7 @@ class CouchbaseSearch(VectorDb):
         for document in documents:
             try:
                 # Consistent with async_insert, prepare_doc is not awaited with to_thread based on prior user edits
-                doc_data = self.prepare_doc(document)
+                doc_data = self.prepare_doc(content_hash, document)
                 if filters:
                     doc_data["filters"] = filters
                 doc_id = doc_data.pop("_id")  # _id is used as key for upsert
@@ -1219,4 +1253,35 @@ class CouchbaseSearch(VectorDb):
 
         except Exception as e:
             log_info(f"Error deleting documents with content_id {content_id}: {e}")
+            return False
+
+    def _delete_by_content_hash(self, content_hash: str) -> bool:
+        """
+        Delete documents by content hash.
+
+        Args:
+            content_hash (str): The content hash to delete
+
+        Returns:
+            bool: True if documents were deleted, False otherwise
+        """
+        try:
+            log_debug(f"Couchbase VectorDB : Deleting documents with content_hash {content_hash}")
+
+            query = f"SELECT META().id as doc_id, * FROM {self.bucket_name}.{self.scope_name}.{self.collection_name} WHERE content_hash = $content_hash"
+            result = self.scope.query(
+                query,
+                QueryOptions(
+                    named_parameters={"content_hash": content_hash}, scan_consistency=QueryScanConsistency.REQUEST_PLUS
+                ),
+            )
+            rows = list(result.rows())  # Collect once
+
+            for row in rows:
+                self.collection.remove(row.get("doc_id"))
+            log_info(f"Deleted {len(rows)} documents with content_hash {content_hash}")
+            return True
+
+        except Exception as e:
+            log_info(f"Error deleting documents with content_hash {content_hash}: {e}")
             return False

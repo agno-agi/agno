@@ -24,7 +24,7 @@ from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
-    from sqlalchemy import JSON, TEXT, and_, cast, func, update
+    from sqlalchemy import TEXT, and_, cast, func, update
     from sqlalchemy.dialects import mysql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -41,7 +41,7 @@ class MySQLDb(BaseDb):
         db_schema: Optional[str] = None,
         db_url: Optional[str] = None,
         session_table: Optional[str] = None,
-        user_memory_table: Optional[str] = None,
+        memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
@@ -59,7 +59,7 @@ class MySQLDb(BaseDb):
             db_engine (Optional[Engine]): The SQLAlchemy database engine to use.
             db_schema (Optional[str]): The database schema to use.
             session_table (Optional[str]): Name of the table to store Agent, Team and Workflow sessions.
-            user_memory_table (Optional[str]): Name of the table to store user memories.
+            memory_table (Optional[str]): Name of the table to store memories.
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
@@ -70,7 +70,7 @@ class MySQLDb(BaseDb):
         """
         super().__init__(
             session_table=session_table,
-            user_memory_table=user_memory_table,
+            memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
@@ -191,15 +191,15 @@ class MySQLDb(BaseDb):
                 )
             return self.session_table
 
-        if table_type == "user_memories":
-            if not hasattr(self, "user_memory_table"):
-                if self.user_memory_table_name is None:
-                    raise ValueError("User memory table was not provided on initialization")
+        if table_type == "memories":
+            if not hasattr(self, " memory_table"):
+                if self.memory_table_name is None:
+                    raise ValueError("Memory table was not provided on initialization")
 
-                self.user_memory_table = self._get_or_create_table(
-                    table_name=self.user_memory_table_name, table_type="user_memories", db_schema=self.db_schema
+                self.memory_table = self._get_or_create_table(
+                    table_name=self.memory_table_name, table_type="memories", db_schema=self.db_schema
                 )
-            return self.user_memory_table
+            return self.memory_table
 
         if table_type == "metrics":
             if not hasattr(self, "metrics_table"):
@@ -680,7 +680,7 @@ class MySQLDb(BaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            table = self._get_table(table_type="user_memories")
+            table = self._get_table(table_type="memories")
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id == memory_id)
@@ -708,7 +708,7 @@ class MySQLDb(BaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            table = self._get_table(table_type="user_memories")
+            table = self._get_table(table_type="memories")
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
@@ -743,7 +743,7 @@ class MySQLDb(BaseDb):
                             topics = json.loads(row[0]) if isinstance(row[0], str) else row[0]
                             if isinstance(topics, list):
                                 topics_set.update(topics)
-                        except:
+                        except Exception:
                             pass
 
                 return list(topics_set)
@@ -768,7 +768,7 @@ class MySQLDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="user_memories")
+            table = self._get_table(table_type="memories")
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.memory_id == memory_id)
@@ -824,7 +824,7 @@ class MySQLDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="user_memories")
+            table = self._get_table(table_type="memories")
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -863,11 +863,11 @@ class MySQLDb(BaseDb):
                 if not result:
                     return [] if deserialize else ([], 0)
 
-                user_memories_raw = [record._mapping for record in result]
+                memories_raw = [record._mapping for record in result]
                 if not deserialize:
-                    return user_memories_raw, total_count
+                    return memories_raw, total_count
 
-            return [UserMemory.from_dict(record) for record in user_memories_raw]
+            return [UserMemory.from_dict(record) for record in memories_raw]
 
         except Exception as e:
             log_warning(f"Exception reading from memory table: {e}")
@@ -876,7 +876,7 @@ class MySQLDb(BaseDb):
     def clear_memories(self) -> None:
         """Clear all user memories from the database."""
         try:
-            table = self._get_table(table_type="user_memories")
+            table = self._get_table(table_type="memories")
             with self.Session() as sess, sess.begin():
                 sess.execute(table.delete())
         except Exception as e:
@@ -907,7 +907,7 @@ class MySQLDb(BaseDb):
         )
         """
         try:
-            table = self._get_table(table_type="user_memories")
+            table = self._get_table(table_type="memories")
 
             with self.Session() as sess, sess.begin():
                 stmt = (
@@ -965,7 +965,7 @@ class MySQLDb(BaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = self._get_table(table_type="user_memories")
+            table = self._get_table(table_type="memories")
 
             with self.Session() as sess, sess.begin():
                 if memory.memory_id is None:
@@ -1000,11 +1000,11 @@ class MySQLDb(BaseDb):
                 if not row:
                     return None
 
-            user_memory_raw = row._mapping
-            if not user_memory_raw or not deserialize:
-                return user_memory_raw
+            memory_raw = row._mapping
+            if not memory_raw or not deserialize:
+                return memory_raw
 
-            return UserMemory.from_dict(user_memory_raw)
+            return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
             log_error(f"Exception upserting user memory: {e}")
