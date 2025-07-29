@@ -1,6 +1,6 @@
 from agno.agent import Agent
+from agno.db.redis import RedisDb
 from agno.models.openai import OpenAIChat
-from agno.storage.redis import RedisStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
@@ -54,10 +54,9 @@ if __name__ == "__main__":
     content_creation_workflow = Workflow(
         name="Content Creation Workflow",
         description="Automated content creation from blog posts to social media",
-        storage=RedisStorage(
-            prefix="agno_test",
-            host="localhost",
-            port=6379,
+        storage=RedisDb(
+            session_table="workflow_session",
+            db_url="redis://localhost:6379",
         ),
         steps=[research_step, content_planning_step],
     )

@@ -1,6 +1,6 @@
 from agno.agent import Agent
+from agno.db.json import JsonDb
 from agno.models.openai import OpenAIChat
-from agno.storage.json import JsonStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
@@ -54,9 +54,9 @@ if __name__ == "__main__":
     content_creation_workflow = Workflow(
         name="Content Creation Workflow",
         description="Automated content creation from blog posts to social media",
-        storage=JsonStorage(
-            dir_path="tmp/workflow_v2",
-            mode="workflow_v2",
+        storage=JsonDb(
+            session_table="workflow_session",
+            db_path="tmp/workflow_v2",
         ),
         steps=[research_step, content_planning_step],
     )

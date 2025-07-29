@@ -7,6 +7,7 @@ import asyncio
 
 import pytest
 
+from agno.db.base import SessionType
 from agno.run.base import RunStatus
 
 

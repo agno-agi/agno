@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -39,6 +40,21 @@ class WorkflowSession:
     def __post_init__(self):
         if self.runs is None:
             self.runs = []
+
+        # Ensure session_data, workflow_data, and extra_data are dictionaries, not None
+        if self.session_data is None:
+            self.session_data = {}
+        if self.workflow_data is None:
+            self.workflow_data = {}
+        if self.extra_data is None:
+            self.extra_data = {}
+
+        # Set timestamps if they're not already set
+        current_time = int(time.time())
+        if self.created_at is None:
+            self.created_at = current_time
+        if self.updated_at is None:
+            self.updated_at = current_time
 
     def upsert_run(self, run: WorkflowRunResponse) -> None:
         """Add or update a workflow run (upsert behavior)"""

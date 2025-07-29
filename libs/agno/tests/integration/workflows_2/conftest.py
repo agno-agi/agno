@@ -4,9 +4,9 @@ from typing import List
 import pytest
 
 from agno.agent.agent import Agent
+from agno.db.json import JsonDb
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.storage.json import JsonStorage
-from agno.storage.sqlite import SqliteStorage
 from agno.team.team import Team
 from agno.workflow.v2 import Condition, Loop, Parallel, Router
 from agno.workflow.v2.step import Step
@@ -17,8 +17,7 @@ from agno.workflow.v2.workflow import Workflow
 @pytest.fixture
 def workflow_storage(tmp_path):
     """Create a workflow storage for testing."""
-    storage = SqliteStorage(table_name="workflow_v2", db_file=str(tmp_path / "test_workflow_v2.db"), mode="workflow_v2")
-    storage.create()
+    storage = SqliteDb(session_table="workflow_session", db_file=str(tmp_path / "test_workflow_v2.db"))
     return storage
 
 
@@ -47,7 +46,7 @@ def mock_agent():
 @pytest.fixture
 def simple_workflow(mock_agent, tmp_path):
     """Create a simple workflow for testing"""
-    storage = JsonStorage(dir_path=tmp_path / "workflow_bg_test", mode="workflow_v2")
+    storage = JsonDb(session_table="workflow_session", db_path=tmp_path / "workflow_bg_test")
 
     return Workflow(
         name="Test Background Workflow",
@@ -82,7 +81,7 @@ def multi_step_workflow(mock_agent, workflow_storage):
 @pytest.fixture
 def team_workflow(tmp_path):
     """Create a workflow with team for testing"""
-    storage = JsonStorage(dir_path=tmp_path / "workflow_bg_team_test", mode="workflow_v2")
+    storage = JsonDb(session_table="workflow_session", db_path=tmp_path / "workflow_bg_team_test")
 
     agent1 = Agent(
         name="Team Member 1",
@@ -116,7 +115,7 @@ def team_workflow(tmp_path):
 @pytest.fixture
 def custom_function_workflow(tmp_path):
     """Create a workflow with custom function for testing"""
-    storage = JsonStorage(dir_path=tmp_path / "workflow_bg_func_test", mode="workflow_v2")
+    storage = JsonDb(session_table="workflow_session", db_path=tmp_path / "workflow_bg_func_test")
 
     async def custom_async_function(workflow, execution_input):
         """Custom async function that simulates work"""
@@ -134,7 +133,7 @@ def custom_function_workflow(tmp_path):
 @pytest.fixture
 def condition_workflow(mock_agent, tmp_path):
     """Create a workflow with conditional execution for testing"""
-    storage = JsonStorage(dir_path=tmp_path / "workflow_bg_condition_test", mode="workflow_v2")
+    storage = JsonDb(session_table="workflow_session", db_path=tmp_path / "workflow_bg_condition_test")
 
     fact_checker = Agent(
         name="Fact Checker",
@@ -166,7 +165,7 @@ def condition_workflow(mock_agent, tmp_path):
 @pytest.fixture
 def parallel_workflow(tmp_path):
     """Create a workflow with parallel execution for testing"""
-    storage = JsonStorage(dir_path=tmp_path / "workflow_bg_parallel_test", mode="workflow_v2")
+    storage = JsonDb(session_table="workflow_session", db_path=tmp_path / "workflow_bg_parallel_test")
 
     researcher1 = Agent(
         name="Researcher 1",
@@ -204,7 +203,7 @@ def parallel_workflow(tmp_path):
 @pytest.fixture
 def router_workflow(tmp_path):
     """Create a workflow with router for testing"""
-    storage = JsonStorage(dir_path=tmp_path / "workflow_bg_router_test", mode="workflow_v2")
+    storage = JsonDb(session_table="workflow_session", db_path=tmp_path / "workflow_bg_router_test")
 
     tech_agent = Agent(
         name="Tech Specialist",
@@ -255,7 +254,7 @@ def router_workflow(tmp_path):
 @pytest.fixture
 def loop_workflow(tmp_path):
     """Create a workflow with loop for testing"""
-    storage = JsonStorage(dir_path=tmp_path / "workflow_bg_loop_test", mode="workflow_v2")
+    storage = JsonDb(session_table="workflow_session", db_path=tmp_path / "workflow_bg_loop_test")
 
     researcher = Agent(
         name="Researcher",

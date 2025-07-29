@@ -1,6 +1,6 @@
 from agno.agent import Agent
+from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
-from agno.storage.postgres import PostgresStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
@@ -56,10 +56,9 @@ if __name__ == "__main__":
     content_creation_workflow = Workflow(
         name="Content Creation Workflow",
         description="Automated content creation from blog posts to social media",
-        storage=PostgresStorage(
-            table_name="workflow_v2",
+        storage=PostgresDb(
+            session_table="workflow_session",
             db_url=db_url,
-            mode="workflow_v2",
         ),
         steps=[research_step, content_planning_step],
     )
