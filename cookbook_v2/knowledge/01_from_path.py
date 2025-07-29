@@ -27,7 +27,7 @@ knowledge = Knowledge(
 # Add from local file to the knowledge base
 knowledge.add_content(
     name="CV",
-    path="data/filters",
+    path="cookbook_v2/knowledge/data/filters",
     metadata={"user_tag": "Engineering Candidates"},
     skip_if_exists=True,
     upsert=False,
