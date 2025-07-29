@@ -860,3 +860,9 @@ class Qdrant(VectorDb):
         except Exception as e:
             log_warning(f"Error deleting points with content_id {content_id}: {e}")
             return False
+
+    def id_exists(self, id: str) -> bool:
+        raise NotImplementedError
+
+    def content_hash_exists(self, content_hash: str) -> bool:
+        raise NotImplementedError

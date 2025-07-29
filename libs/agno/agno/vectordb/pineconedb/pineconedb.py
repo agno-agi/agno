@@ -539,3 +539,9 @@ class PineconeDb(VectorDb):
         except Exception as e:
             log_warning(f"Error getting document count: {e}")
             return 0
+
+    def id_exists(self, id: str) -> bool:
+        raise NotImplementedError
+
+    def content_hash_exists(self, content_hash: str) -> bool:
+        raise NotImplementedError

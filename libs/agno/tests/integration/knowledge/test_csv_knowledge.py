@@ -129,64 +129,72 @@ def test_csv_knowledge_single_file():
         vector_db.drop()
 
 
-# @pytest.mark.asyncio
-# async def test_csv_knowledge_async(setup_csv_files):
-#     vector_db = LanceDb(
-#         table_name="employees_async",
-#         uri="tmp/lancedb",
-#     )
-#     csv_dir = Path(setup_csv_files) / "csvs"
+@pytest.mark.asyncio
+async def test_csv_knowledge_async(setup_csv_files):
+    vector_db = LanceDb(
+        table_name="employees_async",
+        uri="tmp/lancedb",
+    )
+    csv_dir = Path(setup_csv_files) / "csvs"
 
-#     knowledge = Knowledge(
-#         path=str(csv_dir),
-#         vector_db=vector_db,
-#     )
-#     knowledge.reader.chunk = False
+    knowledge = Knowledge(
+        vector_db=vector_db,
+    )
+    reader = CSVReader(
+        chunk=False,
+    )
 
-#     await knowledge.aload(recreate=True)
+    await knowledge.async_add_content(
+        path=str(csv_dir),
+        reader=reader,
+    )
 
-#     assert await vector_db.async_exists()
-#     count = await vector_db.async_get_count()
-#     assert count >= 2
+    assert await vector_db.async_exists()
+    count = await vector_db.async_get_count()
+    assert count >= 2
 
-#     # Create and use the agent
-#     agent = Agent(knowledge=knowledge)
-#     response = await agent.arun("Which employees have salaries above 80000?", markdown=True)
+    # Create and use the agent
+    agent = Agent(knowledge=knowledge)
+    response = await agent.arun("Which employees have salaries above 80000?", markdown=True)
 
-#     # Check for relevant content in the response
-#     assert any(term in response.content.lower() for term in ["salary", "80000", "employee"])
+    # Check for relevant content in the response
+    assert any(term in response.content.lower() for term in ["salary", "80000", "employee"])
 
-#     # Clean up
-#     await vector_db.async_drop()
+    # Clean up
+    await vector_db.async_drop()
 
 
-# @pytest.mark.asyncio
-# async def test_csv_knowledge_async_single_file():
-#     """Test with a single in-memory CSV file asynchronously."""
-#     vector_db = LanceDb(
-#         table_name="sales_async",
-#         uri="tmp/lancedb",
-#     )
+@pytest.mark.asyncio
+async def test_csv_knowledge_async_single_file():
+    """Test with a single in-memory CSV file asynchronously."""
+    vector_db = LanceDb(
+        table_name="sales_async",
+        uri="tmp/lancedb",
+    )
 
-#     with tempfile.NamedTemporaryFile(suffix=".csv", mode="w+") as temp_file:
-#         temp_file.write(SALES_CSV_DATA)
-#         temp_file.flush()
+    with tempfile.NamedTemporaryFile(suffix=".csv", mode="w+") as temp_file:
+        temp_file.write(SALES_CSV_DATA)
+        temp_file.flush()
 
-#         knowledge = Knowledge(
-#             path=temp_file.name,
-#             vector_db=vector_db,
-#         )
-#         knowledge.reader.chunk = False
+        knowledge = Knowledge(
+            vector_db=vector_db,
+        )
+        reader = CSVReader(
+            chunk=False,
+        )
 
-#         await knowledge.aload(recreate=True)
+        await knowledge.async_add_content(
+            path=temp_file.name,
+            reader=reader,
+        )
 
-#         assert await vector_db.async_exists()
-#         count = await vector_db.async_get_count()
-#         assert count >= 1
+        assert await vector_db.async_exists()
+        count = await vector_db.async_get_count()
+        assert count >= 1
 
-#         agent = Agent(knowledge=knowledge)
-#         response = await agent.arun("Compare Q1 and Q2 laptop sales", markdown=True)
+        agent = Agent(knowledge=knowledge)
+        response = await agent.arun("Compare Q1 and Q2 laptop sales", markdown=True)
 
-#         assert any(term in response.content.lower() for term in ["q1", "q2", "laptop", "sales"])
+        assert any(term in response.content.lower() for term in ["q1", "q2", "laptop", "sales"])
 
-#         await vector_db.async_drop()
+        await vector_db.async_drop()

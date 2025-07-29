@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from agno.agent import Agent
-from agno.knowledge.text import TextKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.lancedb import LanceDb
 
 
@@ -20,7 +20,7 @@ def setup_vector_db():
 
 def get_test_data_dir():
     """Get the path to the test data directory."""
-    return Path(__file__).parent / "data"
+    return Path(__file__).parent / "data/pg_essay.txt"
 
 
 def get_filtered_data_dir():
@@ -31,16 +31,15 @@ def get_filtered_data_dir():
 def prepare_knowledge_base(setup_vector_db):
     """Prepare a knowledge base with filtered data."""
     # Create knowledge base
-    kb = TextKnowledgeBase(vector_db=setup_vector_db)
+    kb = Knowledge(vector_db=setup_vector_db)
 
     # Load documents with different user IDs and metadata
-    kb.load_document(
+    kb.add_content(
         path=get_filtered_data_dir() / "cv_1.txt",
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
-        recreate=True,
     )
 
-    kb.load_document(
+    kb.add_content(
         path=get_filtered_data_dir() / "cv_2.txt",
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -51,16 +50,15 @@ def prepare_knowledge_base(setup_vector_db):
 async def aprepare_knowledge_base(setup_vector_db):
     """Prepare a knowledge base with filtered data asynchronously."""
     # Create knowledge base
-    kb = TextKnowledgeBase(vector_db=setup_vector_db)
+    kb = Knowledge(vector_db=setup_vector_db)
 
     # Load documents with different user IDs and metadata
-    await kb.aload_document(
+    await kb.async_add_content(
         path=get_filtered_data_dir() / "cv_1.txt",
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
-        recreate=True,
     )
 
-    await kb.aload_document(
+    await kb.async_add_content(
         path=get_filtered_data_dir() / "cv_2.txt",
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -72,16 +70,15 @@ def test_text_knowledge_base_directory(setup_vector_db):
     """Test loading a directory of text files into the knowledge base."""
     text_dir = get_test_data_dir()
 
-    kb = TextKnowledgeBase(
-        path=text_dir,
-        formats=[".txt"],
+    kb = Knowledge(
         vector_db=setup_vector_db,
     )
-    kb.load(recreate=True)
+    kb.add_content(
+        path=text_dir,
+    )
 
     assert setup_vector_db.exists()
-    # pg_essay.txt is split into 9 documents
-    assert setup_vector_db.get_count() == 9
+    assert setup_vector_db.get_count() == 4
 
     agent = Agent(knowledge=kb)
     response = agent.run("What are the key factors in doing great work?", markdown=True)
@@ -100,12 +97,13 @@ async def test_text_knowledge_base_async_directory(setup_vector_db):
     """Test asynchronously loading a directory of text files into the knowledge base."""
     text_dir = get_test_data_dir()
 
-    kb = TextKnowledgeBase(path=text_dir, formats=[".txt"], vector_db=setup_vector_db)
-    await kb.aload(recreate=True)
+    kb = Knowledge(vector_db=setup_vector_db)
+    await kb.async_add_content(
+        path=text_dir,
+    )
 
     assert await setup_vector_db.async_exists()
-    # pg_essay.txt is split into 9 documents
-    assert await setup_vector_db.async_get_count() == 9
+    assert await setup_vector_db.async_get_count() == 4
 
     agent = Agent(knowledge=kb)
     response = await agent.arun("What does Paul Graham say about great work?", markdown=True)
@@ -122,21 +120,19 @@ async def test_text_knowledge_base_async_directory(setup_vector_db):
 # for the one with new knowledge filter DX- filters at initialization
 def test_text_knowledge_base_with_metadata_path(setup_vector_db):
     """Test loading text files with metadata using the new path structure."""
-    kb = TextKnowledgeBase(
-        path=[
-            {
-                "path": str(get_filtered_data_dir() / "cv_1.txt"),
-                "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
-            },
-            {
-                "path": str(get_filtered_data_dir() / "cv_2.txt"),
-                "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
-            },
-        ],
+    kb = Knowledge(
         vector_db=setup_vector_db,
     )
 
-    kb.load(recreate=True)
+    kb.add_content(
+        path=str(get_filtered_data_dir() / "cv_1.txt"),
+        metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
+    )
+
+    kb.add_content(
+        path=str(get_filtered_data_dir() / "cv_2.txt"),
+        metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
+    )
 
     # Verify documents were loaded with metadata
     agent = Agent(knowledge=kb)
@@ -154,21 +150,19 @@ def test_text_knowledge_base_with_metadata_path(setup_vector_db):
 
 def test_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
     """Test filtering docx knowledge base with invalid filters using the new path structure."""
-    kb = TextKnowledgeBase(
-        path=[
-            {
-                "path": str(get_filtered_data_dir() / "cv_1.txt"),
-                "metadata": {"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
-            },
-            {
-                "path": str(get_filtered_data_dir() / "cv_2.txt"),
-                "metadata": {"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
-            },
-        ],
+    kb = Knowledge(
         vector_db=setup_vector_db,
     )
 
-    kb.load(recreate=True)
+    kb.add_content(
+        path=str(get_filtered_data_dir() / "cv_1.txt"),
+        metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
+    )
+
+    kb.add_content(
+        path=str(get_filtered_data_dir() / "cv_2.txt"),
+        metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
+    )
 
     # Initialize agent with invalid filters
     agent = Agent(knowledge=kb, knowledge_filters={"nonexistent_filter": "value"})

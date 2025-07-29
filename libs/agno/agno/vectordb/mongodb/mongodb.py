@@ -1143,3 +1143,9 @@ class MongoDb(VectorDb):
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
         pass
+
+    def id_exists(self, id: str) -> bool:
+        raise NotImplementedError
+
+    def content_hash_exists(self, content_hash: str) -> bool:
+        raise NotImplementedError

@@ -38,7 +38,7 @@ class RedisDb(BaseDb):
         db_prefix: str = "agno",
         expire: Optional[int] = None,
         session_table: Optional[str] = None,
-        user_memory_table: Optional[str] = None,
+        memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
@@ -57,7 +57,7 @@ class RedisDb(BaseDb):
             db_prefix (str): Prefix for all Redis keys
             expire (Optional[int]): TTL for Redis keys in seconds
             session_table (Optional[str]): Name of the table to store sessions
-            user_memory_table (Optional[str]): Name of the table to store user memories
+            memory_table (Optional[str]): Name of the table to store memories
             metrics_table (Optional[str]): Name of the table to store metrics
             eval_table (Optional[str]): Name of the table to store evaluation runs
             knowledge_table (Optional[str]): Name of the table to store knowledge documents
@@ -67,7 +67,7 @@ class RedisDb(BaseDb):
         """
         super().__init__(
             session_table=session_table,
-            user_memory_table=user_memory_table,
+            memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
@@ -90,8 +90,8 @@ class RedisDb(BaseDb):
         if table_type == "sessions":
             return self.session_table_name
 
-        elif table_type == "user_memories":
-            return self.user_memory_table_name
+        elif table_type == "memories":
+            return self.memory_table_name
 
         elif table_type == "metrics":
             return self.metrics_table_name
@@ -596,7 +596,7 @@ class RedisDb(BaseDb):
         """
         try:
             if self._delete_record(
-                "user_memories", memory_id, index_fields=["user_id", "agent_id", "team_id", "workflow_id"]
+                "memories", memory_id, index_fields=["user_id", "agent_id", "team_id", "workflow_id"]
             ):
                 log_debug(f"Successfully deleted user memory id: {memory_id}")
                 return True
@@ -618,7 +618,7 @@ class RedisDb(BaseDb):
             # TODO: cant we optimize this?
             for memory_id in memory_ids:
                 self._delete_record(
-                    "user_memories",
+                    "memories",
                     memory_id,
                     index_fields=["user_id", "agent_id", "team_id", "workflow_id"],
                 )
@@ -633,7 +633,7 @@ class RedisDb(BaseDb):
             List[str]: The list of memory topics.
         """
         try:
-            all_memories = self._get_all_records("user_memories")
+            all_memories = self._get_all_records("memories")
 
             topics = set()
             for memory in all_memories:
@@ -659,7 +659,7 @@ class RedisDb(BaseDb):
             Optional[UserMemory]: The memory data if found, None otherwise.
         """
         try:
-            memory_raw = self._get_record("user_memories", memory_id)
+            memory_raw = self._get_record("memories", memory_id)
             if memory_raw is None:
                 return None
 
@@ -710,7 +710,7 @@ class RedisDb(BaseDb):
             Exception: If any error occurs while reading the memories.
         """
         try:
-            all_memories = self._get_all_records("user_memories")
+            all_memories = self._get_all_records("memories")
 
             # Apply filters
             conditions = {}
@@ -767,7 +767,7 @@ class RedisDb(BaseDb):
             Exception: If any error occurs while getting the user memory stats.
         """
         try:
-            all_memories = self._get_all_records("user_memories")
+            all_memories = self._get_all_records("memories")
 
             # Group by user_id
             user_stats = {}
@@ -830,7 +830,7 @@ class RedisDb(BaseDb):
             }
 
             success = self._store_record(
-                "user_memories", memory.memory_id, data, index_fields=["user_id", "agent_id", "team_id", "workflow_id"]
+                "memories", memory.memory_id, data, index_fields=["user_id", "agent_id", "team_id", "workflow_id"]
             )
 
             if not success:
@@ -844,6 +844,28 @@ class RedisDb(BaseDb):
         except Exception as e:
             log_error(f"Error upserting user memory: {e}")
             return None
+
+    def clear_memories(self) -> None:
+        """Delete all memories from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            # Get all keys for memories table
+            keys = get_all_keys_for_table(
+                redis_client=self.redis_client, 
+                prefix=self.db_prefix, 
+                table_type="memories"
+            )
+            
+            if keys:
+                # Delete all memory keys in a single batch operation
+                self.redis_client.delete(*keys)
+
+        except Exception as e:
+            from agno.utils.log import log_warning
+            log_warning(f"Exception deleting all memories: {e}")
 
     # -- Metrics methods --
 

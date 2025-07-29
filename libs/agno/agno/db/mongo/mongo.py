@@ -36,7 +36,7 @@ class MongoDb(BaseDb):
         db_name: Optional[str] = None,
         db_url: Optional[str] = None,
         session_collection: Optional[str] = None,
-        user_memory_collection: Optional[str] = None,
+        memory_collection: Optional[str] = None,
         metrics_collection: Optional[str] = None,
         eval_collection: Optional[str] = None,
         knowledge_collection: Optional[str] = None,
@@ -49,7 +49,7 @@ class MongoDb(BaseDb):
             db_name (Optional[str]): The name of the database to use.
             db_url (Optional[str]): The database URL to connect to.
             session_collection (Optional[str]): Name of the collection to store sessions.
-            user_memory_collection (Optional[str]): Name of the collection to store user memories.
+            memory_collection (Optional[str]): Name of the collection to store memories.
             metrics_collection (Optional[str]): Name of the collection to store metrics.
             eval_collection (Optional[str]): Name of the collection to store evaluation runs.
             knowledge_collection (Optional[str]): Name of the collection to store knowledge documents.
@@ -59,7 +59,7 @@ class MongoDb(BaseDb):
         """
         super().__init__(
             session_table=session_collection,
-            user_memory_table=user_memory_collection,
+            memory_table=memory_collection,
             metrics_table=metrics_collection,
             eval_table=eval_collection,
             knowledge_table=knowledge_collection,
@@ -103,14 +103,14 @@ class MongoDb(BaseDb):
                 )
             return self.session_collection
 
-        if table_type == "user_memories":
-            if not hasattr(self, "user_memory_collection"):
-                if self.user_memory_table_name is None:
-                    raise ValueError("User memory collection was not provided on initialization")
-                self.user_memory_collection = self._get_or_create_collection(
-                    collection_name=self.user_memory_table_name, collection_type="user_memories"
+        if table_type == "memories":
+            if not hasattr(self, "memory_collection"):
+                if self.memory_table_name is None:
+                    raise ValueError("Memory collection was not provided on initialization")
+                self.memory_collection = self._get_or_create_collection(
+                    collection_name=self.memory_table_name, collection_type="memories"
                 )
-            return self.user_memory_collection
+            return self.memory_collection
 
         if table_type == "metrics":
             if not hasattr(self, "metrics_collection"):
@@ -562,19 +562,19 @@ class MongoDb(BaseDb):
             Exception: If there is an error deleting the memory.
         """
         try:
-            collection = self._get_collection(table_type="user_memories")
+            collection = self._get_collection(table_type="memories")
             result = collection.delete_one({"memory_id": memory_id})
 
             success = result.deleted_count > 0
             if success:
-                log_debug(f"Successfully deleted user memory id: {memory_id}")
+                log_debug(f"Successfully deleted memory id: {memory_id}")
             else:
-                log_debug(f"No user memory found with id: {memory_id}")
+                log_debug(f"No memory found with id: {memory_id}")
 
             return success
 
         except Exception as e:
-            log_error(f"Error deleting user memory: {e}")
+            log_error(f"Error deleting memory: {e}")
             return False
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
@@ -587,14 +587,14 @@ class MongoDb(BaseDb):
             Exception: If there is an error deleting the memories.
         """
         try:
-            collection = self._get_collection(table_type="user_memories")
+            collection = self._get_collection(table_type="memories")
             result = collection.delete_many({"memory_id": {"$in": memory_ids}})
 
             if result.deleted_count == 0:
-                log_debug(f"No user memories found with ids: {memory_ids}")
+                log_debug(f"No memories found with ids: {memory_ids}")
 
         except Exception as e:
-            log_error(f"Error deleting user memories: {e}")
+            log_error(f"Error deleting memories: {e}")
 
     def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from the database.
@@ -606,7 +606,7 @@ class MongoDb(BaseDb):
             Exception: If there is an error getting the topics.
         """
         try:
-            collection = self._get_collection(table_type="user_memories")
+            collection = self._get_collection(table_type="memories")
             topics = collection.distinct("topics")
             return [topic for topic in topics if topic]
 
@@ -630,7 +630,7 @@ class MongoDb(BaseDb):
             Exception: If there is an error getting the memory.
         """
         try:
-            collection = self._get_collection(table_type="user_memories")
+            collection = self._get_collection(table_type="memories")
             result = collection.find_one({"memory_id": memory_id})
             if result is None or not deserialize:
                 return result
@@ -677,7 +677,7 @@ class MongoDb(BaseDb):
             Exception: If there is an error getting the memories.
         """
         try:
-            collection = self._get_collection(table_type="user_memories")
+            collection = self._get_collection(table_type="memories")
 
             query = {}
             if user_id is not None:
@@ -738,7 +738,7 @@ class MongoDb(BaseDb):
             Exception: If there is an error getting the memories stats.
         """
         try:
-            collection = self._get_collection(table_type="user_memories")
+            collection = self._get_collection(table_type="memories")
 
             pipeline = [
                 {"$match": {"user_id": {"$ne": None}}},
@@ -798,7 +798,7 @@ class MongoDb(BaseDb):
             Exception: If there is an error upserting the memory.
         """
         try:
-            collection = self._get_collection(table_type="user_memories")
+            collection = self._get_collection(table_type="memories")
 
             if memory.memory_id is None:
                 memory.memory_id = str(uuid4())
@@ -827,6 +827,20 @@ class MongoDb(BaseDb):
         except Exception as e:
             log_error(f"Exception upserting user memory: {e}")
             return None
+
+    def clear_memories(self) -> None:
+        """Delete all memories from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            collection = self._get_collection(table_type="memories")
+            collection.delete_many({})
+
+        except Exception as e:
+            from agno.utils.log import log_warning
+            log_warning(f"Exception deleting all memories: {e}")
 
     # -- Metrics methods --
 

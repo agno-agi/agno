@@ -19,13 +19,13 @@ class BaseDb(ABC):
     def __init__(
         self,
         session_table: Optional[str] = None,
-        user_memory_table: Optional[str] = None,
+        memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
     ):
         self.session_table_name = session_table or "agno_sessions"
-        self.user_memory_table_name = user_memory_table or "agno_user_memories"
+        self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
@@ -76,7 +76,12 @@ class BaseDb(ABC):
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         raise NotImplementedError
 
-    # --- User Memory ---
+    # --- Memory ---
+
+    @abstractmethod
+    def clear_memories(self) -> None:
+        raise NotImplementedError
+
     @abstractmethod
     def delete_user_memory(self, memory_id: str) -> None:
         raise NotImplementedError
@@ -126,10 +131,9 @@ class BaseDb(ABC):
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         raise NotImplementedError
 
-    # TODO:
-    # @abstractmethod
-    # def clear_memories(self) -> None:
-    #     raise NotImplementedError
+    @abstractmethod
+    def clear_memories(self) -> None:
+        raise NotImplementedError
 
     # --- Metrics ---
     @abstractmethod
