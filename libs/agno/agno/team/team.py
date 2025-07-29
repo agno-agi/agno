@@ -974,8 +974,6 @@ class Team:
                         from_run_response=run_response,
                         session_id=session_id,
                     )
-            finally:
-                self._reset_session_state()
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -1363,8 +1361,6 @@ class Team:
                         from_run_response=run_response,
                         session_id=session_id,
                     )
-            finally:
-                self._reset_session_state()
 
         # If we get here, all retries failed
         if last_exception is not None:
