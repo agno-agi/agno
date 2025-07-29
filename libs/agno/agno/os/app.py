@@ -100,8 +100,6 @@ class AgentOS:
                     workflow.os_id = self.os_id
                 if not workflow.workflow_id:
                     workflow.workflow_id = generate_id(workflow.name)
-    
-    
 
     def _auto_discover_apps(self) -> List[BaseApp]:
         """Auto-discover apps from agents, teams, and workflows."""
@@ -121,7 +119,7 @@ class AgentOS:
                 seen_components[component_type].add(component_id)
                 return True
             return False
-        
+
         def _auto_discover_entity_apps(entity: Union[Agent, Team]) -> List[BaseApp]:
             if entity.db:
                 # Memory app

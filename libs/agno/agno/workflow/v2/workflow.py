@@ -215,10 +215,6 @@ class Workflow:
             self.session_id = str(uuid4())
             log_debug(f"Generated new session_id: {self.session_id}")
 
-        # Set storage mode to workflow_v2
-        if self.storage is not None:
-            self.storage.mode = "workflow_v2"
-
         self._update_workflow_session_state()
 
     def rename_session(self, session_name: str):
