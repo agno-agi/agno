@@ -20,10 +20,18 @@ knowledge.add_content(
     metadata={"doc_type": "recipe_book"},
 )
 
-# Create and use the agent
-agent = Agent(knowledge=knowledge)
-agent.print_response("List down the ingredients to make Massaman Gai", markdown=True)
 
-vector_db.delete_by_name("Recipes")
-# or
-vector_db.delete_by_metadata({"doc_type": "recipe_book"})
+knowledge.add_content(
+    name="Recipes",
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+    metadata={"doc_type": "recipe_book"},
+    skip_if_exists=False,
+)
+
+# # Create and use the agent
+# agent = Agent(knowledge=knowledge)
+# agent.print_response("List down the ingredients to make Massaman Gai", markdown=True)
+
+# vector_db.delete_by_name("Recipes")
+# # or
+# vector_db.delete_by_metadata({"doc_type": "recipe_book"})

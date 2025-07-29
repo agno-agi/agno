@@ -101,7 +101,7 @@ class LanceDb(VectorDb):
                 self.table = table
                 self.table_name = self.table.name
                 self._vector_col = self.table.schema.names[0]
-                self._id = self.tbl.schema.names[1]  # type: ignore
+                self._id = self.table.schema.names[1]  # type: ignore
             else:
                 if not table_name:
                     raise ValueError("Either table or table_name should be provided.")
@@ -238,6 +238,7 @@ class LanceDb(VectorDb):
                 "content": cleaned_content,
                 "usage": document.usage,
                 "content_id": document.content_id,
+                "content_hash": content_hash,
             }
             data.append(
                 {
@@ -300,6 +301,7 @@ class LanceDb(VectorDb):
                 "content": cleaned_content,
                 "usage": document.usage,
                 "content_id": document.content_id,
+                "content_hash": content_hash,
             }
             data.append(
                 {
@@ -327,6 +329,10 @@ class LanceDb(VectorDb):
             logger.error(f"Error during async document insertion: {e}")
             raise
 
+    def upsert_available(self) -> bool:
+        """Check if upsert is available in LanceDB."""
+        return True
+
     def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
         Upsert documents into the database.
@@ -335,12 +341,16 @@ class LanceDb(VectorDb):
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
-        self.insert(content_hash, documents, filters=filters)
+        if self.content_hash_exists(content_hash):
+            self._delete_by_content_hash(content_hash)
+        self.insert(content_hash=content_hash, documents=documents, filters=filters)
 
     async def async_upsert(
         self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
     ) -> None:
-        await self.async_insert(content_hash, documents, filters)
+        if self.content_hash_exists(content_hash):
+            self._delete_by_content_hash(content_hash)
+        await self.async_insert(content_hash=content_hash, documents=documents, filters=filters)
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """
@@ -606,6 +616,20 @@ class LanceDb(VectorDb):
     async def async_name_exists(self, name: str) -> bool:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
+    def id_exists(self, id: str) -> bool:
+        """Check if a document with the given ID exists in the database"""
+        if self.table is None:
+            logger.error("Table not initialized")
+            return False
+
+        try:
+            # Search for the document with the specific ID
+            result = self.table.search().where(f"{self._id} = '{id}'").to_pandas()
+            return len(result) > 0
+        except Exception as e:
+            logger.error(f"Error checking id existence: {e}")
+            return False
+
     def delete_by_id(self, id: str) -> bool:
         """Delete content by ID."""
         if self.table is None:
@@ -727,8 +751,57 @@ class LanceDb(VectorDb):
             logger.error(f"Error deleting rows by content_id '{content_id}': {e}")
             return False
 
-    def id_exists(self, id: str) -> bool:
-        raise NotImplementedError
+    def _delete_by_content_hash(self, content_hash: str) -> bool:
+        """Delete content by content hash."""
+        if self.table is None:
+            logger.error("Table not initialized")
+            return False
+
+        try:
+            total_count = self.table.count_rows()
+            result = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
+
+            # Find matching IDs
+            ids_to_delete = []
+            for _, row in result.iterrows():
+                payload = json.loads(row["payload"])
+                if payload.get("content_hash") == content_hash:
+                    ids_to_delete.append(row["id"])
+
+            # Delete matching records
+            if ids_to_delete:
+                for doc_id in ids_to_delete:
+                    self.table.delete(f"{self._id} = '{doc_id}'")
+                log_info(
+                    f"Deleted {len(ids_to_delete)} records with content_hash '{content_hash}' from table '{self.table_name}'."
+                )
+                return True
+            else:
+                log_info(f"No records found with content_hash '{content_hash}' to delete.")
+                return False
+
+        except Exception as e:
+            logger.error(f"Error deleting rows by content_hash '{content_hash}': {e}")
+            return False
 
     def content_hash_exists(self, content_hash: str) -> bool:
-        return False
+        """Check if documents with the given content hash exist."""
+        if self.table is None:
+            logger.error("Table not initialized")
+            return False
+
+        try:
+            total_count = self.table.count_rows()
+            result = self.table.search().select(["id", "payload"]).limit(total_count).to_pandas()
+
+            # Check if any records match the content_hash
+            for _, row in result.iterrows():
+                payload = json.loads(row["payload"])
+                if payload.get("content_hash") == content_hash:
+                    return True
+
+            return False
+
+        except Exception as e:
+            logger.error(f"Error checking content_hash existence '{content_hash}': {e}")
+            return False

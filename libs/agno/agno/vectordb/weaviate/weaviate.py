@@ -133,6 +133,7 @@ class Weaviate(VectorDb):
                     Property(name="content", data_type=DataType.TEXT, tokenization=Tokenization.LOWERCASE),
                     Property(name="meta_data", data_type=DataType.TEXT),
                     Property(name="content_id", data_type=DataType.TEXT),
+                    Property(name="content_hash", data_type=DataType.TEXT),
                 ],
                 vectorizer_config=Configure.Vectorizer.none(),
                 vector_index_config=self.get_vector_index_config(self.vector_index, self.distance),
@@ -149,6 +150,7 @@ class Weaviate(VectorDb):
                     Property(name="content", data_type=DataType.TEXT, tokenization=Tokenization.LOWERCASE),
                     Property(name="meta_data", data_type=DataType.TEXT),
                     Property(name="content_id", data_type=DataType.TEXT),
+                    Property(name="content_hash", data_type=DataType.TEXT),
                 ],
                 vectorizer_config=Configure.Vectorizer.none(),
                 vector_index_config=self.get_vector_index_config(self.vector_index, self.distance),
@@ -157,51 +159,26 @@ class Weaviate(VectorDb):
         finally:
             await client.close()
 
-    def doc_exists(self, document: Document) -> bool:
+    def content_hash_exists(self, content_hash: str) -> bool:
         """
-        Validate if the document exists using consistent UUID generation.
+        Check if documents with the given content hash exist in the collection.
 
         Args:
-            document (Document): Document to validate
+            content_hash (str): The content hash to check.
 
         Returns:
-            bool: True if the document exists, False otherwise
+            bool: True if documents with the content hash exist, False otherwise.
         """
-        if not document or not document.content:
-            logger.warning("Invalid document: Missing content.")
-            return False  # Early exit for invalid input
-
-        cleaned_content = document.content.replace("\x00", "\ufffd")
-        content_hash = md5(cleaned_content.encode()).hexdigest()
-        doc_uuid = uuid.UUID(hex=content_hash[:32])
-
-        collection = self.get_client().collections.get(self.collection)
-        return collection.data.exists(doc_uuid)
-
-    async def async_doc_exists(self, document: Document) -> bool:
-        """
-        Validate if the document exists using consistent UUID generation asynchronously.
-
-        Args:
-            document (Document): Document to validate
-
-        Returns:
-            bool: True if the document exists, False otherwise
-        """
-        if not document or not document.content:
-            logger.warning("Invalid document: Missing content.")
-            return False  # Early exit for invalid input
-
-        cleaned_content = document.content.replace("\x00", "\ufffd")
-        content_hash = md5(cleaned_content.encode()).hexdigest()
-        doc_uuid = uuid.UUID(hex=content_hash[:32])
-
-        client = await self.get_async_client()
         try:
-            collection = client.collections.get(self.collection)
-            return await collection.data.exists(doc_uuid)
-        finally:
-            await client.close()
+            collection = self.get_client().collections.get(self.collection)
+            result = collection.query.fetch_objects(
+                limit=1,
+                filters=Filter.by_property("content_hash").equal(content_hash),
+            )
+            return len(result.objects) > 0
+        except Exception as e:
+            logger.error(f"Error checking if content_hash {content_hash} exists: {e}")
+            return False
 
     def name_exists(self, name: str) -> bool:
         """
@@ -241,7 +218,7 @@ class Weaviate(VectorDb):
         finally:
             await client.close()
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
         Insert documents into Weaviate.
 
@@ -259,8 +236,8 @@ class Weaviate(VectorDb):
                 continue
 
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            content_hash = md5(cleaned_content.encode()).hexdigest()
-            doc_uuid = uuid.UUID(hex=content_hash[:32])
+            record_id = md5(cleaned_content.encode()).hexdigest()
+            doc_uuid = uuid.UUID(hex=record_id[:32])
 
             # Merge filters with metadata
             meta_data = document.meta_data or {}
@@ -276,13 +253,16 @@ class Weaviate(VectorDb):
                     "content": cleaned_content,
                     "meta_data": meta_data_str,
                     "content_id": document.content_id,
+                    "content_hash": content_hash,
                 },
                 vector=document.embedding,
                 uuid=doc_uuid,
             )
             log_debug(f"Inserted document: {document.name} ({meta_data})")
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """
         Insert documents into Weaviate asynchronously.
 
@@ -309,8 +289,8 @@ class Weaviate(VectorDb):
 
                     # Clean content and generate UUID
                     cleaned_content = document.content.replace("\x00", "\ufffd")
-                    content_hash = md5(cleaned_content.encode()).hexdigest()
-                    doc_uuid = uuid.UUID(hex=content_hash[:32])
+                    record_id = md5(cleaned_content.encode()).hexdigest()
+                    doc_uuid = uuid.UUID(hex=record_id[:32])
 
                     # Serialize meta_data to JSON string
                     meta_data_str = json.dumps(document.meta_data) if document.meta_data else None
@@ -321,6 +301,7 @@ class Weaviate(VectorDb):
                         "content": cleaned_content,
                         "meta_data": meta_data_str,
                         "content_id": document.content_id,
+                        "content_hash": content_hash,
                     }
 
                     # Use the API correctly - properties, vector and uuid are separate parameters
@@ -333,7 +314,7 @@ class Weaviate(VectorDb):
         finally:
             await client.close()
 
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
         Upsert documents into Weaviate.
 
@@ -342,9 +323,13 @@ class Weaviate(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
         log_debug(f"Upserting {len(documents)} documents into Weaviate.")
-        self.insert(documents, filters)
+        if self.content_hash_exists(content_hash):
+            self._delete_by_content_hash(content_hash)
+        self.insert(content_hash=content_hash, documents=documents, filters=filters)
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """
         Upsert documents into Weaviate asynchronously.
         When documents with the same ID already exist, they will be replaced.
@@ -370,8 +355,8 @@ class Weaviate(VectorDb):
                     continue
 
                 cleaned_content = document.content.replace("\x00", "\ufffd")
-                content_hash = md5(cleaned_content.encode()).hexdigest()
-                doc_uuid = uuid.UUID(hex=content_hash[:32])
+                record_id = md5(cleaned_content.encode()).hexdigest()
+                doc_uuid = uuid.UUID(hex=record_id[:32])
 
                 # Serialize meta_data to JSON string
                 meta_data_str = json.dumps(document.meta_data) if document.meta_data else None
@@ -381,6 +366,7 @@ class Weaviate(VectorDb):
                     "content": cleaned_content,
                     "meta_data": meta_data_str,
                     "content_id": document.content_id,
+                    "content_hash": content_hash,
                 }
 
                 await collection.data.replace(uuid=doc_uuid, properties=properties, vector=document.embedding)
@@ -881,7 +867,42 @@ class Weaviate(VectorDb):
         return None
 
     def id_exists(self, id: str) -> bool:
-        raise NotImplementedError
+        """Check if a document with the given ID exists in the collection.
 
-    def content_hash_exists(self, content_hash: str) -> bool:
-        raise NotImplementedError
+        Args:
+            id (str): The document ID to check.
+
+        Returns:
+            bool: True if the document exists, False otherwise.
+        """
+        try:
+            doc_uuid = uuid.UUID(hex=id[:32]) if len(id) == 32 else uuid.UUID(id)
+            collection = self.get_client().collections.get(self.collection)
+            return collection.data.exists(doc_uuid)
+        except ValueError:
+            log_info(f"Invalid UUID format for ID '{id}' - treating as non-existent")
+            return False
+        except Exception as e:
+            logger.error(f"Error checking if ID '{id}' exists: {e}")
+            return False
+
+    def _delete_by_content_hash(self, content_hash: str) -> bool:
+        """Delete documents by content hash using direct filter deletion.
+
+        Args:
+            content_hash (str): The content hash to delete.
+
+        Returns:
+            bool: True if documents were deleted successfully, False otherwise.
+        """
+        try:
+            collection = self.get_client().collections.get(self.collection)
+
+            result = collection.data.delete_many(where=Filter.by_property("content_hash").equal(content_hash))
+
+            log_info(f"Deleted documents with content_hash '{content_hash}' from collection '{self.collection}'.")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error deleting documents by content_hash '{content_hash}': {e}")
+            return False

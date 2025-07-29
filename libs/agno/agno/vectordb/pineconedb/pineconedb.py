@@ -234,6 +234,17 @@ class PineconeDb(VectorDb):
 
     def upsert(
         self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if self.content_hash_exists(content_hash):
+            self._delete_by_content_hash(content_hash)
+        self._upsert(content_hash=content_hash, documents=documents, filters=filters)
+
+    def _upsert(
+        self,
+        content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         namespace: Optional[str] = None,
@@ -265,6 +276,8 @@ class PineconeDb(VectorDb):
             if document.content_id:
                 metadata["content_id"] = document.content_id
 
+            metadata["content_hash"] = content_hash
+
             data_to_upsert = {
                 "id": document.id,
                 "values": document.embedding,
@@ -283,6 +296,7 @@ class PineconeDb(VectorDb):
 
     async def async_upsert(
         self,
+        content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         namespace: Optional[str] = None,
@@ -350,9 +364,11 @@ class PineconeDb(VectorDb):
             show_progress=show_progress,
         )
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         log_warning("Pinecone does not support insert operations. Redirecting to async_upsert instead.")
-        await self.async_upsert(documents, filters)
+        await self.async_upsert(content_hash=content_hash, documents=documents, filters=filters)
 
     def upsert_available(self) -> bool:
         """Check if upsert operation is available.
@@ -363,9 +379,9 @@ class PineconeDb(VectorDb):
         """
         return True
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         log_warning("Pinecone does not support insert operations. Redirecting to upsert instead.")
-        self.upsert(documents, filters)
+        self.upsert(content_hash=content_hash, documents=documents, filters=filters)
 
     def _hybrid_scale(self, dense: List[float], sparse: Dict[str, Any], alpha: float):
         """Hybrid vector scaling using a convex combination
@@ -541,7 +557,60 @@ class PineconeDb(VectorDb):
             return 0
 
     def id_exists(self, id: str) -> bool:
-        raise NotImplementedError
+        """Check if a document with the given ID exists in the index.
+
+        Args:
+            id (str): The ID to check.
+
+        Returns:
+            bool: True if the document exists, False otherwise.
+        """
+        try:
+            response = self.index.fetch(ids=[id], namespace=self.namespace)
+            return len(response.vectors) > 0
+        except Exception as e:
+            log_warning(f"Error checking if ID {id} exists: {e}")
+            return False
 
     def content_hash_exists(self, content_hash: str) -> bool:
-        raise NotImplementedError
+        """Check if documents with the given content hash exist in the index.
+
+        Args:
+            content_hash (str): The content hash to check.
+
+        Returns:
+            bool: True if documents with the content hash exist, False otherwise.
+        """
+        try:
+            # Use a dummy vector to perform a minimal query with filter
+            # We only need to check if any results exist
+            dummy_vector = [0.0] * self.dimension
+            response = self.index.query(
+                vector=dummy_vector,
+                top_k=1,
+                namespace=self.namespace,
+                filter={"content_hash": {"$eq": content_hash}},
+                include_metadata=False,
+                include_values=False,
+            )
+            return len(response.matches) > 0
+        except Exception as e:
+            log_warning(f"Error checking if content_hash {content_hash} exists: {e}")
+            return False
+
+    def _delete_by_content_hash(self, content_hash: str) -> bool:
+        """Delete documents by content hash (stored in metadata).
+
+        Args:
+            content_hash (str): The content hash to delete.
+
+        Returns:
+            bool: True if documents were deleted, False otherwise.
+        """
+        try:
+            # Delete all documents where metadata.content_hash equals the given content_hash
+            self.index.delete(filter={"content_hash": {"$eq": content_hash}}, namespace=self.namespace)
+            return True
+        except Exception as e:
+            log_warning(f"Error deleting documents with content_hash {content_hash}: {e}")
+            return False

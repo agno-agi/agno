@@ -475,14 +475,41 @@ class MongoDb(VectorDb):
             return False
 
     def id_exists(self, id: str) -> bool:
-        """Check if a document with a given ID exists in the collection."""
+        """Check if a document with the given ID exists in the collection.
+
+        Args:
+            id (str): The document ID to check.
+
+        Returns:
+            bool: True if the document exists, False otherwise.
+        """
         try:
             collection = self._get_collection()
-            exists = collection.find_one({"_id": id}) is not None
+            result = collection.find_one({"_id": id})
+            exists = result is not None
             log_debug(f"Document with ID '{id}' {'exists' if exists else 'does not exist'}")
             return exists
         except Exception as e:
             logger.error(f"Error checking document ID existence: {e}")
+            return False
+
+    def content_hash_exists(self, content_hash: str) -> bool:
+        """Check if documents with the given content hash exist in the collection.
+
+        Args:
+            content_hash (str): The content hash to check.
+
+        Returns:
+            bool: True if documents with the content hash exist, False otherwise.
+        """
+        try:
+            collection = self._get_collection()
+            result = collection.find_one({"content_hash": content_hash})
+            exists = result is not None
+            log_debug(f"Document with content_hash '{content_hash}' {'exists' if exists else 'does not exist'}")
+            return exists
+        except Exception as e:
+            logger.error(f"Error checking content_hash existence: {e}")
             return False
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
@@ -1134,18 +1161,3 @@ class MongoDb(VectorDb):
             return tuple(self._convert_objectids_to_strings(item) for item in obj)
         else:
             return obj
-
-    def delete_by_id(self, id: str) -> bool:
-        pass
-
-    def delete_by_name(self, name: str) -> bool:
-        pass
-
-    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
-        pass
-
-    def id_exists(self, id: str) -> bool:
-        raise NotImplementedError
-
-    def content_hash_exists(self, content_hash: str) -> bool:
-        raise NotImplementedError
