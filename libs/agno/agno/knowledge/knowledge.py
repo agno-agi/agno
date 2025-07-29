@@ -973,12 +973,6 @@ class Knowledge:
         
         return list(self.readers.values())
 
-    def get_loaded_reader_types(self) -> List[str]:
-        """Get list of currently loaded reader types."""
-        if self.readers is None:
-            return []
-        return list(self.readers.keys())
-
     def _generate_reader_key(self, reader: Reader) -> str:
         """Generate a key for a reader instance."""
         if reader.name:
@@ -1007,7 +1001,7 @@ class Knowledge:
 
     # --- Convenience Properties for Backward Compatibility ---
 
-    def _get_cached_reader(self, reader_type: str) -> Optional[Reader]:
+    def _get_reader(self, reader_type: str) -> Optional[Reader]:
         """Get a cached reader or create it if not cached, handling missing dependencies gracefully."""
         if self.readers is None:
             self.readers = {}
@@ -1029,59 +1023,59 @@ class Knowledge:
     @property
     def pdf_reader(self) -> Optional[Reader]:
         """PDF reader - lazy loaded via factory."""
-        return self._get_cached_reader("pdf")
+        return self._get_reader("pdf")
 
     @property
     def csv_reader(self) -> Optional[Reader]:
         """CSV reader - lazy loaded via factory."""
-        return self._get_cached_reader("csv")
+        return self._get_reader("csv")
 
     @property
     def docx_reader(self) -> Optional[Reader]:
         """Docx reader - lazy loaded via factory."""
-        return self._get_cached_reader("docx")
+        return self._get_reader("docx")
 
     @property
     def json_reader(self) -> Optional[Reader]:
         """JSON reader - lazy loaded via factory."""
-        return self._get_cached_reader("json")
+        return self._get_reader("json")
 
     @property
     def markdown_reader(self) -> Optional[Reader]:
         """Markdown reader - lazy loaded via factory."""
-        return self._get_cached_reader("markdown")
+        return self._get_reader("markdown")
 
     @property
     def text_reader(self) -> Optional[Reader]:
         """Text reader - lazy loaded via factory."""
-        return self._get_cached_reader("text")
+        return self._get_reader("text")
 
     @property
     def website_reader(self) -> Optional[Reader]:
         """Website reader - lazy loaded via factory."""
-        return self._get_cached_reader("website")
+        return self._get_reader("website")
 
     @property
     def firecrawl_reader(self) -> Optional[Reader]:
         """Firecrawl reader - lazy loaded via factory."""
-        return self._get_cached_reader("firecrawl")
+        return self._get_reader("firecrawl")
 
     @property
     def url_reader(self) -> Optional[Reader]:
         """URL reader - lazy loaded via factory."""
-        return self._get_cached_reader("url")
+        return self._get_reader("url")
 
     @property
     def pdf_url_reader(self) -> Optional[Reader]:
         """PDF URL reader - lazy loaded via factory."""
-        return self._get_cached_reader("pdf_url")
+        return self._get_reader("pdf_url")
 
     @property
     def youtube_reader(self) -> Optional[Reader]:
         """YouTube reader - lazy loaded via factory."""
-        return self._get_cached_reader("youtube")
+        return self._get_reader("youtube")
 
     @property
     def csv_url_reader(self) -> Optional[Reader]:
         """CSV URL reader - lazy loaded via factory."""
-        return self._get_cached_reader("csv_url")
+        return self._get_reader("csv_url")

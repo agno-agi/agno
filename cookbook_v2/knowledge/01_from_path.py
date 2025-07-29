@@ -29,7 +29,7 @@ knowledge.add_content(
     name="CV",
     path="cookbook_v2/knowledge/data/filters",
     metadata={"user_tag": "Engineering Candidates"},
-    skip_if_exists=True,
+    skip_if_exists=False,
     upsert=False,
     # include=["*.pdf"],
     # exclude=["*cv_5*"],
