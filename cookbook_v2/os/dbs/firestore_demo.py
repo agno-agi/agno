@@ -1,25 +1,30 @@
-"""Example showing how to use AgentOS with a DynamoDB database"""
+"""Example showing how to use AgentOS with a Firestore database"""
 
 from agno.agent import Agent
-from agno.db.dynamo import DynamoDb
+from agno.db.firestore import FirestoreDb
 from agno.eval.accuracy import AccuracyEval
-from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team.team import Team
 
-# Setup the DynamoDB database
-db = DynamoDb()
+PROJECT_ID = "agno-os-test"
 
-# Setup the memory
-memory = Memory(db=db)
+# Setup the Firestore database
+db = FirestoreDb(
+    project_id=PROJECT_ID,
+    session_collection="sessions",
+    eval_collection="eval_runs",
+    memory_collection="user_memories",
+    metrics_collection="metrics",
+    knowledge_collection="knowledge",
+)
 
 # Setup a basic agent and a basic team
 basic_agent = Agent(
     name="Basic Agent",
     agent_id="basic-agent",
     model=OpenAIChat(id="gpt-4o"),
-    memory=memory,
+    db=db,
     enable_user_memories=True,
     enable_session_summaries=True,
     add_history_to_messages=True,
@@ -31,7 +36,8 @@ basic_team = Team(
     team_id="basic-team",
     name="Team Agent",
     model=OpenAIChat(id="gpt-4o"),
-    memory=memory,
+    db=db,
+    enable_user_memories=True,
     members=[basic_agent],
     debug_mode=True,
 )
@@ -49,12 +55,13 @@ evaluation = AccuracyEval(
 # evaluation.run(print_results=True)
 
 agent_os = AgentOS(
-    description="Example app for basic agent with playground capabilities",
-    os_id="basic-app",
+    description="Example app for basic agent with Firestore database capabilities",
+    os_id="firestore-app",
     agents=[basic_agent],
     teams=[basic_team],
 )
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="dynamo_demo:app", reload=True)
+    basic_agent.run("Please remember I really like French food")
+    agent_os.serve(app="firestore_demo:app", reload=True)

@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.db.postgres.postgres import PostgresDb
+from agno.db.json import JsonDb
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
@@ -14,10 +14,7 @@ vector_db = PgVector(
     db_url=db_url,
 )
 
-contents_db = PostgresDb(
-    db_url=db_url,
-    knowledge_table="knowledge_contents",
-)
+contents_db = JsonDb(db_path="./agno_json_data")
 
 # Create knowledge base
 knowledge = Knowledge(

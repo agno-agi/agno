@@ -85,11 +85,6 @@ def serialize_knowledge_row(knowledge: KnowledgeRow) -> Dict[str, Any]:
 def deserialize_knowledge_row(item: Dict[str, Any]) -> KnowledgeRow:
     """Convert DynamoDB item to KnowledgeRow."""
     data = deserialize_from_dynamodb_item(item)
-    # Convert timestamp fields back to datetime
-    if "created_at" in data and data["created_at"]:
-        data["created_at"] = datetime.fromtimestamp(data["created_at"], tz=timezone.utc)
-    if "updated_at" in data and data["updated_at"]:
-        data["updated_at"] = datetime.fromtimestamp(data["updated_at"], tz=timezone.utc)
     return KnowledgeRow(
         id=data["id"],
         name=data["name"],

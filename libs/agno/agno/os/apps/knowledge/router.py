@@ -95,14 +95,15 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
 
         return {"content_id": content_id, "status": "processing"}
 
-    @router.patch("/content/{content_id}", status_code=200)
-    async def edit_content(
+    # TODO: add and use a ContentUpdatePayload schema. Validate input fields there
+    @router.patch("/content/{content_id}", response_model=ContentResponseSchema, status_code=200)
+    async def update_content(
         content_id: str = Path(..., description="Content ID"),
         name: Optional[str] = Form(None),
         description: Optional[str] = Form(None),
         metadata: Optional[str] = Form(None, description="JSON metadata"),
         reader_id: Optional[str] = Form(None),
-    ):
+    ) -> Optional[ContentResponseSchema]:
         parsed_metadata = None
         if metadata:
             try:
@@ -110,19 +111,25 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
             except json.JSONDecodeError:
                 # If it's not valid JSON, treat as a simple key-value pair
                 parsed_metadata = {"value": metadata} if metadata != "string" else None
+
         content = Content(
             id=content_id,
             name=name,
             description=description,
             metadata=parsed_metadata,
         )
+
         if reader_id:
             if reader_id in knowledge.readers:
                 content.reader = knowledge.readers[reader_id]
             else:
                 raise HTTPException(status_code=400, detail=f"Invalid reader_id: {reader_id}")
-        knowledge.patch_content(content)
-        return {"status": "success"}
+
+        content = knowledge.patch_content(content)
+        if not content:
+            raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
+
+        return ContentResponseSchema.from_dict(content)
 
     @router.get("/content", response_model=PaginatedResponse[ContentResponseSchema], status_code=200)
     def get_content(
@@ -198,7 +205,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
 
     @router.delete("/content", status_code=200)
     def delete_all_content():
-        log_info(f"Deleting all content")
+        log_info("Deleting all content")
         knowledge.remove_all_content()
         return "success"
 

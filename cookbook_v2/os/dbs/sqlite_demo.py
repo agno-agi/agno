@@ -1,34 +1,28 @@
-"""Example showing how to use AgentOS with a Firestore database"""
+"""Example showing how to use AgentOS with a SQLite database"""
 
 from agno.agent import Agent
-from agno.db.firestore import FirestoreDb
+from agno.db.sqlite import SqliteDb
 from agno.eval.accuracy import AccuracyEval
-from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team.team import Team
 
-PROJECT_ID = "agno-os-test"
-
-# Setup the Firestore database
-db = FirestoreDb(
-    project_id=PROJECT_ID,
-    session_collection="sessions",
-    eval_collection="eval_runs",
-    user_memory_collection="user_memories",
-    metrics_collection="metrics",
-    knowledge_collection="knowledge",
+# Setup the SQLite database
+db = SqliteDb(
+    db_file="agno.db",
+    session_table="sessions",
+    eval_table="eval_runs",
+    user_memory_table="user_memories",
+    metrics_table="metrics",
 )
 
-# Setup the memory
-memory = Memory(db=db)
 
 # Setup a basic agent and a basic team
 basic_agent = Agent(
     name="Basic Agent",
     agent_id="basic-agent",
     model=OpenAIChat(id="gpt-4o"),
-    memory=memory,
+    db=db,
     enable_user_memories=True,
     enable_session_summaries=True,
     add_history_to_messages=True,
@@ -36,12 +30,11 @@ basic_agent = Agent(
     add_datetime_to_instructions=True,
     markdown=True,
 )
-basic_team = Team(
+team_agent = Team(
     team_id="basic-team",
     name="Team Agent",
     model=OpenAIChat(id="gpt-4o"),
-    memory=memory,
-    enable_user_memories=True,
+    db=db,
     members=[basic_agent],
     debug_mode=True,
 )
@@ -59,13 +52,12 @@ evaluation = AccuracyEval(
 # evaluation.run(print_results=True)
 
 agent_os = AgentOS(
-    description="Example app for basic agent with Firestore database capabilities",
-    os_id="firestore-app",
+    os_id="basic-app",
+    description="Example app for basic agent with playground capabilities",
     agents=[basic_agent],
-    teams=[basic_team],
+    teams=[team_agent],
 )
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    basic_agent.run("Please remember I really like French food")
-    agent_os.serve(app="firestore_demo:app", reload=True)
+    agent_os.serve(app="sqlite_demo:app", reload=True)

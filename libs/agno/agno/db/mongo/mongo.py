@@ -985,50 +985,70 @@ class MongoDb(BaseDb):
 
     # -- Knowledge methods --
 
-    def delete_knowledge_source(self, id: str):
-        """Delete a knowledge source by ID."""
+    def delete_knowledge_content(self, id: str):
+        """Delete a knowledge row from the database.
+
+        Args:
+            id (str): The ID of the knowledge row to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
         try:
             collection = self._get_collection(table_type="knowledge")
             collection.delete_one({"id": id})
 
-            log_debug(f"Deleted knowledge source with id '{id}'")
+            log_debug(f"Deleted knowledge content with id '{id}'")
 
         except Exception as e:
-            log_error(f"Error deleting knowledge source: {e}")
+            log_error(f"Error deleting knowledge content: {e}")
             raise
 
-    def get_source_status(self, id: str) -> Optional[str]:
-        """Get the status of a knowledge source by ID."""
-        try:
-            collection = self._get_collection(table_type="knowledge")
-            result = collection.find_one({"id": id}, {"status": 1})
-            return result.get("status") if result else None
+    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+        """Get a knowledge row from the database.
 
-        except Exception as e:
-            log_error(f"Error getting knowledge source status: {e}")
-            return None
+        Args:
+            id (str): The ID of the knowledge row to get.
 
-    def get_knowledge_source(self, id: str) -> Optional[KnowledgeRow]:
-        """Get a knowledge document by ID."""
+        Returns:
+            Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         try:
             collection = self._get_collection(table_type="knowledge")
             result = collection.find_one({"id": id})
             if result is None:
                 return None
+
             return KnowledgeRow.model_validate(result)
 
         except Exception as e:
-            log_error(f"Error getting knowledge source: {e}")
+            log_error(f"Error getting knowledge content: {e}")
             return None
 
-    def get_knowledge_sources(
+    def get_knowledge_contents(
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
-        """Get all knowledge documents from the database."""
+        """Get all knowledge contents from the database.
+
+        Args:
+            limit (Optional[int]): The maximum number of knowledge contents to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+
+        Returns:
+            Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         try:
             collection = self._get_collection(table_type="knowledge")
 
@@ -1057,11 +1077,21 @@ class MongoDb(BaseDb):
             return knowledge_rows, total_count
 
         except Exception as e:
-            log_error(f"Error getting knowledge sources: {e}")
+            log_error(f"Error getting knowledge contents: {e}")
             return [], 0
 
-    def upsert_knowledge_source(self, knowledge_row: KnowledgeRow):
-        """Upsert a knowledge document in the database."""
+    def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
+        """Upsert knowledge content in the database.
+
+        Args:
+            knowledge_row (KnowledgeRow): The knowledge row to upsert.
+
+        Returns:
+            Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
         try:
             collection = self._get_collection(table_type="knowledge")
 
@@ -1071,7 +1101,7 @@ class MongoDb(BaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Error upserting knowledge document: {e}")
+            log_error(f"Error upserting knowledge content: {e}")
             return None
 
     # -- Eval methods --

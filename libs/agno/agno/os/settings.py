@@ -18,6 +18,9 @@ class AgnoAPISettings(BaseSettings):
     # Set to False to disable docs server at /docs and /redoc
     docs_enabled: bool = True
 
+    # Authentication settings
+    os_security_key: Optional[str] = Field(None, description="Bearer token for API authentication")
+
     # Cors origin list to allow requests from.
     # This list is set using the set_cors_origin_list validator
     cors_origin_list: Optional[List[str]] = Field(None, validate_default=True)
