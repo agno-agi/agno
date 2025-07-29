@@ -25,22 +25,23 @@ knowledge = Knowledge(
 )
 
 # Add from local file to the knowledge base
-# knowledge.add_content(
-#     name="CV",
-#     path="cookbook/agent_concepts/knowledge/testing_resources/",
-#     metadata={"user_tag": "Engineering Candidates"},
-#     reader=PDFReader(chunk_size=100),
-#     skip_if_exists=False,
-#     upsert=False,
-# )
-
 knowledge.add_content(
-    name="URL",
-    url="https://docs.agno.com/introduction",
+    name="CV",
+    path="data/filters",
     metadata={"user_tag": "Engineering Candidates"},
     skip_if_exists=True,
     upsert=False,
+    # include=["*.pdf"],
+    # exclude=["*cv_5*"],
 )
+
+# knowledge.add_content(
+#     name="URL",
+#     url="https://docs.agno.com/introduction",
+#     metadata={"user_tag": "Engineering Candidates"},
+#     skip_if_exists=True,
+#     upsert=False,
+# )
 
 agent = Agent(
     name="My Agent",

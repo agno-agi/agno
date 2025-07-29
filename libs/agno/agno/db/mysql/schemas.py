@@ -26,16 +26,8 @@ SESSION_TABLE_SCHEMA = {
     "updated_at": {"type": BigInteger, "nullable": True},
     "_unique_constraints": [
         {
-            "name": "uq_agent_session",
-            "columns": ["session_id", "agent_id"],
-        },
-        {
-            "name": "uq_team_session",
-            "columns": ["session_id", "team_id"],
-        },
-        {
-            "name": "uq_workflow_session",
-            "columns": ["session_id", "workflow_id"],
+            "name": "uq_session_id",
+            "columns": ["session_id"],
         },
     ],
 }

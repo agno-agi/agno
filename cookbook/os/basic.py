@@ -11,7 +11,7 @@ db = PostgresDb(db_url=db_url)
 
 
 basic_agent = Agent(
-    name="Calculator Agent",
+    name="Basic Agent",
     agent_id="basic-agent",
     db=db,
     enable_user_memories=True,

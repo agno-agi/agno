@@ -698,3 +698,9 @@ class Clickhouse(VectorDb):
         except Exception as e:
             log_info(f"Error deleting documents with content_id {content_id}: {e}")
             return False
+
+    def id_exists(self, id: str) -> bool:
+        raise NotImplementedError
+
+    def content_hash_exists(self, content_hash: str) -> bool:
+        raise NotImplementedError

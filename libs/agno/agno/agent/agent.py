@@ -418,6 +418,7 @@ class Agent:
         store_events: bool = False,
         role: Optional[str] = None,
         events_to_skip: Optional[List[RunEvent]] = None,
+        role: Optional[str] = None,
         debug_mode: bool = False,
         debug_level: Literal[1, 2] = 1,
         telemetry: bool = True,
@@ -800,6 +801,7 @@ class Agent:
         # 6. Calculate session metrics
         self.set_session_metrics(run_messages)
 
+        self.run_response = cast(RunResponse, self.run_response)
         self.run_response.status = RunStatus.completed
 
         # Convert the response to the structured format if needed
@@ -884,6 +886,7 @@ class Agent:
         # 5. Calculate session metrics
         self.set_session_metrics(run_messages)
 
+        self.run_response = cast(RunResponse, self.run_response)
         self.run_response.status = RunStatus.completed
 
         if stream_intermediate_steps:
@@ -1192,6 +1195,7 @@ class Agent:
         # 6. Calculate session metrics
         self.set_session_metrics(run_messages)
 
+        self.run_response = cast(RunResponse, self.run_response)
         self.run_response.status = RunStatus.completed
 
         # Convert the response to the structured format if needed
@@ -1279,6 +1283,7 @@ class Agent:
         # 6. Calculate session metrics
         self.set_session_metrics(run_messages)
 
+        self.run_response = cast(RunResponse, self.run_response)
         self.run_response.status = RunStatus.completed
 
         if stream_intermediate_steps:
@@ -1604,6 +1609,7 @@ class Agent:
             if updated_tools is None:
                 raise ValueError("Updated tools are required to continue a run from a run_id.")
 
+            self.agent_session = cast(AgentSession, self.agent_session)
             runs = self.agent_session.runs
             run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
             if run_response is None:
@@ -1780,6 +1786,7 @@ class Agent:
         # 5. Calculate session metrics
         self.set_session_metrics(run_messages)
 
+        self.run_response = cast(RunResponse, self.run_response)
         self.run_response.status = RunStatus.completed
 
         # Convert the response to the structured format if needed
@@ -1856,6 +1863,7 @@ class Agent:
         # 5. Calculate session metrics
         self.set_session_metrics(run_messages)
 
+        self.run_response = cast(RunResponse, self.run_response)
         self.run_response.status = RunStatus.completed
 
         if stream_intermediate_steps:
@@ -1963,6 +1971,7 @@ class Agent:
             if updated_tools is None:
                 raise ValueError("Updated tools are required to continue a run from a run_id.")
 
+            self.agent_session = cast(AgentSession, self.agent_session)
             runs = self.agent_session.runs
             run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
             if run_response is None:
@@ -2146,6 +2155,7 @@ class Agent:
         # 5. Calculate session metrics
         self.set_session_metrics(run_messages)
 
+        self.run_response = cast(RunResponse, self.run_response)
         self.run_response.status = RunStatus.completed
 
         # Convert the response to the structured format if needed
@@ -2227,6 +2237,7 @@ class Agent:
         # 5. Calculate session metrics
         self.set_session_metrics(run_messages)
 
+        self.run_response = cast(RunResponse, self.run_response)
         self.run_response.status = RunStatus.completed
 
         if stream_intermediate_steps:
@@ -2663,10 +2674,10 @@ class Agent:
         """Calculate session metrics"""
         # Calculate initial metrics
         if self.session_metrics is None:
-            self.session_metrics = self.calculate_metrics(run_messages.messages, for_session=True)
+            self.session_metrics = self.calculate_metrics(run_messages.messages)
         # Update metrics
         else:
-            self.session_metrics += self.calculate_metrics(run_messages.messages, for_session=True)
+            self.session_metrics += self.calculate_metrics(run_messages.messages)
 
     def update_memory(
         self,
@@ -4918,13 +4929,13 @@ class Agent:
         else:
             self.run_response.reasoning_content += reasoning_content
 
-    def calculate_metrics(self, messages: List[Message], for_session: bool = False) -> Metrics:
+    def calculate_metrics(self, messages: List[Message]) -> Optional[Metrics]:
         metrics = Metrics()
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
         for m in messages:
             if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
                 metrics += m.metrics
-        return metrics if for_session else metrics.to_dict()
+        return metrics
 
     def rename(self, name: str, session_id: Optional[str] = None) -> None:
         """Rename the Agent and save to storage"""
@@ -7125,9 +7136,9 @@ class Agent:
             import json
 
             if self.db is None:
-                return "Memory not available"
+                return "Previous session messages not available"
 
-            selected_sessions = self.db.get_sessions(session_type="agent", limit=num_history_sessions)
+            selected_sessions = self.db.get_sessions(session_type=SessionType.AGENT, limit=num_history_sessions)
 
             all_messages = []
             seen_message_pairs = set()
@@ -7136,7 +7147,7 @@ class Agent:
                 if isinstance(session, AgentSession) and session.runs:
                     message_count = 0
                     for run in session.runs:
-                        messages = run.get("messages", [])
+                        messages = run.messages
                         for i in range(0, len(messages) - 1, 2):
                             if i + 1 < len(messages):
                                 try:
@@ -7249,15 +7260,16 @@ class Agent:
         from agno.api.agent import AgentRunCreate, create_agent_run
 
         try:
-            agent_session: AgentSession = self.agent_session or self.get_agent_session(
+            agent_session: Optional[AgentSession] = self.agent_session or self.get_agent_session(
                 session_id=session_id, user_id=user_id
             )
 
-            create_agent_run(
-                run=AgentRunCreate(
-                    agent_data=agent_session.telemetry_data(),
-                ),
-            )
+            # TODO: Telemetry data
+            # create_agent_run(
+            #     run=AgentRunCreate(
+            #         agent_data=agent_session.telemetry_data(),
+            #     ),
+            # )
         except Exception as e:
             log_debug(f"Could not create agent event: {e}")
 
@@ -7270,14 +7282,15 @@ class Agent:
         from agno.api.agent import AgentRunCreate, acreate_agent_run
 
         try:
-            agent_session: AgentSession = self.agent_session or self.get_agent_session(
+            agent_session: Optional[AgentSession] = self.agent_session or self.get_agent_session(
                 session_id=session_id, user_id=user_id
             )
 
-            await acreate_agent_run(
-                run=AgentRunCreate(
-                    agent_data=agent_session.telemetry_data(),
-                ),
-            )
+            # TODO: Telemetry data
+            # await acreate_agent_run(
+            #     run=AgentRunCreate(
+            #         agent_data=agent_session.telemetry_data(),
+            #     ),
+            # )
         except Exception as e:
             log_debug(f"Could not create agent event: {e}")

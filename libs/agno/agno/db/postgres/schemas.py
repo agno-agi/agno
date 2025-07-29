@@ -26,24 +26,13 @@ SESSION_TABLE_SCHEMA = {
     "updated_at": {"type": BigInteger, "nullable": True},
     "_unique_constraints": [
         {
-            "name": "uq_agent_session",
-            "columns": ["session_id", "agent_id"],
-            "where": "session_type = 'agent'",
-        },
-        {
-            "name": "uq_team_session",
-            "columns": ["session_id", "team_id"],
-            "where": "session_type = 'team'",
-        },
-        {
-            "name": "uq_workflow_session",
-            "columns": ["session_id", "workflow_id"],
-            "where": "session_type = 'workflow'",
+            "name": "uq_session_id",
+            "columns": ["session_id"],
         },
     ],
 }
 
-USER_MEMORY_TABLE_SCHEMA = {
+MEMORY_TABLE_SCHEMA = {
     "memory_id": {"type": String, "primary_key": True, "nullable": False},
     "memory": {"type": JSON, "nullable": False},
     "input": {"type": String, "nullable": True},
@@ -126,7 +115,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "sessions": SESSION_TABLE_SCHEMA,
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
-        "user_memories": USER_MEMORY_TABLE_SCHEMA,
+        "memories": MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "learnings": {},
     }

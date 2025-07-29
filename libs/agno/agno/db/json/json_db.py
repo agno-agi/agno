@@ -26,7 +26,7 @@ class JsonDb(BaseDb):
         self,
         db_path: Optional[str] = None,
         session_table: Optional[str] = None,
-        user_memory_table: Optional[str] = None,
+        memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
@@ -37,14 +37,14 @@ class JsonDb(BaseDb):
         Args:
             db_path (Optional[str]): Path to the directory where JSON files will be stored.
             session_table (Optional[str]): Name of the JSON file to store sessions (without .json extension).
-            user_memory_table (Optional[str]): Name of the JSON file to store user memories.
+            memory_table (Optional[str]): Name of the JSON file to store memories.
             metrics_table (Optional[str]): Name of the JSON file to store metrics.
             eval_table (Optional[str]): Name of the JSON file to store evaluation runs.
             knowledge_table (Optional[str]): Name of the JSON file to store knowledge content.
         """
         super().__init__(
             session_table=session_table,
-            user_memory_table=user_memory_table,
+            memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
@@ -396,38 +396,38 @@ class JsonDb(BaseDb):
     def delete_user_memory(self, memory_id: str) -> bool:
         """Delete a user memory from the JSON file."""
         try:
-            memories = self._read_json_file(self.user_memory_table_name)
+            memories = self._read_json_file(self.memory_table_name)
             original_count = len(memories)
             memories = [m for m in memories if m.get("memory_id") != memory_id]
 
             if len(memories) < original_count:
-                self._write_json_file(self.user_memory_table_name, memories)
+                self._write_json_file(self.memory_table_name, memories)
                 log_debug(f"Successfully deleted user memory id: {memory_id}")
                 return True
             else:
-                log_debug(f"No user memory found with id: {memory_id}")
+                log_debug(f"No memory found with id: {memory_id}")
                 return False
 
         except Exception as e:
-            log_error(f"Error deleting user memory: {e}")
+            log_error(f"Error deleting memory: {e}")
             return False
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
         """Delete multiple user memories from the JSON file."""
         try:
-            memories = self._read_json_file(self.user_memory_table_name)
+            memories = self._read_json_file(self.memory_table_name)
             memories = [m for m in memories if m.get("memory_id") not in memory_ids]
-            self._write_json_file(self.user_memory_table_name, memories)
+            self._write_json_file(self.memory_table_name, memories)
 
             log_debug(f"Successfully deleted {len(memory_ids)} user memories")
 
         except Exception as e:
-            log_error(f"Error deleting user memories: {e}")
+            log_error(f"Error deleting memories: {e}")
 
     def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from the JSON file."""
         try:
-            memories = self._read_json_file(self.user_memory_table_name)
+            memories = self._read_json_file(self.memory_table_name)
             topics = set()
             for memory in memories:
                 memory_topics = memory.get("topics", [])
@@ -444,7 +444,7 @@ class JsonDb(BaseDb):
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """Get a memory from the JSON file."""
         try:
-            memories = self._read_json_file(self.user_memory_table_name)
+            memories = self._read_json_file(self.memory_table_name)
 
             for memory_data in memories:
                 if memory_data.get("memory_id") == memory_id:
@@ -474,7 +474,7 @@ class JsonDb(BaseDb):
     ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
         """Get all memories from the JSON file with filtering and pagination."""
         try:
-            memories = self._read_json_file(self.user_memory_table_name)
+            memories = self._read_json_file(self.memory_table_name)
 
             # Apply filters
             filtered_memories = []
@@ -524,7 +524,7 @@ class JsonDb(BaseDb):
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memory statistics."""
         try:
-            memories = self._read_json_file(self.user_memory_table_name)
+            memories = self._read_json_file(self.memory_table_name)
             user_stats = {}
 
             for memory in memories:
@@ -560,7 +560,7 @@ class JsonDb(BaseDb):
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """Upsert a user memory in the JSON file."""
         try:
-            memories = self._read_json_file(self.user_memory_table_name)
+            memories = self._read_json_file(self.memory_table_name)
 
             if memory.memory_id is None:
                 memory.memory_id = str(uuid4())
@@ -579,7 +579,7 @@ class JsonDb(BaseDb):
             if not memory_updated:
                 memories.append(memory_dict)
 
-            self._write_json_file(self.user_memory_table_name, memories)
+            self._write_json_file(self.memory_table_name, memories)
 
             log_debug(f"Upserted user memory with id '{memory.memory_id}'")
 
@@ -590,6 +590,19 @@ class JsonDb(BaseDb):
         except Exception as e:
             log_warning(f"Exception upserting user memory: {e}")
             return None
+
+    def clear_memories(self) -> None:
+        """Delete all memories from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            # Simply write an empty list to the memory JSON file
+            self._write_json_file(self.memory_table_name, [])
+
+        except Exception as e:
+            log_warning(f"Exception deleting all memories: {e}")
 
     # -- Metrics methods --
     def calculate_metrics(self) -> Optional[list[dict]]:

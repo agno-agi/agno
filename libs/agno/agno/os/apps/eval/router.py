@@ -1,3 +1,4 @@
+from copy import deepcopy
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -5,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from agno.agent.agent import Agent
 from agno.db.base import BaseDb
 from agno.db.schemas.evals import EvalFilterType, EvalType
+from agno.models.utils import get_model
 from agno.os.apps.eval.schemas import (
     DeleteEvalRunsRequest,
     EvalRunInput,
@@ -104,6 +106,22 @@ def attach_routes(
             agent = get_agent_by_id(agent_id=eval_run_input.agent_id, agents=agents)
             if not agent:
                 raise HTTPException(status_code=404, detail=f"Agent with id '{eval_run_input.agent_id}' not found")
+
+            default_model = None
+            if (
+                hasattr(agent, "model")
+                and agent.model is not None
+                and eval_run_input.model_id is not None
+                and eval_run_input.model_provider is not None
+            ):
+                default_model = deepcopy(agent.model)
+                if eval_run_input.model_id != agent.model.id or eval_run_input.model_provider != agent.model.provider:
+                    model = get_model(
+                        model_id=eval_run_input.model_id.lower(),
+                        model_provider=eval_run_input.model_provider.lower(),
+                    )
+                    agent.model = model
+
             team = None
 
         elif eval_run_input.team_id:
@@ -117,12 +135,18 @@ def attach_routes(
 
         # Run the evaluation
         if eval_run_input.eval_type == EvalType.ACCURACY:
-            return await run_accuracy_eval(eval_run_input=eval_run_input, db=db, agent=agent, team=team)
+            return await run_accuracy_eval(
+                eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
+            )
 
         elif eval_run_input.eval_type == EvalType.PERFORMANCE:
-            return await run_performance_eval(eval_run_input=eval_run_input, db=db, agent=agent, team=team)
+            return await run_performance_eval(
+                eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
+            )
 
         elif eval_run_input.eval_type == EvalType.RELIABILITY:
-            return await run_reliability_eval(eval_run_input=eval_run_input, db=db, agent=agent, team=team)
+            return await run_reliability_eval(
+                eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
+            )
 
     return router
