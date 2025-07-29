@@ -3,7 +3,7 @@ from typing import AsyncGenerator, List, Optional, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Body, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
@@ -146,13 +146,12 @@ async def team_response_streamer(
 def get_base_router(
     os: "AgentOS",
 ) -> APIRouter:
-    router = APIRouter(tags=["Built-In"])
+    router = APIRouter(tags=["Core"])
 
-    # -- Util routes ---
-
-    @router.get("/status")
-    async def status():
-        return {"status": "available"}
+    # -- Main Routes ---
+    @router.get("/health")
+    async def health_check():
+        return JSONResponse(content={"status": "ok"})
 
     @router.get("/config", response_model=ConfigResponse, response_model_exclude_none=True)
     async def config() -> ConfigResponse:

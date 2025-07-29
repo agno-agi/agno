@@ -16,14 +16,6 @@ class VectorDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def doc_exists(self, document: Document) -> bool:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def async_doc_exists(self, document: Document) -> bool:
-        raise NotImplementedError
-
-    @abstractmethod
     def name_exists(self, name: str) -> bool:
         raise NotImplementedError
 

@@ -2,7 +2,6 @@ import os
 from typing import Dict, List, Optional
 
 from agno.knowledge.reader.base import Reader
-from agno.utils.log import log_info
 
 
 class ReaderFactory:

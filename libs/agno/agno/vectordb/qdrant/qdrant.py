@@ -302,7 +302,13 @@ class Qdrant(VectorDb):
             return len(scroll_result[0]) > 0
         return False
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None, batch_size: int = 10) -> None:
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        batch_size: int = 10,
+    ) -> None:
         """
         Insert documents into the database.
 
@@ -344,6 +350,7 @@ class Qdrant(VectorDb):
                 "content": cleaned_content,
                 "usage": document.usage,
                 "content_id": document.content_id,
+                "content_hash": content_hash,
             }
 
             # Add filters as metadata if provided
@@ -365,7 +372,9 @@ class Qdrant(VectorDb):
             self.client.upsert(collection_name=self.collection, wait=False, points=points)
         log_debug(f"Upsert {len(points)} documents")
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """
         Insert documents asynchronously.
 
@@ -403,6 +412,7 @@ class Qdrant(VectorDb):
                 "content": cleaned_content,
                 "usage": document.usage,
                 "content_id": document.content_id,
+                "content_hash": content_hash,
             }
 
             # Add filters as metadata if provided
@@ -428,7 +438,7 @@ class Qdrant(VectorDb):
             await self.async_client.upsert(collection_name=self.collection, wait=False, points=points)
         log_debug(f"Upserted {len(points)} documents asynchronously")
 
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
         Upsert documents into the database.
 
@@ -437,12 +447,16 @@ class Qdrant(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
         log_debug("Redirecting the request to insert")
-        self.insert(documents, filters)
+        if self.content_hash_exists(content_hash):
+            self._delete_by_content_hash(content_hash)
+        self.insert(content_hash=content_hash, documents=documents, filters=filters)
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Upsert documents asynchronously."""
         log_debug("Redirecting the async request to async_insert")
-        await self.async_insert(documents, filters)
+        await self.async_insert(content_hash=content_hash, documents=documents, filters=filters)
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """
@@ -862,7 +876,86 @@ class Qdrant(VectorDb):
             return False
 
     def id_exists(self, id: str) -> bool:
-        raise NotImplementedError
+        """Check if a point with the given ID exists in the collection.
+
+        Args:
+            id (str): The ID to check.
+
+        Returns:
+            bool: True if the point exists, False otherwise.
+        """
+        try:
+            points = self.client.retrieve(
+                collection_name=self.collection, ids=[id], with_payload=False, with_vectors=False
+            )
+            return len(points) > 0
+        except Exception as e:
+            log_info(f"Error checking if point {id} exists: {e}")
+            return False
 
     def content_hash_exists(self, content_hash: str) -> bool:
-        raise NotImplementedError
+        """Check if any points with the given content hash exist in the collection.
+
+        Args:
+            content_hash (str): The content hash to check.
+
+        Returns:
+            bool: True if points with the content hash exist, False otherwise.
+        """
+        try:
+            # Create a filter to find points with the specified content_hash
+            filter_condition = models.Filter(
+                must=[models.FieldCondition(key="content_hash", match=models.MatchValue(value=content_hash))]
+            )
+
+            # Count how many points match the filter
+            count_result = self.client.count(collection_name=self.collection, count_filter=filter_condition, exact=True)
+            return count_result.count > 0
+        except Exception as e:
+            log_info(f"Error checking if content_hash {content_hash} exists: {e}")
+            return False
+
+    def _delete_by_content_hash(self, content_hash: str) -> bool:
+        """Delete all points that have the specified content_hash in their payload.
+
+        Args:
+            content_hash (str): The content hash to delete.
+
+        Returns:
+            bool: True if points were deleted successfully, False otherwise.
+        """
+        try:
+            log_info(f"Attempting to delete all points with content_hash: {content_hash}")
+
+            # Create a filter to find all points with the specified content_hash
+            filter_condition = models.Filter(
+                must=[models.FieldCondition(key="content_hash", match=models.MatchValue(value=content_hash))]
+            )
+
+            # First, count how many points will be deleted
+            count_result = self.client.count(collection_name=self.collection, count_filter=filter_condition, exact=True)
+
+            if count_result.count == 0:
+                log_warning(f"No points found with content_hash: {content_hash}")
+                return True
+
+            log_info(f"Found {count_result.count} points to delete with content_hash: {content_hash}")
+
+            # Delete all points matching the filter
+            result = self.client.delete(
+                collection_name=self.collection,
+                points_selector=filter_condition,
+                wait=True,  # Wait for the operation to complete
+            )
+
+            # Check if the deletion was successful
+            if result.status == models.UpdateStatus.COMPLETED:
+                log_info(f"Successfully deleted {count_result.count} points with content_hash: {content_hash}")
+                return True
+            else:
+                log_warning(f"Deletion failed for content_hash {content_hash}. Status: {result.status}")
+                return False
+
+        except Exception as e:
+            log_warning(f"Error deleting points with content_hash {content_hash}: {e}")
+            return False

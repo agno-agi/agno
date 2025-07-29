@@ -50,7 +50,10 @@ def mock_mongodb_client() -> Generator[MagicMock, None, None]:
         mock_collection.insert_many = MagicMock(return_value=None)
         mock_collection.find_one = MagicMock(return_value=None)
         mock_collection.delete_many = MagicMock(return_value=MagicMock(deleted_count=1))
+        mock_collection.delete_one = MagicMock(return_value=MagicMock(deleted_count=1))
         mock_collection.drop = MagicMock()
+        mock_collection.find = MagicMock(return_value=[])
+        mock_collection.count_documents = MagicMock(return_value=0)
 
         yield mock_client_instance
 
@@ -106,6 +109,7 @@ def mock_async_mongodb_client() -> Generator[AsyncMock, None, None]:
                 "content": "This is test document 0",
                 "meta_data": {"type": "test", "index": "0"},
                 "name": "test_doc_0",
+                "content_id": "content_0",
                 "score": 0.95,
             }
         ]
@@ -116,6 +120,7 @@ def mock_async_mongodb_client() -> Generator[AsyncMock, None, None]:
         mock_collection.find_one = AsyncMock(return_value=None)
         mock_collection.update_one = AsyncMock()
         mock_collection.delete_many = AsyncMock(return_value=AsyncMock(deleted_count=1))
+        mock_collection.delete_one = AsyncMock(return_value=AsyncMock(deleted_count=1))
         mock_collection.drop = AsyncMock()
 
         yield mock_client_instance
@@ -167,6 +172,7 @@ def create_test_documents(num_docs: int = 3) -> List[Document]:
             content=f"This is test document {i}",
             meta_data={"type": "test", "index": str(i)},
             name=f"test_doc_{i}",
+            content_id=f"content_{i}",
         )
         for i in range(num_docs)
     ]
@@ -198,6 +204,7 @@ def test_insert_and_search(vector_db: MongoDb, mock_mongodb_client: MagicMock, m
             "content": "This is test document 0",
             "meta_data": {"type": "test", "index": "0"},
             "name": "test_doc_0",
+            "content_id": "content_0",
             "score": 0.95,
         }
     ]
@@ -219,6 +226,7 @@ def test_insert_and_search(vector_db: MongoDb, mock_mongodb_client: MagicMock, m
     assert len(results) == 1
     assert all(isinstance(doc, Document) for doc in results)
     assert results[0].id == "doc_0"
+    assert results[0].content_id == "content_0"
 
     # Verify the search pipeline was called correctly
     # Get the aggregate call args and handle potential typing issues
@@ -271,6 +279,89 @@ def test_document_existence(vector_db: MongoDb, mock_mongodb_client: MagicMock) 
     assert not vector_db.id_exists("nonexistent")
 
 
+def test_delete_by_id(vector_db: MongoDb, mock_mongodb_client: MagicMock) -> None:
+    """Test deleting documents by ID."""
+    collection = mock_mongodb_client["test_vectordb"][vector_db.collection_name]
+
+    # Test successful deletion
+    collection.delete_one.return_value = MagicMock(deleted_count=1)
+    result = vector_db.delete_by_id("doc_0")
+    assert result is True
+    collection.delete_one.assert_called_with({"_id": "doc_0"})
+
+    # Test deletion with no documents found
+    collection.delete_one.return_value = MagicMock(deleted_count=0)
+    result = vector_db.delete_by_id("nonexistent_id")
+    assert result is True  # Should still return True for consistency
+
+
+def test_delete_by_name(vector_db: MongoDb, mock_mongodb_client: MagicMock) -> None:
+    """Test deleting documents by name."""
+    collection = mock_mongodb_client["test_vectordb"][vector_db.collection_name]
+
+    collection.delete_many.return_value = MagicMock(deleted_count=3)
+    result = vector_db.delete_by_name("test_doc")
+
+    assert result is True
+    collection.delete_many.assert_called_with({"name": "test_doc"})
+
+
+def test_delete_by_metadata(vector_db: MongoDb, mock_mongodb_client: MagicMock) -> None:
+    """Test deleting documents by metadata."""
+    collection = mock_mongodb_client["test_vectordb"][vector_db.collection_name]
+
+    collection.delete_many.return_value = MagicMock(deleted_count=2)
+    metadata = {"type": "test", "category": "sample"}
+    result = vector_db.delete_by_metadata(metadata)
+
+    assert result is True
+    expected_query = {"meta_data.type": "test", "meta_data.category": "sample"}
+    collection.delete_many.assert_called_with(expected_query)
+
+
+def test_delete_by_content_id(vector_db: MongoDb, mock_mongodb_client: MagicMock) -> None:
+    """Test deleting documents by content ID."""
+    collection = mock_mongodb_client["test_vectordb"][vector_db.collection_name]
+
+    collection.delete_many.return_value = MagicMock(deleted_count=5)
+    result = vector_db.delete_by_content_id("content_123")
+
+    assert result is True
+    collection.delete_many.assert_called_with({"content_id": "content_123"})
+
+
+def test_keyword_search_with_content_id(vector_db: MongoDb, mock_mongodb_client: MagicMock) -> None:
+    """Test keyword search includes content_id field."""
+    collection = mock_mongodb_client["test_vectordb"][vector_db.collection_name]
+
+    # Setup mock cursor with content_id
+    mock_results = [
+        {
+            "_id": "doc_0",
+            "name": "test_doc_0",
+            "content": "This contains the keyword test",
+            "meta_data": {"type": "test"},
+            "content_id": "content_0",
+        }
+    ]
+
+    mock_cursor = MagicMock()
+    mock_cursor.limit.return_value = mock_results
+    mock_cursor.__iter__ = lambda x: iter(mock_results)
+    collection.find.return_value = mock_cursor
+
+    results = vector_db.keyword_search("test", limit=1)
+
+    assert len(results) == 1
+    assert results[0].content_id == "content_0"
+
+    # Verify the find call included content_id in projection
+    collection.find.assert_called_with(
+        {"content": {"$regex": "test", "$options": "i"}},
+        {"_id": 1, "name": 1, "content": 1, "meta_data": 1, "content_id": 1},
+    )
+
+
 def test_upsert(vector_db: MongoDb, mock_mongodb_client: MagicMock, mock_embedder: MagicMock) -> None:
     """Test upsert functionality."""
     collection = mock_mongodb_client["test_vectordb"][vector_db.collection_name]
@@ -281,7 +372,13 @@ def test_upsert(vector_db: MongoDb, mock_mongodb_client: MagicMock, mock_embedde
     collection.update_one = MagicMock(return_value=MagicMock(modified_count=1))
 
     # Modify document and upsert
-    modified_doc = Document(id="doc_0", content="Modified content", meta_data={"type": "modified"}, name="test_doc_0")
+    modified_doc = Document(
+        id="doc_0",
+        content="Modified content",
+        meta_data={"type": "modified"},
+        name="test_doc_0",
+        content_id="content_0",
+    )
 
     # Set the embedding for the document
     modified_doc.embedding = mock_embedder.get_embedding(modified_doc.content)
@@ -294,6 +391,7 @@ def test_upsert(vector_db: MongoDb, mock_mongodb_client: MagicMock, mock_embedde
         "content": doc.content,
         "meta_data": doc.meta_data,
         "embedding": doc.embedding or [0.1] * 384,
+        "content_id": doc.content_id,
     }
 
     # Perform the upsert
@@ -340,6 +438,7 @@ def test_search_with_filters(vector_db: MongoDb, mock_mongodb_client: MagicMock,
             "content": "This is test document 0",
             "meta_data": {"type": "test", "index": "0"},
             "name": "test_doc_0",
+            "content_id": "content_0",
             "score": 0.95,
         }
     ]
@@ -358,7 +457,6 @@ def test_search_with_filters(vector_db: MongoDb, mock_mongodb_client: MagicMock,
     assert any("$match" in stage for stage in args)
 
 
-# Async Tests
 @pytest.mark.asyncio
 async def test_async_client(async_vector_db: MongoDb) -> None:
     """Test that _get_async_client method creates and returns a client."""
@@ -425,6 +523,7 @@ async def test_async_insert(
         "content": doc.content,
         "meta_data": doc.meta_data,
         "embedding": doc.embedding or [0.1] * 384,
+        "content_id": doc.content_id,
     }
 
     # Get reference to the mocked collection
@@ -463,6 +562,7 @@ async def test_async_search(
             "content": "This is test document 0",
             "meta_data": {"type": "test", "index": "0"},
             "name": "test_doc_0",
+            "content_id": "content_0",
             "score": 0.95,
         }
     ]
@@ -481,6 +581,7 @@ async def test_async_search(
     assert len(results) == 1
     assert results[0].content == "This is test document 0"
     assert results[0].id == "doc_0"
+    assert results[0].content_id == "content_0"
 
     # Verify aggregate was called with expected pipeline
     call_args = mock_collection.aggregate.call_args[0][0]
@@ -548,6 +649,7 @@ async def test_async_upsert(
         "content": doc.content,
         "meta_data": doc.meta_data,
         "embedding": doc.embedding or [0.1] * 384,
+        "content_id": doc.content_id,
     }
 
     # Get reference to the mocked collection
