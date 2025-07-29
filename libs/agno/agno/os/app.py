@@ -2,7 +2,7 @@ from os import getenv
 from typing import Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from rich import box
 from rich.panel import Panel
@@ -217,11 +217,11 @@ class AgentOS:
 
         self.fastapi_app.middleware("http")(general_exception_handler)
 
-        # Attach base router
-        self.fastapi_app.include_router(get_base_router(self))
+        self.fastapi_app.include_router(get_base_router(self, settings=self.settings))
 
         for interface in self.interfaces:
-            self.fastapi_app.include_router(interface.get_router())
+            interface_router = interface.get_router()
+            self.fastapi_app.include_router(interface_router)
             self.interfaces_loaded.append((interface.type, interface.router_prefix))
 
         # Auto-discover apps if none are provided
@@ -234,16 +234,16 @@ class AgentOS:
 
             # Passing contextual agents and teams to the eval app, so it can use them to run evals.
             if app.type == "eval":
-                self.fastapi_app.include_router(
-                    app.get_router(
-                        index=app_index_map[app.type],
-                        agents=self.agents,
-                        teams=self.teams,
-                    )
+                app_router = app.get_router(
+                    index=app_index_map[app.type],
+                    agents=self.agents,
+                    teams=self.teams,
+                    settings=self.settings,
                 )
             else:
-                self.fastapi_app.include_router(app.get_router(index=app_index_map[app.type]))
+                app_router = app.get_router(index=app_index_map[app.type], settings=self.settings)
 
+            self.fastapi_app.include_router(app_router)
             self.apps_loaded.append((app.type, app.router_prefix))
 
         self.fastapi_app.add_middleware(

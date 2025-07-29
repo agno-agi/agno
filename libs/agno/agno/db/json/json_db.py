@@ -759,17 +759,36 @@ class JsonDb(BaseDb):
             return [], None
 
     # -- Knowledge methods --
+
     def delete_knowledge_content(self, id: str):
-        """Delete knowledge content by ID."""
+        """Delete a knowledge row from the database.
+
+        Args:
+            id (str): The ID of the knowledge row to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
             knowledge_items = [item for item in knowledge_items if item.get("id") != id]
             self._write_json_file(self.knowledge_table_name, knowledge_items)
+
         except Exception as e:
             log_error(f"Error deleting knowledge content: {e}")
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
-        """Get knowledge content by ID."""
+        """Get a knowledge row from the database.
+
+        Args:
+            id (str): The ID of the knowledge row to get.
+
+        Returns:
+            Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
 
@@ -790,7 +809,20 @@ class JsonDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
-        """Get all knowledge contents from the JSON file."""
+        """Get all knowledge contents from the database.
+
+        Args:
+            limit (Optional[int]): The maximum number of knowledge contents to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+
+        Returns:
+            Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
 
@@ -813,7 +845,17 @@ class JsonDb(BaseDb):
             return [], 0
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
-        """Upsert knowledge content in the JSON file."""
+        """Upsert knowledge content in the database.
+
+        Args:
+            knowledge_row (KnowledgeRow): The knowledge row to upsert.
+
+        Returns:
+            Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
             knowledge_dict = knowledge_row.model_dump()
@@ -840,6 +882,7 @@ class JsonDb(BaseDb):
             return None
 
     # -- Eval methods --
+
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
         """Create an EvalRunRecord in the JSON file."""
         try:

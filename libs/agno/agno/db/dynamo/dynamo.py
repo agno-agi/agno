@@ -151,24 +151,14 @@ class DynamoDb(BaseDb):
         table_name = None
 
         if table_type == "sessions":
-            if self.session_table_name is None:
-                raise ValueError("Session table was not provided on initialization")
             table_name = self.session_table_name
         elif table_type == "memories":
-            if self.memory_table_name is None:
-                raise ValueError("Memory table was not provided on initialization")
             table_name = self.memory_table_name
         elif table_type == "metrics":
-            if self.metrics_table_name is None:
-                raise ValueError("Metrics table was not provided on initialization")
             table_name = self.metrics_table_name
         elif table_type == "evals":
-            if self.eval_table_name is None:
-                raise ValueError("Eval table was not provided on initialization")
             table_name = self.eval_table_name
-        elif table_type == "knowledge_sources":
-            if self.knowledge_table_name is None:
-                raise ValueError("Knowledge table was not provided on initialization")
+        elif table_type == "knowledge":
             table_name = self.knowledge_table_name
         else:
             raise ValueError(f"Unknown table type: {table_type}")
@@ -1402,30 +1392,49 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to get metrics: {e}")
             return [], 0
 
-    # --- Knowledge ---
+    # --- Knowledge methods ---
 
-    def get_source_status(self, id: str) -> Optional[str]:
-        if not self.knowledge_table_name:
-            return None
+    def delete_knowledge_content(self, id: str):
+        """Delete a knowledge row from the database.
 
+        Args:
+            id (str): The ID of the knowledge row to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
         try:
-            response = self.client.get_item(
-                TableName=self.knowledge_table_name,
-                Key={"id": {"S": id}},
-                ProjectionExpression="status",
-            )
+            table_name = self._get_table("knowledge")
+
+            self.client.delete_item(TableName=table_name, Key={"id": {"S": id}})
+
+            log_debug(f"Deleted knowledge content {id}")
+
+        except Exception as e:
+            log_error(f"Failed to delete knowledge content {id}: {e}")
+
+    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+        """Get a knowledge row from the database.
+
+        Args:
+            id (str): The ID of the knowledge row to get.
+
+        Returns:
+            Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
+        """
+        try:
+            table_name = self._get_table("knowledge")
+            response = self.client.get_item(TableName=table_name, Key={"id": {"S": id}})
 
             item = response.get("Item")
-            if item and "status" in item:
-                return item["status"]["S"]
+            if item:
+                return deserialize_knowledge_row(item)
+
             return None
 
         except Exception as e:
-            log_error(f"Failed to get source status {id}: {e}")
+            log_error(f"Failed to get knowledge content {id}: {e}")
             return None
-
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
-        pass
 
     def get_knowledge_contents(
         self,
@@ -1433,44 +1442,30 @@ class DynamoDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-    ):
-        pass
-
-    def get_knowledge_source(self, id: str) -> Optional[KnowledgeRow]:
-        if not self.knowledge_table_name:
-            return None
-
-        try:
-            response = self.client.get_item(TableName=self.knowledge_table_name, Key={"id": {"S": id}})
-
-            item = response.get("Item")
-            if item:
-                return deserialize_knowledge_row(item)
-            return None
-
-        except Exception as e:
-            log_error(f"Failed to get knowledge source {id}: {e}")
-            return None
-
-    def get_knowledge_sources(
-        self,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
-        if not self.knowledge_table_name:
-            return [], 0
+        """Get all knowledge contents from the database.
 
+        Args:
+            limit (Optional[int]): The maximum number of knowledge contents to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+
+        Returns:
+            Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         try:
-            # Execute scan
-            response = self.client.scan(TableName=self.knowledge_table_name)
+            table_name = self._get_table("knowledge")
+            response = self.client.scan(TableName=table_name)
             items = response.get("Items", [])
 
             # Handle pagination
             while "LastEvaluatedKey" in response:
                 response = self.client.scan(
-                    TableName=self.knowledge_table_name,
+                    TableName=table_name,
                     ExclusiveStartKey=response["LastEvaluatedKey"],
                 )
                 items.extend(response.get("Items", []))
@@ -1506,53 +1501,55 @@ class DynamoDb(BaseDb):
             return knowledge_rows, total_count
 
         except Exception as e:
-            log_error(f"Failed to get knowledge sources: {e}")
+            log_error(f"Failed to get knowledge contents: {e}")
             return [], 0
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
-        pass
+        """Upsert knowledge content in the database.
 
-    def upsert_knowledge_source(self, knowledge_row: KnowledgeRow):
-        if not self.knowledge_table_name:
-            return
+        Args:
+            knowledge_row (KnowledgeRow): The knowledge row to upsert.
 
+        Returns:
+            Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
+        """
         try:
+            table_name = self._get_table("knowledge")
             item = serialize_knowledge_row(knowledge_row)
 
-            self.client.put_item(TableName=self.knowledge_table_name, Item=item)
+            self.client.put_item(TableName=table_name, Item=item)
 
-            log_debug(f"Upserted knowledge source with id '{knowledge_row.id}'")
+            log_debug(f"Upserted knowledge content with id '{knowledge_row.id}'")
 
-        except Exception as e:
-            log_error(f"Failed to upsert knowledge source {knowledge_row.id}: {e}")
-
-    def delete_knowledge_content(self, id: str):
-        pass
-
-    def delete_knowledge_source(self, id: str):
-        if not self.knowledge_table_name:
-            return
-
-        try:
-            self.client.delete_item(TableName=self.knowledge_table_name, Key={"id": {"S": id}})
-            log_debug(f"Deleted knowledge source {id}")
+            return knowledge_row
 
         except Exception as e:
-            log_error(f"Failed to delete knowledge source {id}: {e}")
+            log_error(f"Failed to upsert knowledge content {knowledge_row.id}: {e}")
+            return None
 
     # --- Eval ---
 
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
-        if not self.eval_table_name:
-            return None
+        """Create an eval run in the database.
 
+        Args:
+            eval_run (EvalRunRecord): The eval run to create.
+
+        Returns:
+            Optional[EvalRunRecord]: The created eval run, or None if the operation fails.
+
+        Raises:
+            Exception: If an error occurs during creation.
+        """
         try:
+            table_name = self._get_table("evals")
+
             item = serialize_eval_record(eval_run)
             current_time = int(datetime.now(timezone.utc).timestamp())
             item["created_at"] = {"N": str(current_time)}
             item["updated_at"] = {"N": str(current_time)}
 
-            self.client.put_item(TableName=self.eval_table_name, Item=item)
+            self.client.put_item(TableName=table_name, Item=item)
 
             return eval_run
 

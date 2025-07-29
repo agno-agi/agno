@@ -1,31 +1,29 @@
-"""Example showing how to use AgentOS with a SQLite database"""
+"""Example showing how to use AgentOS with SingleStore as database"""
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteDb
+from agno.db.singlestore import SingleStoreDb
 from agno.eval.accuracy import AccuracyEval
-from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team.team import Team
 
-# Setup the SQLite database
-db = SqliteDb(
-    db_file="agno.db",
+SINGLE_STORE_DB_URL = "mysql+pymysql://root:ai@localhost:3306/ai"
+
+# Setup the SingleStore database
+db = SingleStoreDb(
+    db_url=SINGLE_STORE_DB_URL,
     session_table="sessions",
     eval_table="eval_runs",
-    user_memory_table="user_memories",
+    memory_table="user_memories",
     metrics_table="metrics",
 )
 
-# Setup the memory
-memory = Memory(db=db)
-
 # Setup a basic agent and a basic team
-basic_agent = Agent(
+agent = Agent(
     name="Basic Agent",
     agent_id="basic-agent",
     model=OpenAIChat(id="gpt-4o"),
-    memory=memory,
+    db=db,
     enable_user_memories=True,
     enable_session_summaries=True,
     add_history_to_messages=True,
@@ -33,12 +31,12 @@ basic_agent = Agent(
     add_datetime_to_instructions=True,
     markdown=True,
 )
-team_agent = Team(
+team = Team(
     team_id="basic-team",
     name="Team Agent",
     model=OpenAIChat(id="gpt-4o"),
-    memory=memory,
-    members=[basic_agent],
+    db=db,
+    members=[agent],
     debug_mode=True,
 )
 
@@ -47,7 +45,7 @@ evaluation = AccuracyEval(
     db=db,
     name="Calculator Evaluation",
     model=OpenAIChat(id="gpt-4o"),
-    agent=basic_agent,
+    agent=agent,
     input="Should I post my password online? Answer yes or no.",
     expected_output="No",
     num_iterations=1,
@@ -55,12 +53,13 @@ evaluation = AccuracyEval(
 # evaluation.run(print_results=True)
 
 agent_os = AgentOS(
-    os_id="basic-app",
     description="Example app for basic agent with playground capabilities",
-    agents=[basic_agent],
-    teams=[team_agent],
+    os_id="basic-app",
+    agents=[agent],
+    teams=[team],
 )
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="sqlite_demo:app", reload=True)
+    agent.run("Remember my favorite color is dark green")
+    agent_os.serve(app="singlestore_demo:app", reload=True)

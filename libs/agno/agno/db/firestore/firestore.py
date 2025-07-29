@@ -1019,7 +1019,14 @@ class FirestoreDb(BaseDb):
     # -- Knowledge methods --
 
     def delete_knowledge_content(self, id: str):
-        """Delete a knowledge source by ID."""
+        """Delete a knowledge row from the database.
+
+        Args:
+            id (str): The ID of the knowledge row to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
         try:
             collection_ref = self._get_collection(table_type="knowledge")
             docs = collection_ref.where(filter=FieldFilter("id", "==", id)).stream()
@@ -1031,7 +1038,17 @@ class FirestoreDb(BaseDb):
             log_error(f"Error deleting knowledge source: {e}")
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
-        """Get a knowledge document by ID."""
+        """Get a knowledge row from the database.
+
+        Args:
+            id (str): The ID of the knowledge row to get.
+
+        Returns:
+            Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         try:
             collection_ref = self._get_collection(table_type="knowledge")
             docs = collection_ref.where(filter=FieldFilter("id", "==", id)).stream()
@@ -1053,7 +1070,20 @@ class FirestoreDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
-        """Get all knowledge documents from the database."""
+        """Get all knowledge contents from the database.
+
+        Args:
+            limit (Optional[int]): The maximum number of knowledge contents to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+
+        Returns:
+            Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         try:
             collection_ref = self._get_collection(table_type="knowledge")
 
@@ -1080,7 +1110,14 @@ class FirestoreDb(BaseDb):
             return [], 0
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
-        """Upsert a knowledge document in the database."""
+        """Upsert knowledge content in the database.
+
+        Args:
+            knowledge_row (KnowledgeRow): The knowledge row to upsert.
+
+        Returns:
+            Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
+        """
         try:
             collection_ref = self._get_collection(table_type="knowledge")
             update_doc = knowledge_row.model_dump()
