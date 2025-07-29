@@ -1,3 +1,11 @@
+"""
+Please first install litellm[proxy] by running: pip install 'litellm[proxy]'
+
+Before running this script, you need to start the LiteLLM server:
+
+litellm --model gpt-4o-audio-preview --host 127.0.0.1 --port 4000
+"""
+
 import requests
 from agno.agent import Agent, RunResponse  # noqa
 from agno.media import Audio
