@@ -2316,7 +2316,7 @@ class Agent:
         self.run_response = cast(RunResponse, self.run_response)
         self.model = cast(Model, self.model)
         # Execute the tool
-        function_call = self.model.get_function_call_to_run_from_tool_execution(tool, self._functions_for_model)
+        function_call = get_function_call_to_run_from_tool_execution(tool, self._functions_for_model)
         function_call_results: List[Message] = []
 
         for call_result in self.model.run_function_call(
@@ -2346,7 +2346,7 @@ class Agent:
 
     def _reject_tool_call(self, run_messages: RunMessages, tool: ToolExecution):
         self.model = cast(Model, self.model)
-        function_call = self.model.get_function_call_to_run_from_tool_execution(tool, self._functions_for_model)
+        function_call = get_function_call_to_run_from_tool_execution(tool, self._functions_for_model)
         function_call.error = tool.confirmation_note or "Function call was rejected by the user"
         function_call_result = self.model.create_function_call_result(
             function_call=function_call,
@@ -2363,7 +2363,7 @@ class Agent:
         self.model = cast(Model, self.model)
 
         # Execute the tool
-        function_call = self.model.get_function_call_to_run_from_tool_execution(tool, self._functions_for_model)
+        function_call = get_function_call_to_run_from_tool_execution(tool, self._functions_for_model)
         function_call_results: List[Message] = []
 
         async for call_result in self.model.arun_function_calls(

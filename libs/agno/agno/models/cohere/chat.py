@@ -5,9 +5,9 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Ty
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
-from agno.models.base import MessageData, Model, _add_usage_metrics_to_assistant_message
+from agno.models.base import Model, _add_usage_metrics_to_assistant_message
 from agno.models.message import Message
-from agno.models.response import ModelResponse
+from agno.models.response import StreamData, ModelResponse
 from agno.utils.log import log_debug, log_error
 from agno.utils.models.cohere import format_messages
 
@@ -265,7 +265,7 @@ class Cohere(Model):
         self,
         response: StreamedChatResponseV2,
         assistant_message: Message,
-        stream_data: MessageData,
+        stream_data: StreamData,
         tool_use: Dict[str, Any],
     ) -> Tuple[Optional[ModelResponse], Dict[str, Any]]:
         """
@@ -339,7 +339,7 @@ class Cohere(Model):
         self,
         messages: List[Message],
         assistant_message: Message,
-        stream_data: MessageData,
+        stream_data: StreamData,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -360,7 +360,7 @@ class Cohere(Model):
         self,
         messages: List[Message],
         assistant_message: Message,
-        stream_data: MessageData,
+        stream_data: StreamData,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,

@@ -316,22 +316,25 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> ChatCompletion:
+    ) -> ModelResponse:
         """
         Send a chat completion request to the OpenAI API.
 
         Args:
             messages (List[Message]): A list of messages to send to the model.
+            response_format (Optional[Union[Dict, Type[BaseModel]]]): The response format to use.
+            tools (Optional[List[Dict[str, Any]]]): The tools to use.
+            tool_choice (Optional[Union[str, Dict[str, Any]]]): The tool choice to use.
 
-        Returns:
-            ChatCompletion: The chat completion response from the API.
         """
         try:
-            return self.get_client().chat.completions.create(
+            response: ChatCompletion = self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
+            return self._parse_response(response)
+            
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")
             error_message = e.response.json().get("error", {})
@@ -376,22 +379,24 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> ChatCompletion:
+    ) -> ModelResponse:
         """
         Sends an asynchronous chat completion request to the OpenAI API.
 
         Args:
             messages (List[Message]): A list of messages to send to the model.
-
-        Returns:
-            ChatCompletion: The chat completion response from the API.
+            response_format (Optional[Union[Dict, Type[BaseModel]]]): The response format to use.
+            tools (Optional[List[Dict[str, Any]]]): The tools to use.
+            tool_choice (Optional[Union[str, Dict[str, Any]]]): The tool choice to use.
         """
         try:
-            return await self.get_async_client().chat.completions.create(
+            response: ChatCompletion = await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
+            return self._parse_response(response)
+        
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")
             error_message = e.response.json().get("error", {})
@@ -448,13 +453,15 @@ class OpenAIChat(Model):
         """
 
         try:
-            yield from self.get_client().chat.completions.create(
+            for chunk in self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
-            )  # type: ignore
+            ):
+                yield self._parse_response_delta(chunk)
+                
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")
             error_message = e.response.json().get("error", {})
@@ -519,7 +526,7 @@ class OpenAIChat(Model):
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
             async for chunk in async_stream:
-                yield chunk
+                yield self._parse_response_delta(chunk)
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")
             error_message = e.response.json().get("error", {})
@@ -599,10 +606,9 @@ class OpenAIChat(Model):
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
 
-    def parse_provider_response(
+    def _parse_response(
         self,
         response: ChatCompletion,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> ModelResponse:
         """
         Parse the OpenAI response into a ModelResponse.
@@ -679,7 +685,7 @@ class OpenAIChat(Model):
 
         return model_response
 
-    def parse_provider_response_delta(self, response_delta: ChatCompletionChunk) -> ModelResponse:
+    def _parse_response_delta(self, response_delta: ChatCompletionChunk) -> ModelResponse:
         """
         Parse the OpenAI streaming response into a ModelResponse.
 

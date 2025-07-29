@@ -1,7 +1,7 @@
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from time import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 
 from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations
@@ -81,7 +81,7 @@ class ToolExecution:
 
 @dataclass
 class ModelResponse:
-    """Response from the model provider"""
+    """Response from the model provider. Could be full response or a single chunk"""
 
     role: Optional[str] = None
 
@@ -112,6 +112,24 @@ class ModelResponse:
 
     extra: Optional[Dict[str, Any]] = None
 
+
+@dataclass
+class StreamData:
+    """ Cumulative result from a model stream """
+    response_role: Optional[Literal["system", "user", "assistant", "tool"]] = None
+    response_content: Any = ""
+    response_thinking: Any = ""
+    response_redacted_thinking: Any = ""
+    response_citations: Optional[Citations] = None
+    response_tool_calls: List[Dict[str, Any]] = field(default_factory=list)
+
+    response_audio: Optional[AudioResponse] = None
+    response_image: Optional[ImageArtifact] = None
+
+    # Data from the provider that we might need on subsequent messages
+    response_provider_data: Optional[Dict[str, Any]] = None
+
+    extra: Optional[Dict[str, Any]] = None
 
 class FileType(str, Enum):
     MP4 = "mp4"

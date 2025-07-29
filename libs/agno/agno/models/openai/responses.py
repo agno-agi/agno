@@ -8,9 +8,9 @@ from typing_extensions import Literal
 
 from agno.exceptions import ModelProviderError
 from agno.media import File
-from agno.models.base import MessageData, Model, _add_usage_metrics_to_assistant_message
+from agno.models.base import Model, _add_usage_metrics_to_assistant_message
 from agno.models.message import Citations, Message, UrlCitation
-from agno.models.response import ModelResponse
+from agno.models.response import StreamData, ModelResponse
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.openai_responses import images_to_message
 from agno.utils.models.schema_utils import get_response_schema_for_provider
@@ -714,7 +714,7 @@ class OpenAIResponses(Model):
         self,
         stream_event: ResponseStreamEvent,
         assistant_message: Message,
-        stream_data: MessageData,
+        stream_data: StreamData,
         tool_use: Dict[str, Any],
     ) -> Tuple[Optional[ModelResponse], Dict[str, Any]]:
         """
@@ -819,7 +819,7 @@ class OpenAIResponses(Model):
         self,
         messages: List[Message],
         assistant_message: Message,
-        stream_data: MessageData,
+        stream_data: StreamData,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -844,7 +844,7 @@ class OpenAIResponses(Model):
         self,
         messages: List[Message],
         assistant_message: Message,
-        stream_data: MessageData,
+        stream_data: StreamData,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,

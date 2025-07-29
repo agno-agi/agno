@@ -6,9 +6,9 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple, Type, Union
 from pydantic import BaseModel
 
 from agno.exceptions import AgnoError, ModelProviderError
-from agno.models.base import MessageData, Model, _add_usage_metrics_to_assistant_message
+from agno.models.base import Model, _add_usage_metrics_to_assistant_message
 from agno.models.message import Message
-from agno.models.response import ModelResponse
+from agno.models.response import StreamData, ModelResponse
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
@@ -395,7 +395,7 @@ class AwsBedrock(Model):
         self,
         messages: List[Message],
         assistant_message: Message,
-        stream_data: MessageData,
+        stream_data: StreamData,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -406,7 +406,7 @@ class AwsBedrock(Model):
         Args:
             messages (List[Message]): The messages to include in the request.
             assistant_message (Message): The assistant message.
-            stream_data (MessageData): The stream data.
+            stream_data (StreamData): The stream data.
         """
         tool_use: Dict[str, Any] = {}
         content = []
