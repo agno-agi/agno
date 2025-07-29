@@ -127,7 +127,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
 
         content = knowledge.patch_content(content)
 
-        return ContentResponseSchema.from_content(content)
+        return ContentResponseSchema.from_dict(content) if content else None
 
     @router.get("/content", response_model=PaginatedResponse[ContentResponseSchema], status_code=200)
     def get_content(
