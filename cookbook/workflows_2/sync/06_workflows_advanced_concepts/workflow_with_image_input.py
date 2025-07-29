@@ -36,7 +36,7 @@ media_workflow = Workflow(
     name="Image Analysis and Research Workflow",
     description="Analyze an image and research related news",
     steps=[analysis_step, research_step],
-    storage=SqliteDb(
+    db=SqliteDb(
         session_table="workflow_session",
         db_file="tmp/workflow_v2.db",
     ),

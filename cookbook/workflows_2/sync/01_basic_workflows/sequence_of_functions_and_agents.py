@@ -77,7 +77,7 @@ if __name__ == "__main__":
     content_creation_workflow = Workflow(
         name="Blog Post Workflow",
         description="Automated blog post creation from Hackernews and the web",
-        storage=SqliteDb(
+        db=SqliteDb(
             session_table="workflow_session",
             db_file="tmp/workflow_v2.db",
         ),

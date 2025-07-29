@@ -325,7 +325,7 @@ async def investment_analysis_execution(
 investment_workflow = Workflow(
     name="Investment Report Generator",
     description="Automated investment analysis with market research and portfolio allocation",
-    storage=SqliteStorage(
+    db=SqliteDb(
         session_table="workflow_session",
         db_file="tmp/workflows.db",
     ),

@@ -271,7 +271,7 @@ async def recruitment_execution(
 recruitment_workflow = Workflow(
     name="Employee Recruitment Workflow (Simulated)",
     description="Automated candidate screening with simulated scheduling and email",
-    storage=SqliteDb(
+    db=SqliteDb(
         session_table="workflow_session",
         db_file="tmp/workflows.db",
     ),

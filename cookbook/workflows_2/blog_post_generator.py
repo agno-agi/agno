@@ -442,7 +442,7 @@ async def blog_generation_execution(
 blog_generator_workflow = Workflow(
     name="Blog Post Generator",
     description="Advanced blog post generator with research and content creation capabilities",
-    storage=SqliteDb(
+    db=SqliteDb(
         session_table="workflow_session",
         db_file="tmp/blog_generator_v2.db",
     ),

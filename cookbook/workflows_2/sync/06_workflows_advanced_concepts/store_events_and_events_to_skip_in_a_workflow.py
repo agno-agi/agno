@@ -116,10 +116,9 @@ parallel_workflow = Workflow(
         ),
         Step(name="Combine Results", agent=analysis_agent),
     ],
-    storage=SqliteStorage(
-        table_name="workflow_v2_parallel",
+    db=SqliteDb(
+        session_table="workflow_v2_parallel",
         db_file="tmp/workflow_v2_parallel.db",
-        mode="workflow_v2",
     ),
     store_events=True,
     events_to_skip=[

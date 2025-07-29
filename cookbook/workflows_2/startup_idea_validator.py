@@ -364,7 +364,7 @@ async def startup_validation_execution(
 startup_validation_workflow = Workflow(
     name="Startup Idea Validator",
     description="Comprehensive startup idea validation with market research and competitive analysis",
-    storage=SqliteDb(
+    db=SqliteDb(
         session_table="workflow_session",
         db_file="tmp/workflows.db",
     ),

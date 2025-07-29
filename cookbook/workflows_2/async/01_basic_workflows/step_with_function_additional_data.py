@@ -141,7 +141,7 @@ if __name__ == "__main__":
     content_creation_workflow = Workflow(
         name="Content Creation Workflow",
         description="Automated content creation with custom execution options",
-        storage=SqliteDb(
+        db=SqliteDb(
             session_table="workflow_session",
             db_file="tmp/workflow_v2.db",
         ),

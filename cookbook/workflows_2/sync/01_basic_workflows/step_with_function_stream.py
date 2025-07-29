@@ -122,7 +122,7 @@ if __name__ == "__main__":
     streaming_content_workflow = Workflow(
         name="Streaming Content Creation Workflow",
         description="Automated content creation with streaming custom execution functions",
-        storage=SqliteDb(
+        db=SqliteDb(
             session_table="workflow_session",
             db_file="tmp/workflow_v2.db",
         ),

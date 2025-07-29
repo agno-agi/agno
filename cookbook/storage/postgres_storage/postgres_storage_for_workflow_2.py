@@ -7,6 +7,8 @@ from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.workflow import Workflow
 
+from cookbook.os.dbs.json_demo import db
+
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 # Define agents
@@ -56,7 +58,7 @@ if __name__ == "__main__":
     content_creation_workflow = Workflow(
         name="Content Creation Workflow",
         description="Automated content creation from blog posts to social media",
-        storage=PostgresDb(
+        db=PostgresDb(
             session_table="workflow_session",
             db_url=db_url,
         ),
