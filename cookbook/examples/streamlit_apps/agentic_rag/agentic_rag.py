@@ -33,8 +33,8 @@ from typing import Optional
 
 from agno.agent import Agent
 from agno.db.agent.postgres import PostgresAgentStorage
-from agno.knowledge import AgentKnowledge
 from agno.knowledge.embedder.openai import OpenAIEmbedder
+from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.groq import Groq
@@ -69,7 +69,7 @@ def get_agentic_rag_agent(
     # Define persistent memory for chat history
 
     # Define the knowledge base
-    knowledge_base = AgentKnowledge(
+    knowledge_base = Knowledge(
         vector_db=PgVector(
             db_url=db_url,
             table_name="agentic_rag_documents",
@@ -77,7 +77,7 @@ def get_agentic_rag_agent(
             # Use OpenAI embeddings
             embedder=OpenAIEmbedder(id="text-embedding-3-small"),
         ),
-        num_documents=3,  # Retrieve 3 most relevant documents
+        max_results=3,  # Retrieve 3 most relevant documents
     )
 
     # Create the Agent
