@@ -131,6 +131,7 @@ class PostgresStorage(Storage):
         elif self.mode == "workflow_v2":
             specific_columns = [
                 Column("workflow_id", String, index=True),
+                Column("workflow_name", String, index=True),
                 Column("workflow_data", postgresql.JSONB),
                 Column("runs", postgresql.JSONB),
             ]
@@ -572,6 +573,7 @@ class PostgresStorage(Storage):
                         workflow_id=session.workflow_id,  # type: ignore
                         user_id=session.user_id,
                         runs=session_dict.get("runs"),
+                        workflow_name=session.workflow_name,  # type: ignore
                         workflow_data=session.workflow_data,  # type: ignore
                         session_data=session.session_data,
                         extra_data=session.extra_data,
@@ -584,6 +586,7 @@ class PostgresStorage(Storage):
                             workflow_id=session.workflow_id,  # type: ignore
                             user_id=session.user_id,
                             runs=session_dict.get("runs"),
+                            workflow_name=session.workflow_name,  # type: ignore
                             workflow_data=session.workflow_data,  # type: ignore
                             session_data=session.session_data,
                             extra_data=session.extra_data,
