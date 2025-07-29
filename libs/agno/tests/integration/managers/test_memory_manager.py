@@ -200,55 +200,6 @@ def test_search_user_memories_semantic(memory_with_db):
     assert any("basketball" in memory.memory for memory in results)
 
 
-def test_create_session_summary_with_db(memory_with_db):
-    """Test creating a session summary with database persistence."""
-    # Add a run to have messages for the summary
-    session_id = "test_session"
-    user_id = "test_user"
-
-    run_response = RunResponse(
-        content="Sample response",
-        messages=[
-            Message(role="user", content="Hello, how are you?"),
-            Message(role="assistant", content="I'm doing well, thank you for asking!"),
-        ],
-    )
-
-    memory_with_db.add_run(session_id, run_response)
-
-    # Create the summary
-    summary = memory_with_db.create_session_summary(session_id=session_id, user_id=user_id)
-
-    # Verify the summary was created
-    assert summary is not None
-    assert summary.summary is not None
-
-
-@pytest.mark.asyncio
-async def test_acreate_session_summary_with_db(memory_with_db):
-    """Test async creation of a session summary with database persistence."""
-    # Add a run to have messages for the summary
-    session_id = "test_session"
-    user_id = "test_user"
-
-    run_response = RunResponse(
-        content="Sample response",
-        messages=[
-            Message(role="user", content="Hello, how are you?"),
-            Message(role="assistant", content="I'm doing well, thank you for asking!"),
-        ],
-    )
-
-    memory_with_db.add_run(session_id, run_response)
-
-    # Create the summary asynchronously
-    summary = await memory_with_db.acreate_session_summary(session_id, user_id)
-
-    # Verify the summary was created
-    assert summary is not None
-    assert summary.summary is not None
-
-
 def test_memory_persistence_across_instances(model, memory_db):
     """Test that memories persist across different Memory instances."""
     # Create the first Memory instance
@@ -290,87 +241,13 @@ def test_memory_operations_with_db(memory_with_db):
     memory_with_db.delete_user_memory(user_id="test_user", memory_id=memory_id)
 
     # Verify the memory was deleted
-    assert memory_id not in memory_with_db.memories["test_user"]
+    assert memory_with_db.get_user_memory(user_id="test_user", memory_id=memory_id) is None
 
     # Create a new Memory instance with the same database
     new_memory = MemoryManager(model=memory_with_db.model, db=memory_with_db.db)
 
     # Verify the memory is still deleted in the new instance
-    assert "test_user" not in new_memory.memories or memory_id not in new_memory.memories["test_user"]
-
-
-def test_summary_operations_with_db(memory_with_db):
-    """Test various summary operations with database persistence."""
-    # Add a run to have messages for the summary
-    session_id = "test_session"
-    user_id = "test_user"
-
-    run_response = RunResponse(
-        content="Sample response",
-        messages=[
-            Message(role="user", content="Hello, how are you?"),
-            Message(role="assistant", content="I'm doing well, thank you for asking!"),
-        ],
-    )
-
-    memory_with_db.add_run(session_id, run_response)
-
-    # Create the summary
-    summary = memory_with_db.create_session_summary(session_id, user_id)
-
-    # Verify the summary was created
-    assert summary is not None
-
-    # Delete the summary
-    memory_with_db.delete_session_summary(user_id, session_id)
-
-    # Verify the summary was deleted
-    assert session_id not in memory_with_db.summaries[user_id]
-
-    # Create a new Memory instance with the same database
-    new_memory = MemoryManager(model=memory_with_db.model, db=memory_with_db.db)
-
-    # Verify the summary is still deleted in the new instance
-    assert "test_user" not in new_memory.summaries or session_id not in new_memory.summaries["test_user"]
-
-
-def test_clear_memory_with_db(memory_with_db):
-    """Test clearing memory with database persistence."""
-    # Add a user memory
-    user_memory = UserMemory(memory="The user's name is John Doe", topics=["name", "user"], last_updated=datetime.now())
-
-    memory_with_db.add_user_memory(memory=user_memory, user_id="test_user")
-
-    # Add a run to have messages for the summary
-    session_id = "test_session"
-    user_id = "test_user"
-
-    run_response = RunResponse(
-        content="Sample response",
-        messages=[
-            Message(role="user", content="Hello, how are you?"),
-            Message(role="assistant", content="I'm doing well, thank you for asking!"),
-        ],
-    )
-
-    memory_with_db.add_run(session_id, run_response)
-
-    # Create the summary
-    memory_with_db.create_session_summary(session_id, user_id)
-
-    # Clear the memory
-    memory_with_db.clear()
-
-    # Verify the memory was cleared
-    assert memory_with_db.memories == {}
-    assert memory_with_db.summaries == {}
-
-    # Create a new Memory instance with the same database
-    new_memory = MemoryManager(model=memory_with_db.model, db=memory_with_db.db)
-
-    # Verify the memory is still cleared in the new instance
-    assert new_memory.memories == {}
-    assert new_memory.summaries == {}
+    assert new_memory.get_user_memory(user_id="test_user", memory_id=memory_id) is None
 
 
 def test_search_user_memories_last_n(memory_with_db):
@@ -504,52 +381,3 @@ async def test_aupdate_memory_task_with_db(memory_with_db):
     memories = memory_with_db.get_user_memories("test_user")
     assert len(memories) > 0
     assert any("John Doe" not in memory.memory for memory in memories)
-
-
-def test_memory_deepcopy(memory_with_db):
-    """Test that deepcopy works correctly for Memory instances."""
-    from copy import deepcopy
-
-    # Add some data to the original memory
-    user_memory = UserMemory(memory="The user's name is John Doe", topics=["name", "user"], last_updated=datetime.now())
-    memory_id = memory_with_db.add_user_memory(memory=user_memory, user_id="test_user")
-
-    # Add a run
-    session_id = "test_session"
-    run_response = RunResponse(
-        content="Sample response",
-        messages=[
-            Message(role="user", content="Hello, how are you?"),
-            Message(role="assistant", content="I'm doing well, thank you for asking!"),
-        ],
-    )
-    memory_with_db.add_run(session_id, run_response)
-
-    # Create a deep copy
-    copied_memory = deepcopy(memory_with_db)
-
-    # Verify the copy is a different object
-    assert copied_memory is not memory_with_db
-
-    # Verify shared objects are reused (not copied)
-    assert copied_memory.db is memory_with_db.db
-    assert copied_memory.memory_manager is memory_with_db.memory_manager
-    assert copied_memory.summary_manager is memory_with_db.summary_manager
-
-    # Verify memories are deep copied
-    assert copied_memory.memories is not memory_with_db.memories
-    assert copied_memory.memories["test_user"] is not memory_with_db.memories["test_user"]
-    assert copied_memory.memories["test_user"][memory_id] is not memory_with_db.memories["test_user"][memory_id]
-    assert (
-        copied_memory.memories["test_user"][memory_id].memory == memory_with_db.memories["test_user"][memory_id].memory
-    )
-
-    # Verify runs are deep copied
-    assert copied_memory.runs is not memory_with_db.runs
-    assert copied_memory.runs[session_id] is not memory_with_db.runs[session_id]
-    assert len(copied_memory.runs[session_id]) == len(memory_with_db.runs[session_id])
-
-    # Verify modifying the copy doesn't affect the original
-    copied_memory.memories["test_user"][memory_id].memory = "Modified memory"
-    assert memory_with_db.memories["test_user"][memory_id].memory == "The user's name is John Doe"
-    assert copied_memory.memories["test_user"][memory_id].memory == "Modified memory"

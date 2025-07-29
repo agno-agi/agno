@@ -24,7 +24,7 @@ from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
-    from sqlalchemy import JSON, TEXT, and_, cast, func, update
+    from sqlalchemy import TEXT, and_, cast, func, update
     from sqlalchemy.dialects import mysql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -743,7 +743,7 @@ class MySQLDb(BaseDb):
                             topics = json.loads(row[0]) if isinstance(row[0], str) else row[0]
                             if isinstance(topics, list):
                                 topics_set.update(topics)
-                        except:
+                        except Exception:
                             pass
 
                 return list(topics_set)
