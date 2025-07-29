@@ -10,6 +10,7 @@ from agno.db.base import SessionType
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.apps.utils import PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     AgentResponse,
     AgentSessionDetailSchema,
@@ -29,6 +30,7 @@ from agno.os.schema import (
     WorkflowRunRequest,
     WorkflowSummaryResponse,
 )
+from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     get_agent_by_id,
     get_team_by_id,
@@ -145,9 +147,9 @@ async def team_response_streamer(
 
 def get_base_router(
     os: "AgentOS",
-    auth_dependency: Optional[Callable] = None,
+    settings: AgnoAPISettings = AgnoAPISettings(),
 ) -> APIRouter:
-    router = APIRouter(tags=["Built-In"])
+    router = APIRouter(tags=["Built-In"], dependencies=[Depends(get_authentication_dependency(settings))])
 
     # -- Util routes ---
 
@@ -159,7 +161,6 @@ def get_base_router(
         "/config",
         response_model=ConfigResponse,
         response_model_exclude_none=True,
-        dependencies=[Depends(auth_dependency)] if auth_dependency else None,
     )
     async def config() -> ConfigResponse:
         apps_response = AppsResponse(
@@ -230,7 +231,6 @@ def get_base_router(
         "/models",
         response_model=List[Model],
         response_model_exclude_none=True,
-        dependencies=[Depends(auth_dependency)] if auth_dependency else None,
     )
     async def get_models():
         """Return the list of all models used by agents and teams in the contextual OS"""
@@ -251,7 +251,7 @@ def get_base_router(
 
     # -- Agent routes ---
 
-    @router.post("/agents/{agent_id}/runs", dependencies=[Depends(auth_dependency)] if auth_dependency else None)
+    @router.post("/agents/{agent_id}/runs")
     async def create_agent_run(
         agent_id: str,
         message: str = Form(...),
@@ -357,7 +357,6 @@ def get_base_router(
 
     @router.post(
         "/agents/{agent_id}/runs/{run_id}/continue",
-        dependencies=[Depends(auth_dependency)] if auth_dependency else None,
     )
     async def continue_agent_run(
         agent_id: str,
@@ -419,7 +418,6 @@ def get_base_router(
     @router.delete(
         "/agents/{agent_id}/sessions/{session_id}",
         status_code=204,
-        dependencies=[Depends(auth_dependency)] if auth_dependency else None,
     )
     async def delete_agent_session(agent_id: str, session_id: str) -> None:
         agent = get_agent_by_id(agent_id, os.agents)
@@ -434,7 +432,6 @@ def get_base_router(
         "/agents",
         response_model=List[AgentResponse],
         response_model_exclude_none=True,
-        dependencies=[Depends(auth_dependency)] if auth_dependency else None,
     )
     async def get_agents():
         if os.agents is None:
@@ -446,7 +443,6 @@ def get_base_router(
         "/agents/{agent_id}/sessions",
         response_model=PaginatedResponse[SessionSchema],
         status_code=200,
-        dependencies=[Depends(auth_dependency)] if auth_dependency else None,
     )
     async def get_agent_sessions(
         agent_id: str,
@@ -487,7 +483,6 @@ def get_base_router(
         "/agents/{agent_id}/sessions/{session_id}",
         response_model=AgentSessionDetailSchema,
         status_code=200,
-        dependencies=[Depends(auth_dependency)] if auth_dependency else None,
     )
     async def get_agent_session_by_id(
         agent_id: str,
@@ -510,7 +505,6 @@ def get_base_router(
         "/agents/{agent_id}/sessions/{session_id}/runs",
         response_model=List[RunSchema],
         status_code=200,
-        dependencies=[Depends(auth_dependency)] if auth_dependency else None,
     )
     async def get_agent_session_runs(
         agent_id: str,
@@ -532,7 +526,6 @@ def get_base_router(
     @router.get(
         "/agents/{agent_id}",
         response_model=AgentResponse,
-        dependencies=[Depends(auth_dependency)] if auth_dependency else None,
     )
     async def get_agent(agent_id: str):
         agent = get_agent_by_id(agent_id, os.agents)
@@ -544,7 +537,6 @@ def get_base_router(
     @router.post(
         "/agents/{agent_id}/sessions/{session_id}/rename",
         response_model=AgentSessionDetailSchema,
-        dependencies=[Depends(auth_dependency)] if auth_dependency else None,
     )
     async def rename_agent_session(
         agent_id: str,
@@ -565,7 +557,7 @@ def get_base_router(
 
     # -- Team routes ---
 
-    @router.post("/teams/{team_id}/runs", dependencies=[Depends(auth_dependency)] if auth_dependency else None)
+    @router.post("/teams/{team_id}/runs")
     async def create_team_run(
         team_id: str,
         message: str = Form(...),
@@ -674,7 +666,6 @@ def get_base_router(
     @router.delete(
         "/teams/{team_id}/sessions/{session_id}",
         status_code=204,
-        dependencies=[Depends(auth_dependency)] if auth_dependency else None,
     )
     async def delete_team_session(team_id: str, session_id: str) -> None:
         team = get_team_by_id(team_id, os.teams)
@@ -689,7 +680,6 @@ def get_base_router(
         "/teams",
         response_model=List[TeamResponse],
         response_model_exclude_none=True,
-        dependencies=[Depends(auth_dependency)] if auth_dependency else None,
     )
     async def get_teams():
         if os.teams is None:
@@ -701,7 +691,6 @@ def get_base_router(
         "/teams/{team_id}/sessions",
         response_model=PaginatedResponse[SessionSchema],
         status_code=200,
-        dependencies=[Depends(auth_dependency)] if auth_dependency else None,
     )
     async def get_team_sessions(
         team_id: str,
@@ -745,7 +734,6 @@ def get_base_router(
         "/teams/{team_id}/sessions/{session_id}",
         response_model=TeamSessionDetailSchema,
         status_code=200,
-        dependencies=[Depends(auth_dependency)] if auth_dependency else None,
     )
     async def get_team_session_by_id(
         team_id: str,
@@ -768,7 +756,6 @@ def get_base_router(
         "/teams/{team_id}/sessions/{session_id}/runs",
         response_model=List[TeamRunSchema],
         status_code=200,
-        dependencies=[Depends(auth_dependency)] if auth_dependency else None,
     )
     async def get_team_session_runs(
         team_id: str,
@@ -794,7 +781,6 @@ def get_base_router(
     @router.get(
         "/teams/{team_id}",
         response_model=TeamResponse,
-        dependencies=[Depends(auth_dependency)] if auth_dependency else None,
     )
     async def get_team(team_id: str):
         team = get_team_by_id(team_id, os.teams)
@@ -806,7 +792,6 @@ def get_base_router(
     @router.post(
         "/teams/{team_id}/sessions/{session_id}/rename",
         response_model=TeamSessionDetailSchema,
-        dependencies=[Depends(auth_dependency)] if auth_dependency else None,
     )
     async def rename_team_session(
         team_id: str,
@@ -831,7 +816,6 @@ def get_base_router(
         "/workflows",
         response_model=List[WorkflowResponse],
         response_model_exclude_none=True,
-        dependencies=[Depends(auth_dependency)] if auth_dependency else None,
     )
     async def get_workflows():
         if os.workflows is None:
@@ -849,7 +833,6 @@ def get_base_router(
     @router.get(
         "/workflows/{workflow_id}",
         response_model=WorkflowResponse,
-        dependencies=[Depends(auth_dependency)] if auth_dependency else None,
     )
     async def get_workflow(workflow_id: str):
         workflow = get_workflow_by_id(workflow_id, os.workflows)
@@ -862,7 +845,7 @@ def get_base_router(
             description=workflow.description,
         )
 
-    @router.post("/workflows/{workflow_id}/runs", dependencies=[Depends(auth_dependency)] if auth_dependency else None)
+    @router.post("/workflows/{workflow_id}/runs")
     async def create_workflow_run(workflow_id: str, body: WorkflowRunRequest):
         # Retrieve the workflow by ID
         workflow = get_workflow_by_id(workflow_id, os.workflows)

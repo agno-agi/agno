@@ -237,20 +237,10 @@ class AgentOS:
 
         self.fastapi_app.middleware("http")(general_exception_handler)
 
-        # Attach base router
-        from agno.os.auth import get_authentication_dependency
-
-        auth_dependency = get_authentication_dependency(self.settings)
-
-        self.fastapi_app.include_router(get_base_router(self, auth_dependency))
+        self.fastapi_app.include_router(get_base_router(self, settings=self.settings))
 
         for interface in self.interfaces:
             interface_router = interface.get_router()
-            # Apply authentication to all routes in the interface router
-            for route in interface_router.routes:
-                if not route.dependencies:
-                    route.dependencies = []
-                route.dependencies.append(Depends(auth_dependency))
             self.fastapi_app.include_router(interface_router)
             self.interfaces_loaded.append((interface.type, interface.router_prefix))
 
@@ -268,15 +258,10 @@ class AgentOS:
                     index=app_index_map[app.type],
                     agents=self.agents,
                     teams=self.teams,
+                    settings=self.settings,
                 )
             else:
-                app_router = app.get_router(index=app_index_map[app.type])
-
-            # Apply authentication to all routes in the app router
-            for route in app_router.routes:
-                if not route.dependencies:
-                    route.dependencies = []
-                route.dependencies.append(Depends(auth_dependency))  # type: ignore
+                app_router = app.get_router(index=app_index_map[app.type], settings=self.settings)
 
             self.fastapi_app.include_router(app_router)
             self.apps_loaded.append((app.type, app.router_prefix))
