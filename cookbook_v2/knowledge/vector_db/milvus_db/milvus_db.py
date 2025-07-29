@@ -24,7 +24,6 @@ knowledge.add_content(
     name="Recipes",
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
     metadata={"doc_type": "recipe_book"},
-    upsert=False
 )
 
 # Create and use the agent

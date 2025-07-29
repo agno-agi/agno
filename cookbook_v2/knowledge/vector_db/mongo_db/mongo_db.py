@@ -40,7 +40,6 @@ Example connection strings:
 "mongodb://localhost:27017/agno?authSource=admin"
 """
 mdb_connection_string = "mongodb+srv://<username>:<password>@cluster0.mongodb.net/?retryWrites=true&w=majority"
-mdb_connection_string = "mongodb+srv://willem:DwLfzCQO2D64E0gH@agno.vtlsmyf.mongodb.net/?retryWrites=true&w=majority&appName=Agno"
 
 knowledge = Knowledge(
     vector_db=MongoDb(
