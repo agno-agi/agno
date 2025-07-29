@@ -853,18 +853,15 @@ class RedisDb(BaseDb):
         """
         try:
             # Get all keys for memories table
-            keys = get_all_keys_for_table(
-                redis_client=self.redis_client, 
-                prefix=self.db_prefix, 
-                table_type="memories"
-            )
-            
+            keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type="memories")
+
             if keys:
                 # Delete all memory keys in a single batch operation
                 self.redis_client.delete(*keys)
 
         except Exception as e:
             from agno.utils.log import log_warning
+
             log_warning(f"Exception deleting all memories: {e}")
 
     # -- Metrics methods --

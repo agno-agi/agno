@@ -2,8 +2,6 @@ from typing import Dict, List, Optional, Union
 
 from pydantic import BaseModel
 
-from pydantic import BaseModel
-
 from agno.models.message import Message
 
 

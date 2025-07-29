@@ -416,7 +416,6 @@ class Agent:
         stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
         store_events: bool = False,
-        role: Optional[str] = None,
         events_to_skip: Optional[List[RunEvent]] = None,
         role: Optional[str] = None,
         debug_mode: bool = False,
