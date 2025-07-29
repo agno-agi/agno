@@ -834,30 +834,31 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="memories")
-            
+
             # Get all documents in the collection
             docs = collection_ref.stream()
-            
+
             # Delete all documents in batches
             batch = self.db_client.batch()
             batch_count = 0
-            
+
             for doc in docs:
                 batch.delete(doc.reference)
                 batch_count += 1
-                
+
                 # Firestore batch has a limit of 500 operations
                 if batch_count >= 500:
                     batch.commit()
                     batch = self.db_client.batch()
                     batch_count = 0
-            
+
             # Commit remaining operations
             if batch_count > 0:
                 batch.commit()
 
         except Exception as e:
             from agno.utils.log import log_warning
+
             log_warning(f"Exception deleting all memories: {e}")
 
     # -- Metrics methods --

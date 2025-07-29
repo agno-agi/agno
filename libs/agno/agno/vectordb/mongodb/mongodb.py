@@ -951,7 +951,9 @@ class MongoDb(VectorDb):
         # Return True if collection doesn't exist (nothing to delete)
         return True
 
-    def prepare_doc(self, content_hash: str, document: Document, filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def prepare_doc(
+        self, content_hash: str, document: Document, filters: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """Prepare a document for insertion or upsertion into MongoDB."""
         document.embed(embedder=self.embedder)
         if document.embedding is None:
@@ -1001,7 +1003,9 @@ class MongoDb(VectorDb):
             logger.error(f"Error checking document existence asynchronously: {e}")
             return False
 
-    async def async_insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Insert documents asynchronously."""
         log_debug(f"Inserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
@@ -1025,7 +1029,9 @@ class MongoDb(VectorDb):
             except Exception as e:
                 logger.error(f"Error inserting documents asynchronously: {e}")
 
-    async def async_upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Upsert documents asynchronously."""
         log_info(f"Upserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()

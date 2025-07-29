@@ -987,6 +987,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             from agno.utils.log import log_warning
+
             log_warning(f"Exception deleting all memories: {e}")
 
     # -- Metrics methods --

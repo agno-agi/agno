@@ -329,6 +329,7 @@ def test_delete_by_content_id(vector_db: MongoDb, mock_mongodb_client: MagicMock
     assert result is True
     collection.delete_many.assert_called_with({"content_id": "content_123"})
 
+
 def test_keyword_search_with_content_id(vector_db: MongoDb, mock_mongodb_client: MagicMock) -> None:
     """Test keyword search includes content_id field."""
     collection = mock_mongodb_client["test_vectordb"][vector_db.collection_name]
@@ -454,6 +455,7 @@ def test_search_with_filters(vector_db: MongoDb, mock_mongodb_client: MagicMock,
     # Verify the search pipeline included filters
     args = collection.aggregate.call_args[0][0]
     assert any("$match" in stage for stage in args)
+
 
 @pytest.mark.asyncio
 async def test_async_client(async_vector_db: MongoDb) -> None:

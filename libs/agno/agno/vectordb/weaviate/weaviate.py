@@ -868,11 +868,6 @@ class Weaviate(VectorDb):
 
     def id_exists(self, id: str) -> bool:
         """Check if a document with the given ID exists in the collection.
-<<<<<<< HEAD
-
-        Args:
-            id (str): The document ID to check.
-=======
 
         Args:
             id (str): The document ID to check.
@@ -896,43 +891,11 @@ class Weaviate(VectorDb):
 
         Args:
             content_hash (str): The content hash to check.
->>>>>>> a8fd0a12f (feat: Mongo skips)
 
         Returns:
             bool: True if the document exists, False otherwise.
         """
         try:
-<<<<<<< HEAD
-            doc_uuid = uuid.UUID(hex=id[:32]) if len(id) == 32 else uuid.UUID(id)
-            collection = self.get_client().collections.get(self.collection)
-            return collection.data.exists(doc_uuid)
-        except ValueError:
-            log_info(f"Invalid UUID format for ID '{id}' - treating as non-existent")
-            return False
-        except Exception as e:
-            logger.error(f"Error checking if ID '{id}' exists: {e}")
-            return False
-
-    def _delete_by_content_hash(self, content_hash: str) -> bool:
-        """Delete documents by content hash using direct filter deletion.
-
-        Args:
-            content_hash (str): The content hash to delete.
-
-        Returns:
-            bool: True if documents were deleted successfully, False otherwise.
-        """
-        try:
-            collection = self.get_client().collections.get(self.collection)
-
-            result = collection.data.delete_many(where=Filter.by_property("content_hash").equal(content_hash))
-
-            log_info(f"Deleted documents with content_hash '{content_hash}' from collection '{self.collection}'.")
-            return True
-
-        except Exception as e:
-            logger.error(f"Error deleting documents by content_hash '{content_hash}': {e}")
-=======
             doc_uuid = uuid.UUID(hex=content_hash[:32])
             collection = self.get_client().collections.get(self.collection)
             return collection.data.exists(doc_uuid)
@@ -941,5 +904,4 @@ class Weaviate(VectorDb):
             return False
         except Exception as e:
             logger.error(f"Error checking if content_hash '{content_hash}' exists: {e}")
->>>>>>> a8fd0a12f (feat: Mongo skips)
             return False
