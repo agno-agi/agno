@@ -30,7 +30,7 @@ class PostgresStorage(Storage):
         db_engine: Optional[Engine] = None,
         schema_version: int = 1,
         auto_upgrade_schema: bool = False,
-        mode: Optional[Literal["agent", "team", "workflow"]] = "agent",
+        mode: Optional[Literal["agent", "team", "workflow", "workflow_v2"]] = "agent",
     ):
         """
         This class provides agent storage using a PostgreSQL table.
@@ -570,7 +570,6 @@ class PostgresStorage(Storage):
                     stmt = postgresql.insert(self.table).values(
                         session_id=session.session_id,
                         workflow_id=session.workflow_id,  # type: ignore
-                        workflow_name=session.workflow_name,  # type: ignore
                         user_id=session.user_id,
                         runs=session_dict.get("runs"),
                         workflow_data=session.workflow_data,  # type: ignore
@@ -583,7 +582,6 @@ class PostgresStorage(Storage):
                         index_elements=["session_id"],
                         set_=dict(
                             workflow_id=session.workflow_id,  # type: ignore
-                            workflow_name=session.workflow_name,  # type: ignore
                             user_id=session.user_id,
                             runs=session_dict.get("runs"),
                             workflow_data=session.workflow_data,  # type: ignore
