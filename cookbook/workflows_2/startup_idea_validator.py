@@ -49,8 +49,8 @@ import asyncio
 from typing import Any
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.storage.sqlite import SqliteStorage
 from agno.tools.googlesearch import GoogleSearchTools
 from agno.utils.pprint import pprint_run_response
 from agno.workflow.v2.types import WorkflowExecutionInput
@@ -364,10 +364,9 @@ async def startup_validation_execution(
 startup_validation_workflow = Workflow(
     name="Startup Idea Validator",
     description="Comprehensive startup idea validation with market research and competitive analysis",
-    storage=SqliteStorage(
-        table_name="startup_ideas_workflow_sessions",
+    storage=SqliteDb(
+        session_table="workflow_session",
         db_file="tmp/workflows.db",
-        mode="workflow_v2",
     ),
     steps=startup_validation_execution,
     workflow_session_state={},  # Initialize empty workflow session state

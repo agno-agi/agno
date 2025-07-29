@@ -7,8 +7,8 @@ It is for a content writer that creates posts about tech trends from Hackernews 
 import asyncio
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.storage.sqlite import SqliteStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
@@ -60,10 +60,9 @@ content_planning_step = Step(
 content_creation_workflow = Workflow(
     name="Content Creation Workflow",
     description="Automated content creation from blog posts to social media",
-    storage=SqliteStorage(
-        table_name="workflow_v2",
+    storage=SqliteDb(
+        session_table="workflow_session",
         db_file="tmp/workflow_v2.db",
-        mode="workflow_v2",
     ),
     steps=[research_step, content_planning_step],
 )

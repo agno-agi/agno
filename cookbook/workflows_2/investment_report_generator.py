@@ -33,8 +33,8 @@ from shutil import rmtree
 from textwrap import dedent
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.storage.sqlite import SqliteStorage
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.pprint import pprint_run_response
 from agno.workflow.v2.types import WorkflowExecutionInput
@@ -326,9 +326,8 @@ investment_workflow = Workflow(
     name="Investment Report Generator",
     description="Automated investment analysis with market research and portfolio allocation",
     storage=SqliteStorage(
-        table_name="investment_workflow_sessions",
+        session_table="workflow_session",
         db_file="tmp/workflows.db",
-        mode="workflow_v2",
     ),
     steps=investment_analysis_execution,
     workflow_session_state={},  # Initialize empty workflow session state

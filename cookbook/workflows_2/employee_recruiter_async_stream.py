@@ -6,8 +6,8 @@ from typing import Any, List
 
 import requests
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.storage.sqlite import SqliteStorage
 from agno.workflow.v2.types import WorkflowExecutionInput
 from agno.workflow.v2.workflow import Workflow
 from pydantic import BaseModel, Field
@@ -271,10 +271,9 @@ async def recruitment_execution(
 recruitment_workflow = Workflow(
     name="Employee Recruitment Workflow (Simulated)",
     description="Automated candidate screening with simulated scheduling and email",
-    storage=SqliteStorage(
-        table_name="recruiter_workflow_sessions",
+    storage=SqliteDb(
+        session_table="workflow_session",
         db_file="tmp/workflows.db",
-        mode="workflow_v2",
     ),
     steps=recruitment_execution,
     workflow_session_state={},

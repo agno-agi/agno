@@ -1,4 +1,5 @@
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.run.response import (
     RunResponseContentEvent,
@@ -6,7 +7,6 @@ from agno.run.response import (
     ToolCallStartedEvent,
 )
 from agno.run.v2.workflow import WorkflowRunEvent
-from agno.storage.sqlite import SqliteStorage
 from agno.tools.googlesearch import GoogleSearchTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.v2.parallel import Parallel
@@ -67,10 +67,9 @@ print("=== Simple Step Workflow with Event Storage ===")
 step_workflow = Workflow(
     name="Simple Step Workflow",
     description="Basic workflow demonstrating step event storage",
-    storage=SqliteStorage(
-        table_name="workflow_v2_steps",
-        db_file="tmp/workflow_v2_steps.db",
-        mode="workflow_v2",
+    storage=SqliteDb(
+        session_table="workflow_session",
+        db_file="tmp/workflow_v2.db",
     ),
     steps=[research_step, search_step],
     store_events=True,

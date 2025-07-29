@@ -1,7 +1,7 @@
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.media import Image
 from agno.models.openai import OpenAIChat
-from agno.storage.sqlite import SqliteStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.workflow import Workflow
@@ -36,10 +36,9 @@ media_workflow = Workflow(
     name="Image Analysis and Research Workflow",
     description="Analyze an image and research related news",
     steps=[analysis_step, research_step],
-    storage=SqliteStorage(
-        table_name="workflow_v2",
+    storage=SqliteDb(
+        session_table="workflow_session",
         db_file="tmp/workflow_v2.db",
-        mode="workflow_v2",
     ),
 )
 

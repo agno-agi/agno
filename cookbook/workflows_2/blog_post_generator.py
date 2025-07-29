@@ -22,8 +22,8 @@ from textwrap import dedent
 from typing import Dict, Optional
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.storage.sqlite import SqliteStorage
 from agno.tools.googlesearch import GoogleSearchTools
 from agno.tools.newspaper4k import Newspaper4kTools
 from agno.utils.log import logger
@@ -442,10 +442,9 @@ async def blog_generation_execution(
 blog_generator_workflow = Workflow(
     name="Blog Post Generator",
     description="Advanced blog post generator with research and content creation capabilities",
-    storage=SqliteStorage(
-        table_name="blog_generator_v2",
+    storage=SqliteDb(
+        session_table="workflow_session",
         db_file="tmp/blog_generator_v2.db",
-        mode="workflow_v2",
     ),
     steps=blog_generation_execution,
     workflow_session_state={},  # Initialize empty session state for caching
