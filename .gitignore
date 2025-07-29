@@ -64,3 +64,7 @@ token.json
 # Coverage
 coverage_report
 .coverage
+
+# AI
+.claude/
+.cursor/

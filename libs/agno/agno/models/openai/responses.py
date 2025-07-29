@@ -154,7 +154,7 @@ class OpenAIResponses(Model):
 
     def get_request_params(
         self,
-        messages: List[Message],
+        messages: Optional[List[Message]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -214,13 +214,13 @@ class OpenAIResponses(Model):
                 log_debug(f"Added web_search_preview tool for deep research model: {self.id}")
 
         if tools:
-            request_params["tools"] = self._format_tool_params(messages=messages, tools=tools)
+            request_params["tools"] = self._format_tool_params(messages=messages, tools=tools)  # type: ignore
 
         if tool_choice is not None:
             request_params["tool_choice"] = tool_choice
 
         # Handle reasoning tools for o3 and o4-mini models
-        if self.id.startswith("o3") or self.id.startswith("o4-mini"):
+        if (self.id.startswith("o3") or self.id.startswith("o4-mini")) and messages is not None:
             request_params["store"] = True
 
             # Check if the last assistant message has a previous_response_id to continue from
@@ -756,11 +756,11 @@ class OpenAIResponses(Model):
                         UrlCitation(url=stream_event.annotation.get("url"), title=stream_event.annotation.get("title"))
                     )
             else:
-                if stream_event.annotation.type == "url_citation":
+                if stream_event.annotation.type == "url_citation":  # type: ignore
                     if stream_data.response_citations.urls is None:
                         stream_data.response_citations.urls = []
                     stream_data.response_citations.urls.append(
-                        UrlCitation(url=stream_event.annotation.url, title=stream_event.annotation.title)
+                        UrlCitation(url=stream_event.annotation.url, title=stream_event.annotation.title)  # type: ignore
                     )
 
             model_response.citations = stream_data.response_citations

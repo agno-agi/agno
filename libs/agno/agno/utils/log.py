@@ -128,6 +128,22 @@ def set_log_level_to_info(source_type: Optional[str] = None):
     debug_on = False
 
 
+def set_log_level_to_warning(source_type: Optional[str] = None):
+    _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
+    _logger.setLevel(logging.WARNING)
+
+    global debug_on
+    debug_on = False
+
+
+def set_log_level_to_error(source_type: Optional[str] = None):
+    _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
+    _logger.setLevel(logging.ERROR)
+
+    global debug_on
+    debug_on = False
+
+
 def center_header(message: str, symbol: str = "*") -> str:
     try:
         import shutil
