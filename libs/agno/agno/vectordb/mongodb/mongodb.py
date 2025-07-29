@@ -475,14 +475,41 @@ class MongoDb(VectorDb):
             return False
 
     def id_exists(self, id: str) -> bool:
-        """Check if a document with a given ID exists in the collection."""
+        """Check if a document with the given ID exists in the collection.
+
+        Args:
+            id (str): The document ID to check.
+
+        Returns:
+            bool: True if the document exists, False otherwise.
+        """
         try:
             collection = self._get_collection()
-            exists = collection.find_one({"_id": id}) is not None
+            result = collection.find_one({"_id": id})
+            exists = result is not None
             log_debug(f"Document with ID '{id}' {'exists' if exists else 'does not exist'}")
             return exists
         except Exception as e:
             logger.error(f"Error checking document ID existence: {e}")
+            return False
+
+    def content_hash_exists(self, content_hash: str) -> bool:
+        """Check if documents with the given content hash exist in the collection.
+
+        Args:
+            content_hash (str): The content hash to check.
+
+        Returns:
+            bool: True if documents with the content hash exist, False otherwise.
+        """
+        try:
+            collection = self._get_collection()
+            result = collection.find_one({"content_hash": content_hash})
+            exists = result is not None
+            log_debug(f"Document with content_hash '{content_hash}' {'exists' if exists else 'does not exist'}")
+            return exists
+        except Exception as e:
+            logger.error(f"Error checking content_hash existence: {e}")
             return False
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
@@ -493,7 +520,7 @@ class MongoDb(VectorDb):
         prepared_docs = []
         for document in documents:
             try:
-                doc_data = self.prepare_doc(document, filters)
+                doc_data = self.prepare_doc(content_hash, document, filters)
                 prepared_docs.append(doc_data)
             except ValueError as e:
                 logger.error(f"Error preparing document '{document.name}': {e}")
@@ -509,14 +536,14 @@ class MongoDb(VectorDb):
             except Exception as e:
                 logger.error(f"Error inserting documents: {e}")
 
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Upsert documents into the MongoDB collection."""
         log_info(f"Upserting {len(documents)} documents")
         collection = self._get_collection()
 
         for document in documents:
             try:
-                doc_data = self.prepare_doc(document)
+                doc_data = self.prepare_doc(content_hash, document)
                 collection.update_one(
                     {"_id": doc_data["_id"]},
                     {"$set": doc_data},
@@ -575,6 +602,7 @@ class MongoDb(VectorDb):
                         name=doc.get("name"),
                         content=doc["content"],
                         meta_data={**doc.get("meta_data", {}), "score": doc.get("similarityScore", 0.0)},
+                        content_id=doc.get("content_id"),
                     )
                     for doc in results
                 ]
@@ -635,6 +663,7 @@ class MongoDb(VectorDb):
                         name=clean_doc.get("name"),
                         content=clean_doc["content"],
                         meta_data={**clean_doc.get("meta_data", {}), "score": clean_doc.get("score", 0.0)},
+                        content_id=clean_doc.get("content_id"),
                     )
                     docs.append(document)
 
@@ -656,7 +685,7 @@ class MongoDb(VectorDb):
             collection = self._get_collection()
             cursor = collection.find(
                 {"content": {"$regex": query, "$options": "i"}},
-                {"_id": 1, "name": 1, "content": 1, "meta_data": 1},
+                {"_id": 1, "name": 1, "content": 1, "meta_data": 1, "content_id": 1},
             ).limit(limit)
             results = [
                 Document(
@@ -664,6 +693,7 @@ class MongoDb(VectorDb):
                     name=doc.get("name"),
                     content=doc["content"],
                     meta_data=doc.get("meta_data", {}),
+                    content_id=doc.get("content_id"),
                 )
                 for doc in cursor
             ]
@@ -731,6 +761,7 @@ class MongoDb(VectorDb):
                     "name": "$docs.name",
                     "content": "$docs.content",
                     "meta_data": "$docs.meta_data",
+                    "content_id": "$docs.content_id",
                     "vs_score": {
                         "$divide": [
                             self.hybrid_vector_weight,
@@ -746,6 +777,7 @@ class MongoDb(VectorDb):
                     "name": 1,
                     "content": 1,
                     "meta_data": 1,
+                    "content_id": 1,
                     "vs_score": 1,
                     # Now fts_score is included with its value (0.0 here)
                     "fts_score": 1,
@@ -771,6 +803,7 @@ class MongoDb(VectorDb):
                                 "name": "$docs.name",
                                 "content": "$docs.content",
                                 "meta_data": "$docs.meta_data",
+                                "content_id": "$docs.content_id",
                                 "vs_score": 0.0,
                                 "fts_score": {
                                     "$divide": [
@@ -786,6 +819,7 @@ class MongoDb(VectorDb):
                                 "name": 1,
                                 "content": 1,
                                 "meta_data": 1,
+                                "content_id": 1,
                                 "vs_score": 1,
                                 "fts_score": 1,
                             }
@@ -800,6 +834,7 @@ class MongoDb(VectorDb):
                     "name": {"$first": "$name"},
                     "content": {"$first": "$content"},
                     "meta_data": {"$first": "$meta_data"},
+                    "content_id": {"$first": "$content_id"},
                     "vs_score": {"$sum": "$vs_score"},
                     "fts_score": {"$sum": "$fts_score"},
                 }
@@ -810,6 +845,7 @@ class MongoDb(VectorDb):
                     "name": 1,
                     "content": 1,
                     "meta_data": 1,
+                    "content_id": 1,
                     "score": {"$add": ["$vs_score", "$fts_score"]},
                 }
             },
@@ -833,6 +869,7 @@ class MongoDb(VectorDb):
                     name=clean_doc.get("name"),
                     content=clean_doc["content"],
                     meta_data={**clean_doc.get("meta_data", {}), "score": clean_doc.get("score", 0.0)},
+                    content_id=clean_doc.get("content_id"),
                 )
                 docs.append(document)
 
@@ -914,7 +951,9 @@ class MongoDb(VectorDb):
         # Return True if collection doesn't exist (nothing to delete)
         return True
 
-    def prepare_doc(self, document: Document, filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def prepare_doc(
+        self, content_hash: str, document: Document, filters: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """Prepare a document for insertion or upsertion into MongoDB."""
         document.embed(embedder=self.embedder)
         if document.embedding is None:
@@ -934,6 +973,8 @@ class MongoDb(VectorDb):
             "content": cleaned_content,
             "meta_data": document.meta_data,
             "embedding": document.embedding,
+            "content_id": document.content_id,
+            "content_hash": content_hash,
         }
         log_debug(f"Prepared document: {doc_data['_id']}")
         return doc_data
@@ -962,7 +1003,9 @@ class MongoDb(VectorDb):
             logger.error(f"Error checking document existence asynchronously: {e}")
             return False
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Insert documents asynchronously."""
         log_debug(f"Inserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
@@ -970,7 +1013,7 @@ class MongoDb(VectorDb):
         prepared_docs = []
         for document in documents:
             try:
-                doc_data = self.prepare_doc(document, filters)
+                doc_data = self.prepare_doc(content_hash, document, filters)
                 prepared_docs.append(doc_data)
             except ValueError as e:
                 logger.error(f"Error preparing document '{document.name}': {e}")
@@ -986,14 +1029,16 @@ class MongoDb(VectorDb):
             except Exception as e:
                 logger.error(f"Error inserting documents asynchronously: {e}")
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Upsert documents asynchronously."""
         log_info(f"Upserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
 
         for document in documents:
             try:
-                doc_data = self.prepare_doc(document)
+                doc_data = self.prepare_doc(content_hash, document, filters)
                 await collection.update_one(
                     {"_id": doc_data["_id"]},
                     {"$set": doc_data},
@@ -1059,6 +1104,7 @@ class MongoDb(VectorDb):
                     name=doc.get("name"),
                     content=doc["content"],
                     meta_data={**doc.get("meta_data", {}), "score": doc.get("score", 0.0)},
+                    content_id=doc.get("content_id"),
                 )
                 for doc in results
             ]
@@ -1136,16 +1182,105 @@ class MongoDb(VectorDb):
             return obj
 
     def delete_by_id(self, id: str) -> bool:
-        pass
+        """Delete document by ID."""
+        try:
+            collection = self._get_collection()
+            result = collection.delete_one({"_id": id})
+
+            if result.deleted_count > 0:
+                log_info(
+                    f"Deleted {result.deleted_count} document(s) with ID '{id}' from collection '{self.collection_name}'."
+                )
+                return True
+            else:
+                log_info(f"No documents found with ID '{id}' to delete.")
+                return True
+        except Exception as e:
+            logger.error(f"Error deleting document with ID '{id}': {e}")
+            return False
 
     def delete_by_name(self, name: str) -> bool:
-        pass
+        """Delete documents by name."""
+        try:
+            collection = self._get_collection()
+            result = collection.delete_many({"name": name})
+
+            log_info(
+                f"Deleted {result.deleted_count} document(s) with name '{name}' from collection '{self.collection_name}'."
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting documents with name '{name}': {e}")
+            return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
-        pass
+        """Delete documents by metadata."""
+        try:
+            collection = self._get_collection()
 
-    def id_exists(self, id: str) -> bool:
-        raise NotImplementedError
+            # Build MongoDB query for metadata matching
+            mongo_filters = {}
+            for key, value in metadata.items():
+                # Use dot notation for nested metadata fields
+                mongo_filters[f"meta_data.{key}"] = value
+
+            result = collection.delete_many(mongo_filters)
+
+            log_info(
+                f"Deleted {result.deleted_count} document(s) with metadata '{metadata}' from collection '{self.collection_name}'."
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting documents with metadata '{metadata}': {e}")
+            return False
 
     def content_hash_exists(self, content_hash: str) -> bool:
-        raise NotImplementedError
+        """Check if documents with the given content hash exist in the collection.
+
+        Args:
+            content_hash (str): The content hash to check.
+
+        Returns:
+            bool: True if documents with the content hash exist, False otherwise.
+        """
+        try:
+            collection = self._get_collection()
+            result = collection.find_one({"content_hash": content_hash})
+            exists = result is not None
+            log_debug(f"Document with content_hash '{content_hash}' {'exists' if exists else 'does not exist'}")
+            return exists
+        except Exception as e:
+            logger.error(f"Error checking content_hash existence: {e}")
+            return False
+
+    def _delete_by_content_hash(self, content_hash: str) -> bool:
+        """Delete documents by content hash.
+
+        Args:
+            content_hash (str): The content hash to delete.
+
+        Returns:
+            bool: True if documents were deleted successfully, False otherwise.
+        """
+        try:
+            collection = self._get_collection()
+            result = collection.delete_many({"content_hash": content_hash})
+            log_info(f"Deleted {result.deleted_count} documents with content_hash '{content_hash}'")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting documents by content_hash '{content_hash}': {e}")
+            return False
+
+    def delete_by_content_id(self, content_id: str) -> bool:
+        """Delete documents by content ID."""
+        try:
+            collection = self._get_collection()
+            result = collection.delete_many({"content_id": content_id})
+
+            log_info(
+                f"Deleted {result.deleted_count} document(s) with content_id '{content_id}' from collection '{self.collection_name}'."
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting documents with content_id '{content_id}': {e}")
+            return False

@@ -44,12 +44,12 @@ Example connection strings:
 mdb_connection_string = "mongodb+srv://<username>:<password>@cluster0.mongodb.net/?retryWrites=true&w=majority"
 
 knowledge = Knowledge(
-    urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
     vector_db=MongoDb(
         collection_name="recipes",
         db_url=mdb_connection_string,
     ),
 )
+
 
 # Create and use the agent
 agent = Agent(knowledge=knowledge, show_tool_calls=True)

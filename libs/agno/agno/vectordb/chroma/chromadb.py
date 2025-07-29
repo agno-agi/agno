@@ -91,32 +91,6 @@ class ChromaDb(VectorDb):
         """Create the collection asynchronously by running in a thread."""
         await asyncio.to_thread(self.create)
 
-    def doc_exists(self, document: Document) -> bool:
-        """Check if a document exists in the collection.
-        Args:
-            document (Document): Document to check.
-        Returns:
-            bool: True if document exists, False otherwise.
-        """
-        if not self.client:
-            logger.warning("Client not initialized")
-            return False
-
-        try:
-            collection: Collection = self.client.get_collection(name=self.collection_name)
-            collection_data: GetResult = collection.get(include=["documents"])  # type: ignore
-            existing_documents = collection_data.get("documents", [])
-            cleaned_content = document.content.replace("\x00", "\ufffd")
-            if cleaned_content in existing_documents:  # type: ignore
-                return True
-        except Exception as e:
-            logger.error(f"Document does not exist: {e}")
-        return False
-
-    async def async_doc_exists(self, document: Document) -> bool:
-        """Check if a document exists asynchronously."""
-        return await asyncio.to_thread(self.doc_exists, document)
-
     def name_exists(self, name: str) -> bool:
         """Check if a document with a given name exists in the collection.
         Args:
@@ -139,14 +113,14 @@ class ChromaDb(VectorDb):
         """Check if a document with given name exists asynchronously."""
         return await asyncio.to_thread(self.name_exists, name)
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents into the collection.
 
         Args:
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to merge with document metadata
         """
-        log_debug(f"Inserting {len(documents)} documents")
+        log_info(f"Inserting {len(documents)} documents")
         ids: List = []
         docs: List = []
         docs_embeddings: List = []
@@ -170,6 +144,8 @@ class ChromaDb(VectorDb):
                 metadata["name"] = document.name
             if document.content_id is not None:
                 metadata["content_id"] = document.content_id
+
+            metadata["content_hash"] = content_hash
 
             docs_embeddings.append(document.embedding)
             docs.append(cleaned_content)
@@ -184,22 +160,39 @@ class ChromaDb(VectorDb):
                 self._collection.add(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
                 log_debug(f"Committed {len(docs)} documents")
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Insert documents asynchronously by running in a thread."""
-        await asyncio.to_thread(self.insert, documents, filters)
+        await asyncio.to_thread(self.insert, content_hash, documents, filters)
 
     def upsert_available(self) -> bool:
         """Check if upsert is available in ChromaDB."""
         return True
 
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Upsert documents into the collection.
 
         Args:
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
-        log_debug(f"Upserting {len(documents)} documents")
+        try:
+            if self.content_hash_exists(content_hash):
+                self._delete_by_content_hash(content_hash)
+            self._upsert(content_hash, documents, filters)
+        except Exception as e:
+            logger.error(f"Error upserting documents by content hash: {e}")
+            raise
+
+    def _upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        """Upsert documents into the collection.
+
+        Args:
+            documents (List[Document]): List of documents to upsert
+            filters (Optional[Dict[str, Any]]): Filters to apply while upserting
+        """
+        log_info(f"Upserting {len(documents)} documents")
         ids: List = []
         docs: List = []
         docs_embeddings: List = []
@@ -224,6 +217,8 @@ class ChromaDb(VectorDb):
             if document.content_id is not None:
                 metadata["content_id"] = document.content_id
 
+            metadata["content_hash"] = content_hash
+
             docs_embeddings.append(document.embedding)
             docs.append(cleaned_content)
             ids.append(doc_id)
@@ -237,9 +232,11 @@ class ChromaDb(VectorDb):
                 self._collection.upsert(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
                 log_debug(f"Committed {len(docs)} documents")
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Upsert documents asynchronously by running in a thread."""
-        await asyncio.to_thread(self.upsert, documents, filters)
+        await asyncio.to_thread(self.upsert, content_hash, documents, filters)
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Search the collection for a query.
@@ -489,8 +486,73 @@ class ChromaDb(VectorDb):
             logger.error(f"Error deleting documents by content_id '{content_id}': {e}")
             return False
 
+    def _delete_by_content_hash(self, content_hash: str) -> bool:
+        """Delete documents by content hash."""
+        if not self.client:
+            logger.error("Client not initialized")
+            return False
+
+        try:
+            collection: Collection = self.client.get_collection(name=self.collection_name)
+
+            # Find all documents with the given content_hash
+            result = collection.get(where={"content_hash": {"$eq": content_hash}})
+            ids_to_delete = result.get("ids", [])
+
+            if not ids_to_delete:
+                log_info(f"No documents found with content_hash '{content_hash}'")
+                return False
+
+            # Delete all matching documents
+            collection.delete(ids=ids_to_delete)
+            log_info(f"Deleted {len(ids_to_delete)} documents with content_hash '{content_hash}'")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting documents by content_hash '{content_hash}': {e}")
+            return False
+
     def id_exists(self, id: str) -> bool:
-        raise NotImplementedError
+        """Check if a document with the given ID exists in the collection.
+
+        Args:
+            id (str): The document ID to check.
+
+        Returns:
+            bool: True if the document exists, False otherwise.
+        """
+        if not self.client:
+            logger.error("Client not initialized")
+            return False
+
+        try:
+            collection: Collection = self.client.get_collection(name=self.collection_name)
+
+            # Try to get the document by ID
+            result = collection.get(ids=[id])
+            found_ids = result.get("ids", [])
+
+            # Return True if the document was found
+            return len(found_ids) > 0
+        except Exception as e:
+            logger.error(f"Error checking if ID '{id}' exists: {e}")
+            return False
 
     def content_hash_exists(self, content_hash: str) -> bool:
-        raise NotImplementedError
+        """Check if documents with the given content hash exist."""
+        if not self.client:
+            logger.error("Client not initialized")
+            return False
+
+        try:
+            collection: Collection = self.client.get_collection(name=self.collection_name)
+
+            # Find all documents with the given content_hash
+            result = collection.get(where={"content_hash": {"$eq": content_hash}})
+            found_ids = result.get("ids", [])
+
+            # Return True if any documents were found
+            return len(found_ids) > 0
+
+        except Exception as e:
+            logger.error(f"Error checking if content_hash '{content_hash}' exists: {e}")
+            return False

@@ -531,7 +531,15 @@ class Knowledge:
                 log_info(f"Using reader: {content.reader.__class__.__name__} to read content")
                 read_documents = content.reader.read(content_io, name=name)
             else:
-                read_documents = self.text_reader.read(content_io, name=name)
+                text_reader = self.text_reader
+                if text_reader:
+                    read_documents = text_reader.read(content_io, name=name)
+                else:
+                    content.status = "Failed"
+                    content.status_message = "Text reader not available"
+                    completed = False
+                    self._update_content(content)
+                    return
 
         elif isinstance(content.file_data, FileData):
             if content.file_data.type:
@@ -953,8 +961,10 @@ class Knowledge:
     # --- Reader Factory Integration ---
 
     def construct_readers(self):
-        """Construct readers using the ReaderFactory."""
-        self.readers = ReaderFactory.create_all_readers()
+        """Initialize readers dictionary for lazy loading."""
+        # Initialize empty readers dict - readers will be created on-demand
+        if self.readers is None:
+            self.readers = {}
 
     def add_reader(self, reader: Reader):
         """Add a custom reader to the knowledge base."""
@@ -967,9 +977,10 @@ class Knowledge:
         return reader
 
     def get_readers(self) -> List[Reader]:
-        """Get all available readers."""
+        """Get all currently loaded readers (only returns readers that have been used)."""
         if self.readers is None:
-            return []
+            self.readers = {}
+        
         return list(self.readers.values())
 
     def _generate_reader_key(self, reader: Reader) -> str:
@@ -1000,62 +1011,81 @@ class Knowledge:
 
     # --- Convenience Properties for Backward Compatibility ---
 
+    def _get_reader(self, reader_type: str) -> Optional[Reader]:
+        """Get a cached reader or create it if not cached, handling missing dependencies gracefully."""
+        if self.readers is None:
+            self.readers = {}
+        
+        if reader_type not in self.readers:
+            try:
+                reader = ReaderFactory.create_reader(reader_type)
+                if reader:
+                    self.readers[reader_type] = reader
+                else:
+                    return None
+
+            except Exception as e:
+                log_warning(f"Cannot create {reader_type} reader {e}")
+                return None
+        
+        return self.readers.get(reader_type)
+
     @property
-    def pdf_reader(self) -> Reader:
+    def pdf_reader(self) -> Optional[Reader]:
         """PDF reader - lazy loaded via factory."""
-        return ReaderFactory.create_reader("pdf")
+        return self._get_reader("pdf")
 
     @property
-    def csv_reader(self) -> Reader:
+    def csv_reader(self) -> Optional[Reader]:
         """CSV reader - lazy loaded via factory."""
-        return ReaderFactory.create_reader("csv")
+        return self._get_reader("csv")
 
     @property
-    def docx_reader(self) -> Reader:
+    def docx_reader(self) -> Optional[Reader]:
         """Docx reader - lazy loaded via factory."""
-        return ReaderFactory.create_reader("docx")
+        return self._get_reader("docx")
 
     @property
-    def json_reader(self) -> Reader:
+    def json_reader(self) -> Optional[Reader]:
         """JSON reader - lazy loaded via factory."""
-        return ReaderFactory.create_reader("json")
+        return self._get_reader("json")
 
     @property
-    def markdown_reader(self) -> Reader:
+    def markdown_reader(self) -> Optional[Reader]:
         """Markdown reader - lazy loaded via factory."""
-        return ReaderFactory.create_reader("markdown")
+        return self._get_reader("markdown")
 
     @property
-    def text_reader(self) -> Reader:
+    def text_reader(self) -> Optional[Reader]:
         """Text reader - lazy loaded via factory."""
-        return ReaderFactory.create_reader("text")
+        return self._get_reader("text")
 
     @property
-    def website_reader(self) -> Reader:
+    def website_reader(self) -> Optional[Reader]:
         """Website reader - lazy loaded via factory."""
-        return ReaderFactory.create_reader("website")
+        return self._get_reader("website")
 
     @property
-    def firecrawl_reader(self) -> Reader:
+    def firecrawl_reader(self) -> Optional[Reader]:
         """Firecrawl reader - lazy loaded via factory."""
-        return ReaderFactory.create_reader("firecrawl")
+        return self._get_reader("firecrawl")
 
     @property
-    def url_reader(self) -> Reader:
+    def url_reader(self) -> Optional[Reader]:
         """URL reader - lazy loaded via factory."""
-        return ReaderFactory.create_reader("url")
+        return self._get_reader("url")
 
     @property
-    def pdf_url_reader(self) -> Reader:
+    def pdf_url_reader(self) -> Optional[Reader]:
         """PDF URL reader - lazy loaded via factory."""
-        return ReaderFactory.create_reader("pdf_url")
+        return self._get_reader("pdf_url")
 
     @property
-    def youtube_reader(self) -> Reader:
+    def youtube_reader(self) -> Optional[Reader]:
         """YouTube reader - lazy loaded via factory."""
-        return ReaderFactory.create_reader("youtube")
+        return self._get_reader("youtube")
 
     @property
-    def csv_url_reader(self) -> Reader:
+    def csv_url_reader(self) -> Optional[Reader]:
         """CSV URL reader - lazy loaded via factory."""
-        return ReaderFactory.create_reader("csv_url")
+        return self._get_reader("csv_url")

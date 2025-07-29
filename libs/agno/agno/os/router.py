@@ -1,15 +1,16 @@
 import json
-from typing import AsyncGenerator, List, Optional, cast
+from typing import AsyncGenerator, Callable, List, Optional, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse, JSONResponse
 
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.apps.utils import PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     AgentResponse,
     AgentSessionDetailSchema,
@@ -29,6 +30,7 @@ from agno.os.schema import (
     WorkflowRunRequest,
     WorkflowSummaryResponse,
 )
+from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     get_agent_by_id,
     get_team_by_id,
@@ -145,16 +147,20 @@ async def team_response_streamer(
 
 def get_base_router(
     os: "AgentOS",
+    settings: AgnoAPISettings = AgnoAPISettings(),
 ) -> APIRouter:
-    router = APIRouter(tags=["Built-In"])
+    router = APIRouter(tags=["Core"], dependencies=[Depends(get_authentication_dependency(settings))])
 
-    # -- Util routes ---
+    # -- Main Routes ---
+    @router.get("/health")
+    async def health_check():
+        return JSONResponse(content={"status": "ok"})
 
-    @router.get("/status")
-    async def status():
-        return {"status": "available"}
-
-    @router.get("/config", response_model=ConfigResponse, response_model_exclude_none=True)
+    @router.get(
+        "/config",
+        response_model=ConfigResponse,
+        response_model_exclude_none=True,
+    )
     async def config() -> ConfigResponse:
         apps_response = AppsResponse(
             session=[
@@ -220,7 +226,11 @@ def get_base_router(
             else [],
         )
 
-    @router.get("/models", response_model=List[Model], response_model_exclude_none=True)
+    @router.get(
+        "/models",
+        response_model=List[Model],
+        response_model_exclude_none=True,
+    )
     async def get_models():
         """Return the list of all models used by agents and teams in the contextual OS"""
         all_components = []
@@ -344,7 +354,9 @@ def get_base_router(
             )
             return run_response.to_dict()
 
-    @router.post("/agents/{agent_id}/runs/{run_id}/continue")
+    @router.post(
+        "/agents/{agent_id}/runs/{run_id}/continue",
+    )
     async def continue_agent_run(
         agent_id: str,
         run_id: str,
@@ -402,7 +414,10 @@ def get_base_router(
             )
             return run_response_obj.to_dict()
 
-    @router.delete("/agents/{agent_id}/sessions/{session_id}", status_code=204)
+    @router.delete(
+        "/agents/{agent_id}/sessions/{session_id}",
+        status_code=204,
+    )
     async def delete_agent_session(agent_id: str, session_id: str) -> None:
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
@@ -412,7 +427,11 @@ def get_base_router(
 
         agent.db.delete_session(session_id=session_id, session_type=SessionType.AGENT)
 
-    @router.get("/agents", response_model=List[AgentResponse], response_model_exclude_none=True)
+    @router.get(
+        "/agents",
+        response_model=List[AgentResponse],
+        response_model_exclude_none=True,
+    )
     async def get_agents():
         if os.agents is None:
             return []
@@ -459,7 +478,11 @@ def get_base_router(
             ),
         )
 
-    @router.get("/agents/{agent_id}/sessions/{session_id}", response_model=AgentSessionDetailSchema, status_code=200)
+    @router.get(
+        "/agents/{agent_id}/sessions/{session_id}",
+        response_model=AgentSessionDetailSchema,
+        status_code=200,
+    )
     async def get_agent_session_by_id(
         agent_id: str,
         session_id: str,
@@ -499,7 +522,10 @@ def get_base_router(
 
         return [RunSchema.from_dict(run) for run in session["runs"]]  # type: ignore
 
-    @router.get("/agents/{agent_id}", response_model=AgentResponse)
+    @router.get(
+        "/agents/{agent_id}",
+        response_model=AgentResponse,
+    )
     async def get_agent(agent_id: str):
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
@@ -507,7 +533,10 @@ def get_base_router(
 
         return AgentResponse.from_agent(agent)
 
-    @router.post("/agents/{agent_id}/sessions/{session_id}/rename", response_model=AgentSessionDetailSchema)
+    @router.post(
+        "/agents/{agent_id}/sessions/{session_id}/rename",
+        response_model=AgentSessionDetailSchema,
+    )
     async def rename_agent_session(
         agent_id: str,
         session_id: str,
@@ -633,7 +662,10 @@ def get_base_router(
             )
             return run_response.to_dict()
 
-    @router.delete("/teams/{team_id}/sessions/{session_id}", status_code=204)
+    @router.delete(
+        "/teams/{team_id}/sessions/{session_id}",
+        status_code=204,
+    )
     async def delete_team_session(team_id: str, session_id: str) -> None:
         team = get_team_by_id(team_id, os.teams)
         if team is None:
@@ -643,7 +675,11 @@ def get_base_router(
 
         team.db.delete_session(session_id=session_id, session_type=SessionType.TEAM)
 
-    @router.get("/teams", response_model=List[TeamResponse], response_model_exclude_none=True)
+    @router.get(
+        "/teams",
+        response_model=List[TeamResponse],
+        response_model_exclude_none=True,
+    )
     async def get_teams():
         if os.teams is None:
             return []
@@ -693,7 +729,11 @@ def get_base_router(
             ),
         )
 
-    @router.get("/teams/{team_id}/sessions/{session_id}", response_model=TeamSessionDetailSchema, status_code=200)
+    @router.get(
+        "/teams/{team_id}/sessions/{session_id}",
+        response_model=TeamSessionDetailSchema,
+        status_code=200,
+    )
     async def get_team_session_by_id(
         team_id: str,
         session_id: str,
@@ -711,7 +751,11 @@ def get_base_router(
 
         return TeamSessionDetailSchema.from_session(session)  # type: ignore
 
-    @router.get("/teams/{team_id}/sessions/{session_id}/runs", response_model=List[TeamRunSchema], status_code=200)
+    @router.get(
+        "/teams/{team_id}/sessions/{session_id}/runs",
+        response_model=List[TeamRunSchema],
+        status_code=200,
+    )
     async def get_team_session_runs(
         team_id: str,
         session_id: str,
@@ -733,7 +777,10 @@ def get_base_router(
 
         return [TeamRunSchema.from_dict(run) for run in runs]
 
-    @router.get("/teams/{team_id}", response_model=TeamResponse)
+    @router.get(
+        "/teams/{team_id}",
+        response_model=TeamResponse,
+    )
     async def get_team(team_id: str):
         team = get_team_by_id(team_id, os.teams)
         if team is None:
@@ -741,7 +788,10 @@ def get_base_router(
 
         return TeamResponse.from_team(team)
 
-    @router.post("/teams/{team_id}/sessions/{session_id}/rename", response_model=TeamSessionDetailSchema)
+    @router.post(
+        "/teams/{team_id}/sessions/{session_id}/rename",
+        response_model=TeamSessionDetailSchema,
+    )
     async def rename_team_session(
         team_id: str,
         session_id: str,
@@ -761,7 +811,11 @@ def get_base_router(
 
     # -- Workflow routes ---
 
-    @router.get("/workflows", response_model=List[WorkflowResponse], response_model_exclude_none=True)
+    @router.get(
+        "/workflows",
+        response_model=List[WorkflowResponse],
+        response_model_exclude_none=True,
+    )
     async def get_workflows():
         if os.workflows is None:
             return []
@@ -775,7 +829,10 @@ def get_base_router(
             for workflow in os.workflows
         ]
 
-    @router.get("/workflows/{workflow_id}", response_model=WorkflowResponse)
+    @router.get(
+        "/workflows/{workflow_id}",
+        response_model=WorkflowResponse,
+    )
     async def get_workflow(workflow_id: str):
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
