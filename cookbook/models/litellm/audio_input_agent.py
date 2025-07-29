@@ -1,5 +1,5 @@
 import requests
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent
 from agno.media import Audio
 from agno.models.litellm import LiteLLM
 
@@ -9,12 +9,13 @@ response = requests.get(url)
 response.raise_for_status()
 mp3_data = response.content
 
-# Provide the agent with the audio file and get result as text
-# Note: Audio input requires specific audio-enabled models like gpt-4o-audio-preview
+# Audio input requires specific audio-enabled models like gpt-4o-audio-preview
 agent = Agent(
     model=LiteLLM(id="gpt-4o-audio-preview"),
     markdown=True,
 )
 agent.print_response(
-    "What is in this audio?", audio=[Audio(content=mp3_data, format="mp3")], stream=True
+    "What's the audio about?",
+    audio=[Audio(content=mp3_data, format="mp3")],
+    stream=True,
 )

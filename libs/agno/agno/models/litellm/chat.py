@@ -77,21 +77,27 @@ class LiteLLM(Model):
             # Handle media
             if (m.images is not None and len(m.images) > 0) or (m.audio is not None and len(m.audio) > 0):
                 if isinstance(m.content, str):
-                    msg["content"] = [{"type": "text", "text": m.content}]
+                    content_list = [{"type": "text", "text": m.content}]
                     if m.images is not None:
-                        msg["content"].extend(images_to_message(images=m.images))
+                        content_list.extend(images_to_message(images=m.images))
                     if m.audio is not None:
-                        msg["content"].extend(audio_to_message(audio=m.audio))
+                        content_list.extend(audio_to_message(audio=m.audio))
+                    msg["content"] = content_list
 
             if m.videos is not None and len(m.videos) > 0:
                 log_warning("Video input is currently unsupported by LLM providers.")
 
             # Handle files
             if m.files is not None:
+                if isinstance(msg["content"], str):
+                    content_list = [{"type": "text", "text": msg["content"]}]
+                else:
+                    content_list = msg["content"]
                 for file in m.files:
                     file_part = _format_file_for_message(file)
                     if file_part:
-                        msg["content"].append(file_part)
+                        content_list.append(file_part)
+                msg["content"] = content_list
 
             # Handle tool calls in assistant messages
             if m.role == "assistant" and m.tool_calls:
