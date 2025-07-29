@@ -1,6 +1,7 @@
 """AgentOS Demo"""
 
 from textwrap import dedent
+
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.eval.accuracy import AccuracyEval

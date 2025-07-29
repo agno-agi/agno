@@ -3,7 +3,7 @@ from typing import AsyncGenerator, List, Optional, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Body, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
@@ -40,8 +40,10 @@ from agno.os.utils import (
 )
 from agno.run.response import RunResponse, RunResponseErrorEvent
 from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
+from agno.run.v2.workflow import WorkflowErrorEvent
 from agno.team.team import Team
 from agno.utils.log import log_debug, log_error, log_warning, logger
+from agno.workflow.v2.workflow import Workflow
 
 
 async def agent_response_streamer(
@@ -138,6 +140,34 @@ async def team_response_streamer(
         traceback.print_exc()
         error_response = TeamRunResponseErrorEvent(
             content=str(e),
+        )
+        yield error_response.to_json()
+        return
+
+
+async def workflow_response_streamer(
+    workflow: Workflow,
+    message: Optional[str] = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> AsyncGenerator:
+    try:
+        run_response = await workflow.arun(
+            message,
+            session_id=session_id,
+            user_id=user_id,
+            stream=True,
+            stream_intermediate_steps=True,
+        )
+
+        async for run_response_chunk in run_response:
+            yield run_response_chunk.to_json()
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
+        error_response = WorkflowErrorEvent(
+            error=str(e),
         )
         yield error_response.to_json()
         return
@@ -760,60 +790,50 @@ def get_base_router(
 
     # -- Workflow routes ---
 
-    @router.get("/workflows", response_model=List[WorkflowResponse], response_model_exclude_none=True)
-    async def get_workflows():
-        if os.workflows is None:
-            return []
-
-        return [
-            WorkflowResponse(
-                workflow_id=str(workflow.workflow_id),
-                name=workflow.name,
-                description=workflow.description,
-            )
-            for workflow in os.workflows
-        ]
-
-    @router.get("/workflows/{workflow_id}", response_model=WorkflowResponse)
-    async def get_workflow(workflow_id: str):
-        workflow = get_workflow_by_id(workflow_id, os.workflows)
-        if workflow is None:
-            raise HTTPException(status_code=404, detail="Workflow not found")
-
-        return WorkflowResponse(
-            workflow_id=workflow.workflow_id,
-            name=workflow.name,
-            description=workflow.description,
-        )
-
     @router.post("/workflows/{workflow_id}/runs")
-    async def create_workflow_run(workflow_id: str, body: WorkflowRunRequest):
+    async def create_workflow_run(
+        workflow_id: str,
+        message: str = Form(...),
+        stream: bool = Form(True),
+        session_id: Optional[str] = Form(None),
+        user_id: Optional[str] = Form(None),
+    ):
         # Retrieve the workflow by ID
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        if body.session_id is not None:
-            logger.debug(f"Continuing session: {body.session_id}")
+        if session_id is not None and session_id != "":
+            logger.debug(f"Continuing session: {session_id}")
         else:
             logger.debug("Creating new session")
+            session_id = str(uuid4())
 
-        # Create a new instance of this workflow
-        new_workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id, "session_id": body.session_id})
-        new_workflow_instance.user_id = body.user_id
-        new_workflow_instance.session_name = None
-
-        # Return based on the response type
+        # Return based on stream parameter
         try:
-            if new_workflow_instance._run_return_type == "RunResponse":
-                # Return as a normal response
-                return new_workflow_instance.run(**body.input)
-            else:
-                # Return as a streaming response
+            if stream:
                 return StreamingResponse(
-                    (result.to_json() for result in new_workflow_instance.run(**body.input)),
+                    workflow_response_streamer(
+                        workflow,
+                        message=message,
+                        session_id=session_id,
+                        user_id=user_id,
+                    ),
                     media_type="text/event-stream",
+                    headers={
+                        "Access-Control-Allow-Origin": "*",
+                        "Access-Control-Allow-Methods": "POST, OPTIONS",
+                        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+                    },
                 )
+            else:
+                run_response = await workflow.arun(
+                    message=message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    stream=False,
+                )
+                return run_response.to_dict()
         except Exception as e:
             # Handle unexpected runtime errors
             raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")

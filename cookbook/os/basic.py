@@ -2,7 +2,8 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.os import AgentOS
 from agno.team import Team
-from agno.workflow import Workflow
+from agno.workflow.v2.step import Step
+from agno.workflow.v2.workflow import Workflow
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
@@ -32,6 +33,13 @@ basic_workflow = Workflow(
     workflow_id="basic-workflow",
     name="Basic Workflow",
     description="Just a simple workflow",
+    steps=[
+        Step(
+            name="step1",
+            description="Just a simple step",
+            agent=basic_agent,
+        )
+    ],
 )
 
 agent_os = AgentOS(
@@ -44,4 +52,4 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="basic:app", reload=True)
+    agent_os.serve(app="test:app", reload=True)
