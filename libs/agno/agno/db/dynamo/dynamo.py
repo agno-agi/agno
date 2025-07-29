@@ -51,7 +51,7 @@ class DynamoDb(BaseDb):
         aws_access_key_id: Optional[str] = None,
         aws_secret_access_key: Optional[str] = None,
         session_table: Optional[str] = None,
-        user_memory_table: Optional[str] = None,
+        memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
@@ -65,14 +65,14 @@ class DynamoDb(BaseDb):
             aws_access_key_id: AWS access key ID.
             aws_secret_access_key: AWS secret access key.
             session_table: The name of the session table.
-            user_memory_table: The name of the user memory table.
+            memory_table: The name of the memory table.
             metrics_table: The name of the metrics table.
             eval_table: The name of the eval table.
             knowledge_table: The name of the knowledge table.
         """
         super().__init__(
             session_table=session_table,
-            user_memory_table=user_memory_table,
+            memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
@@ -101,7 +101,7 @@ class DynamoDb(BaseDb):
     def _create_tables(self):
         tables_to_create = [
             (self.session_table_name, "sessions"),
-            (self.user_memory_table_name, "user_memories"),
+            (self.memory_table_name, "memories"),
             (self.metrics_table_name, "metrics"),
             (self.eval_table_name, "evals"),
             (self.knowledge_table_name, "knowledge_sources"),
@@ -140,7 +140,7 @@ class DynamoDb(BaseDb):
         Get table name and ensure the table exists, creating it if needed.
 
         Args:
-            table_type: Type of table ("sessions", "user_memories", "metrics", "evals", "knowledge_sources")
+            table_type: Type of table ("sessions", "memories", "metrics", "evals", "knowledge_sources")
 
         Returns:
             str: The table name
@@ -154,10 +154,10 @@ class DynamoDb(BaseDb):
             if self.session_table_name is None:
                 raise ValueError("Session table was not provided on initialization")
             table_name = self.session_table_name
-        elif table_type == "user_memories":
-            if self.user_memory_table_name is None:
-                raise ValueError("User memory table was not provided on initialization")
-            table_name = self.user_memory_table_name
+        elif table_type == "memories":
+            if self.memory_table_name is None:
+                raise ValueError("Memory table was not provided on initialization")
+            table_name = self.memory_table_name
         elif table_type == "metrics":
             if self.metrics_table_name is None:
                 raise ValueError("Metrics table was not provided on initialization")
@@ -535,7 +535,7 @@ class DynamoDb(BaseDb):
         """
         try:
             self.client.delete_item(
-                TableName=self.user_memory_table_name,
+                TableName=self.memory_table_name,
                 Key={"memory_id": {"S": memory_id}},
             )
             log_debug(f"Deleted user memory {memory_id}")
@@ -562,7 +562,7 @@ class DynamoDb(BaseDb):
                 for memory_id in batch:
                     delete_requests.append({"DeleteRequest": {"Key": {"memory_id": {"S": memory_id}}}})
 
-                self.client.batch_write_item(RequestItems={self.user_memory_table_name: delete_requests})
+                self.client.batch_write_item(RequestItems={self.memory_table_name: delete_requests})
 
         except Exception as e:
             log_error(f"Failed to delete user memories: {e}")
@@ -574,7 +574,7 @@ class DynamoDb(BaseDb):
             List[str]: List of unique memory topics.
         """
         try:
-            table_name = self._get_table("user_memories")
+            table_name = self._get_table("memories")
 
             # Scan the entire table to get all memories
             response = self.client.scan(TableName=table_name)
@@ -614,7 +614,7 @@ class DynamoDb(BaseDb):
             Exception: If any error occurs while getting the user memory.
         """
         try:
-            table_name = self._get_table("user_memories")
+            table_name = self._get_table("memories")
             response = self.client.get_item(TableName=table_name, Key={"memory_id": {"S": memory_id}})
 
             item = response.get("Item")
@@ -668,7 +668,7 @@ class DynamoDb(BaseDb):
             Exception: If any error occurs while getting the user memories.
         """
         try:
-            table_name = self._get_table("user_memories")
+            table_name = self._get_table("memories")
 
             # Build filter expressions for component filters
             (
@@ -783,7 +783,7 @@ class DynamoDb(BaseDb):
         )
         """
         try:
-            table_name = self._get_table("user_memories")
+            table_name = self._get_table("memories")
 
             response = self.client.scan(TableName=table_name)
             items = response.get("Items", [])
@@ -855,7 +855,7 @@ class DynamoDb(BaseDb):
             Optional[Dict[str, Any]]: The upserted memory data if successful, None otherwise.
         """
         try:
-            table_name = self._get_table("user_memories")
+            table_name = self._get_table("memories")
             memory_dict = memory.to_dict()
             memory_dict["last_updated"] = datetime.now(timezone.utc).isoformat()
             item = serialize_to_dynamo_item(memory_dict)
@@ -872,6 +872,45 @@ class DynamoDb(BaseDb):
         except Exception as e:
             log_error(f"Failed to upsert user memory: {e}")
             return None
+
+    def clear_memories(self) -> None:
+        """Delete all memories from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table_name = self._get_table("memories")
+
+            # Scan the table to get all items
+            response = self.client.scan(TableName=table_name)
+            items = response.get("Items", [])
+
+            # Handle pagination for scan
+            while "LastEvaluatedKey" in response:
+                response = self.client.scan(TableName=table_name, ExclusiveStartKey=response["LastEvaluatedKey"])
+                items.extend(response.get("Items", []))
+
+            if not items:
+                return
+
+            # Delete items in batches
+            for i in range(0, len(items), DYNAMO_BATCH_SIZE_LIMIT):
+                batch = items[i : i + DYNAMO_BATCH_SIZE_LIMIT]
+
+                delete_requests = []
+                for item in batch:
+                    # Extract the memory_id from the item
+                    memory_id = item.get("memory_id", {}).get("S")
+                    if memory_id:
+                        delete_requests.append({"DeleteRequest": {"Key": {"memory_id": {"S": memory_id}}}})
+
+                if delete_requests:
+                    self.client.batch_write_item(RequestItems={table_name: delete_requests})
+
+        except Exception as e:
+            from agno.utils.log import log_warning
+            log_warning(f"Exception deleting all memories: {e}")
 
     # --- Metrics ---
 

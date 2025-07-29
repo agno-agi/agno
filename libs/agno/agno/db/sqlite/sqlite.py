@@ -39,7 +39,7 @@ class SqliteDb(BaseDb):
         db_url: Optional[str] = None,
         db_file: Optional[str] = None,
         session_table: Optional[str] = None,
-        user_memory_table: Optional[str] = None,
+        memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
@@ -58,7 +58,7 @@ class SqliteDb(BaseDb):
             db_url (Optional[str]): The database URL to connect to.
             db_file (Optional[str]): The database file to connect to.
             session_table (Optional[str]): Name of the table to store Agent, Team and Workflow sessions.
-            user_memory_table (Optional[str]): Name of the table to store user memories.
+            memory_table (Optional[str]): Name of the table to store user memories.
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge documents data.
@@ -68,7 +68,7 @@ class SqliteDb(BaseDb):
         """
         super().__init__(
             session_table=session_table,
-            user_memory_table=user_memory_table,
+            memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
@@ -188,16 +188,14 @@ class SqliteDb(BaseDb):
 
             return self.session_table
 
-        elif table_type == "user_memories":
-            if not hasattr(self, "user_memory_table"):
-                if self.user_memory_table_name is None:
-                    raise ValueError("User memory table was not provided on initialization")
+        elif table_type == "memories":
+            if not hasattr(self, "memory_table"):
+                if self.memory_table_name is None:
+                    raise ValueError("Memory table was not provided on initialization")
 
-                self.user_memory_table = self._get_or_create_table(
-                    table_name=self.user_memory_table_name, table_type="user_memories"
-                )
+                self.memory_table = self._get_or_create_table(table_name=self.memory_table_name, table_type="memories")
 
-            return self.user_memory_table
+            return self.memory_table
 
         elif table_type == "metrics":
             if not hasattr(self, "metrics_table"):
@@ -670,7 +668,7 @@ class SqliteDb(BaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            table = self._get_table(table_type="user_memories")
+            table = self._get_table(table_type="memories")
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id == memory_id)
@@ -698,7 +696,7 @@ class SqliteDb(BaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            table = self._get_table(table_type="user_memories")
+            table = self._get_table(table_type="memories")
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
@@ -716,7 +714,7 @@ class SqliteDb(BaseDb):
             List[str]: List of memory topics.
         """
         try:
-            table = self._get_table(table_type="user_memories")
+            table = self._get_table(table_type="memories")
 
             with self.Session() as sess, sess.begin():
                 stmt = select(func.json_array_elements_text(table.c.topics))
@@ -745,7 +743,7 @@ class SqliteDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="user_memories")
+            table = self._get_table(table_type="memories")
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.memory_id == memory_id)
@@ -801,7 +799,7 @@ class SqliteDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="user_memories")
+            table = self._get_table(table_type="memories")
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -837,12 +835,12 @@ class SqliteDb(BaseDb):
                 if not result:
                     return [] if deserialize else ([], 0)
 
-                user_memories_raw = [record._mapping for record in result]
+                memories_raw = [record._mapping for record in result]
 
                 if not deserialize:
-                    return user_memories_raw, total_count
+                    return memories_raw, total_count
 
-            return [UserMemory.from_dict(record) for record in user_memories_raw]
+            return [UserMemory.from_dict(record) for record in memories_raw]
 
         except Exception as e:
             log_error(f"Error reading from memory table: {e}")
@@ -875,7 +873,7 @@ class SqliteDb(BaseDb):
         )
         """
         try:
-            table = self._get_table(table_type="user_memories")
+            table = self._get_table(table_type="memories")
 
             with self.Session() as sess, sess.begin():
                 stmt = (
@@ -933,7 +931,7 @@ class SqliteDb(BaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = self._get_table(table_type="user_memories")
+            table = self._get_table(table_type="memories")
             if memory.memory_id is None:
                 memory.memory_id = str(uuid4())
 
@@ -945,6 +943,7 @@ class SqliteDb(BaseDb):
                     memory_id=memory.memory_id,
                     memory=memory.memory,
                     topics=memory.topics,
+                    input=memory.input,
                     last_updated=int(time.time()),
                 )
                 stmt = stmt.on_conflict_do_update(
@@ -952,6 +951,7 @@ class SqliteDb(BaseDb):
                     set_=dict(
                         memory=memory.memory,
                         topics=memory.topics,
+                        input=memory.input,
                         last_updated=int(time.time()),
                     ),
                 ).returning(table)
@@ -964,15 +964,30 @@ class SqliteDb(BaseDb):
 
             log_debug(f"Upserted user memory with id '{memory.memory_id}'")
 
-            user_memory_raw = row._mapping
-            if not user_memory_raw or not deserialize:
-                return user_memory_raw
+            memory_raw = row._mapping
+            if not memory_raw or not deserialize:
+                return memory_raw
 
-            return UserMemory.from_dict(user_memory_raw)
+            return UserMemory.from_dict(memory_raw)
 
         except Exception as e:
             log_error(f"Error upserting user memory: {e}")
             return None
+
+    def clear_memories(self) -> None:
+        """Delete all memories from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            table = self._get_table(table_type="memories")
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.delete())
+
+        except Exception as e:
+            from agno.utils.log import log_warning
+            log_warning(f"Exception deleting all memories: {e}")
 
     # -- Metrics methods --
 

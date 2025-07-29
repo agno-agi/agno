@@ -455,3 +455,9 @@ class UpstashVectorDb(VectorDb):
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    def id_exists(self, id: str) -> bool:
+        raise NotImplementedError
+
+    def content_hash_exists(self, content_hash: str) -> bool:
+        raise NotImplementedError

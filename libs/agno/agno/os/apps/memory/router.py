@@ -33,6 +33,10 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
 
         return UserMemorySchema.from_dict(user_memory)  # type: ignore
 
+    @router.delete("/memories/{memory_id}", status_code=204)
+    async def delete_memory(memory_id: str = Path()) -> None:
+        db.delete_user_memory(memory_id=memory_id)
+
     @router.delete("/memories", status_code=204)
     async def delete_memories(request: DeleteMemoriesRequest) -> None:
         db.delete_user_memories(memory_ids=request.memory_ids)

@@ -488,3 +488,9 @@ class ChromaDb(VectorDb):
         except Exception as e:
             logger.error(f"Error deleting documents by content_id '{content_id}': {e}")
             return False
+
+    def id_exists(self, id: str) -> bool:
+        raise NotImplementedError
+
+    def content_hash_exists(self, content_hash: str) -> bool:
+        raise NotImplementedError

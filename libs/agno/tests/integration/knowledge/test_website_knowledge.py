@@ -3,7 +3,8 @@ import os
 import pytest
 
 from agno.agent import Agent
-from agno.knowledge.website import WebsiteKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.reader.website_reader import WebsiteReader
 from agno.vectordb.lancedb import LanceDb
 
 
@@ -21,8 +22,12 @@ def test_website_knowledge_base_directory(setup_vector_db):
     """Test loading multiple websites into the knowledge base."""
     urls = ["https://docs.agno.com/introduction/agents", "https://docs.agno.com/introduction/playground"]
 
-    kb = WebsiteKnowledgeBase(urls=urls, max_links=1, vector_db=setup_vector_db)
-    kb.load(recreate=True)
+    kb = Knowledge(vector_db=setup_vector_db)
+
+    kb.add_contents(
+        urls=urls,
+        reader=WebsiteReader(max_links=1),
+    )
 
     assert setup_vector_db.exists()
 
@@ -40,10 +45,11 @@ def test_website_knowledge_base_directory(setup_vector_db):
 
 def test_website_knowledge_base_single_url(setup_vector_db):
     """Test loading a single website into the knowledge base."""
-    kb = WebsiteKnowledgeBase(
-        urls=["https://docs.agno.com/introduction/agents"], max_links=1, vector_db=setup_vector_db
+    kb = Knowledge(vector_db=setup_vector_db)
+    kb.add_contents(
+        urls=["https://docs.agno.com/introduction/agents"],
+        reader=WebsiteReader(max_links=1),
     )
-    kb.load(recreate=True)
 
     assert setup_vector_db.exists()
 
@@ -64,8 +70,11 @@ async def test_website_knowledge_base_async_directory(setup_vector_db):
     """Test asynchronously loading multiple websites into the knowledge base."""
     urls = ["https://docs.agno.com/introduction/agents", "https://docs.agno.com/introduction/playground"]
 
-    kb = WebsiteKnowledgeBase(urls=urls, max_links=1, vector_db=setup_vector_db)
-    await kb.aload(recreate=True)
+    kb = Knowledge(vector_db=setup_vector_db)
+    await kb.async_add_contents(
+        urls=urls,
+        reader=WebsiteReader(max_links=1),
+    )
 
     assert await setup_vector_db.async_exists()
 
@@ -88,10 +97,11 @@ async def test_website_knowledge_base_async_directory(setup_vector_db):
 @pytest.mark.asyncio
 async def test_website_knowledge_base_async_single_url(setup_vector_db):
     """Test asynchronously loading a single website into the knowledge base."""
-    kb = WebsiteKnowledgeBase(
-        urls=["https://docs.agno.com/introduction/agents"], max_links=1, vector_db=setup_vector_db
+    kb = Knowledge(vector_db=setup_vector_db)
+    await kb.async_add_contents(
+        urls=["https://docs.agno.com/introduction/agents"],
+        reader=WebsiteReader(max_links=1),
     )
-    await kb.aload(recreate=True)
 
     assert await setup_vector_db.async_exists()
 

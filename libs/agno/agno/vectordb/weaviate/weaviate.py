@@ -879,3 +879,9 @@ class Weaviate(VectorDb):
             return None
 
         return None
+
+    def id_exists(self, id: str) -> bool:
+        raise NotImplementedError
+
+    def content_hash_exists(self, content_hash: str) -> bool:
+        raise NotImplementedError

@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
 from agno.models.message import Citations, Message
+from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
 from agno.run.base import BaseRunResponseEvent, RunResponseExtraData, RunStatus
 from agno.utils.log import logger
@@ -235,7 +236,7 @@ class RunResponse:
     thinking: Optional[str] = None
     reasoning_content: Optional[str] = None
     messages: Optional[List[Message]] = None
-    metrics: Optional[Dict[str, Any]] = None
+    metrics: Optional[Metrics] = None
     model: Optional[str] = None
     model_provider: Optional[str] = None
     run_id: Optional[str] = None
@@ -298,6 +299,9 @@ class RunResponse:
                 "events",
             ]
         }
+
+        if self.metrics is not None:
+            _dict["metrics"] = self.metrics.to_dict() if isinstance(self.metrics, Metrics) else self.metrics
 
         if self.events is not None:
             _dict["events"] = [e.to_dict() for e in self.events]

@@ -47,24 +47,23 @@ def prepare_knowledge_base(setup_vector_db):
     return kb
 
 
-# async def aprepare_knowledge_base(setup_vector_db):
-#     """Prepare a knowledge base with filtered data asynchronously."""
-#     # Create knowledge base
-#     kb = DocxKnowledgeBase(vector_db=setup_vector_db)
+async def aprepare_knowledge_base(setup_vector_db):
+    """Prepare a knowledge base with filtered data asynchronously."""
+    # Create knowledge base
+    kb = Knowledge(vector_db=setup_vector_db)
 
-#     # Load documents with different user IDs and metadata
-#     await kb.aload_document(
-#         path=get_filtered_data_dir() / "cv_1.docx",
-#         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
-#         recreate=True,
-#     )
+    # Load contents with different user IDs and metadata
+    await kb.async_add_content(
+        path=get_filtered_data_dir() / "cv_1.docx",
+        metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
+    )
 
-#     await kb.aload_document(
-#         path=get_filtered_data_dir() / "cv_2.docx",
-#         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
-#     )
+    await kb.async_add_content(
+        path=get_filtered_data_dir() / "cv_2.docx",
+        metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
+    )
 
-#     return kb
+    return kb
 
 
 def test_docx_knowledge_base_directory(setup_vector_db):
@@ -92,29 +91,31 @@ def test_docx_knowledge_base_directory(setup_vector_db):
     assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
 
 
-# @pytest.mark.asyncio
-# async def test_docx_knowledge_base_async_directory(setup_vector_db):
-#     """Test asynchronously loading a directory of DOCX files into the knowledge base."""
-#     docx_dir = get_test_data_dir()
+@pytest.mark.asyncio
+async def test_docx_knowledge_base_async_directory(setup_vector_db):
+    """Test asynchronously loading a directory of DOCX files into the knowledge base."""
+    docx_dir = get_test_data_dir()
 
-#     kb = DocxKnowledgeBase(path=docx_dir, vector_db=setup_vector_db)
-#     await kb.aload(recreate=True)
+    kb = Knowledge(vector_db=setup_vector_db)
+    await kb.async_add_content(
+        path=docx_dir,
+    )
 
-#     assert await setup_vector_db.async_exists()
-#     assert await setup_vector_db.async_get_count() > 0
+    assert await setup_vector_db.async_exists()
+    assert await setup_vector_db.async_get_count() > 0
 
-#     # Enable search on the agent
-#     agent = Agent(knowledge=kb, search_knowledge=True)
-#     response = await agent.arun("What is the story of little prince about?", markdown=True)
+    # Enable search on the agent
+    agent = Agent(knowledge=kb, search_knowledge=True)
+    response = await agent.arun("What is the story of little prince about?", markdown=True)
 
-#     tool_calls = []
-#     for msg in response.messages:
-#         if msg.tool_calls:
-#             tool_calls.extend(msg.tool_calls)
+    tool_calls = []
+    for msg in response.messages:
+        if msg.tool_calls:
+            tool_calls.extend(msg.tool_calls)
 
-#     function_calls = [call for call in tool_calls if call.get("type") == "function"]
-#     # For async operations, we use search_knowledge_base
-#     assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
+    function_calls = [call for call in tool_calls if call.get("type") == "function"]
+    # For async operations, we use search_knowledge_base
+    assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
 
 
 # for the one with new knowledge filter DX- filters at initialization

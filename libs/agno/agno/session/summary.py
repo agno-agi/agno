@@ -186,9 +186,13 @@ class SessionSummaryManager:
         response_format = self.get_response_format(self.model)
 
         summary_response = self.model.response(messages=messages, response_format=response_format)
-        session.summary = self._process_summary_response(summary_response, self.model)
-        self.summaries_updated = True
-        return session.summary
+        session_summary = self._process_summary_response(summary_response, self.model)
+
+        if session_summary is not None:
+            session.summary = session_summary
+            self.summaries_updated = True
+
+        return session_summary
 
     async def acreate_session_summary(
         self,
@@ -203,6 +207,10 @@ class SessionSummaryManager:
         response_format = self.get_response_format(self.model)
 
         summary_response = await self.model.aresponse(messages=messages, response_format=response_format)
-        session.summary = self._process_summary_response(summary_response, self.model)
-        self.summaries_updated = True
-        return session.summary
+        session_summary = self._process_summary_response(summary_response, self.model)
+
+        if session_summary is not None:
+            session.summary = session_summary
+            self.summaries_updated = True
+
+        return session_summary

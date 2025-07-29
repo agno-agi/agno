@@ -34,7 +34,7 @@ class FirestoreDb(BaseDb):
         db_client: Optional[Client] = None,
         project_id: Optional[str] = None,
         session_collection: Optional[str] = None,
-        user_memory_collection: Optional[str] = None,
+        memory_collection: Optional[str] = None,
         metrics_collection: Optional[str] = None,
         eval_collection: Optional[str] = None,
         knowledge_collection: Optional[str] = None,
@@ -46,7 +46,7 @@ class FirestoreDb(BaseDb):
             db_client (Optional[Client]): The Firestore client to use.
             project_id (Optional[str]): The GCP project ID for Firestore.
             session_collection (Optional[str]): Name of the collection to store sessions.
-            user_memory_collection (Optional[str]): Name of the collection to store user memories.
+            memory_collection (Optional[str]): Name of the collection to store memories.
             metrics_collection (Optional[str]): Name of the collection to store metrics.
             eval_collection (Optional[str]): Name of the collection to store evaluation runs.
             knowledge_collection (Optional[str]): Name of the collection to store knowledge documents.
@@ -56,7 +56,7 @@ class FirestoreDb(BaseDb):
         """
         super().__init__(
             session_table=session_collection,
-            user_memory_table=user_memory_collection,
+            memory_table=memory_collection,
             metrics_table=metrics_collection,
             eval_table=eval_collection,
             knowledge_table=knowledge_collection,
@@ -91,14 +91,14 @@ class FirestoreDb(BaseDb):
                 )
             return self.session_collection
 
-        if table_type == "user_memories":
-            if not hasattr(self, "user_memory_collection"):
-                if self.user_memory_table_name is None:
-                    raise ValueError("User memory collection was not provided on initialization")
-                self.user_memory_collection = self._get_or_create_collection(
-                    collection_name=self.user_memory_table_name, collection_type="user_memories"
+        if table_type == "memories":
+            if not hasattr(self, "memory_collection"):
+                if self.memory_table_name is None:
+                    raise ValueError("Memory collection was not provided on initialization")
+                self.memory_collection = self._get_or_create_collection(
+                    collection_name=self.memory_table_name, collection_type="memories"
                 )
-            return self.user_memory_collection
+            return self.memory_collection
 
         if table_type == "metrics":
             if not hasattr(self, "metrics_collection"):
@@ -536,7 +536,7 @@ class FirestoreDb(BaseDb):
             Exception: If there is an error deleting the memory.
         """
         try:
-            collection_ref = self._get_collection(table_type="user_memories")
+            collection_ref = self._get_collection(table_type="memories")
             docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
 
             deleted_count = 0
@@ -566,7 +566,7 @@ class FirestoreDb(BaseDb):
             Exception: If there is an error deleting the memories.
         """
         try:
-            collection_ref = self._get_collection(table_type="user_memories")
+            collection_ref = self._get_collection(table_type="memories")
             batch = self.db_client.batch()
             deleted_count = 0
 
@@ -579,12 +579,12 @@ class FirestoreDb(BaseDb):
             batch.commit()
 
             if deleted_count == 0:
-                log_info(f"No user memories found with ids: {memory_ids}")
+                log_info(f"No memories found with ids: {memory_ids}")
             else:
-                log_info(f"Successfully deleted {deleted_count} user memories")
+                log_info(f"Successfully deleted {deleted_count} memories")
 
         except Exception as e:
-            log_error(f"Error deleting user memories: {e}")
+            log_error(f"Error deleting memories: {e}")
 
     def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from the database.
@@ -596,7 +596,7 @@ class FirestoreDb(BaseDb):
             Exception: If there is an error getting the topics.
         """
         try:
-            collection_ref = self._get_collection(table_type="user_memories")
+            collection_ref = self._get_collection(table_type="memories")
             docs = collection_ref.stream()
 
             all_topics = set()
@@ -628,7 +628,7 @@ class FirestoreDb(BaseDb):
             Exception: If there is an error getting the memory.
         """
         try:
-            collection_ref = self._get_collection(table_type="user_memories")
+            collection_ref = self._get_collection(table_type="memories")
             docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
 
             result = None
@@ -681,7 +681,7 @@ class FirestoreDb(BaseDb):
             Exception: If there is an error getting the memories.
         """
         try:
-            collection_ref = self._get_collection(table_type="user_memories")
+            collection_ref = self._get_collection(table_type="memories")
             query = collection_ref
 
             if user_id is not None:
@@ -742,7 +742,7 @@ class FirestoreDb(BaseDb):
             Exception: If there is an error getting the memories stats.
         """
         try:
-            collection_ref = self._get_collection(table_type="user_memories")
+            collection_ref = self._get_collection(table_type="memories")
             docs = collection_ref.where(filter=FieldFilter("user_id", "!=", None)).stream()
 
             user_stats = {}
@@ -798,7 +798,7 @@ class FirestoreDb(BaseDb):
             Exception: If there is an error upserting the memory.
         """
         try:
-            collection_ref = self._get_collection(table_type="user_memories")
+            collection_ref = self._get_collection(table_type="memories")
 
             if memory.memory_id is None:
                 memory.memory_id = str(uuid4())
@@ -825,6 +825,40 @@ class FirestoreDb(BaseDb):
         except Exception as e:
             log_error(f"Exception upserting user memory: {e}")
             return None
+
+    def clear_memories(self) -> None:
+        """Delete all memories from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            collection_ref = self._get_collection(table_type="memories")
+            
+            # Get all documents in the collection
+            docs = collection_ref.stream()
+            
+            # Delete all documents in batches
+            batch = self.db_client.batch()
+            batch_count = 0
+            
+            for doc in docs:
+                batch.delete(doc.reference)
+                batch_count += 1
+                
+                # Firestore batch has a limit of 500 operations
+                if batch_count >= 500:
+                    batch.commit()
+                    batch = self.db_client.batch()
+                    batch_count = 0
+            
+            # Commit remaining operations
+            if batch_count > 0:
+                batch.commit()
+
+        except Exception as e:
+            from agno.utils.log import log_warning
+            log_warning(f"Exception deleting all memories: {e}")
 
     # -- Metrics methods --
 

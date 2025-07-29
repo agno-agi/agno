@@ -140,7 +140,11 @@ class MemoryManager:
             memories = self.read_from_db(user_id=user_id)
             if memories is None:
                 return None
-            return memories.get(user_id, []).get(memory_id, None)
+            memories_for_user = memories.get(user_id, [])
+            for memory in memories_for_user:
+                if memory.memory_id == memory_id:
+                    return memory
+            return None
         else:
             log_warning("Memory Db not provided.")
             return None
@@ -440,11 +444,6 @@ class MemoryManager:
         except Exception as e:
             log_warning(f"Error upserting session into db: {e}")
             return None
-
-    def clear(self) -> None:
-        """Clears the memory."""
-        if self.db:
-            self.db.clear_memories()
 
     # -*- Utility Functions
     def search_user_memories(

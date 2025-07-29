@@ -211,6 +211,12 @@ class PerformanceEval:
     # Number of memory allocations to track
     top_n_memory_allocations: int = 5
 
+    # Agent and Team information
+    agent_id: Optional[str] = None
+    team_id: Optional[str] = None
+    model_id: Optional[str] = None
+    model_provider: Optional[str] = None
+
     # If set, results will be saved in the given file path
     file_path_to_save_results: Optional[str] = None
     # Enable debug logs
@@ -496,12 +502,13 @@ class PerformanceEval:
         console = Console()
         with Live(console=console, transient=True) as live_log:
             # 1. Do optional warm-up runs.
-            for i in range(self.warmup_runs):
-                status = Status(f"Warm-up run {i + 1}/{self.warmup_runs}...", spinner="dots", speed=1.0)
-                live_log.update(status)
-                self.func()  # Simply run the function without measuring
-                self._set_log_level()  # Set log level incase function changed it
-                status.stop()
+            if self.warmup_runs is not None:
+                for i in range(self.warmup_runs):
+                    status = Status(f"Warm-up run {i + 1}/{self.warmup_runs}...", spinner="dots", speed=1.0)
+                    live_log.update(status)
+                    self.func()  # Simply run the function without measuring
+                    self._set_log_level()  # Set log level incase function changed it
+                    status.stop()
 
             # 2. Measure runtime
             if self.measure_runtime:
@@ -579,6 +586,10 @@ class PerformanceEval:
                 eval_type=EvalType.PERFORMANCE,
                 name=self.name if self.name is not None else None,
                 evaluated_component_name=self.func.__name__,
+                agent_id=self.agent_id,
+                team_id=self.team_id,
+                model_id=self.model_id,
+                model_provider=self.model_provider,
             )
 
         log_debug(f"*********** Evaluation End: {self.eval_id} ***********")
@@ -619,12 +630,13 @@ class PerformanceEval:
         console = Console()
         with Live(console=console, transient=True) as live_log:
             # 1. Do optional warm-up runs.
-            for i in range(self.warmup_runs):
-                status = Status(f"Warm-up run {i + 1}/{self.warmup_runs}...", spinner="dots", speed=1.0)
-                live_log.update(status)
-                await self.func()  # Simply run the function without measuring
-                self._set_log_level()  # Set log level incase function changed it
-                status.stop()
+            if self.warmup_runs is not None:
+                for i in range(self.warmup_runs):
+                    status = Status(f"Warm-up run {i + 1}/{self.warmup_runs}...", spinner="dots", speed=1.0)
+                    live_log.update(status)
+                    await self.func()  # Simply run the function without measuring
+                    self._set_log_level()  # Set log level incase function changed it
+                    status.stop()
 
             # 2. Measure runtime
             if self.measure_runtime:
@@ -702,6 +714,10 @@ class PerformanceEval:
                 eval_type=EvalType.PERFORMANCE,
                 name=self.name if self.name is not None else None,
                 evaluated_component_name=self.func.__name__,
+                agent_id=self.agent_id,
+                team_id=self.team_id,
+                model_id=self.model_id,
+                model_provider=self.model_provider,
             )
 
         log_debug(f"*********** Evaluation End: {self.eval_id} ***********")

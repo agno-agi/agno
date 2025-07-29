@@ -80,38 +80,39 @@ def test_arxiv_knowledge_base_search_integration(setup_vector_db):
     assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
 
 
-# @pytest.mark.asyncio
-# async def test_arxiv_knowledge_base_async_integration(setup_vector_db):
-#     """Integration test using real arXiv papers with async loading."""
-#     reader = ArxivReader()
-#     knowledge = Knowledge(
-#         # "GPT-3" and "AlphaFold" papers
-#         queries=["2005.14165", "2003.02645"],
-#         vector_db=setup_vector_db,
-#         reader=reader,
-#         max_results=1,  # Limit to exactly one result per query
-#     )
+@pytest.mark.asyncio
+async def test_arxiv_knowledge_base_async_integration(setup_vector_db):
+    """Integration test using real arXiv papers with async loading."""
+    reader = ArxivReader()
+    knowledge = Knowledge(
+        vector_db=setup_vector_db,
+        max_results=1,  # Limit to exactly one result per query
+    )
 
-#     await knowledge.aload(recreate=True)
+    await knowledge.async_add_content(
+        # "GPT-3" and "AlphaFold" papers
+        topics=["2005.14165", "2003.02645"],
+        reader=reader,
+    )
 
-#     assert await setup_vector_db.async_exists()
-#     # Check that we have at least the papers we requested
-#     assert await setup_vector_db.async_get_count() >= 2
+    assert await setup_vector_db.async_exists()
+    # Check that we have at least the papers we requested
+    assert await setup_vector_db.async_get_count() >= 2
 
-#     agent = Agent(
-#         knowledge=knowledge,
-#         search_knowledge=True,
-#         instructions=[
-#             "You are a helpful assistant that can answer questions.",
-#             "You can use the search_knowledge_base tool to search the knowledge base of journal articles for information.",
-#         ],
-#     )
-#     response = await agent.arun("What are the key capabilities of GPT-3?", markdown=True)
+    agent = Agent(
+        knowledge=knowledge,
+        search_knowledge=True,
+        instructions=[
+            "You are a helpful assistant that can answer questions.",
+            "You can use the search_knowledge_base tool to search the knowledge base of journal articles for information.",
+        ],
+    )
+    response = await agent.arun("What are the key capabilities of GPT-3?", markdown=True)
 
-#     tool_calls = []
-#     for msg in response.messages:
-#         if msg.tool_calls:
-#             tool_calls.extend(msg.tool_calls)
+    tool_calls = []
+    for msg in response.messages:
+        if msg.tool_calls:
+            tool_calls.extend(msg.tool_calls)
 
-#     function_calls = [call for call in tool_calls if call.get("type") == "function"]
-#     assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
+    function_calls = [call for call in tool_calls if call.get("type") == "function"]
+    assert any(call["function"]["name"] == "search_knowledge_base" for call in function_calls)
