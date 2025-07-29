@@ -27,13 +27,6 @@ knowledge.add_content(
     upsert=False
 )
 
-knowledge.add_content(
-    name="Recipes",
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-    metadata={"doc_type": "recipe_book"},
-    skip_if_exists=False,
-)
-
 # Create and use the agent
 agent = Agent(knowledge=knowledge, show_tool_calls=True)
 agent.print_response("How to make Tom Kha Gai", markdown=True)
