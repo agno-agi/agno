@@ -30,7 +30,7 @@ docker run -p 27017:27017 -d --name mongodb-container --rm -v ./tmp/mongo-data:/
 """
 
 from agno.agent import Agent
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.mongodb import MongoDb
 
 # MongoDB Atlas connection string
@@ -40,9 +40,9 @@ Example connection strings:
 "mongodb://localhost:27017/agno?authSource=admin"
 """
 mdb_connection_string = "mongodb+srv://<username>:<password>@cluster0.mongodb.net/?retryWrites=true&w=majority"
+mdb_connection_string = "mongodb+srv://willem:DwLfzCQO2D64E0gH@agno.vtlsmyf.mongodb.net/?retryWrites=true&w=majority&appName=Agno"
 
-knowledge_base = PDFUrlKnowledgeBase(
-    urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
+knowledge = Knowledge(
     vector_db=MongoDb(
         collection_name="recipes",
         db_url=mdb_connection_string,
@@ -50,10 +50,13 @@ knowledge_base = PDFUrlKnowledgeBase(
     ),
 )
 
-# Comment out after first run
-knowledge_base.load(recreate=False)
+knowledge.add_content(
+    name="Recipes",
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+    metadata={"doc_type": "recipe_book"},
+)
 
 # Create and use the agent
-agent = Agent(knowledge=knowledge_base, show_tool_calls=True)
+agent = Agent(knowledge=knowledge, show_tool_calls=True)
 
 agent.print_response("How to make Thai curry?", markdown=True)
