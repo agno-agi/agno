@@ -1341,6 +1341,9 @@ class SingleStoreDb(BaseDb):
                         stmt = stmt.offset((page - 1) * limit)
 
                 result = sess.execute(stmt).fetchall()
+                if result is None:
+                    return [], 0
+
                 return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
 
         except Exception as e:

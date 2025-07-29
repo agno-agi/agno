@@ -103,7 +103,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         description: Optional[str] = Form(None),
         metadata: Optional[str] = Form(None, description="JSON metadata"),
         reader_id: Optional[str] = Form(None),
-    ):
+    ) -> Optional[ContentResponseSchema]:
         parsed_metadata = None
         if metadata:
             try:
@@ -126,8 +126,10 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
                 raise HTTPException(status_code=400, detail=f"Invalid reader_id: {reader_id}")
 
         content = knowledge.patch_content(content)
+        if not content:
+            raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
 
-        return ContentResponseSchema.from_dict(content) if content else None
+        return ContentResponseSchema.from_dict(content)
 
     @router.get("/content", response_model=PaginatedResponse[ContentResponseSchema], status_code=200)
     def get_content(

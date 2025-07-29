@@ -151,24 +151,14 @@ class DynamoDb(BaseDb):
         table_name = None
 
         if table_type == "sessions":
-            if self.session_table_name is None:
-                raise ValueError("Session table was not provided on initialization")
             table_name = self.session_table_name
         elif table_type == "user_memories":
-            if self.user_memory_table_name is None:
-                raise ValueError("User memory table was not provided on initialization")
             table_name = self.user_memory_table_name
         elif table_type == "metrics":
-            if self.metrics_table_name is None:
-                raise ValueError("Metrics table was not provided on initialization")
             table_name = self.metrics_table_name
         elif table_type == "evals":
-            if self.eval_table_name is None:
-                raise ValueError("Eval table was not provided on initialization")
             table_name = self.eval_table_name
-        elif table_type == "knowledge_sources":
-            if self.knowledge_table_name is None:
-                raise ValueError("Knowledge table was not provided on initialization")
+        elif table_type == "knowledge":
             table_name = self.knowledge_table_name
         else:
             raise ValueError(f"Unknown table type: {table_type}")
@@ -1373,11 +1363,11 @@ class DynamoDb(BaseDb):
         Raises:
             Exception: If an error occurs during deletion.
         """
-        if not self.knowledge_table_name:
-            return
-
         try:
-            self.client.delete_item(TableName=self.knowledge_table_name, Key={"id": {"S": id}})
+            table_name = self._get_table("knowledge")
+
+            self.client.delete_item(TableName=table_name, Key={"id": {"S": id}})
+
             log_debug(f"Deleted knowledge content {id}")
 
         except Exception as e:
@@ -1392,15 +1382,14 @@ class DynamoDb(BaseDb):
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
         """
-        if not self.knowledge_table_name:
-            return None
-
         try:
-            response = self.client.get_item(TableName=self.knowledge_table_name, Key={"id": {"S": id}})
+            table_name = self._get_table("knowledge")
+            response = self.client.get_item(TableName=table_name, Key={"id": {"S": id}})
 
             item = response.get("Item")
             if item:
                 return deserialize_knowledge_row(item)
+
             return None
 
         except Exception as e:
@@ -1428,18 +1417,15 @@ class DynamoDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
-        if not self.knowledge_table_name:
-            return [], 0
-
         try:
-            # Execute scan
-            response = self.client.scan(TableName=self.knowledge_table_name)
+            table_name = self._get_table("knowledge")
+            response = self.client.scan(TableName=table_name)
             items = response.get("Items", [])
 
             # Handle pagination
             while "LastEvaluatedKey" in response:
                 response = self.client.scan(
-                    TableName=self.knowledge_table_name,
+                    TableName=table_name,
                     ExclusiveStartKey=response["LastEvaluatedKey"],
                 )
                 items.extend(response.get("Items", []))
@@ -1487,15 +1473,14 @@ class DynamoDb(BaseDb):
         Returns:
             Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
         """
-        if not self.knowledge_table_name:
-            return None
-
         try:
+            table_name = self._get_table("knowledge")
             item = serialize_knowledge_row(knowledge_row)
 
-            self.client.put_item(TableName=self.knowledge_table_name, Item=item)
+            self.client.put_item(TableName=table_name, Item=item)
 
             log_debug(f"Upserted knowledge content with id '{knowledge_row.id}'")
+
             return knowledge_row
 
         except Exception as e:
@@ -1505,16 +1490,26 @@ class DynamoDb(BaseDb):
     # --- Eval ---
 
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
-        if not self.eval_table_name:
-            return None
+        """Create an eval run in the database.
 
+        Args:
+            eval_run (EvalRunRecord): The eval run to create.
+
+        Returns:
+            Optional[EvalRunRecord]: The created eval run, or None if the operation fails.
+
+        Raises:
+            Exception: If an error occurs during creation.
+        """
         try:
+            table_name = self._get_table("evals")
+
             item = serialize_eval_record(eval_run)
             current_time = int(datetime.now(timezone.utc).timestamp())
             item["created_at"] = {"N": str(current_time)}
             item["updated_at"] = {"N": str(current_time)}
 
-            self.client.put_item(TableName=self.eval_table_name, Item=item)
+            self.client.put_item(TableName=table_name, Item=item)
 
             return eval_run
 

@@ -166,6 +166,7 @@ class SqliteDb(BaseDb):
                             continue
 
                     idx.create(self.db_engine)
+
                 except Exception as e:
                     log_warning(f"Error creating index {idx.name}: {e}")
 
@@ -216,6 +217,14 @@ class SqliteDb(BaseDb):
                 self.eval_table = self._get_or_create_table(table_name=self.eval_table_name, table_type="evals")
 
             return self.eval_table
+
+        elif table_type == "knowledge":
+            if not hasattr(self, "knowledge_table"):
+                self.knowledge_table = self._get_or_create_table(
+                    table_name=self.knowledge_table_name, table_type="knowledge"
+                )
+
+            return self.knowledge_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -1190,6 +1199,9 @@ class SqliteDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.id == id)
                 result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+
                 return KnowledgeRow.model_validate(result._mapping)
 
         except Exception as e:
@@ -1222,22 +1234,22 @@ class SqliteDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
 
-            # Apply sorting
-            if sort_by is not None:
-                stmt = stmt.order_by(getattr(table.c, sort_by) * (1 if sort_order == "asc" else -1))
+                # Apply sorting
+                if sort_by is not None:
+                    stmt = stmt.order_by(getattr(table.c, sort_by) * (1 if sort_order == "asc" else -1))
 
-            # Get total count before applying limit and pagination
-            count_stmt = select(func.count()).select_from(stmt.alias())
-            total_count = sess.execute(count_stmt).scalar()
+                # Get total count before applying limit and pagination
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
 
-            # Apply pagination after count
-            if limit is not None:
-                stmt = stmt.limit(limit)
-                if page is not None:
-                    stmt = stmt.offset((page - 1) * limit)
+                # Apply pagination after count
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
 
-            result = sess.execute(stmt).fetchall()
-            return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
+                result = sess.execute(stmt).fetchall()
+                return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
 
         except Exception as e:
             log_error(f"Error getting knowledge contents: {e}")
@@ -1254,8 +1266,8 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="knowledge")
+
             with self.Session() as sess, sess.begin():
-                # Only include fields that are not None in the update
                 update_fields = {
                     k: v
                     for k, v in {
@@ -1270,6 +1282,7 @@ class SqliteDb(BaseDb):
                         "created_at": knowledge_row.created_at,
                         "updated_at": knowledge_row.updated_at,
                     }.items()
+                    # Filtering out None fields if updating
                     if v is not None
                 }
 
@@ -1279,7 +1292,6 @@ class SqliteDb(BaseDb):
                     .on_conflict_do_update(index_elements=["id"], set_=update_fields)
                 )
                 sess.execute(stmt)
-                sess.commit()
 
             log_debug(f"Upserted knowledge content with id '{knowledge_row.id}'")
 

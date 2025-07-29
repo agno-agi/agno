@@ -3,7 +3,6 @@
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.eval.accuracy import AccuracyEval
-from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team.team import Team
@@ -17,15 +16,13 @@ db = SqliteDb(
     metrics_table="metrics",
 )
 
-# Setup the memory
-memory = Memory(db=db)
 
 # Setup a basic agent and a basic team
 basic_agent = Agent(
     name="Basic Agent",
     agent_id="basic-agent",
     model=OpenAIChat(id="gpt-4o"),
-    memory=memory,
+    db=db,
     enable_user_memories=True,
     enable_session_summaries=True,
     add_history_to_messages=True,
@@ -37,7 +34,7 @@ team_agent = Team(
     team_id="basic-team",
     name="Team Agent",
     model=OpenAIChat(id="gpt-4o"),
-    memory=memory,
+    db=db,
     members=[basic_agent],
     debug_mode=True,
 )

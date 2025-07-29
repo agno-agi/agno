@@ -8,7 +8,7 @@ from pprint import pprint
 from typing import Any, Dict, List, Optional, Tuple, Union, overload
 from uuid import uuid4
 
-from agno.db.postgres.postgres import PostgresDb
+from agno.db.base import BaseDb
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.knowledge.cloud_storage.cloud_storage import CloudStorageConfig
 from agno.knowledge.content import Content, FileData
@@ -27,7 +27,7 @@ class Knowledge:
     name: Optional[str] = None
     description: Optional[str] = None
     vector_db: Optional[VectorDb] = None
-    contents_db: Optional[PostgresDb] = None
+    contents_db: Optional[BaseDb] = None
     max_results: int = 10
     readers: Optional[Dict[str, Reader]] = None
 
@@ -571,6 +571,7 @@ class Knowledge:
                 log_warning("Content id is required to update Knowledge content")
                 return None
 
+            # TODO: we shouldn't check for content here, we should trust the upsert method to handle conflicts
             content_row = self.contents_db.get_knowledge_content(content.id)
             if content_row is None:
                 log_warning(f"Content row not found for id: {content.id}, cannot update status")

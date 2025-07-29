@@ -1006,6 +1006,7 @@ class MongoDb(BaseDb):
             result = collection.find_one({"id": id})
             if result is None:
                 return None
+
             return KnowledgeRow.model_validate(result)
 
         except Exception as e:

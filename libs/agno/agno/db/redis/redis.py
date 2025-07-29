@@ -1085,6 +1085,8 @@ class RedisDb(BaseDb):
         """
         try:
             all_documents = self._get_all_records("knowledge")
+            if len(all_documents) == 0:
+                return [], 0
 
             total_count = len(all_documents)
 
