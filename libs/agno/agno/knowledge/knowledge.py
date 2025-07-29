@@ -535,7 +535,6 @@ class Knowledge:
                 if text_reader:
                     read_documents = text_reader.read(content_io, name=name)
                 else:
-                    log_error("Text reader not available due to missing dependencies")
                     content.status = "Failed"
                     content.status_message = "Text reader not available"
                     completed = False
@@ -1020,11 +1019,9 @@ class Knowledge:
                     self.readers[reader_type] = reader
                 else:
                     return None
-            except (ImportError, ModuleNotFoundError) as e:
-                log_debug(f"Cannot create {reader_type} reader due to missing dependency: {e}")
-                return None
+
             except Exception as e:
-                log_debug(f"Cannot create {reader_type} reader due to error: {e}")
+                log_warning(f"Cannot create {reader_type} reader {e}")
                 return None
         
         return self.readers.get(reader_type)
