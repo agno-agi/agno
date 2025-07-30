@@ -459,8 +459,8 @@ class Knowledge:
         url_path = Path(parsed_url.path)
         file_extension = url_path.suffix.lower()
 
-        if content.url.endswith("llms-full.txt"):
-            log_info(f"Detected llms-full.txt, using url reader")
+        if content.url.endswith("llms-full.txt") or content.url.endswith("llms.txt"):
+            log_info(f"Detected llms, using url reader")
             reader = self.url_reader
             read_documents = reader.read(content.url, content.name)
 
