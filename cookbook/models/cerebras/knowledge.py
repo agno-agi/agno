@@ -16,6 +16,5 @@ knowledge_base.load(recreate=True)  # Comment out after first run
 agent = Agent(
     model=Cerebras(id="llama-4-scout-17b-16e-instruct"),
     knowledge=knowledge_base,
-    show_tool_calls=True,
 )
 agent.print_response("How to make Thai curry?", markdown=True)

@@ -21,7 +21,6 @@ knowledge_base.load(recreate=False)  # Comment out after first run
 agent = Agent(
     model=AzureAIFoundry(id="Cohere-command-r-08-2024"),
     knowledge=knowledge_base,
-    show_tool_calls=True,
     debug_mode=True,
 )
 agent.print_response("How to make Thai curry?", markdown=True)
