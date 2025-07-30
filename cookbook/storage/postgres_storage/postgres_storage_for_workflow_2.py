@@ -7,8 +7,6 @@ from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.workflow import Workflow
 
-from cookbook.os.dbs.json_demo import db
-
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 # Define agents
