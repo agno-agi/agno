@@ -695,7 +695,6 @@ class Knowledge:
         log_info(f"Loading content from S3")
         if content.reader is None:
             reader = self.s3_reader
-            print(f"Using S3 PDF reader", reader.__class__.__name__)
         else:
             reader = content.reader
 
@@ -708,24 +707,17 @@ class Knowledge:
         objects_to_read: List[S3Object] = []
 
         if remote_content.bucket is not None:
-            print(f"Using bucket: {remote_content.bucket.name}")
             if remote_content.key is not None:
-                print(f"Using key: {remote_content.key}")
                 _object = S3Object(bucket_name=remote_content.bucket.name, name=remote_content.key)
                 objects_to_read.append(_object)
             elif remote_content.object is not None:
-                print(f"Using object: {remote_content.object.name}")
                 objects_to_read.append(remote_content.object)
             elif remote_content.prefix is not None:
-                print(f"Using prefix: {remote_content.prefix}")
                 objects_to_read.extend(remote_content.bucket.get_objects(prefix=remote_content.prefix))
             else:
-                print(f"Using bucket: {remote_content.bucket.name}")
                 objects_to_read.extend(remote_content.bucket.get_objects())
 
         for object in objects_to_read:
-            print(f"Reading object: {object.name}")
-
             id = str(uuid4())
             content_entry = Content(
                 id=id,
@@ -777,7 +769,6 @@ class Knowledge:
 
         if content.reader is None:
             reader = self.gcs_reader
-            print(f"Using GCS reader", reader.__class__.__name__)
         else:
             reader = content.reader
 
@@ -789,18 +780,13 @@ class Knowledge:
         objects_to_read = []
 
         if remote_content.blob_name is not None:
-            print(f"Using blob name: {remote_content.blob_name}")
             objects_to_read.append(remote_content.bucket.blob(remote_content.blob_name))
         elif remote_content.prefix is not None:
-            print(f"Using prefix: {remote_content.prefix}")
             objects_to_read.extend(remote_content.bucket.list_blobs(prefix=remote_content.prefix))
         else:
-            print(f"Using bucket: {remote_content.bucket.name}")
             objects_to_read.extend(remote_content.bucket.list_blobs())
 
         for object in objects_to_read:
-            print(f"Reading object: {object.name}")
-
             id = str(uuid4())
             content_entry = Content(
                 id=id,
@@ -812,10 +798,6 @@ class Knowledge:
             )
 
             content_hash = self._build_content_hash(content_entry)
-            if self.vector_db.content_hash_exists(content_hash) and skip_if_exists:
-                log_info(f"Content {content_hash} already exists, skipping")
-                continue
-
             if self.vector_db.content_hash_exists(content_hash) and skip_if_exists:
                 log_info(f"Content {content_hash} already exists, skipping")
                 continue

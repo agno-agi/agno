@@ -12,7 +12,7 @@ from agno.reranker.cohere import CohereReranker
 from agno.tools.reasoning import ReasoningTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 
-knowledge = Knowledge(  
+knowledge = Knowledge(
     # Use LanceDB as the vector database, store embeddings in the `agno_docs` table
     vector_db=LanceDb(
         uri="tmp/lancedb",
@@ -23,9 +23,7 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_contents(
-    urls=["https://docs.agno.com/introduction/agents.md"]
-)
+knowledge.add_contents(urls=["https://docs.agno.com/introduction/agents.md"])
 
 agent = Agent(
     model=Claude(id="claude-sonnet-4-20250514"),
@@ -43,7 +41,6 @@ agent = Agent(
 )
 
 if __name__ == "__main__":
-
     agent.print_response(
         "What are Agents?",
         stream=True,

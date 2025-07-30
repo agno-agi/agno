@@ -28,8 +28,7 @@ knowledge = Knowledge(
 )
 
 knowledge.add_content(
-    name="Recipes",
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+    name="Recipes", url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
 )
 
 
