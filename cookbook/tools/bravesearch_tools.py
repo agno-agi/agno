@@ -7,6 +7,5 @@ agent = Agent(
     instructions=[
         "Given a topic by the user, respond with 4 latest news items about that topic."
     ],
-    show_tool_calls=True,
 )
 agent.print_response("AI Agents", markdown=True)

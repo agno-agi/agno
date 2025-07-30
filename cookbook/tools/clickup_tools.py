@@ -37,7 +37,6 @@ clickup_agent = Agent(
         "- If status is not specified, use 'todo' as default",
         "Be helpful and guide users if they need more information.",
     ],
-    show_tool_calls=True,
     markdown=True,
 )
 

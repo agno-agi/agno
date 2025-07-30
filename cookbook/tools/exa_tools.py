@@ -10,7 +10,6 @@ agent = Agent(
             highlights=False,
         )
     ],
-    show_tool_calls=True,
     markdown=True,
 )
 
@@ -23,7 +22,6 @@ agent = Agent(
             show_results=True,
         )
     ],
-    show_tool_calls=True,
     markdown=True,
 )
 

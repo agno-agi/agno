@@ -7,7 +7,6 @@ from agno.tools.aws_lambda import AWSLambdaTools
 agent = Agent(
     tools=[AWSLambdaTools(region_name="us-east-1")],
     name="AWS Lambda Agent",
-    show_tool_calls=True,
 )
 
 # Example 1: List all Lambda functions
