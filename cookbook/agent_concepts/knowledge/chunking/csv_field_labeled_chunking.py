@@ -7,8 +7,6 @@ from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-# Create a field-labeled CSV chunking strategy
-# When title_template is provided, the first row is automatically treated as headers
 field_labeled_chunking = FieldLabeledCSVChunking(
     chunk_title="🎬 Movie Information",
     field_names=["Movie Rank", "Movie Title", "Genre", "Description"],
@@ -22,13 +20,11 @@ knowledge_base = CSVUrlKnowledgeBase(
         table_name="imdb_movies_field_labeled_chunking",
         db_url=db_url,
     ),
-    chunking_strategy=field_labeled_chunking,  # Use the chunking strategy instead of custom reader
+    chunking_strategy=field_labeled_chunking,
 )
 
-# Load the knowledge base
 knowledge_base.load(recreate=False)
 
-# Initialize the Agent with the knowledge_base
 agent = Agent(
     knowledge=knowledge_base,
     search_knowledge=True,
