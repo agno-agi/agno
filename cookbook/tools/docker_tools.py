@@ -20,7 +20,6 @@ try:
             "You can manage containers, images, volumes, and networks.",
         ],
         tools=[docker_tools],
-        show_tool_calls=True,
         markdown=True,
     )
 

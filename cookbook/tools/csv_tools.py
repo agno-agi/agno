@@ -14,7 +14,6 @@ imdb_csv.write_bytes(response.content)
 agent = Agent(
     tools=[CsvTools(csvs=[imdb_csv])],
     markdown=True,
-    show_tool_calls=True,
     instructions=[
         "First always get the list of files",
         "Then check the columns in the file",

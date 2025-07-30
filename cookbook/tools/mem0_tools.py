@@ -28,7 +28,6 @@ agent = Agent(
         clear all remembered information and proceed anew.
         """
     ),
-    show_tool_calls=True,
 )
 
 agent.print_response("I live in NYC")
