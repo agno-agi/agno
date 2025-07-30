@@ -79,9 +79,7 @@ Available Steps: {list(step_input.previous_step_outputs.keys())}"""
 
 def test_basic_access(workflow_storage):
     """Test basic access to previous steps."""
-    workflow = Workflow(
-        name="Basic Access", storage=workflow_storage, steps=[research_step, analysis_step, report_step]
-    )
+    workflow = Workflow(name="Basic Access", db=workflow_storage, steps=[research_step, analysis_step, report_step])
 
     response = workflow.run(message="test topic")
     assert isinstance(response, WorkflowRunResponse)
@@ -97,9 +95,7 @@ def test_basic_access(workflow_storage):
 
 def test_streaming_access(workflow_storage):
     """Test streaming with multiple step access."""
-    workflow = Workflow(
-        name="Streaming Access", storage=workflow_storage, steps=[research_step, analysis_step, report_step]
-    )
+    workflow = Workflow(name="Streaming Access", db=workflow_storage, steps=[research_step, analysis_step, report_step])
 
     events = list(workflow.run(message="test topic", stream=True))
 
@@ -112,9 +108,7 @@ def test_streaming_access(workflow_storage):
 @pytest.mark.asyncio
 async def test_async_access(workflow_storage):
     """Test async execution with multiple step access."""
-    workflow = Workflow(
-        name="Async Access", storage=workflow_storage, steps=[research_step, analysis_step, report_step]
-    )
+    workflow = Workflow(name="Async Access", db=workflow_storage, steps=[research_step, analysis_step, report_step])
 
     response = await workflow.arun(message="test topic")
     assert isinstance(response, WorkflowRunResponse)
@@ -125,9 +119,7 @@ async def test_async_access(workflow_storage):
 @pytest.mark.asyncio
 async def test_async_streaming_access(workflow_storage):
     """Test async streaming with multiple step access."""
-    workflow = Workflow(
-        name="Async Streaming", storage=workflow_storage, steps=[research_step, analysis_step, report_step]
-    )
+    workflow = Workflow(name="Async Streaming", db=workflow_storage, steps=[research_step, analysis_step, report_step])
 
     events = []
     async for event in await workflow.arun(message="test topic", stream=True):
@@ -143,7 +135,7 @@ def test_parallel_step_access(workflow_storage):
     """Test accessing content from parallel steps."""
     workflow = Workflow(
         name="Parallel Step Access",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[Parallel(step_a, step_b, step_c, name="Parallel Processing"), parallel_aggregator_step],
     )
 
@@ -167,7 +159,7 @@ async def test_async_parallel_step_access(workflow_storage):
     """Test async accessing content from parallel steps."""
     workflow = Workflow(
         name="Async Parallel Step Access",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[Parallel(step_a, step_b, step_c, name="Parallel Processing"), parallel_aggregator_step],
     )
 
@@ -188,7 +180,7 @@ def test_single_parallel_step_access(workflow_storage):
     """Test accessing content from a single step in parallel (edge case)."""
     workflow = Workflow(
         name="Single Parallel Step Access",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[Parallel(step_a, name="Parallel Processing"), parallel_aggregator_step],
     )
 

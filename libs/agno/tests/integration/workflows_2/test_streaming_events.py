@@ -82,7 +82,7 @@ def test_step_events_with_stream_intermediate_steps_false(workflow_storage):
     """Test Step events with stream_intermediate_steps=False."""
     workflow = Workflow(
         name="Step Events Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[Step(name="test_step", executor=step_function)],
     )
 
@@ -100,7 +100,7 @@ def test_step_events_with_stream_intermediate_steps_true(workflow_storage):
     """Test Step events with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Step Events Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[Step(name="test_step", executor=step_function)],
     )
 
@@ -130,7 +130,7 @@ def test_workflow_events_with_stream_intermediate_steps_false(workflow_storage):
             Step(name="step_1", executor=simple_step_1),
             Step(name="step_2", executor=simple_step_2),
         ],
-        storage=workflow_storage,
+        db=workflow_storage,
     )
 
     events = list(workflow.run("test message", stream=True, stream_intermediate_steps=False))
@@ -159,7 +159,7 @@ def test_workflow_events_with_stream_intermediate_steps_true(workflow_storage):
             Step(name="step_1", executor=simple_step_1),
             Step(name="step_2", executor=simple_step_2),
         ],
-        storage=workflow_storage,
+        db=workflow_storage,
     )
 
     events = list(workflow.run("test message", stream=True, stream_intermediate_steps=True))
@@ -189,7 +189,7 @@ async def test_step_events_async_with_stream_intermediate_steps_true(workflow_st
     """Test Step events in async streaming with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Async Step Events Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[Step(name="test_step", executor=step_function)],
     )
 
@@ -218,7 +218,7 @@ def test_steps_events_with_stream_intermediate_steps_false(workflow_storage):
     """Test Steps events with stream_intermediate_steps=False."""
     workflow = Workflow(
         name="Steps Events Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Steps(
                 name="test_steps",
@@ -245,7 +245,7 @@ def test_steps_events_with_stream_intermediate_steps_true(workflow_storage):
     """Test Steps events with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Steps Events Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Steps(
                 name="test_steps",
@@ -276,7 +276,7 @@ async def test_steps_events_async_with_stream_intermediate_steps_true(workflow_s
     """Test Steps events in async streaming with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Async Steps Events Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Steps(
                 name="test_steps",
@@ -309,7 +309,7 @@ def test_parallel_events_with_stream_intermediate_steps_false(workflow_storage):
     """Test Parallel events with stream_intermediate_steps=False."""
     workflow = Workflow(
         name="Parallel Events Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Parallel(
                 step_a,
@@ -335,7 +335,7 @@ def test_parallel_events_with_stream_intermediate_steps_true(workflow_storage):
     """Test Parallel events with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Parallel Events Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Parallel(
                 step_a,
@@ -365,7 +365,7 @@ async def test_parallel_events_async_with_stream_intermediate_steps_true(workflo
     """Test Parallel events in async streaming with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Async Parallel Events Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Parallel(
                 step_a,
@@ -396,7 +396,7 @@ def test_loop_events_with_stream_intermediate_steps_false(workflow_storage):
     """Test Loop events with stream_intermediate_steps=False."""
     workflow = Workflow(
         name="Loop Events Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Loop(
                 name="test_loop",
@@ -425,7 +425,7 @@ def test_loop_events_with_stream_intermediate_steps_true(workflow_storage):
     """Test Loop events with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Loop Events Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Loop(
                 name="test_loop",
@@ -459,7 +459,7 @@ async def test_loop_events_async_with_stream_intermediate_steps_true(workflow_st
     """Test Loop events in async streaming with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Async Loop Events Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Loop(
                 name="test_loop",
@@ -491,7 +491,7 @@ def test_condition_events_with_stream_intermediate_steps_false(workflow_storage)
     """Test Condition events with stream_intermediate_steps=False."""
     workflow = Workflow(
         name="Condition Events Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Condition(
                 name="test_condition",
@@ -517,7 +517,7 @@ def test_condition_events_with_stream_intermediate_steps_true(workflow_storage):
     """Test Condition events with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Condition Events Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Condition(
                 name="test_condition",
@@ -546,7 +546,7 @@ async def test_condition_events_async_with_stream_intermediate_steps_true(workfl
     """Test Condition events in async streaming with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Async Condition Events Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Condition(
                 name="test_condition",
@@ -577,7 +577,7 @@ def test_router_events_with_stream_intermediate_steps_false(workflow_storage):
     """Test Router events with stream_intermediate_steps=False."""
     workflow = Workflow(
         name="Router Events Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Router(
                 name="test_router",
@@ -610,7 +610,7 @@ def test_router_events_with_stream_intermediate_steps_true(workflow_storage):
 
     workflow = Workflow(
         name="Router Events Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Router(
                 name="test_router",
@@ -643,7 +643,7 @@ async def test_router_events_async_with_stream_intermediate_steps_true(workflow_
 
     workflow = Workflow(
         name="Async Router Events Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Router(
                 name="test_router",
@@ -674,7 +674,7 @@ def test_comprehensive_workflow_events_with_stream_intermediate_steps_true(workf
     """Test comprehensive workflow with multiple component types with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Comprehensive Events Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Step(name="initial_step", executor=step_function),
             Parallel(
@@ -721,7 +721,7 @@ async def test_comprehensive_workflow_events_async_with_stream_intermediate_step
     """Test comprehensive workflow with multiple component types - async with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Async Comprehensive Events Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Step(name="initial_step", executor=step_function),
             Parallel(
@@ -760,7 +760,7 @@ def test_comprehensive_workflow_events_with_stream_intermediate_steps_false(work
     """Test comprehensive workflow with multiple component types with stream_intermediate_steps=False."""
     workflow = Workflow(
         name="Comprehensive Events Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Step(name="initial_step", executor=step_function),
             Parallel(
