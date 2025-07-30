@@ -20,5 +20,4 @@ knowledge_base = PDFUrlKnowledgeBase(
 knowledge_base.load(recreate=True)  # Comment out after first run
 
 # Create and use the agent
-agent = Agent(knowledge=knowledge_base, show_tool_calls=True)
 agent.print_response("How to make Tom Kha Gai", markdown=True)

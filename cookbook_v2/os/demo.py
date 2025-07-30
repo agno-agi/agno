@@ -89,7 +89,6 @@ research_team = Team(
     db=db,
     enable_user_memories=True,
     add_datetime_to_instructions=True,
-    show_tool_calls=True,
     markdown=True,
     enable_agentic_context=True,
 )
