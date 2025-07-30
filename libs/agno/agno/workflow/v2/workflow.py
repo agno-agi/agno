@@ -145,7 +145,6 @@ class Workflow:
         stream_intermediate_steps: bool = False,
         store_events: bool = False,
         events_to_skip: Optional[List[WorkflowRunEvent]] = None,
-        os_id: Optional[str] = None,
     ):
         self.workflow_id = workflow_id
         self.name = name
@@ -161,7 +160,6 @@ class Workflow:
         self.events_to_skip = events_to_skip or []
         self.stream = stream
         self.stream_intermediate_steps = stream_intermediate_steps
-        self.os_id = os_id
 
     @property
     def run_parameters(self) -> Dict[str, Any]:
