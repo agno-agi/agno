@@ -1,6 +1,6 @@
 """
 1. Run: `pip install openai lancedb tantivy pypdf sqlalchemy agno` to install the dependencies
-2. Run: `python cookbook/rag/03_traditional_rag_lancedb.py` to run the agent
+2. Run: `python cookbook/rag/04_agentic_rag_lancedb.py` to run the agent
 """
 
 from agno.agent import Agent
@@ -9,7 +9,6 @@ from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.vectordb.lancedb import LanceDb, SearchType
 
-# Create a knowledge base of PDFs from URLs
 knowledge = Knowledge(
     # Use LanceDB as the vector database and store embeddings in the `recipes` table
     vector_db=LanceDb(
@@ -21,17 +20,15 @@ knowledge = Knowledge(
 )
 
 knowledge.add_content(
-    name="Recipes",
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
 )
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     knowledge=knowledge,
-    # Enable RAG by adding references from Knowledge to the user prompt.
-    add_references=True,
-    # Set as False because Agents default to `search_knowledge=True`
-    search_knowledge=False,
+    # Add a tool to search the knowledge base which enables agentic RAG.
+    # This is enabled by default when `knowledge` is provided to the Agent.
+    search_knowledge=True,
     show_tool_calls=True,
     markdown=True,
 )
