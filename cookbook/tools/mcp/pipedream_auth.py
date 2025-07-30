@@ -11,7 +11,7 @@ This is useful if your app is interfacing with the MCP servers in behalf of your
     - MCP_ACCESS_TOKEN: The access token you previously got
     - PIPEDREAM_PROJECT_ID: The project id of the Pipedream project you want to use
     - PIPEDREAM_ENVIRONMENT: The environment of the Pipedream project you want to use
-3. Install dependencies: pip install agno mcp-sdk
+3. Install dependencies: pip install agno mcp
 """
 
 import asyncio

@@ -361,9 +361,9 @@ class TeamRunResponse:
         messages = data.pop("messages", None)
         messages = [Message.model_validate(message) for message in messages] if messages else None
 
-        member_responses = data.pop("member_responses", None)
+        member_responses = data.pop("member_responses", [])
         parsed_member_responses: List[Union["TeamRunResponse", RunResponse]] = []
-        if member_responses is not None:
+        if member_responses:
             for response in member_responses:
                 if "agent_id" in response:
                     parsed_member_responses.append(RunResponse.from_dict(response))
@@ -374,16 +374,16 @@ class TeamRunResponse:
         if extra_data is not None:
             extra_data = RunResponseExtraData.from_dict(extra_data)
 
-        images = data.pop("images", None)
+        images = data.pop("images", [])
         images = [ImageArtifact.model_validate(image) for image in images] if images else None
 
-        videos = data.pop("videos", None)
+        videos = data.pop("videos", [])
         videos = [VideoArtifact.model_validate(video) for video in videos] if videos else None
 
-        audio = data.pop("audio", None)
+        audio = data.pop("audio", [])
         audio = [AudioArtifact.model_validate(audio) for audio in audio] if audio else None
 
-        tools = data.pop("tools", None)
+        tools = data.pop("tools", [])
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
 
         response_audio = data.pop("response_audio", None)

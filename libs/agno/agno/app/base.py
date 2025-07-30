@@ -161,11 +161,6 @@ class BaseAPIApp(ABC):
     ):
         self.set_app_id()
         self.register_app_on_platform()
-
-        if self.agent:
-            self.agent.register_agent()
-        if self.team:
-            self.team.register_team()
         log_info(f"Starting API on {host}:{port}")
 
         uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)
@@ -184,23 +179,6 @@ class BaseAPIApp(ABC):
 
     def to_dict(self) -> Dict[str, Any]:
         payload = {
-            "agents": [
-                {
-                    **self.agent.get_agent_config_dict(),
-                    "agent_id": self.agent.agent_id,
-                    "team_id": self.agent.team_id,
-                }
-            ]
-            if self.agent
-            else None,
-            "teams": [
-                {
-                    **self.team.to_platform_dict(),
-                    "team_id": self.team.team_id,
-                }
-            ]
-            if self.team
-            else None,
             "type": self.type,
             "description": self.description,
         }

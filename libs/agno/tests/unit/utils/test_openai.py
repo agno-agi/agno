@@ -223,13 +223,14 @@ def test_images_to_message_empty():
 
 
 def test_images_to_message_bytes(dummy_image_bytes):
-    """Test images_to_message with raw bytes content (defaults to jpeg)."""
+    """Test images_to_message with raw bytes content (detects PNG from header)."""
     images = [Image(content=dummy_image_bytes)]
     result = images_to_message(images)
     assert len(result) == 1
     msg = result[0]
     assert msg["type"] == "image_url"
-    assert msg["image_url"]["url"].startswith("data:image/jpeg;base64,")  # Default MIME
+    # Should detect PNG from the PNG header bytes in dummy_image_bytes
+    assert msg["image_url"]["url"].startswith("data:image/png;base64,")
     assert base64.b64decode(msg["image_url"]["url"].split(",")[1]) == dummy_image_bytes
 
 
@@ -313,7 +314,7 @@ def test_images_to_message_with_detail(detail_value, dummy_image_bytes):
 def test_images_to_message_mixed(tmp_png_file, dummy_image_bytes):
     """Test images_to_message with a mix of valid and invalid inputs."""
     images = [
-        Image(content=dummy_image_bytes),  # Valid bytes (jpeg default)
+        Image(content=dummy_image_bytes),  # Valid bytes (PNG detected from header)
         Image(filepath=str(tmp_png_file)),  # Valid file (png)
         Image(url="https://example.com/image.webp"),  # Valid URL
         Image(filepath="/non/existent/path.jpg"),  # Invalid file
@@ -321,8 +322,11 @@ def test_images_to_message_mixed(tmp_png_file, dummy_image_bytes):
     ]
     result = images_to_message(images)
     assert len(result) == 3  # Should skip the two invalid ones
-    assert result[0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    # First image: PNG detected from header bytes
+    assert result[0]["image_url"]["url"].startswith("data:image/png;base64,")
+    # Second image: PNG from file extension
     assert result[1]["image_url"]["url"].startswith("data:image/png;base64,")
+    # Third image: URL passed through as-is
     assert result[2]["image_url"]["url"] == "https://example.com/image.webp"
 
 
