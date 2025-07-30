@@ -16,6 +16,5 @@ knowledge_base.load(recreate=True)  # Comment out after first run
 agent = Agent(
     model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
     knowledge=knowledge_base,
-    show_tool_calls=True,
 )
 agent.print_response("How to make Thai curry?", markdown=True)
