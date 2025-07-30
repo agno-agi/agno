@@ -1,7 +1,7 @@
 """
 This example shows how to instrument your agno agent and send traces to LangWatch.
 
-1. Install dependencies: pip install openai langwatch opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
+1. Install dependencies: pip install openai langwatch openinference-instrumentation-agno
 2. Sign up for an account at https://app.langwatch.ai/
 3. Set your LangWatch API key as an environment variables:
   - export LANGWATCH_API_KEY=<your-key>
