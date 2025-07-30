@@ -713,6 +713,7 @@ class Gemini(Model):
                     if isinstance(text_content, str):
                         # Check if this is a thought summary
                         if hasattr(part, "thought") and part.thought:
+                            # Add all parts as single message
                             if model_response.reasoning_content is None:
                                 model_response.reasoning_content = text_content
                             else:
@@ -725,6 +726,7 @@ class Gemini(Model):
                     else:
                         content_str = str(text_content) if text_content is not None else ""
                         if hasattr(part, "thought") and part.thought:
+                            # Add all parts as single message
                             if model_response.reasoning_content is None:
                                 model_response.reasoning_content = content_str
                             else:
