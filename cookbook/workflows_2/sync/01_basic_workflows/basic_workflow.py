@@ -1,69 +1,72 @@
+from pydantic import BaseModel, Field
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.storage.postgres import PostgresStorage
-from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.workflow import Workflow
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
+# Define response format
+class Source(BaseModel):
+    name: str = Field(description="The name of the source")
+    page_number: int = Field(description="The page number of the source")
+
+class Response(BaseModel):
+    response: str = Field(description="The response to the user's query")
+    sources: list[Source] = Field(description="The sources used to generate the response")
+
 # Define agents
-hackernews_agent = Agent(
-    name="Hackernews Agent",
+information_agent = Agent(
+    name="Information Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[HackerNewsTools()],
-    role="Extract key insights and content from Hackernews posts",
-)
-web_agent = Agent(
-    name="Web Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[DuckDuckGoTools()],
-    role="Search the web for the latest news and trends",
+    role="Gathers sufficient context from the user regarding their query",
 )
 
-# Define research team for complex analysis
-research_team = Team(
-    name="Research Team",
-    mode="coordinate",
-    members=[hackernews_agent, web_agent],
-    instructions="Research tech topics from Hackernews and the web",
+knowledge_search_agent = Agent(
+    name="Knowledge Search Agent",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    role="Searches the knowledge base for relevant information to answer the user's query",
+    # knowledge=knowledge, # Commented out for now, but will have its own knowledge base
 )
 
-content_planner = Agent(
-    name="Content Planner",
+response_agent = Agent(
+    name="Response Agent",
     model=OpenAIChat(id="gpt-4o"),
-    instructions=[
-        "Plan a content schedule over 4 weeks for the provided topic and research content",
-        "Ensure that I have posts for 3 posts per week",
-    ],
+    role="Respond to the user's query based on the provided information and sources",
+    response_model=Response,
 )
 
 # Define steps
-research_step = Step(
+information_gather_step = Step(
     name="Research Step",
-    team=research_team,
+    agent=information_agent,
 )
 
-content_planning_step = Step(
-    name="Content Planning Step",
-    agent=content_planner,
+knowledge_search_step = Step(
+    name="Knowledge Search Step",
+    agent=knowledge_search_agent,
+)
+
+response_step = Step(
+    name="Response Step",
+    agent=response_agent,
 )
 
 # Create and use workflow
 if __name__ == "__main__":
-    content_creation_workflow = Workflow(
-        name="Content Creation Workflow",
-        description="Automated content creation from blog posts to social media",
+    rag_workflow = Workflow(
+        name="RAG Workflow",
+        description="A RAG workflow tasked with answering user queries based on a provided knowledge base.",
         storage=PostgresStorage(
             table_name="workflow_v2",
             db_url=db_url,
             mode="workflow_v2",
         ),
-        steps=[research_step, content_planning_step],
+        steps=[information_gather_step, knowledge_search_step, response_step],
     )
-    content_creation_workflow.print_response(
-        message="AI trends in 2024",
+    rag_workflow.print_response(
+        message="What is the latest news in AI?",
         markdown=True,
     )
