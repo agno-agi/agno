@@ -904,11 +904,6 @@ def get_base_router(
                         user_id=user_id,
                     ),
                     media_type="text/event-stream",
-                    headers={
-                        "Access-Control-Allow-Origin": "*",
-                        "Access-Control-Allow-Methods": "POST, OPTIONS",
-                        "Access-Control-Allow-Headers": "Content-Type, Authorization",
-                    },
                 )
             else:
                 run_response = await workflow.arun(
