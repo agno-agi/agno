@@ -13,7 +13,6 @@ fal_agent = Agent(
         "Don't convert video URL to markdown or anything else.",
     ],
     markdown=True,
-    show_tool_calls=True,
 )
 
 fal_agent.print_response("Generate video of balloon in the ocean")

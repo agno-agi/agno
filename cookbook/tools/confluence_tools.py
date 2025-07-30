@@ -4,7 +4,6 @@ from agno.tools.confluence import ConfluenceTools
 agent = Agent(
     name="Confluence agent",
     tools=[ConfluenceTools()],
-    show_tool_calls=True,
     markdown=True,
 )
 

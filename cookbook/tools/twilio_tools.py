@@ -30,7 +30,6 @@ agent = Agent(
     ],
     model=OpenAIChat(id="gpt-4o"),
     tools=[TwilioTools()],
-    show_tool_calls=True,
     markdown=True,
 )
 

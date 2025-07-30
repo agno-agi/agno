@@ -24,7 +24,6 @@ agent = Agent(
     model=Claude(id="claude-sonnet-4-20250514"),
     tools=[daytona_tools],
     markdown=True,
-    show_tool_calls=True,
     instructions=[
         "You are an expert at writing and validating Python code. You have access to a remote, secure Daytona sandbox.",
         "Your primary purpose is to:",
