@@ -28,7 +28,6 @@ agent = Agent(
     ),
     enable_user_memories=True,
     enable_session_summaries=True,
-    show_tool_calls=True,
     # This setting adds a tool to search the knowledge base for information
     search_knowledge=True,
     # This setting adds a tool to get chat history
