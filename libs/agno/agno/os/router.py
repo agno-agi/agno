@@ -887,7 +887,7 @@ def get_base_router(
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        if session_id is not None and session_id != "":
+        if session_id:
             logger.debug(f"Continuing session: {session_id}")
         else:
             logger.debug("Creating new session")
