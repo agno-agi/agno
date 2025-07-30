@@ -33,7 +33,6 @@ class HackerNewsReporter(Workflow):
     hn_agent: Agent = Agent(
         description="Get the top stories from hackernews. "
         "Share all possible information, including url, score, title and summary if available.",
-        show_tool_calls=True,
     )
 
     writer: Agent = Agent(
