@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union
 
-from agno.knowledge.cloud_storage.cloud_storage import CloudStorageConfig
 from agno.knowledge.reader import Reader
+from agno.knowledge.remote_content.remote_content import RemoteContent
 
 
 @dataclass
@@ -22,7 +22,7 @@ class Content:
     metadata: Optional[Dict[str, Any]] = None
     topics: Optional[List[str]] = None
     file_type: Optional[str] = None
-    config: Optional[CloudStorageConfig] = None
+    remote_content: Optional[RemoteContent] = None
     reader: Optional[Reader] = None
     size: Optional[int] = None
     status: Optional[str] = None

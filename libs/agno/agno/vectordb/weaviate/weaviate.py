@@ -159,7 +159,6 @@ class Weaviate(VectorDb):
         finally:
             await client.close()
 
-
     def content_hash_exists(self, content_hash: str) -> bool:
         """Check if a document with the given content hash exists in the collection.
 
@@ -179,7 +178,6 @@ class Weaviate(VectorDb):
         except Exception as e:
             logger.error(f"Error checking if content_hash '{content_hash}' exists: {e}")
             return False
-
 
     def name_exists(self, name: str) -> bool:
         """

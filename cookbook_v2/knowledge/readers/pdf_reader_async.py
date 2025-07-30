@@ -21,8 +21,15 @@ agent = Agent(
 )
 
 if __name__ == "__main__":
-    asyncio.run(knowledge.async_add_content(
-        path="data/pdf",
-    ))
+    asyncio.run(
+        knowledge.async_add_content(
+            path="data/pdf",
+        )
+    )
     # Create and use the agent
-    asyncio.run(agent.aprint_response("What skills does an applicant require to apply for the Software Engineer position?", markdown=True))
+    asyncio.run(
+        agent.aprint_response(
+            "What skills does an applicant require to apply for the Software Engineer position?",
+            markdown=True,
+        )
+    )

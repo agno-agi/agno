@@ -21,7 +21,11 @@ db = PostgresDb(db_url=db_url, session_table="sessions")
 # team.print_response("Tell me a new interesting fact about space. Ask your team members to help you.")
 
 # Team member with storage
-agent = Agent(agent_id="test_agent", model=OpenAIChat(id="gpt-4o-mini"), add_history_to_messages=True)
+agent = Agent(
+    agent_id="test_agent",
+    model=OpenAIChat(id="gpt-4o-mini"),
+    add_history_to_messages=True,
+)
 
 team = Team(
     model=OpenAIChat(id="gpt-4o-mini"),

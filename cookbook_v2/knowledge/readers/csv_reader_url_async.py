@@ -22,9 +22,11 @@ agent = Agent(
 
 if __name__ == "__main__":
     # Comment out after first run
-    asyncio.run(knowledge.async_add_content(
-        url="https://agno-public.s3.amazonaws.com/demo_data/IMDB-Movie-Data.csv"
-    ))
+    asyncio.run(
+        knowledge.async_add_content(
+            url="https://agno-public.s3.amazonaws.com/demo_data/IMDB-Movie-Data.csv"
+        )
+    )
 
     # Create and use the agent
     asyncio.run(

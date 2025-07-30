@@ -1,11 +1,11 @@
-"""This cookbook shows how to add content from a S3 bucket to the knowledge base.
-1. Run: `python cookbook/agent_concepts/knowledge/11_from_s3.py` to run the cookbook
+"""This cookbook shows how to add content from a GCS bucket to the knowledge base.
+1. Run: `python cookbook/agent_concepts/knowledge/12_from_gcs.py` to run the cookbook
 """
 
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.remote_content.remote_content import S3Content
+from agno.knowledge.remote_content.remote_content import GCSContent
 from agno.vectordb.pgvector import PgVector
 
 contents_db = PostgresDb(
@@ -23,13 +23,13 @@ knowledge = Knowledge(
     ),
 )
 
-# Add from S3 bucket
+# Add from GCS
 knowledge.add_content(
-    name="S3 PDF",
-    remote_content=S3Content(bucket_name="agno-public", key="recipes/ThaiRecipes.pdf"),
-    metadata={"remote_content": "S3"},
-    skip_if_exists=True,
+    name="GCS PDF",
+    remote_content=GCSContent(bucket_name="thai-recepies", blob_name="ThaiRecipes.pdf"),
+    metadata={"remote_content": "GCS"},
 )
+
 
 agent = Agent(
     name="My Agent",

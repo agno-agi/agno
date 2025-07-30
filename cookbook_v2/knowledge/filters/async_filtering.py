@@ -88,7 +88,6 @@ agent = Agent(
 )
 
 if __name__ == "__main__":
-
     # Query for Jordan Mitchell's experience and skills
     asyncio.run(
         agent.aprint_response(

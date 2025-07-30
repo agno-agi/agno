@@ -22,9 +22,11 @@ agent = Agent(
 )
 
 if __name__ == "__main__":
-    asyncio.run(knowledge.async_add_content(
-        path=Path("README.md"),
-    ))
+    asyncio.run(
+        knowledge.async_add_content(
+            path=Path("README.md"),
+        )
+    )
 
     asyncio.run(
         agent.aprint_response(

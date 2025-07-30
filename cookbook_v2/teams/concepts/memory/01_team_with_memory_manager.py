@@ -9,10 +9,10 @@ To enable this, set `enable_user_memories=True` in the Agent config.
 from uuid import uuid4
 
 from agno.agent import Agent
-from agno.team import Team
 from agno.db.postgres import PostgresDb
 from agno.memory import MemoryManager
 from agno.models.openai import OpenAIChat
+from agno.team import Team
 from rich.pretty import pprint
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
