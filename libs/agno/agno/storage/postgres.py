@@ -30,7 +30,7 @@ class PostgresStorage(Storage):
         db_engine: Optional[Engine] = None,
         schema_version: int = 1,
         auto_upgrade_schema: bool = False,
-        mode: Optional[Literal["agent", "team", "workflow"]] = "agent",
+        mode: Optional[Literal["agent", "team", "workflow", "workflow_v2"]] = "agent",
     ):
         """
         This class provides agent storage using a PostgreSQL table.
@@ -131,6 +131,7 @@ class PostgresStorage(Storage):
         elif self.mode == "workflow_v2":
             specific_columns = [
                 Column("workflow_id", String, index=True),
+                Column("workflow_name", String, index=True),
                 Column("workflow_data", postgresql.JSONB),
                 Column("runs", postgresql.JSONB),
             ]
@@ -570,9 +571,9 @@ class PostgresStorage(Storage):
                     stmt = postgresql.insert(self.table).values(
                         session_id=session.session_id,
                         workflow_id=session.workflow_id,  # type: ignore
-                        workflow_name=session.workflow_name,  # type: ignore
                         user_id=session.user_id,
                         runs=session_dict.get("runs"),
+                        workflow_name=session.workflow_name,  # type: ignore
                         workflow_data=session.workflow_data,  # type: ignore
                         session_data=session.session_data,
                         extra_data=session.extra_data,
@@ -583,9 +584,9 @@ class PostgresStorage(Storage):
                         index_elements=["session_id"],
                         set_=dict(
                             workflow_id=session.workflow_id,  # type: ignore
-                            workflow_name=session.workflow_name,  # type: ignore
                             user_id=session.user_id,
                             runs=session_dict.get("runs"),
+                            workflow_name=session.workflow_name,  # type: ignore
                             workflow_data=session.workflow_data,  # type: ignore
                             session_data=session.session_data,
                             extra_data=session.extra_data,
