@@ -29,7 +29,7 @@ import typer
 from agno.agent import Agent
 from agno.db.agent.sqlite import SqliteAgentStorage
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.url import UrlKnowledge
+from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.tools.python import PythonTools
 from agno.vectordb.lancedb import LanceDb, SearchType
@@ -46,14 +46,13 @@ tmp_dir.mkdir(parents=True, exist_ok=True)
 # *************************************
 
 
-def initialize_knowledge_base(load_knowledge: bool = False):
+def initialize_knowledge(load_knowledge: bool = False):
     """Initialize the knowledge base with Agno documentation
 
     Args:
         load_knowledge (bool): Whether to load the knowledge base. Defaults to False.
     """
-    agent_knowledge = UrlKnowledge(
-        urls=["https://docs.agno.com/llms-full.txt"],
+    agent_knowledge = Knowledge(
         vector_db=LanceDb(
             uri="tmp/lancedb",
             table_name="agno_assist_knowledge",
@@ -61,14 +60,17 @@ def initialize_knowledge_base(load_knowledge: bool = False):
             embedder=OpenAIEmbedder(id="text-embedding-3-small"),
         ),
     )
-    # Load the knowledge base
+
+    # Load the knowledge
     if load_knowledge:
-        print("[bold blue]📚 Initializing knowledge base...[/bold blue]")
+        print("[bold blue]📚 Initializing Knowledge...[/bold blue]")
         print("   • Loading Agno documentation")
         print("   • Building vector embeddings")
         print("   • Optimizing for hybrid search")
-        agent_knowledge.load()
-        print("[bold green]✨ Knowledge base ready![/bold green]\n")
+        agent_knowledge.add_content(
+            name="Agno Docs", url="https://docs.agno.com/llms-full.txt"
+        )
+        print("[bold green]✨ Knowledge ready![/bold green]\n")
     return agent_knowledge
 
 
@@ -83,7 +85,7 @@ def create_agent(
     session_id: Optional[str] = None, load_knowledge: bool = False
 ) -> Agent:
     """Create and return a configured Agno Support agent."""
-    agent_knowledge = initialize_knowledge_base(load_knowledge)
+    agent_knowledge = initialize_knowledge(load_knowledge)
     agent_storage = get_agent_storage()
 
     return Agent(

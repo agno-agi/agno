@@ -1,14 +1,11 @@
 from agno.agent import Agent
 from agno.db.sqlite import SqliteStorage
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.url import UrlKnowledge
+from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic import Claude
 from agno.vectordb.lancedb import LanceDb, SearchType
 
-# Load Agno documentation in a knowledge base
-# You can also use `https://docs.agno.com/llms-full.txt` for the full documentation
-knowledge = UrlKnowledge(
-    urls=["https://docs.agno.com/introduction.md"],
+knowledge = Knowledge(
     vector_db=LanceDb(
         uri="tmp/lancedb",
         table_name="agno_docs",
@@ -17,6 +14,8 @@ knowledge = UrlKnowledge(
         embedder=OpenAIEmbedder(id="text-embedding-3-small", dimensions=1536),
     ),
 )
+
+knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/introduction.md")
 
 # Store agent sessions in a SQLite database
 storage = SqliteStorage(table_name="agent_sessions", db_file="tmp/agent.db")

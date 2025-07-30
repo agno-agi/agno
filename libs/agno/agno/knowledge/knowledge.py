@@ -446,8 +446,12 @@ class Knowledge:
         url_path = Path(parsed_url.path)
         file_extension = url_path.suffix.lower()
 
-        # Check if it's a file with known extension
-        if file_extension and file_extension is not None:
+        if content.url.endswith("llms-full.txt"):
+            log_info(f"Detected llms-full.txt, using url reader")
+            reader = self.url_reader
+            read_documents = reader.read(content.url, content.name)
+
+        elif file_extension and file_extension is not None:
             log_info(f"Detected file type: {file_extension} from URL: {content.url}")
             reader = self._select_url_file_reader(file_extension)
             if reader is not None:
@@ -980,7 +984,7 @@ class Knowledge:
         """Get all currently loaded readers (only returns readers that have been used)."""
         if self.readers is None:
             self.readers = {}
-        
+
         return list(self.readers.values())
 
     def _generate_reader_key(self, reader: Reader) -> str:
@@ -1015,7 +1019,7 @@ class Knowledge:
         """Get a cached reader or create it if not cached, handling missing dependencies gracefully."""
         if self.readers is None:
             self.readers = {}
-        
+
         if reader_type not in self.readers:
             try:
                 reader = ReaderFactory.create_reader(reader_type)
@@ -1027,7 +1031,7 @@ class Knowledge:
             except Exception as e:
                 log_warning(f"Cannot create {reader_type} reader {e}")
                 return None
-        
+
         return self.readers.get(reader_type)
 
     @property

@@ -47,18 +47,13 @@ python cookbook/agent_concepts/agentic_search/agentic_rag_infinity_reranker.py
 
 from agno.agent import Agent
 from agno.knowledge.embedder.cohere import CohereEmbedder
-from agno.knowledge.url import UrlKnowledge
+from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic import Claude
 from agno.reranker.infinity import InfinityReranker
 from agno.vectordb.lancedb import LanceDb, SearchType
 
-# Create a knowledge base, loaded with documents from a URL
-knowledge_base = UrlKnowledge(
-    urls=[
-        "https://docs.agno.com/introduction/agents.md",
-        "https://docs.agno.com/agents/tools.md",
-        "https://docs.agno.com/agents/knowledge.md",
-    ],
+knowledge = Knowledge(
+  
     # Use LanceDB as the vector database, store embeddings in the `agno_docs_infinity` table
     vector_db=LanceDb(
         uri="tmp/lancedb",
@@ -75,10 +70,18 @@ knowledge_base = UrlKnowledge(
     ),
 )
 
+knowledge.add_contents(
+      urls=[
+        "https://docs.agno.com/introduction/agents.md",
+        "https://docs.agno.com/agents/tools.md",
+        "https://docs.agno.com/agents/knowledge.md",
+    ]
+)
+
 agent = Agent(
     model=Claude(id="claude-3-7-sonnet-latest"),
     # Agentic RAG is enabled by default when `knowledge` is provided to the Agent.
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     # search_knowledge=True gives the Agent the ability to search on demand
     # search_knowledge is True by default
     search_knowledge=True,
@@ -114,11 +117,6 @@ if __name__ == "__main__":
     # Test Infinity connection first
     if not test_infinity_connection():
         exit(1)
-
-    print("\n📚 Loading knowledge base...")
-    # Load the knowledge base, comment after first run
-    knowledge_base.load(recreate=True)
-    print("✅ Knowledge base loaded successfully!")
 
     print("\n🤖 Starting agent interaction...")
     print("=" * 50)

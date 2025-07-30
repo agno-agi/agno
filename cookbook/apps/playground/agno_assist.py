@@ -31,7 +31,7 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.db.sqlite import SqliteStorage
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.url import UrlKnowledge
+from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.playground import Playground
 from agno.tools.dalle import DalleTools
@@ -120,8 +120,7 @@ _instructions = dedent("""\
     - Best practices and common patterns""")
 
 # Initialize knowledge base
-agent_knowledge = UrlKnowledge(
-    urls=["https://docs.agno.com/llms-full.txt"],
+agent_knowledge = Knowledge(
     vector_db=LanceDb(
         uri="tmp/lancedb",
         table_name="agno_assist_knowledge",
@@ -129,6 +128,7 @@ agent_knowledge = UrlKnowledge(
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
 )
+agent_knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt")
 
 # Create the agent
 agno_support = Agent(
@@ -188,7 +188,4 @@ playground = Playground(
 app = playground.get_app()
 
 if __name__ == "__main__":
-    load_kb = False
-    if load_kb:
-        agent_knowledge.load(recreate=True)
     playground.serve(app="agno_assist:app", reload=True)

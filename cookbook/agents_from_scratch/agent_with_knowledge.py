@@ -8,7 +8,7 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.url import UrlKnowledge
+from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.vectordb.lancedb import LanceDb, SearchType
 
@@ -17,9 +17,8 @@ cwd = Path(__file__).parent
 tmp_dir = cwd.joinpath("tmp")
 tmp_dir.mkdir(parents=True, exist_ok=True)
 
-# Initialize knowledge base
-agent_knowledge = UrlKnowledge(
-    urls=["https://docs.agno.com/llms-full.txt"],
+# Initialize knowledge
+agent_knowledge = Knowledge(
     vector_db=LanceDb(
         uri=str(tmp_dir.joinpath("lancedb")),
         table_name="agno_assist_knowledge",
@@ -27,6 +26,7 @@ agent_knowledge = UrlKnowledge(
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
 )
+agent_knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt")
 
 agent_with_knowledge = Agent(
     name="Agent with Knowledge",
@@ -86,9 +86,4 @@ agent_with_knowledge = Agent(
 )
 
 if __name__ == "__main__":
-    # Set to False after the knowledge base is loaded
-    load_knowledge = False
-    if load_knowledge:
-        agent_knowledge.load()
-
     agent_with_knowledge.print_response("Tell me about the Agno framework", stream=True)

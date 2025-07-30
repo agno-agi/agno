@@ -1,13 +1,12 @@
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.url import UrlKnowledge
+from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic import Claude
 from agno.tools.reasoning import ReasoningTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 
-# Load Agno documentation in a knowledge base
-knowledge = UrlKnowledge(
-    urls=["https://docs.agno.com/introduction/agents.md"],
+# Load Agno documentation into Knowledge
+knowledge = Knowledge(
     vector_db=LanceDb(
         uri="tmp/lancedb",
         table_name="agno_docs",
@@ -15,6 +14,10 @@ knowledge = UrlKnowledge(
         # Use OpenAI for embeddings
         embedder=OpenAIEmbedder(id="text-embedding-3-small", dimensions=1536),
     ),
+)
+
+knowledge.add_content(
+    name="Agno Docs", url="https://docs.agno.com/introduction/agents.md"
 )
 
 agent = Agent(
@@ -33,9 +36,6 @@ agent = Agent(
 )
 
 if __name__ == "__main__":
-    # Load the knowledge base, comment out after first run
-    # Set recreate to True to recreate the knowledge base if needed
-    agent.knowledge.load(recreate=False)
     agent.print_response(
         "What are Agents?",
         stream=True,
