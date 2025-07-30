@@ -29,7 +29,7 @@ agent = Agent(
 
         Present the findings exactly as provided by the research tool.
     """),
-    show_tool_calls=True,
+    
 )
 
 # Example 1: Basic research with simple string

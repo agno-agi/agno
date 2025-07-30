@@ -36,7 +36,7 @@ file_agent = Agent(
         "You are an AI agent that can analyze files.",
         "You are given a file and you need to answer questions about the file.",
     ],
-    show_tool_calls=True,
+    
     markdown=True,
 )
 
@@ -50,7 +50,7 @@ video_agent = Agent(
     enable_user_memories=True,
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
-    show_tool_calls=True,
+    
     markdown=True,
 )
 
@@ -64,7 +64,7 @@ audio_agent = Agent(
     enable_user_memories=True,
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
-    show_tool_calls=True,
+    
     markdown=True,
 )
 
@@ -79,7 +79,7 @@ web_agent = Agent(
     ],
     memory=memory,
     enable_user_memories=True,
-    show_tool_calls=True,
+    
     markdown=True,
     storage=agent_storage,
 )
@@ -102,7 +102,7 @@ finance_agent = Agent(
     ],
     memory=memory,
     enable_user_memories=True,
-    show_tool_calls=True,
+    
     markdown=True,
     storage=agent_storage,
 )
@@ -146,7 +146,7 @@ research_team = Team(
     memory=memory,
     enable_user_memories=True,
     add_datetime_to_instructions=True,
-    show_tool_calls=True,
+    
     markdown=True,
     enable_agentic_context=True,
     storage=PostgresStorage(
@@ -202,7 +202,7 @@ financial_news_team = Team(
         "If the user is just being conversational, you should respond directly WITHOUT forwarding a task to a member.",
     ],
     add_datetime_to_instructions=True,
-    show_tool_calls=True,
+    
     markdown=True,
     enable_agentic_context=True,
     show_members_responses=True,

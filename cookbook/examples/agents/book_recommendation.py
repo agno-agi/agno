@@ -71,7 +71,7 @@ book_recommendation_agent = Agent(
         - Note trigger warnings when relevant"""),
     markdown=True,
     add_datetime_to_instructions=True,
-    show_tool_calls=True,
+    
 )
 
 # Example usage with different types of book queries

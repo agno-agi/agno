@@ -113,7 +113,7 @@ research_team = Team(
     memory=memory,
     enable_user_memories=True,
     add_datetime_to_instructions=True,
-    show_tool_calls=True,
+    
     markdown=True,
     enable_agentic_context=True,
     storage=SqliteStorage(

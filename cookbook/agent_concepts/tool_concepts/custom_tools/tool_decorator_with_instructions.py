@@ -38,7 +38,7 @@ def get_top_hackernews_stories(num_stories: int = 5) -> str:
 agent = Agent(
     tools=[get_top_hackernews_stories],
     markdown=True,
-    show_tool_calls=True,
+    
     debug_mode=True,
 )
 

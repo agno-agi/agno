@@ -67,7 +67,7 @@ reasoning_model_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     reasoning_model=OpenAIChat(id="o3-mini"),
     instructions=["You are a reasoning agent that can reason about math."],
-    show_tool_calls=True,
+    
     markdown=True,
     debug_mode=True,
     storage=SqliteStorage(
@@ -149,7 +149,7 @@ thinking_tool_agent = Agent(
         - Mention relevant regulatory concerns\
     """),
     add_datetime_to_instructions=True,
-    show_tool_calls=True,
+    
     markdown=True,
     stream_intermediate_steps=True,
     storage=SqliteStorage(
@@ -183,7 +183,7 @@ knowledge_agent = Agent(
     name="Knowledge Agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[knowledge_tools],
-    show_tool_calls=True,
+    
     markdown=True,
     storage=SqliteStorage(
         table_name="knowledge_agent",

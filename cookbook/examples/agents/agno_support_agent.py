@@ -194,7 +194,7 @@ def create_agent(
         storage=agent_storage,
         add_history_to_messages=True,
         num_history_responses=3,
-        show_tool_calls=True,
+        
         read_chat_history=True,
         markdown=True,
     )

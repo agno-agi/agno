@@ -21,7 +21,7 @@ file_agent = Agent(
         table_name="agent_sessions", db_url=db_url, auto_upgrade_schema=True
     ),
     knowledge=knowledge,
-    show_tool_calls=True,
+    
     markdown=True,
 )
 
@@ -36,7 +36,7 @@ audio_agent = Agent(
     ),
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
-    show_tool_calls=True,
+    
     markdown=True,
 )
 
@@ -50,7 +50,7 @@ video_agent = Agent(
     ),
     add_history_to_messages=True,
     add_datetime_to_instructions=True,
-    show_tool_calls=True,
+    
     markdown=True,
 )
 
