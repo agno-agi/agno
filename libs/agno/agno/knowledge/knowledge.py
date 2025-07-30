@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from agno.db.base import BaseDb
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.knowledge.cloud_storage.cloud_storage import CloudStorageConfig
+from agno.knowledge.cloud_storage.cloud_storage import AzureConfig, CloudStorageConfig, GCSConfig, S3Config
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
@@ -235,8 +235,8 @@ class Knowledge:
         skip_if_exists: bool = True,
     ) -> None:
         # Validation: At least one of the parameters must be provided
-        if all(argument is None for argument in [name, path, url, text_content, topics]):
-            log_info("At least one of 'path', 'url', 'text_content', or 'topics' must be provided.")
+        if all(argument is None for argument in [path, url, text_content, topics, config]):
+            log_info("At least one of 'path', 'url', 'text_content', 'topics', or 'config' must be provided.")
             return
 
         if not skip_if_exists:
@@ -653,7 +653,116 @@ class Knowledge:
             content.status = "Completed"
             self._update_content(content)
 
-    def _load_from_cloud_storage(self): ...
+    def _load_from_cloud_storage(
+        self,
+        content: Content,
+        upsert: bool,
+        skip_if_exists: bool,
+    ):
+        log_info(f"Loading content from cloud storage")
+
+        if content.config is None:
+            log_warning("No config provided for content")
+            return
+        config = content.config
+        if isinstance(config, S3Config):
+            self._load_from_s3(content, upsert, skip_if_exists)
+
+        # elif isinstance(config, GCSConfig):
+        #     self._load_from_gcs(content, upsert, skip_if_exists)
+        # elif isinstance(config, AzureConfig):
+        #     self._load_from_azure(content, upsert, skip_if_exists)
+        else:
+            log_warning(f"Unsupported config type: {type(config)}")
+
+    def _load_from_s3(self, content: Content, upsert: bool, skip_if_exists: bool):
+        from agno.aws.resource.s3.object import S3Object  # type: ignore
+
+        log_info(f"Loading content from S3")
+        if content.reader is None:
+            reader = self.s3_reader
+            print(f"Using S3 PDF reader", reader.__class__.__name__)
+        else:
+            reader = content.reader
+
+        if reader is None:
+            log_warning("No reader provided for content")
+            return
+
+        config: S3Config = content.config
+
+        objects_to_read: List[S3Object] = []
+
+        if config.bucket is not None:
+            print(f"Using bucket: {config.bucket.name}")
+            if config.key is not None:
+                print(f"Using key: {config.key}")
+                _object = S3Object(bucket_name=config.bucket.name, name=config.key)
+                objects_to_read.append(_object)
+            elif config.object is not None:
+                print(f"Using object: {config.object.name}")
+                objects_to_read.append(config.object)
+            elif config.prefix is not None:
+                print(f"Using prefix: {config.prefix}")
+                objects_to_read.extend(config.bucket.get_objects(prefix=config.prefix))
+            else:
+                print(f"Using bucket: {config.bucket.name}")
+                objects_to_read.extend(config.bucket.get_objects())
+
+        for object in objects_to_read:
+            print(f"Reading object: {object.name}")
+
+            id = str(uuid4())
+            content_entry = Content(
+                id=id,
+                name=content.name + "_" + object.name,
+                description=content.description,
+                status="Processing",
+                metadata=content.metadata,
+                file_type="s3_pdf",
+            )
+
+            content_hash = (self._build_content_hash(content_entry),)
+            if self.vector_db.content_hash_exists(content_hash) and skip_if_exists:
+                log_info(f"Content {content_hash} already exists, skipping")
+                continue
+
+            self._add_to_contents_db(content_entry)
+
+            read_documents = reader.read(content_entry.name, object)
+
+            for read_document in read_documents:
+                read_document.content_id = content.id
+
+            completed = True
+            if upsert:
+                try:
+                    self.vector_db.upsert(content_hash, read_documents, content.metadata)
+                except Exception as e:
+                    log_error(f"Error upserting document: {e}")
+                    content_entry.status = "Failed"
+                    content_entry.status_message = "Could not upsert embedding"
+                    completed = False
+                    self._update_content(content_entry)
+            else:
+                try:
+                    self.vector_db.insert(content_hash, documents=read_documents, filters=content.metadata)
+                except Exception as e:
+                    log_error(f"Error inserting document: {e}")
+                    content_entry.status = "Failed"
+                    content_entry.status_message = "Could not insert embedding"
+                    completed = False
+                    self._update_content(content_entry)
+
+            if completed:
+                content_entry.status = "Completed"
+                self._update_content(content_entry)
+
+    def _load_from_gcs(self, content: Content, upsert: bool, skip_if_exists: bool):
+        pass
+
+    def _load_from_azure(self, content: Content, upsert: bool, skip_if_exists: bool):
+        pass
 
     def _load_content(
         self,
@@ -680,8 +789,8 @@ class Knowledge:
         if content.topics:
             self._load_from_topics(content, upsert, skip_if_exists)
 
-        # if content.config:
-        #     self._load_from_cloud_storage(content)
+        if content.config:
+            self._load_from_cloud_storage(content, upsert, skip_if_exists)
 
     def _build_content_hash(self, content: Content) -> str:
         """
@@ -1093,3 +1202,8 @@ class Knowledge:
     def csv_url_reader(self) -> Optional[Reader]:
         """CSV URL reader - lazy loaded via factory."""
         return self._get_reader("csv_url")
+
+    @property
+    def s3_reader(self) -> Optional[Reader]:
+        """S3 reader - lazy loaded via factory."""
+        return self._get_reader("s3")

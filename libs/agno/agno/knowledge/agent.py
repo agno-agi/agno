@@ -134,8 +134,12 @@ class AgentKnowledge(BaseModel):
 
                 if documents_to_load:
                     for doc in documents_to_load:
+                        import random
+                        import string
+
                         log_info(f"Document: {doc.content}")
-                        self.vector_db.insert(documents=[doc], filters=doc.meta_data)
+                        hash_random = "".join(random.choices(string.ascii_letters + string.digits, k=10))
+                        self.vector_db.insert(hash_random, documents=[doc], filters=doc.meta_data)
 
             num_documents += len(documents_to_load)
             log_info(f"Added {len(documents_to_load)} documents to knowledge base")
@@ -429,7 +433,7 @@ class AgentKnowledge(BaseModel):
         for doc in documents:
             # Check hash and existence in DB
             content_hash = doc.content  # Assuming doc.content is reliable hash key
-            if content_hash not in seen_content and not self.vector_db.doc_exists(doc):
+            if content_hash not in seen_content:
                 seen_content.add(content_hash)
                 filtered_documents.append(doc)
             else:
