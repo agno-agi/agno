@@ -12,7 +12,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 web_agent = Agent(
     name="Web Search Agent",
     role="Handle web search requests",
-    model=OpenAIChat(id="gpt-4o"),
+    model=Claude(id="claude-3-7-sonnet-latest"),
     db=PostgresDb(db_url=db_url, session_table="web_agent_sessions"),
     tools=[DuckDuckGoTools()],
     instructions=["Always include sources"],
@@ -21,7 +21,7 @@ web_agent = Agent(
 finance_agent = Agent(
     name="Finance Agent",
     role="Handle financial data requests",
-    model=OpenAIChat(id="gpt-4o"),
+    model=Claude(id="claude-3-7-sonnet-latest"),
     db=PostgresDb(db_url=db_url, session_table="finance_agent_sessions"),
     tools=[
         YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)
