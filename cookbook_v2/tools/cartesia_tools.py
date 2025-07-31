@@ -13,7 +13,6 @@ agent = Agent(
     name="Cartesia TTS Agent",
     description="An agent that uses Cartesia for text-to-speech.",
     tools=[CartesiaTools()],
-    show_tool_calls=True,
 )
 
 response = agent.run(

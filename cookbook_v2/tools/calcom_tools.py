@@ -36,7 +36,6 @@ agent = Agent(
     instructions=[INSTRUCTONS],
     model=OpenAIChat(id="gpt-4"),
     tools=[CalComTools(user_timezone="America/New_York")],
-    show_tool_calls=True,
     markdown=True,
 )
 

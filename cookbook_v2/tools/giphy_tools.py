@@ -12,7 +12,6 @@ gif_agent = Agent(
     instructions=[
         "When the user asks you to create a gif, come up with the appropriate Giphy query and use the `search_gifs` tool to find the appropriate gif.",
     ],
-    show_tool_calls=True,
 )
 
 gif_agent.print_response("I want a gif to send to a friend for their birthday.")

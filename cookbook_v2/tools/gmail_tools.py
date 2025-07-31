@@ -29,7 +29,6 @@ agent = Agent(
         "Attachments can be added to the email",
     ],
     markdown=True,
-    show_tool_calls=False,
     response_model=FindEmailOutput,
 )
 
