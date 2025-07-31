@@ -91,7 +91,6 @@ class PostgresDb(BaseDb):
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
 
     # -- DB methods --
-
     def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
         """
         Create a table with the appropriate schema based on the table type.
@@ -249,7 +248,6 @@ class PostgresDb(BaseDb):
             raise
 
     # -- Session methods --
-
     def delete_session(self, session_id: str) -> bool:
         """
         Delete a session from the database.
@@ -626,7 +624,7 @@ class PostgresDb(BaseDb):
                         return session
                     return TeamSession.from_dict(session)  # type: ignore
 
-            else:
+            elif isinstance(session, WorkflowSession):
                 with self.Session() as sess, sess.begin():
                     stmt = postgresql.insert(table).values(
                         session_id=session_dict.get("session_id"),
@@ -663,6 +661,9 @@ class PostgresDb(BaseDb):
                     if session is None or not deserialize:
                         return session
                     return WorkflowSession.from_dict(session)  # type: ignore
+
+            else:
+                raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_error(f"Exception upserting into sessions table: {e}")
@@ -1176,7 +1177,6 @@ class PostgresDb(BaseDb):
             return [], None
 
     # -- Knowledge methods --
-
     def delete_knowledge_content(self, id: str):
         """Delete a knowledge row from the database.
 
@@ -1342,7 +1342,6 @@ class PostgresDb(BaseDb):
             return None
 
     # -- Eval methods --
-
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
         """Create an EvalRunRecord in the database.
 
