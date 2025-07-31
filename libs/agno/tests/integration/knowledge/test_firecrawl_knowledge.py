@@ -3,7 +3,8 @@ import os
 import pytest
 
 from agno.agent import Agent
-from agno.knowledge.firecrawl import FireCrawlKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.reader.firecrawl_reader import FirecrawlReader
 from agno.vectordb.lancedb import LanceDb
 
 
@@ -20,17 +21,17 @@ def setup_vector_db():
 @pytest.mark.skip(reason="Skipping firecrawl knowledge base tests")
 def test_firecrawl_knowledge_base_directory(setup_vector_db):
     """Test loading multiple URLs into knowledge base"""
-    kb = FireCrawlKnowledgeBase(
+    kb = Knowledge(vector_db=setup_vector_db)
+    kb.add_contents(
         urls=["https://docs.agno.com/knowledge/introduction", "https://docs.agno.com/knowledge/pdf"],
-        vector_db=setup_vector_db,
+        reader=FirecrawlReader(),
     )
-    kb.load(recreate=True)
 
     assert setup_vector_db.exists()
     assert setup_vector_db.get_count() > 0
 
     agent = Agent(knowledge=kb)
-    response = agent.run("What are knowledge bases in Agno and what types are available?", markdown=True)
+    response = agent.run("What is knowledge in Agno and what types are available?", markdown=True)
 
     tool_calls = []
     for msg in response.messages:
@@ -44,14 +45,17 @@ def test_firecrawl_knowledge_base_directory(setup_vector_db):
 @pytest.mark.skip(reason="Skipping firecrawl knowledge base tests")
 def test_firecrawl_knowledge_base_single_url(setup_vector_db):
     """Test loading a single URL into knowledge base"""
-    kb = FireCrawlKnowledgeBase(urls=["https://docs.agno.com/knowledge/pdf"], vector_db=setup_vector_db)
-    kb.load(recreate=True)
+    kb = Knowledge(vector_db=setup_vector_db)
+    kb.add_contents(
+        urls=["https://docs.agno.com/knowledge/pdf"],
+        reader=FirecrawlReader(),
+    )
 
     assert setup_vector_db.exists()
     assert setup_vector_db.get_count() > 0
 
     agent = Agent(knowledge=kb)
-    response = agent.run("How do I use PDFKnowledgeBase in Agno?", markdown=True)
+    response = agent.run("How do I use Knowledge in Agno?", markdown=True)
 
     tool_calls = []
     for msg in response.messages:
@@ -66,11 +70,11 @@ def test_firecrawl_knowledge_base_single_url(setup_vector_db):
 @pytest.mark.asyncio
 async def test_firecrawl_knowledge_base_async_directory(setup_vector_db):
     """Test async loading of multiple URLs into knowledge base"""
-    kb = FireCrawlKnowledgeBase(
+    kb = Knowledge(vector_db=setup_vector_db)
+    await kb.async_add_contents(
         urls=["https://docs.agno.com/knowledge/introduction", "https://docs.agno.com/knowledge/pdf"],
-        vector_db=setup_vector_db,
+        reader=FirecrawlReader(),
     )
-    await kb.aload(recreate=True)
 
     assert await setup_vector_db.async_exists()
     assert await setup_vector_db.async_get_count() > 0
@@ -94,8 +98,11 @@ async def test_firecrawl_knowledge_base_async_directory(setup_vector_db):
 @pytest.mark.asyncio
 async def test_firecrawl_knowledge_base_async_single_url(setup_vector_db):
     """Test async loading of a single URL into knowledge base"""
-    kb = FireCrawlKnowledgeBase(urls=["https://docs.agno.com/knowledge/introduction"], vector_db=setup_vector_db)
-    await kb.aload(recreate=True)
+    kb = Knowledge(vector_db=setup_vector_db)
+    await kb.async_add_contents(
+        urls=["https://docs.agno.com/knowledge/introduction"],
+        reader=FirecrawlReader(),
+    )
 
     assert await setup_vector_db.async_exists()
     assert await setup_vector_db.async_get_count() > 0
@@ -115,8 +122,11 @@ async def test_firecrawl_knowledge_base_async_single_url(setup_vector_db):
 @pytest.mark.skip(reason="Skipping firecrawl knowledge base tests")
 def test_firecrawl_knowledge_base_empty_urls(setup_vector_db):
     """Test handling of empty URL list"""
-    kb = FireCrawlKnowledgeBase(urls=[], vector_db=setup_vector_db)
-    kb.load(recreate=True)
+    kb = Knowledge(vector_db=setup_vector_db)
+    kb.add_contents(
+        urls=[],
+        reader=FirecrawlReader(),
+    )
 
     assert setup_vector_db.exists()
     assert setup_vector_db.get_count() == 0

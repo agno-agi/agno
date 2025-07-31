@@ -13,7 +13,7 @@ Run: `uv run cookbook/agent_concepts/rag/rag_sentence_transformer.py`
 """
 
 from agno.agent import Agent
-from agno.knowledge.document import DocumentKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.embedder.sentence_transformer import SentenceTransformerEmbedder
 from agno.models.openai import OpenAIChat
 from agno.reranker.sentence_transformer import SentenceTransformerReranker
@@ -32,10 +32,7 @@ search_results = [
     "新しいメイクのトレンドは鮮やかな色と革新的な技術に焦点を当てています",
 ]
 
-documents = [Document(content=result) for result in search_results]
-
-knowledge_base = DocumentKnowledgeBase(
-    documents=documents,
+knowledge = Knowledge(
     vector_db=PgVector(
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
         table_name="sentence_transformer_rerank_docs",
@@ -46,9 +43,17 @@ knowledge_base = DocumentKnowledgeBase(
     reranker=SentenceTransformerReranker(model="BAAI/bge-reranker-v2-m3"),
 )
 
+for result in search_results:
+    knowledge.add_content(
+        content=result,
+        metadata={
+            "source": "search_results",
+        },
+    )
+
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     search_knowledge=True,
     instructions=[
         "Include sources in your response.",
@@ -58,7 +63,6 @@ agent = Agent(
 )
 
 if __name__ == "__main__":
-    knowledge_base.load(recreate=True)
 
     test_queries = [
         "What organic skincare products are good for sensitive skin?",
