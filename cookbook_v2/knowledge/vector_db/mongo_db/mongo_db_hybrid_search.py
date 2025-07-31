@@ -36,7 +36,6 @@ def mongodb_agent(user: str = "user"):
         user_id=user,
         knowledge=knowledge_base,
         search_knowledge=True,
-        show_tool_calls=True,
     )
 
     while True:

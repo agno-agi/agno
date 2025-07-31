@@ -167,7 +167,6 @@ knowledge_base = Knowledge(
 )
 
 # Create and use the agent
-agent = Agent(knowledge=knowledge_base, show_tool_calls=True)
 
 
 async def run_agent():

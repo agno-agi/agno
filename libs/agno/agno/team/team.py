@@ -213,8 +213,7 @@ class Team:
     # A list of tools provided to the Model.
     # Tools are functions the model may generate JSON inputs for.
     tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None
-    # Show tool calls in Team response. This sets the default for the team.
-    show_tool_calls: bool = True
+
     # Controls which (if any) tool is called by the team model.
     # "none" means the model will not call a tool and instead generates a message.
     # "auto" means the model can pick between generating a message or calling a tool.
@@ -341,7 +340,6 @@ class Team:
         search_knowledge: bool = True,
         read_team_history: bool = False,
         tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
-        show_tool_calls: bool = True,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
@@ -424,7 +422,6 @@ class Team:
         self.read_team_history = read_team_history
 
         self.tools = tools
-        self.show_tool_calls = show_tool_calls
         self.tool_choice = tool_choice
         self.tool_call_limit = tool_call_limit
         self.tool_hooks = tool_hooks
@@ -546,8 +543,7 @@ class Team:
         if self.debug_mode:
             member.debug_mode = True
             member.debug_level = self.debug_level
-        if self.show_tool_calls:
-            member.show_tool_calls = True
+
         if self.markdown:
             member.markdown = True
 
@@ -2465,7 +2461,7 @@ class Team:
                                 panels.append(member_reasoning_panel)
 
                         # Add tool calls panel for member if available
-                        if self.show_tool_calls and hasattr(member_response, "tools") and member_response.tools:
+                        if hasattr(member_response, "tools") and member_response.tools:
                             member_name = None
                             if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
                                 member_name = self._get_member_name(member_response.agent_id)
@@ -2540,7 +2536,7 @@ class Team:
                     live_console.update(Group(*panels))
 
                 # Add team level tool calls panel if available
-                if self.show_tool_calls and run_response.tools:
+                if run_response.tools:
                     formatted_calls = format_tool_calls(run_response.tools)
                     if formatted_calls:
                         console_width = console.width if console else 80
@@ -2738,7 +2734,7 @@ class Team:
                         reasoning_steps = resp.extra_data.reasoning_steps
 
                     # Collect team tool calls, avoiding duplicates
-                    if self.show_tool_calls and isinstance(resp, ToolCallCompletedEvent) and resp.tool:
+                    if isinstance(resp, ToolCallCompletedEvent) and resp.tool:
                         tool = resp.tool
                         # Generate a unique ID for this tool call
                         if tool.tool_call_id:
@@ -2750,7 +2746,7 @@ class Team:
                             team_tool_calls.append(tool)
 
                 # Collect member tool calls, avoiding duplicates
-                if self.show_tool_calls and hasattr(resp, "member_responses") and resp.member_responses:
+                if hasattr(resp, "member_responses") and resp.member_responses:
                     for member_response in resp.member_responses:
                         member_id = None
                         if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
@@ -2824,7 +2820,7 @@ class Team:
                         member_name = self._get_member_name(member_id)
 
                     # If we have tool calls for this member, display them
-                    if self.show_tool_calls and member_id in member_tool_calls and member_tool_calls[member_id]:
+                    if member_id in member_tool_calls and member_tool_calls[member_id]:
                         formatted_calls = format_tool_calls(member_tool_calls[member_id])
                         if formatted_calls:
                             console_width = console.width if console else 80
@@ -2869,7 +2865,7 @@ class Team:
                             member_response_panels[member_id] = member_response_panel
 
                 # Add team tool calls panel if available (before the team response)
-                if self.show_tool_calls and team_tool_calls:
+                if team_tool_calls:
                     formatted_calls = format_tool_calls(team_tool_calls)
                     if formatted_calls:
                         console_width = console.width if console else 80
@@ -3004,7 +3000,7 @@ class Team:
 
                 if member_id:
                     # First add tool calls if any
-                    if self.show_tool_calls and member_id in member_tool_calls and member_tool_calls[member_id]:
+                    if member_id in member_tool_calls and member_tool_calls[member_id]:
                         formatted_calls = format_tool_calls(member_tool_calls[member_id])
                         if formatted_calls:
                             console_width = console.width if console else 80
@@ -3081,7 +3077,7 @@ class Team:
                             final_panels.append(citations_panel)
 
             # Add team tool calls before team response
-            if self.show_tool_calls and team_tool_calls:
+            if team_tool_calls:
                 formatted_calls = format_tool_calls(team_tool_calls)
                 if formatted_calls:
                     console_width = console.width if console else 80
@@ -3344,7 +3340,7 @@ class Team:
                                 panels.append(member_reasoning_panel)
 
                         # Add tool calls panel for member if available
-                        if self.show_tool_calls and hasattr(member_response, "tools") and member_response.tools:
+                        if hasattr(member_response, "tools") and member_response.tools:
                             member_name = None
                             if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
                                 member_name = self._get_member_name(member_response.agent_id)
@@ -3419,7 +3415,7 @@ class Team:
                     live_console.update(Group(*panels))
 
                 # Add team level tool calls panel if available
-                if self.show_tool_calls and run_response.tools:
+                if run_response.tools:
                     formatted_calls = format_tool_calls(run_response.tools)
                     if formatted_calls:
                         console_width = console.width if console else 80
@@ -3612,7 +3608,7 @@ class Team:
                         reasoning_steps = resp.extra_data.reasoning_steps
 
                     # Collect team tool calls, avoiding duplicates
-                    if self.show_tool_calls and isinstance(resp, ToolCallCompletedEvent) and resp.tool:
+                    if isinstance(resp, ToolCallCompletedEvent) and resp.tool:
                         tool = resp.tool
                         # Generate a unique ID for this tool call
                         if tool.tool_call_id is not None:
@@ -3624,7 +3620,7 @@ class Team:
                             team_tool_calls.append(tool)
 
                 # Collect member tool calls, avoiding duplicates
-                if self.show_tool_calls and hasattr(resp, "member_responses") and resp.member_responses:
+                if hasattr(resp, "member_responses") and resp.member_responses:
                     for member_response in resp.member_responses:
                         member_id = None
                         if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
@@ -3689,7 +3685,7 @@ class Team:
                     live_console.update(Group(*panels))
 
                 # Add tool calls panel if available
-                if self.show_tool_calls and resp is not None and self.run_response.formatted_tool_calls:
+                if resp is not None and self.run_response.formatted_tool_calls:
                     render = True
                     # Create bullet points for each tool call
                     tool_calls_content = Text()
@@ -3813,7 +3809,7 @@ class Team:
 
                 if member_id:
                     # First add tool calls if any
-                    if self.show_tool_calls and member_id in member_tool_calls and member_tool_calls[member_id]:
+                    if member_id in member_tool_calls and member_tool_calls[member_id]:
                         formatted_calls = format_tool_calls(member_tool_calls[member_id])
                         if formatted_calls:
                             console_width = console.width if console else 80
@@ -3895,7 +3891,7 @@ class Team:
                             final_panels.append(citations_panel)
 
             # Add team tool calls before team response
-            if self.show_tool_calls and team_tool_calls:
+            if team_tool_calls:
                 formatted_calls = format_tool_calls(team_tool_calls)
                 if formatted_calls:
                     console_width = console.width if console else 80
@@ -4304,7 +4300,6 @@ class Team:
                 log_warning("Reasoning agent response model should be `ReasoningSteps`, continuing regular session...")
                 return
             # Ensure the reasoning model and agent do not show tool calls
-            reasoning_agent.show_tool_calls = False
 
             step_count = 1
             next_action = NextAction.CONTINUE
@@ -4523,7 +4518,6 @@ class Team:
                 return
 
             # Ensure the reasoning model and agent do not show tool calls
-            reasoning_agent.show_tool_calls = False
 
             step_count = 1
             next_action = NextAction.CONTINUE

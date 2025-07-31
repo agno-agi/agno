@@ -229,7 +229,6 @@ def test_tool_calls_panel_creation():
 
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        show_tool_calls=True,  # Enable tool call display
         telemetry=False,
         monitoring=False,
     )
@@ -272,8 +271,6 @@ def test_tool_calls_panel_creation():
                         if "Tool" in title or "get_weather" in content or "get_temperature" in content:
                             break
 
-                # The test should verify that show_tool_calls=True was set and response has tool calls
-                assert agent.show_tool_calls, "Agent should have show_tool_calls=True"
                 assert mock_response.formatted_tool_calls, "Response should have formatted_tool_calls"
 
                 # If no tool panel was created, maybe tool calls are shown differently
