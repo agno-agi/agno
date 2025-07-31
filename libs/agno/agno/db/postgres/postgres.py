@@ -970,7 +970,6 @@ class PostgresDb(BaseDb):
                     agent_id=memory.agent_id,
                     team_id=memory.team_id,
                     topics=memory.topics,
-                    workflow_id=memory.workflow_id,
                     last_updated=int(time.time()),
                 )
                 stmt = stmt.on_conflict_do_update(
@@ -981,7 +980,6 @@ class PostgresDb(BaseDb):
                         input=memory.input,
                         agent_id=memory.agent_id,
                         team_id=memory.team_id,
-                        workflow_id=memory.workflow_id,
                         last_updated=int(time.time()),
                     ),
                 ).returning(table)
