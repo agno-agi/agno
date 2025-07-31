@@ -713,15 +713,6 @@ class Agent:
             if self.workflow_session_state is not None:
                 self.workflow_session_state["current_user_id"] = user_id
 
-    def _reset_session_state(self) -> None:
-        """Reset the session state for the agent."""
-        if self.team_session_state is not None:
-            self.team_session_state.pop("current_session_id", None)
-            self.team_session_state.pop("current_user_id", None)
-        if self.session_state is not None:
-            self.session_state.pop("current_session_id", None)
-            self.session_state.pop("current_user_id", None)
-
     def _initialize_session(
         self,
         session_id: Optional[str] = None,
@@ -1162,8 +1153,6 @@ class Agent:
                     )
                 else:
                     return self.run_response
-            finally:
-                self._reset_session_state()
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -1540,8 +1529,6 @@ class Agent:
                     )
                 else:
                     return self.run_response
-            finally:
-                self._reset_session_state()
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -1797,8 +1784,6 @@ class Agent:
                     return self.create_run_response(
                         run_state=RunStatus.cancelled, content="Operation cancelled by user", run_response=run_response
                     )
-            finally:
-                self._reset_session_state()
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -2196,8 +2181,6 @@ class Agent:
                     return self.create_run_response(
                         run_state=RunStatus.cancelled, content="Operation cancelled by user", run_response=run_response
                     )
-            finally:
-                self._reset_session_state()
 
         # If we get here, all retries failed
         if last_exception is not None:
