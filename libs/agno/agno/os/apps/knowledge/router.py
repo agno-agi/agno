@@ -20,7 +20,7 @@ from agno.utils.log import log_debug, log_info
 
 
 def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
-    @router.post("/content", response_model=ContentResponseSchema, status_code=201)
+    @router.post("/content", response_model=ContentResponseSchema, status_code=202)
     async def upload_content(
         background_tasks: BackgroundTasks,
         name: Optional[str] = Form(None),
