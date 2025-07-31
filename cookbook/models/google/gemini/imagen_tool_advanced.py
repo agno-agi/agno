@@ -19,7 +19,6 @@ agent = Agent(
             image_generation_model="imagen-4.0-generate-preview-05-20", vertexai=True
         )
     ],
-    show_tool_calls=True,
 )
 
 agent.print_response(
