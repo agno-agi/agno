@@ -1,14 +1,27 @@
-import inspect
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 from os import getenv
-from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Literal, Optional, Union, overload
+from typing import (
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Dict,
+    Iterator,
+    List,
+    Literal,
+    Optional,
+    Union,
+    overload,
+)
 from uuid import uuid4
 
 from pydantic import BaseModel
 
 from agno.agent.agent import Agent
-from agno.media import Audio, Image, Video
+from agno.db.base import BaseDb, SessionType
+from agno.media import Audio, AudioArtifact, Image, ImageArtifact, Video, VideoArtifact
 from agno.run.base import RunStatus
 from agno.run.v2.workflow import (
     ConditionExecutionCompletedEvent,
@@ -32,17 +45,28 @@ from agno.run.v2.workflow import (
     WorkflowRunResponseEvent,
     WorkflowStartedEvent,
 )
-from agno.session.workflow import WorkflowSession as WorkflowSessionV2
-from agno.storage.base import Storage
+from agno.session.workflow import WorkflowSession
 from agno.team.team import Team
-from agno.utils.log import log_debug, logger, set_log_level_to_debug, set_log_level_to_info
+from agno.utils.log import (
+    log_debug,
+    logger,
+    set_log_level_to_debug,
+    set_log_level_to_info,
+    use_workflow_logger,
+)
 from agno.workflow.v2.condition import Condition
 from agno.workflow.v2.loop import Loop
 from agno.workflow.v2.parallel import Parallel
 from agno.workflow.v2.router import Router
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.steps import Steps
-from agno.workflow.v2.types import StepInput, StepMetrics, StepOutput, WorkflowExecutionInput, WorkflowMetrics
+from agno.workflow.v2.types import (
+    StepInput,
+    StepMetrics,
+    StepOutput,
+    WorkflowExecutionInput,
+    WorkflowMetrics,
+)
 
 WorkflowSteps = Union[
     Callable[
@@ -78,7 +102,7 @@ class Workflow:
     # Workflow configuration
     steps: Optional[WorkflowSteps] = None
 
-    storage: Optional[Storage] = None
+    db: Optional[BaseDb] = None
 
     # Session management
     session_id: Optional[str] = None
@@ -92,7 +116,7 @@ class Workflow:
     run_response: Optional[WorkflowRunResponse] = None
 
     # Workflow session for storage
-    workflow_session: Optional[WorkflowSessionV2] = None
+    workflow_session: Optional[WorkflowSession] = None
     debug_mode: Optional[bool] = False
 
     # --- Workflow Streaming ---
@@ -103,13 +127,14 @@ class Workflow:
 
     store_events: bool = False
     events_to_skip: Optional[List[WorkflowRunEvent]] = None
+    os_id: Optional[str] = None
 
     def __init__(
         self,
         workflow_id: Optional[str] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
-        storage: Optional[Storage] = None,
+        db: Optional[BaseDb] = None,
         steps: Optional[WorkflowSteps] = None,
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -124,7 +149,7 @@ class Workflow:
         self.workflow_id = workflow_id
         self.name = name
         self.description = description
-        self.storage = storage
+        self.db = db
         self.steps = steps
         self.session_id = session_id
         self.session_name = session_name
@@ -136,6 +161,52 @@ class Workflow:
         self.stream = stream
         self.stream_intermediate_steps = stream_intermediate_steps
 
+    @property
+    def run_parameters(self) -> Dict[str, Any]:
+        """Get the run parameters for the workflow"""
+
+        if self.steps is None:
+            return {}
+
+        parameters = {}
+
+        if self.steps and callable(self.steps):
+            from inspect import Parameter, signature
+
+            sig = signature(self.steps)  # type: ignore
+
+            for param_name, param in sig.parameters.items():
+                if param_name not in ["workflow", "execution_input", "self"]:
+                    parameters[param_name] = {
+                        "name": param_name,
+                        "default": param.default.default
+                        if hasattr(param.default, "__class__") and param.default.__class__.__name__ == "FieldInfo"
+                        else (param.default if param.default is not Parameter.empty else None),
+                        "annotation": (
+                            param.annotation.__name__
+                            if hasattr(param.annotation, "__name__")
+                            else (
+                                str(param.annotation).replace("typing.Optional[", "").replace("]", "")
+                                if "typing.Optional" in str(param.annotation)
+                                else str(param.annotation)
+                            )
+                        )
+                        if param.annotation is not Parameter.empty
+                        else None,
+                        "required": param.default is Parameter.empty,
+                    }
+        else:
+            parameters = {
+                "message": {
+                    "name": "message",
+                    "default": None,
+                    "annotation": "str",
+                    "required": True,
+                },
+            }
+
+        return parameters
+
     def initialize_workflow(self):
         if self.workflow_id is None:
             self.workflow_id = str(uuid4())
@@ -145,11 +216,24 @@ class Workflow:
             self.session_id = str(uuid4())
             log_debug(f"Generated new session_id: {self.session_id}")
 
-        # Set storage mode to workflow_v2
-        if self.storage is not None:
-            self.storage.mode = "workflow_v2"
-
         self._update_workflow_session_state()
+
+    def rename_session(self, session_name: str):
+        """Rename the current session and save to storage"""
+
+        # -*- Read from storage
+        self.read_from_storage()
+        # -*- Rename session
+        self.session_name = session_name
+        # -*- Save to storage
+        self.write_to_storage()
+
+    def delete_session(self, session_id: str):
+        """Delete the current session and save to storage"""
+        if self.db is None:
+            return
+        # -*- Delete session
+        self.db.delete_session(session_id=session_id)
 
     def _handle_event(
         self, event: "WorkflowRunResponseEvent", workflow_run_response: WorkflowRunResponse
@@ -193,35 +277,52 @@ class Workflow:
     def _set_debug(self) -> None:
         """Set debug mode and configure logging"""
         if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
+            use_workflow_logger()
+
             self.debug_mode = True
-            set_log_level_to_debug()
+            set_log_level_to_debug(source_type="workflow")
 
             # Propagate to steps - only if steps is iterable (not callable)
-            if self.steps and not isinstance(self.steps, Callable):
-                for step in self.steps:
-                    # TODO: Handle properly steps inside other primitives
+            if self.steps and not callable(self.steps):
+                if isinstance(self.steps, Steps):
+                    steps_to_iterate = self.steps.steps
+                else:
+                    steps_to_iterate = self.steps
 
-                    # Propagate to step executors (agents/teams)
-                    if hasattr(step, "active_executor") and step.active_executor:
-                        executor = step.active_executor
-                        if hasattr(executor, "debug_mode"):
-                            executor.debug_mode = True
-
-                        # If it's a team, propagate to all members
-                        if hasattr(executor, "members"):
-                            for member in executor.members:
-                                if hasattr(member, "debug_mode"):
-                                    member.debug_mode = True
+                for step in steps_to_iterate:
+                    self._propagate_debug_to_step(step)
         else:
-            set_log_level_to_info()
+            set_log_level_to_info(source_type="workflow")
+
+    def _propagate_debug_to_step(self, step):
+        """Recursively propagate debug mode to steps and nested primitives"""
+        # Handle direct Step objects
+        if hasattr(step, "active_executor") and step.active_executor:
+            executor = step.active_executor
+            if hasattr(executor, "debug_mode"):
+                executor.debug_mode = True
+
+            # If it's a team, propagate to all members
+            if hasattr(executor, "members"):
+                for member in executor.members:
+                    if hasattr(member, "debug_mode"):
+                        member.debug_mode = True
+
+        # Handle nested primitives - check both 'steps' and 'choices' attributes
+        for attr_name in ["steps", "choices"]:
+            if hasattr(step, attr_name):
+                attr_value = getattr(step, attr_name)
+                if attr_value and isinstance(attr_value, list):
+                    for nested_step in attr_value:
+                        self._propagate_debug_to_step(nested_step)
 
     def _create_step_input(
         self,
         execution_input: WorkflowExecutionInput,
         previous_step_outputs: Optional[Dict[str, StepOutput]] = None,
-        shared_images: Optional[List[Image]] = None,
-        shared_videos: Optional[List[Video]] = None,
-        shared_audio: Optional[List[Audio]] = None,
+        shared_images: Optional[List[ImageArtifact]] = None,
+        shared_videos: Optional[List[VideoArtifact]] = None,
+        shared_audio: Optional[List[AudioArtifact]] = None,
     ) -> StepInput:
         """Helper method to create StepInput with enhanced data flow support"""
 
@@ -229,12 +330,13 @@ class Workflow:
         if previous_step_outputs:
             last_output = list(previous_step_outputs.values())[-1]
             previous_step_content = last_output.content if last_output else None
+            log_debug(f"Using previous step content from: {list(previous_step_outputs.keys())[-1]}")
 
         return StepInput(
             message=execution_input.message,
             previous_step_content=previous_step_content,
             previous_step_outputs=previous_step_outputs,
-            workflow_message=execution_input.message,
+            additional_data=execution_input.additional_data,
             images=shared_images or [],
             videos=shared_videos or [],
             audio=shared_audio or [],
@@ -244,22 +346,14 @@ class Workflow:
         """Get the number of steps in the workflow"""
         if self.steps is None:
             return 0
-        elif isinstance(self.steps, Callable):
+        elif callable(self.steps):
             return 1  # Callable function counts as 1 step
         else:
-            return len(self.steps)
-
-    def _convert_dict_to_step_metrics(self, step_name: str, metrics_dict: Dict[str, Any]) -> StepMetrics:
-        """Convert dictionary metrics to StepMetrics object"""
-        return StepMetrics.from_dict(
-            {
-                "step_name": step_name,
-                "executor_type": metrics_dict.get("executor_type", "unknown"),
-                "executor_name": metrics_dict.get("executor_name", "unknown"),
-                "metrics": metrics_dict.get("metrics"),
-                "parallel_steps": metrics_dict.get("parallel_steps"),
-            }
-        )
+            # Handle Steps wrapper
+            if isinstance(self.steps, Steps):
+                return len(self.steps.steps)
+            else:
+                return len(self.steps)
 
     def _aggregate_workflow_metrics(self, step_responses: List[Union[StepOutput, List[StepOutput]]]) -> WorkflowMetrics:
         """Aggregate metrics from all step responses into structured workflow metrics"""
@@ -273,7 +367,37 @@ class Workflow:
 
             # Add step-specific metrics
             if step_output.step_name and step_output.metrics:
-                step_metrics = self._convert_dict_to_step_metrics(step_output.step_name, step_output.metrics)
+                if step_output.parallel_step_outputs:
+                    # This is a parallel step - create nested step metrics for each sub-step
+                    parallel_step_metrics = {}
+                    for sub_step_name, sub_step_output in step_output.parallel_step_outputs.items():
+                        if sub_step_output.metrics:
+                            parallel_step_metrics[sub_step_name] = StepMetrics(
+                                step_name=sub_step_name,
+                                executor_type=sub_step_output.executor_type or "unknown",
+                                executor_name=sub_step_output.executor_name or "unknown",
+                                metrics=sub_step_output.metrics,
+                                parallel_steps=None,
+                            )
+
+                    # Create a StepMetrics for the parallel container
+                    step_metrics = StepMetrics(
+                        step_name=step_output.step_name,
+                        executor_type="parallel",
+                        executor_name=step_output.step_name or "Parallel",
+                        metrics=step_output.metrics,
+                        parallel_steps=parallel_step_metrics if parallel_step_metrics else None,
+                    )
+                else:
+                    # Regular step
+                    step_metrics = StepMetrics(
+                        step_name=step_output.step_name,
+                        executor_type=step_output.executor_type or "unknown",
+                        executor_name=step_output.executor_name or "unknown",
+                        metrics=step_output.metrics,
+                        parallel_steps=None,
+                    )
+
                 steps_dict[step_output.step_name] = step_metrics
 
         # Process all step responses
@@ -295,24 +419,26 @@ class Workflow:
         self, func: Callable, workflow: "Workflow", execution_input: WorkflowExecutionInput, **kwargs: Any
     ) -> Any:
         """Call custom function with only the parameters it expects"""
-        sig = inspect.signature(func)
+        from inspect import signature
+
+        sig = signature(func)
 
         # Build arguments based on what the function actually accepts
         call_kwargs = {}
 
         # Only add workflow and execution_input if the function expects them
-        if "workflow" in sig.parameters:
+        if "workflow" in sig.parameters:  # type: ignore
             call_kwargs["workflow"] = self
         if "execution_input" in sig.parameters:
-            call_kwargs["execution_input"] = execution_input
+            call_kwargs["execution_input"] = execution_input  # type: ignore
 
         # Add any other kwargs that the function expects
         for param_name in kwargs:
-            if param_name in sig.parameters:
+            if param_name in sig.parameters:  # type: ignore
                 call_kwargs[param_name] = kwargs[param_name]
 
         # If function has **kwargs parameter, pass all remaining kwargs
-        for param in sig.parameters.values():
+        for param in sig.parameters.values():  # type: ignore
             if param.kind == param.VAR_KEYWORD:
                 call_kwargs.update(kwargs)
                 break
@@ -330,13 +456,14 @@ class Workflow:
         self, execution_input: WorkflowExecutionInput, workflow_run_response: WorkflowRunResponse, **kwargs: Any
     ) -> WorkflowRunResponse:
         """Execute a specific pipeline by name synchronously"""
+        from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
 
-        if isinstance(self.steps, Callable):
-            if inspect.iscoroutinefunction(self.steps) or inspect.isasyncgenfunction(self.steps):
+        if callable(self.steps):
+            if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
                 raise ValueError("Cannot use async function with synchronous execution")
-            elif inspect.isgeneratorfunction(self.steps):
+            elif isgeneratorfunction(self.steps):
                 content = ""
                 for chunk in self.steps(self, execution_input, **kwargs):
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
@@ -346,7 +473,7 @@ class Workflow:
                 workflow_run_response.content = content
             else:
                 # Execute the workflow with the custom executor
-                workflow_run_response.content = self._call_custom_function(self.steps, self, execution_input, **kwargs)
+                workflow_run_response.content = self._call_custom_function(self.steps, self, execution_input, **kwargs)  # type: ignore[arg-type]
 
             workflow_run_response.status = RunStatus.completed
         else:
@@ -355,14 +482,14 @@ class Workflow:
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
                 previous_step_outputs: Dict[str, StepOutput] = {}
 
-                shared_images = execution_input.images or []
-                output_images = []
-                shared_videos = execution_input.videos or []
-                output_videos = []
-                shared_audio = execution_input.audio or []
-                output_audio = []
+                shared_images: List[ImageArtifact] = execution_input.images or []
+                output_images: List[ImageArtifact] = (execution_input.images or []).copy()  # Start with input images
+                shared_videos: List[VideoArtifact] = execution_input.videos or []
+                output_videos: List[VideoArtifact] = (execution_input.videos or []).copy()  # Start with input videos
+                shared_audio: List[AudioArtifact] = execution_input.audio or []
+                output_audio: List[AudioArtifact] = (execution_input.audio or []).copy()  # Start with input audio
 
-                for i, step in enumerate(self.steps):
+                for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     log_debug(f"Executing step {i + 1}/{self._get_step_count()}: {step_name}")
 
@@ -375,10 +502,11 @@ class Workflow:
                         shared_audio=shared_audio,
                     )
 
-                    step_output = step.execute(step_input, session_id=self.session_id, user_id=self.user_id)
+                    step_output = step.execute(step_input, session_id=self.session_id, user_id=self.user_id)  # type: ignore[union-attr]
 
                     # Update the workflow-level previous_step_outputs dictionary
                     if isinstance(step_output, list):
+                        log_debug(f"Step returned {len(step_output)} outputs")
                         # For multiple outputs (from Loop, Condition, etc.), store the last one
                         if step_output:
                             previous_step_outputs[step_name] = step_output[-1]
@@ -420,7 +548,7 @@ class Workflow:
                     if isinstance(last_output, list) and last_output:
                         # If it's a list (from Condition/Loop/etc.), use the last one
                         workflow_run_response.content = last_output[-1].content
-                    else:
+                    elif not isinstance(last_output, list):
                         # Single StepOutput
                         workflow_run_response.content = last_output.content
                 else:
@@ -442,9 +570,7 @@ class Workflow:
                 workflow_run_response.content = f"Workflow execution failed: {e}"
 
             finally:
-                if self.workflow_session:
-                    self.workflow_session.add_run(workflow_run_response)
-                self.write_to_storage()
+                self._save_run_to_storage(workflow_run_response)
 
         return workflow_run_response
 
@@ -456,6 +582,7 @@ class Workflow:
         **kwargs: Any,
     ) -> Iterator[WorkflowRunResponseEvent]:
         """Execute a specific pipeline by name with event streaming"""
+        from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
 
@@ -467,12 +594,12 @@ class Workflow:
         )
         yield self._handle_event(workflow_started_event, workflow_run_response)
 
-        if isinstance(self.steps, Callable):
-            if inspect.iscoroutinefunction(self.steps) or inspect.isasyncgenfunction(self.steps):
+        if callable(self.steps):
+            if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
                 raise ValueError("Cannot use async function with synchronous execution")
-            elif inspect.isgeneratorfunction(self.steps):
+            elif isgeneratorfunction(self.steps):
                 content = ""
-                for chunk in self._call_custom_function(self.steps, self, execution_input, **kwargs):
+                for chunk in self._call_custom_function(self.steps, self, execution_input, **kwargs):  # type: ignore[arg-type]
                     # Update the run_response with the content from the result
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
@@ -490,16 +617,16 @@ class Workflow:
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
                 previous_step_outputs: Dict[str, StepOutput] = {}
 
-                shared_images = execution_input.images or []
-                output_images = []
-                shared_videos = execution_input.videos or []
-                output_videos = []
-                shared_audio = execution_input.audio or []
-                output_audio = []
+                shared_images: List[ImageArtifact] = execution_input.images or []
+                output_images: List[ImageArtifact] = (execution_input.images or []).copy()  # Start with input images
+                shared_videos: List[VideoArtifact] = execution_input.videos or []
+                output_videos: List[VideoArtifact] = (execution_input.videos or []).copy()  # Start with input videos
+                shared_audio: List[AudioArtifact] = execution_input.audio or []
+                output_audio: List[AudioArtifact] = (execution_input.audio or []).copy()  # Start with input audio
 
                 early_termination = False
 
-                for i, step in enumerate(self.steps):
+                for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     log_debug(f"Streaming step {i + 1}/{self._get_step_count()}: {step_name}")
 
@@ -513,7 +640,7 @@ class Workflow:
                     )
 
                     # Execute step with streaming and yield all events
-                    for event in step.execute_stream(
+                    for event in step.execute_stream(  # type: ignore[union-attr]
                         step_input,
                         session_id=self.session_id,
                         user_id=self.user_id,
@@ -564,12 +691,12 @@ class Workflow:
                             if getattr(step, "executor_type", None) == "function":
                                 yield step_output_event
 
-                        elif isinstance(event, WorkflowRunResponseEvent):
-                            yield self._handle_event(event, workflow_run_response)
+                        elif isinstance(event, WorkflowRunResponseEvent):  # type: ignore
+                            yield self._handle_event(event, workflow_run_response)  # type: ignore
 
                         else:
                             # Yield other internal events
-                            yield event
+                            yield event  # type: ignore
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
                         break
@@ -583,7 +710,7 @@ class Workflow:
                     if isinstance(last_output, list) and last_output:
                         # If it's a list (from Condition/Loop/etc.), use the last one
                         workflow_run_response.content = last_output[-1].content
-                    else:
+                    elif not isinstance(last_output, list):
                         # Single StepOutput
                         workflow_run_response.content = last_output.content
                 else:
@@ -621,95 +748,95 @@ class Workflow:
             workflow_name=workflow_run_response.workflow_name,
             workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
-            step_responses=workflow_run_response.step_responses,
+            step_responses=workflow_run_response.step_responses,  # type: ignore
             extra_data=workflow_run_response.extra_data,
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response)
 
         # Store the completed workflow response
-        if self.workflow_session:
-            self.workflow_session.add_run(workflow_run_response)
-
-        # Save to storage after complete execution
-        self.write_to_storage()
+        self._save_run_to_storage(workflow_run_response)
 
     async def _acall_custom_function(
         self, func: Callable, workflow: "Workflow", execution_input: WorkflowExecutionInput, **kwargs: Any
     ) -> Any:
         """Call custom function with only the parameters it expects - handles both async functions and async generators"""
-        sig = inspect.signature(func)
+        from inspect import isasyncgenfunction, signature
+
+        sig = signature(func)
 
         # Build arguments based on what the function actually accepts
         call_kwargs = {}
 
         # Only add workflow and execution_input if the function expects them
-        if "workflow" in sig.parameters:
+        if "workflow" in sig.parameters:  # type: ignore
             call_kwargs["workflow"] = self
         if "execution_input" in sig.parameters:
-            call_kwargs["execution_input"] = execution_input
+            call_kwargs["execution_input"] = execution_input  # type: ignore
 
         # Add any other kwargs that the function expects
         for param_name in kwargs:
-            if param_name in sig.parameters:
+            if param_name in sig.parameters:  # type: ignore
                 call_kwargs[param_name] = kwargs[param_name]
 
         # If function has **kwargs parameter, pass all remaining kwargs
-        for param in sig.parameters.values():
+        for param in sig.parameters.values():  # type: ignore
             if param.kind == param.VAR_KEYWORD:
                 call_kwargs.update(kwargs)
                 break
 
         try:
             # Check if it's an async generator function
-            if inspect.isasyncgenfunction(func):
+            if isasyncgenfunction(func):
                 # For async generators, call the function and return the async generator directly
-                return func(**call_kwargs)
+                return func(**call_kwargs)  # type: ignore
             else:
                 # For regular async functions, await the result
-                return await func(**call_kwargs)
+                return await func(**call_kwargs)  # type: ignore
         except TypeError as e:
             # If signature inspection fails, fall back to original method
             logger.warning(
                 f"Async function signature inspection failed: {e}. Falling back to original calling convention."
             )
-            if inspect.isasyncgenfunction(func):
+            if isasyncgenfunction(func):
                 # For async generators, use the same signature inspection logic in fallback
-                return func(**call_kwargs)
+                return func(**call_kwargs)  # type: ignore
             else:
                 # For regular async functions, use the same signature inspection logic in fallback
-                return await func(**call_kwargs)
+                return await func(**call_kwargs)  # type: ignore
 
     async def _aexecute(
         self, execution_input: WorkflowExecutionInput, workflow_run_response: WorkflowRunResponse, **kwargs: Any
     ) -> WorkflowRunResponse:
         """Execute a specific pipeline by name asynchronously"""
+        from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
 
-        if isinstance(self.steps, Callable):
+        if callable(self.steps):
             # Execute the workflow with the custom executor
             content = ""
 
-            if inspect.iscoroutinefunction(self.steps):
+            if iscoroutinefunction(self.steps):  # type: ignore
                 workflow_run_response.content = await self._acall_custom_function(
                     self.steps, self, execution_input, **kwargs
                 )
-            elif inspect.isgeneratorfunction(self.steps):
-                for chunk in self.steps(self, execution_input, **kwargs):
+            elif isgeneratorfunction(self.steps):
+                for chunk in self.steps(self, execution_input, **kwargs):  # type: ignore[arg-type]
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
                     else:
                         content += str(chunk)
                 workflow_run_response.content = content
-            elif inspect.isasyncgenfunction(self.steps):
-                async for chunk in self.steps(self, execution_input):
+            elif isasyncgenfunction(self.steps):  # type: ignore
+                async_gen = await self._acall_custom_function(self.steps, self, execution_input, **kwargs)
+                async for chunk in async_gen:
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
                     else:
                         content += str(chunk)
                 workflow_run_response.content = content
             else:
-                workflow_run_response.content = self.steps(self, execution_input, **kwargs)
+                workflow_run_response.content = self._call_custom_function(self.steps, self, execution_input, **kwargs)
             workflow_run_response.status = RunStatus.completed
 
         else:
@@ -718,14 +845,14 @@ class Workflow:
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
                 previous_step_outputs: Dict[str, StepOutput] = {}
 
-                shared_images = execution_input.images or []
-                output_images = []
-                shared_videos = execution_input.videos or []
-                output_videos = []
-                shared_audio = execution_input.audio or []
-                output_audio = []
+                shared_images: List[ImageArtifact] = execution_input.images or []
+                output_images: List[ImageArtifact] = (execution_input.images or []).copy()  # Start with input images
+                shared_videos: List[VideoArtifact] = execution_input.videos or []
+                output_videos: List[VideoArtifact] = (execution_input.videos or []).copy()  # Start with input videos
+                shared_audio: List[AudioArtifact] = execution_input.audio or []
+                output_audio: List[AudioArtifact] = (execution_input.audio or []).copy()  # Start with input audio
 
-                for i, step in enumerate(self.steps):
+                for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     log_debug(f"Async Executing step {i + 1}/{self._get_step_count()}: {step_name}")
 
@@ -738,7 +865,7 @@ class Workflow:
                         shared_audio=shared_audio,
                     )
 
-                    step_output = await step.aexecute(step_input, session_id=self.session_id, user_id=self.user_id)
+                    step_output = await step.aexecute(step_input, session_id=self.session_id, user_id=self.user_id)  # type: ignore[union-attr]
 
                     # Update the workflow-level previous_step_outputs dictionary
                     if isinstance(step_output, list):
@@ -783,7 +910,7 @@ class Workflow:
                     if isinstance(last_output, list) and last_output:
                         # If it's a list (from Condition/Loop/etc.), use the last one
                         workflow_run_response.content = last_output[-1].content
-                    else:
+                    elif not isinstance(last_output, list):
                         # Single StepOutput
                         workflow_run_response.content = last_output.content
                 else:
@@ -801,9 +928,7 @@ class Workflow:
                 workflow_run_response.content = f"Workflow execution failed: {e}"
 
         # Store error response
-        if self.workflow_session:
-            self.workflow_session.add_run(workflow_run_response)
-        self.write_to_storage()
+        self._save_run_to_storage(workflow_run_response)
 
         return workflow_run_response
 
@@ -815,6 +940,7 @@ class Workflow:
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunResponseEvent]:
         """Execute a specific pipeline by name with event streaming"""
+        from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
         workflow_started_event = WorkflowStartedEvent(
@@ -825,19 +951,21 @@ class Workflow:
         )
         yield self._handle_event(workflow_started_event, workflow_run_response)
 
-        if isinstance(self.steps, Callable):
-            if inspect.iscoroutinefunction(self.steps):
-                workflow_run_response.content = await self.steps(self, execution_input, **kwargs)
-            elif inspect.isgeneratorfunction(self.steps):
+        if callable(self.steps):
+            if iscoroutinefunction(self.steps):  # type: ignore
+                workflow_run_response.content = await self._acall_custom_function(
+                    self.steps, self, execution_input, **kwargs
+                )
+            elif isgeneratorfunction(self.steps):
                 content = ""
-                for chunk in self.steps(self, execution_input, **kwargs):
+                for chunk in self.steps(self, execution_input, **kwargs):  # type: ignore[arg-type]
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
                         yield chunk
                     else:
                         content += str(chunk)
                 workflow_run_response.content = content
-            elif inspect.isasyncgenfunction(self.steps):
+            elif isasyncgenfunction(self.steps):  # type: ignore
                 content = ""
                 async_gen = await self._acall_custom_function(self.steps, self, execution_input, **kwargs)
                 async for chunk in async_gen:
@@ -857,16 +985,16 @@ class Workflow:
                 collected_step_outputs: List[Union[StepOutput, List[StepOutput]]] = []
                 previous_step_outputs: Dict[str, StepOutput] = {}
 
-                shared_images = execution_input.images or []
-                output_images = []
-                shared_videos = execution_input.videos or []
-                output_videos = []
-                shared_audio = execution_input.audio or []
-                output_audio = []
+                shared_images: List[ImageArtifact] = execution_input.images or []
+                output_images: List[ImageArtifact] = (execution_input.images or []).copy()  # Start with input images
+                shared_videos: List[VideoArtifact] = execution_input.videos or []
+                output_videos: List[VideoArtifact] = (execution_input.videos or []).copy()  # Start with input videos
+                shared_audio: List[AudioArtifact] = execution_input.audio or []
+                output_audio: List[AudioArtifact] = (execution_input.audio or []).copy()  # Start with input audio
 
                 early_termination = False
 
-                for i, step in enumerate(self.steps):
+                for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     log_debug(f"Async streaming step {i + 1}/{self._get_step_count()}: {step_name}")
 
@@ -880,7 +1008,7 @@ class Workflow:
                     )
 
                     # Execute step with streaming and yield all events
-                    async for event in step.aexecute_stream(
+                    async for event in step.aexecute_stream(  # type: ignore[union-attr]
                         step_input,
                         session_id=self.session_id,
                         user_id=self.user_id,
@@ -929,12 +1057,12 @@ class Workflow:
                             if getattr(step, "executor_type", None) == "function":
                                 yield step_output_event
 
-                        elif isinstance(event, WorkflowRunResponseEvent):
-                            yield self._handle_event(event, workflow_run_response)
+                        elif isinstance(event, WorkflowRunResponseEvent):  # type: ignore
+                            yield self._handle_event(event, workflow_run_response)  # type: ignore
 
                         else:
                             # Yield other internal events
-                            yield event
+                            yield event  # type: ignore
 
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
@@ -949,7 +1077,7 @@ class Workflow:
                     if isinstance(last_output, list) and last_output:
                         # If it's a list (from Condition/Loop/etc.), use the last one
                         workflow_run_response.content = last_output[-1].content
-                    else:
+                    elif not isinstance(last_output, list):
                         # Single StepOutput
                         workflow_run_response.content = last_output.content
                 else:
@@ -987,17 +1115,13 @@ class Workflow:
             workflow_name=workflow_run_response.workflow_name,
             workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
-            step_responses=workflow_run_response.step_responses,
+            step_responses=workflow_run_response.step_responses,  # type: ignore[arg-type]
             extra_data=workflow_run_response.extra_data,
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response)
 
         # Store the completed workflow response
-        if self.workflow_session:
-            self.workflow_session.add_run(workflow_run_response)
-
-        # Save to storage after complete execution
-        self.write_to_storage()
+        self._save_run_to_storage(workflow_run_response)
 
     def _update_workflow_session_state(self):
         if not self.workflow_session_state:
@@ -1016,10 +1140,101 @@ class Workflow:
 
         return self.workflow_session_state
 
+    async def _arun_background(
+        self,
+        message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        audio: Optional[List[Audio]] = None,
+        images: Optional[List[Image]] = None,
+        videos: Optional[List[Video]] = None,
+        **kwargs: Any,
+    ) -> WorkflowRunResponse:
+        """Execute workflow in background using asyncio.create_task()"""
+
+        if user_id is not None:
+            self.user_id = user_id
+        if session_id is not None:
+            self.session_id = session_id
+
+        if self.session_id is None:
+            self.session_id = str(uuid4())
+
+        if self.run_id is None:
+            self.run_id = str(uuid4())
+
+        self.initialize_workflow()
+        self.load_session()
+        self._prepare_steps()
+
+        # Create workflow run response with PENDING status
+        workflow_run_response = WorkflowRunResponse(
+            run_id=self.run_id,
+            session_id=self.session_id,
+            workflow_id=self.workflow_id,
+            workflow_name=self.name,
+            created_at=int(datetime.now().timestamp()),
+            status=RunStatus.pending,
+        )
+
+        # Store PENDING response immediately
+        self._save_run_to_storage(workflow_run_response)
+
+        # Prepare execution input
+        inputs = WorkflowExecutionInput(
+            message=message,
+            additional_data=additional_data,
+            audio=audio,  # type: ignore
+            images=images,  # type: ignore
+            videos=videos,  # type: ignore
+        )
+
+        self.update_agents_and_teams_session_info()
+
+        async def execute_workflow_background():
+            """Simple background execution"""
+            try:
+                # Update status to RUNNING and save
+                workflow_run_response.status = RunStatus.running
+                self._save_run_to_storage(workflow_run_response)
+
+                await self._aexecute(execution_input=inputs, workflow_run_response=workflow_run_response, **kwargs)
+
+                self._save_run_to_storage(workflow_run_response)
+
+                log_debug(f"Background execution completed with status: {workflow_run_response.status}")
+
+            except Exception as e:
+                logger.error(f"Background workflow execution failed: {e}")
+                workflow_run_response.status = RunStatus.error
+                workflow_run_response.content = f"Background execution failed: {str(e)}"
+                self._save_run_to_storage(workflow_run_response)
+
+        # Create and start asyncio task
+        loop = asyncio.get_running_loop()
+        loop.create_task(execute_workflow_background())
+
+        # Return SAME object that will be updated by background execution
+        return workflow_run_response
+
+    def get_run(self, run_id: str) -> Optional[WorkflowRunResponse]:
+        """Get the status and details of a background workflow run - SIMPLIFIED"""
+        if self.db is not None and self.session_id is not None:
+            session = self.db.get_session(session_id=self.session_id, session_type=SessionType.WORKFLOW)
+            if session and isinstance(session, WorkflowSession) and session.runs:
+                # Find the run by ID
+                for run in session.runs:
+                    if run.run_id == run_id:
+                        return run
+
+        return None
+
     @overload
     def run(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         audio: Optional[List[Audio]] = None,
@@ -1027,12 +1242,14 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         stream: Literal[False] = False,
         stream_intermediate_steps: Optional[bool] = None,
+        background: Optional[bool] = False,
     ) -> WorkflowRunResponse: ...
 
     @overload
     def run(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         audio: Optional[List[Audio]] = None,
@@ -1040,11 +1257,13 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         stream: Literal[True] = True,
         stream_intermediate_steps: Optional[bool] = None,
+        background: Optional[bool] = False,
     ) -> Iterator[WorkflowRunResponseEvent]: ...
 
     def run(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         audio: Optional[List[Audio]] = None,
@@ -1052,9 +1271,14 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         stream: bool = False,
         stream_intermediate_steps: Optional[bool] = None,
+        background: Optional[bool] = False,
         **kwargs: Any,
     ) -> Union[WorkflowRunResponse, Iterator[WorkflowRunResponseEvent]]:
         """Execute the workflow synchronously with optional streaming"""
+
+        if background:
+            raise RuntimeError("Background execution is not supported for sync run()")
+
         self._set_debug()
 
         log_debug(f"Workflow Run Start: {self.name}", center=True)
@@ -1077,6 +1301,9 @@ class Workflow:
             self.session_id = session_id
             log_debug(f"Session ID: {session_id}")
 
+        if self.session_id is None:
+            self.session_id = str(uuid4())
+
         self.run_id = str(uuid4())
 
         self.initialize_workflow()
@@ -1099,9 +1326,10 @@ class Workflow:
 
         inputs = WorkflowExecutionInput(
             message=message,
-            audio=audio,
-            images=images,
-            videos=videos,
+            additional_data=additional_data,
+            audio=audio,  # type: ignore
+            images=images,  # type: ignore
+            videos=videos,  # type: ignore
         )
         log_debug(
             f"Created pipeline input with session state keys: {list(self.workflow_session_state.keys()) if self.workflow_session_state else 'None'}"
@@ -1111,7 +1339,7 @@ class Workflow:
 
         if stream:
             return self._execute_stream(
-                execution_input=inputs,
+                execution_input=inputs,  # type: ignore[arg-type]
                 workflow_run_response=workflow_run_response,
                 stream_intermediate_steps=stream_intermediate_steps,
                 **kwargs,
@@ -1123,6 +1351,7 @@ class Workflow:
     async def arun(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         audio: Optional[List[Audio]] = None,
@@ -1130,12 +1359,14 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         stream: Literal[False] = False,
         stream_intermediate_steps: Optional[bool] = None,
+        background: Optional[bool] = False,
     ) -> WorkflowRunResponse: ...
 
     @overload
     async def arun(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         audio: Optional[List[Audio]] = None,
@@ -1143,21 +1374,38 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         stream: Literal[True] = True,
         stream_intermediate_steps: Optional[bool] = None,
+        background: Optional[bool] = False,
     ) -> AsyncIterator[WorkflowRunResponseEvent]: ...
 
     async def arun(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         audio: Optional[List[Audio]] = None,
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
         stream: bool = False,
-        stream_intermediate_steps: bool = False,
+        stream_intermediate_steps: Optional[bool] = False,
+        background: Optional[bool] = False,
         **kwargs: Any,
     ) -> Union[WorkflowRunResponse, AsyncIterator[WorkflowRunResponseEvent]]:
         """Execute the workflow synchronously with optional streaming"""
+        if background:
+            return await self._arun_background(
+                message=message,
+                additional_data=additional_data,
+                user_id=user_id,
+                session_id=session_id,
+                audio=audio,
+                images=images,
+                videos=videos,
+                **kwargs,
+            )
+
+        self._set_debug()
+
         log_debug(f"Async Workflow Run Start: {self.name}", center=True)
 
         # Use simple defaults
@@ -1178,6 +1426,9 @@ class Workflow:
             self.session_id = session_id
             log_debug(f"Session ID: {session_id}")
 
+        if self.session_id is None:
+            self.session_id = str(uuid4())
+
         self.run_id = str(uuid4())
 
         self.initialize_workflow()
@@ -1200,9 +1451,10 @@ class Workflow:
 
         inputs = WorkflowExecutionInput(
             message=message,
-            audio=audio,
-            images=images,
-            videos=videos,
+            additional_data=additional_data,
+            audio=audio,  # type: ignore
+            images=images,  # type: ignore
+            videos=videos,  # type: ignore
         )
         log_debug(
             f"Created async pipeline input with session state keys: {list(self.workflow_session_state.keys()) if self.workflow_session_state else 'None'}"
@@ -1222,37 +1474,44 @@ class Workflow:
 
     def _prepare_steps(self):
         """Prepare the steps for execution"""
-        prepared_steps = []
-        if not isinstance(self.steps, Callable):
-            for step in self.steps:
-                if isinstance(step, Callable):
-                    prepared_steps.append(
-                        Step(name=step.__name__, description="User-defined callable step", executor=step)
-                    )
+        if not callable(self.steps) and self.steps is not None:
+            prepared_steps: List[Union[Step, Steps, Loop, Parallel, Condition, Router]] = []
+            for i, step in enumerate(self.steps):  # type: ignore
+                if callable(step) and hasattr(step, "__name__"):
+                    step_name = step.__name__
+                    log_debug(f"Step {i + 1}: Wrapping callable function '{step_name}'")
+                    prepared_steps.append(Step(name=step_name, description="User-defined callable step", executor=step))
                 elif isinstance(step, Agent):
-                    prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
+                    step_name = step.name or f"step_{i + 1}"
+                    log_debug(f"Step {i + 1}: Agent '{step_name}'")
+                    prepared_steps.append(Step(name=step_name, description=step.description, agent=step))
                 elif isinstance(step, Team):
-                    prepared_steps.append(Step(name=step.name, description=step.description, team=step))
+                    step_name = step.name or f"step_{i + 1}"
+                    log_debug(f"Step {i + 1}: Team '{step_name}' with {len(step.members)} members")
+                    prepared_steps.append(Step(name=step_name, description=step.description, team=step))
                 elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
+                    step_type = type(step).__name__
+                    step_name = getattr(step, "name", f"unnamed_{step_type.lower()}")
+                    log_debug(f"Step {i + 1}: {step_type} '{step_name}'")
                     prepared_steps.append(step)
                 else:
                     raise ValueError(f"Invalid step type: {type(step).__name__}")
 
-            self.steps = prepared_steps
+            self.steps = prepared_steps  # type: ignore
+            log_debug("Step preparation completed")
 
-    def get_workflow_session(self) -> WorkflowSessionV2:
-        """Get a WorkflowSessionV2 object for storage"""
+    def get_workflow_session(self) -> WorkflowSession:
+        """Get a WorkflowSession object for storage"""
         workflow_data = {}
-        # TODO: Handle recursive
-        if self.steps and not isinstance(self.steps, Callable):
+        if self.steps and not callable(self.steps):
             workflow_data["steps"] = [
                 {
                     "name": step.name if hasattr(step, "name") else step.__name__,
                     "description": step.description if hasattr(step, "description") else "User-defined callable step",
                 }
-                for step in self.steps
+                for step in self.steps  # type: ignore
             ]
-        elif isinstance(self.steps, Callable):
+        elif callable(self.steps):
             workflow_data["steps"] = [
                 {
                     "name": "Custom Function",
@@ -1260,7 +1519,10 @@ class Workflow:
                 }
             ]
 
-        return WorkflowSessionV2(
+        if self.session_id is None:
+            raise ValueError("Session ID is required")
+
+        return WorkflowSession(
             session_id=self.session_id,
             user_id=self.user_id,
             workflow_id=self.workflow_id,
@@ -1270,7 +1532,7 @@ class Workflow:
             session_data={},
         )
 
-    def load_workflow_session(self, session: WorkflowSessionV2):
+    def load_workflow_session(self, session: WorkflowSession):
         """Load workflow session from storage"""
         if self.workflow_id is None and session.workflow_id is not None:
             self.workflow_id = session.workflow_id
@@ -1282,54 +1544,56 @@ class Workflow:
             self.name = session.workflow_name
 
         self.workflow_session = session
-        log_debug(f"Loaded WorkflowSessionV2: {session.session_id}")
+        log_debug(f"Loaded WorkflowSession: {session.session_id}")
 
-    def read_from_storage(self) -> Optional[WorkflowSessionV2]:
-        """Load the WorkflowSessionV2 from storage"""
-        if self.storage is not None and self.session_id is not None:
-            session = self.storage.read(session_id=self.session_id)
-            if session and isinstance(session, WorkflowSessionV2):
+    def read_from_storage(self) -> Optional[WorkflowSession]:
+        """Load the WorkflowSession from storage"""
+        if self.db is not None and self.session_id is not None:
+            session = self.db.get_session(session_id=self.session_id, session_type=SessionType.WORKFLOW)
+            if session and isinstance(session, WorkflowSession):
                 self.load_workflow_session(session)
                 return session
         return None
 
-    def write_to_storage(self) -> Optional[WorkflowSessionV2]:
-        """Save the WorkflowSessionV2 to storage"""
-        if self.storage is not None:
+    def write_to_storage(self) -> Optional[WorkflowSession]:
+        """Save the WorkflowSession to storage"""
+        if self.db is not None:
             session_to_save = self.get_workflow_session()
-            saved_session = self.storage.upsert(session=session_to_save)
-            if saved_session and isinstance(saved_session, WorkflowSessionV2):
+            saved_session = self.db.upsert_session(session=session_to_save)
+            if saved_session and isinstance(saved_session, WorkflowSession):
                 self.workflow_session = saved_session
                 return saved_session
         return None
 
     def load_session(self, force: bool = False) -> Optional[str]:
         """Load an existing session from storage or create a new one"""
-        log_debug(f"Current session_id: {self.session_id}")
-
         if self.workflow_session is not None and not force:
             if self.session_id is not None and self.workflow_session.session_id == self.session_id:
                 log_debug("Using existing workflow session")
                 return self.workflow_session.session_id
 
-        if self.storage is not None:
+        if self.db is not None:
             # Try to load existing session
-            log_debug(f"Reading WorkflowSessionV2: {self.session_id}")
             existing_session = self.read_from_storage()
 
             # Create new session if it doesn't exist
             if existing_session is None:
-                log_debug("Creating new WorkflowSessionV2")
-                self.workflow_session = WorkflowSessionV2(
-                    session_id=self.session_id,  # type: ignore
+                log_debug("Creating new WorkflowSession")
+
+                # Ensure we have a session_id
+                if self.session_id is None:
+                    self.session_id = str(uuid4())
+
+                self.workflow_session = WorkflowSession(
+                    session_id=self.session_id,
                     user_id=self.user_id,
                     workflow_id=self.workflow_id,
                     workflow_name=self.name,
                 )
                 saved_session = self.write_to_storage()
                 if saved_session is None:
-                    raise Exception("Failed to create new WorkflowSessionV2 in storage")
-                log_debug(f"Created WorkflowSessionV2: {saved_session.session_id}")
+                    raise Exception("Failed to create new WorkflowSession in storage")
+                log_debug(f"Created WorkflowSession: {saved_session.session_id}")
 
         return self.session_id
 
@@ -1374,6 +1638,7 @@ class Workflow:
     def print_response(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         audio: Optional[List[Audio]] = None,
@@ -1413,6 +1678,7 @@ class Workflow:
                 message=message,
                 user_id=user_id,
                 session_id=session_id,
+                additional_data=additional_data,
                 audio=audio,
                 images=images,
                 videos=videos,
@@ -1428,6 +1694,7 @@ class Workflow:
                 message=message,
                 user_id=user_id,
                 session_id=session_id,
+                additional_data=additional_data,
                 audio=audio,
                 images=images,
                 videos=videos,
@@ -1443,6 +1710,7 @@ class Workflow:
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
         audio: Optional[List[Audio]] = None,
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
@@ -1502,7 +1770,7 @@ class Workflow:
             title="Workflow Information",
             border_style="cyan",
         )
-        console.print(workflow_panel)
+        console.print(workflow_panel)  # type: ignore
 
         # Start timer
         response_timer = Timer()
@@ -1518,11 +1786,12 @@ class Workflow:
                     message=message,
                     user_id=user_id,
                     session_id=session_id,
+                    additional_data=additional_data,
                     audio=audio,
                     images=images,
                     videos=videos,
                     **kwargs,
-                )
+                )  # type: ignore
 
                 response_timer.stop()
 
@@ -1537,9 +1806,9 @@ class Workflow:
                                     step_panel = create_panel(
                                         content=Markdown(formatted_content) if markdown else formatted_content,
                                         title=f"Step {i + 1}.{j + 1}: {sub_step_output.step_name} (Completed)",
-                                        border_style="green",
+                                        border_style="orange3",
                                     )
-                                    console.print(step_panel)
+                                    console.print(step_panel)  # type: ignore
                         else:
                             # This is a regular single step
                             if step_output.content:
@@ -1547,22 +1816,22 @@ class Workflow:
                                 step_panel = create_panel(
                                     content=Markdown(formatted_content) if markdown else formatted_content,
                                     title=f"Step {i + 1}: {step_output.step_name} (Completed)",
-                                    border_style="green",
+                                    border_style="orange3",
                                 )
-                                console.print(step_panel)
+                                console.print(step_panel)  # type: ignore
 
                 # For callable functions, show the content directly since there are no step_responses
-                elif show_step_details and isinstance(self.steps, Callable) and workflow_response.content:
+                elif show_step_details and callable(self.steps) and workflow_response.content:
                     step_panel = create_panel(
-                        content=Markdown(workflow_response.content) if markdown else workflow_response.content,
+                        content=Markdown(workflow_response.content) if markdown else workflow_response.content,  # type: ignore
                         title="Custom Function (Completed)",
-                        border_style="green",
+                        border_style="orange3",
                     )
-                    console.print(step_panel)
+                    console.print(step_panel)  # type: ignore
 
                 # Show final summary
                 if workflow_response.extra_data:
-                    status = workflow_response.status.value
+                    status = workflow_response.status.value  # type: ignore
                     summary_content = ""
                     summary_content += f"""\n\n**Status:** {status}"""
                     summary_content += f"""\n\n**Steps Completed:** {len(workflow_response.step_responses) if workflow_response.step_responses else 0}"""
@@ -1573,14 +1842,14 @@ class Workflow:
                         title="Execution Summary",
                         border_style="blue",
                     )
-                    console.print(summary_panel)
+                    console.print(summary_panel)  # type: ignore
 
                 live_log.update("")
 
                 # Final completion message
                 if show_time:
                     completion_text = Text(f"Completed in {response_timer.elapsed:.1f}s", style="bold green")
-                    console.print(completion_text)
+                    console.print(completion_text)  # type: ignore
 
             except Exception as e:
                 import traceback
@@ -1590,13 +1859,14 @@ class Workflow:
                 error_panel = create_panel(
                     content=f"Workflow execution failed: {str(e)}", title="Execution Error", border_style="red"
                 )
-                console.print(error_panel)
+                console.print(error_panel)  # type: ignore
 
     def _print_response_stream(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
         audio: Optional[List[Audio]] = None,
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
@@ -1607,7 +1877,7 @@ class Workflow:
         console: Optional[Any] = None,
         **kwargs: Any,
     ) -> None:
-        """Print workflow execution with clean streaming - green step blocks displayed once"""
+        """Print workflow execution with clean streaming"""
         from rich.console import Group
         from rich.live import Live
         from rich.markdown import Markdown
@@ -1660,19 +1930,61 @@ class Workflow:
             title="Workflow Information",
             border_style="cyan",
         )
-        console.print(workflow_panel)
+        console.print(workflow_panel)  # type: ignore
 
         # Start timer
         response_timer = Timer()
         response_timer.start()
 
-        # Streaming execution variables
+        # Streaming execution variables with smart step tracking
         current_step_content = ""
         current_step_name = ""
         current_step_index = 0
         step_responses = []
         step_started_printed = False
-        is_callable_function = isinstance(self.steps, Callable)
+        is_callable_function = callable(self.steps)
+
+        # Smart step hierarchy tracking
+        current_primitive_context = None  # Current primitive being executed (parallel, loop, etc.)
+        step_display_cache = {}  # type: ignore
+
+        def get_step_display_number(step_index: Union[int, tuple], step_name: str = "") -> str:
+            """Generate clean two-level step numbering: x.y format only"""
+
+            # Handle tuple format for child steps
+            if isinstance(step_index, tuple):
+                if len(step_index) >= 2:
+                    parent_idx, sub_idx = step_index[0], step_index[1]
+
+                    # Extract base parent index if it's nested
+                    if isinstance(parent_idx, tuple):
+                        base_idx = parent_idx[0] if len(parent_idx) > 0 else 0
+                        while isinstance(base_idx, tuple) and len(base_idx) > 0:
+                            base_idx = base_idx[0]
+                    else:
+                        base_idx = parent_idx
+
+                    # Check context for parallel special case
+                    if current_primitive_context and current_primitive_context["type"] == "parallel":
+                        # For parallel child steps, all get the same number based on their actual step_index
+                        return f"Step {base_idx + 1}.{sub_idx + 1}"
+                    elif current_primitive_context and current_primitive_context["type"] == "loop":
+                        iteration = current_primitive_context.get("current_iteration", 1)
+                        return f"Step {base_idx + 1}.{sub_idx + 1} (Iteration {iteration})"
+                    else:
+                        # Regular child step numbering
+                        return f"Step {base_idx + 1}.{sub_idx + 1}"  # type: ignore
+                else:
+                    # Single element tuple - treat as main step
+                    return f"Step {step_index[0] + 1}"
+
+            # Handle integer step_index - main step
+            if not current_primitive_context:
+                # Regular main step
+                return f"Step {step_index + 1}"
+            else:
+                # This shouldn't happen with the new logic, but fallback
+                return f"Step {step_index + 1}"
 
         with Live(console=console, refresh_per_second=10) as live_log:
             status = Status("Starting workflow...", spinner="dots")
@@ -1683,13 +1995,14 @@ class Workflow:
                     message=message,
                     user_id=user_id,
                     session_id=session_id,
+                    additional_data=additional_data,
                     audio=audio,
                     images=images,
                     videos=videos,
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
                     **kwargs,
-                ):
+                ):  # type: ignore
                     # Handle the new event types
                     if isinstance(response, WorkflowStartedEvent):
                         status.update("Workflow started...")
@@ -1700,17 +2013,22 @@ class Workflow:
 
                     elif isinstance(response, StepStartedEvent):
                         current_step_name = response.step_name or "Unknown"
-                        current_step_index = response.step_index or 0
+                        current_step_index = response.step_index or 0  # type: ignore
                         current_step_content = ""
                         step_started_printed = False
-                        status.update(f"Starting step {current_step_index + 1}: {current_step_name}...")
+
+                        # Generate smart step number
+                        step_display = get_step_display_number(current_step_index, current_step_name)
+                        status.update(f"Starting {step_display}: {current_step_name}...")
                         live_log.update(status)
 
                     elif isinstance(response, StepCompletedEvent):
                         step_name = response.step_name or "Unknown"
                         step_index = response.step_index or 0
 
-                        status.update(f"Completed step {step_index + 1}: {step_name}")
+                        # Generate smart step number for completion (will use cached value)
+                        step_display = get_step_display_number(step_index, step_name)
+                        status.update(f"Completed {step_display}: {step_name}")
 
                         if response.content:
                             step_responses.append(
@@ -1722,29 +2040,48 @@ class Workflow:
                                 }
                             )
 
-                        # Print the final step result in green (only once)
+                        # Print the final step result in orange (only once)
                         if show_step_details and current_step_content and not step_started_printed:
                             live_log.update(status, refresh=True)
 
                             final_step_panel = create_panel(
                                 content=Markdown(current_step_content) if markdown else current_step_content,
-                                title=f"Step {step_index + 1}: {step_name} (Completed)",
-                                border_style="green",
+                                title=f"{step_display}: {step_name} (Completed)",
+                                border_style="orange3",
                             )
-                            console.print(final_step_panel)
+                            console.print(final_step_panel)  # type: ignore
                             step_started_printed = True
 
                     elif isinstance(response, LoopExecutionStartedEvent):
                         current_step_name = response.step_name or "Loop"
-                        current_step_index = response.step_index or 0
+                        current_step_index = response.step_index or 0  # type: ignore
                         current_step_content = ""
                         step_started_printed = False
+
+                        # Set up loop context
+                        current_primitive_context = {
+                            "type": "loop",
+                            "step_index": current_step_index,
+                            "sub_step_counter": 0,
+                            "current_iteration": 1,
+                            "max_iterations": response.max_iterations,
+                        }
+
+                        # Clear cache for this primitive's sub-steps
+                        step_display_cache.clear()
+
                         status.update(
                             f"Starting loop: {current_step_name} (max {response.max_iterations} iterations)..."
                         )
                         live_log.update(status)
 
                     elif isinstance(response, LoopIterationStartedEvent):
+                        if current_primitive_context and current_primitive_context["type"] == "loop":
+                            current_primitive_context["current_iteration"] = response.iteration
+                            current_primitive_context["sub_step_counter"] = 0  # Reset for new iteration
+                            # Clear cache for new iteration
+                            step_display_cache.clear()
+
                         status.update(
                             f"Loop iteration {response.iteration}/{response.max_iterations}: {response.step_name}..."
                         )
@@ -1754,18 +2091,6 @@ class Workflow:
                         status.update(
                             f"Completed iteration {response.iteration}/{response.max_iterations}: {response.step_name}"
                         )
-
-                        # Add iteration results to step_responses
-                        if response.iteration_results:
-                            for i, result in enumerate(response.iteration_results):
-                                step_responses.append(
-                                    {
-                                        "step_name": f"{response.step_name}.{response.iteration}.{i + 1}: {result.step_name}",
-                                        "step_index": response.step_index,
-                                        "content": result.content,
-                                        "event": "LoopIterationResult",
-                                    }
-                                )
 
                     elif isinstance(response, LoopExecutionCompletedEvent):
                         step_name = response.step_name or "Loop"
@@ -1789,15 +2114,42 @@ class Workflow:
                                 title=f"Loop {step_name} (Completed)",
                                 border_style="yellow",
                             )
-                            console.print(loop_summary_panel)
+                            console.print(loop_summary_panel)  # type: ignore
 
+                        # Reset context
+                        current_primitive_context = None
+                        step_display_cache.clear()
                         step_started_printed = True
 
                     elif isinstance(response, ParallelExecutionStartedEvent):
                         current_step_name = response.step_name or "Parallel Steps"
-                        current_step_index = response.step_index or 0
+                        current_step_index = response.step_index or 0  # type: ignore
                         current_step_content = ""
                         step_started_printed = False
+
+                        # Set up parallel context
+                        current_primitive_context = {
+                            "type": "parallel",
+                            "step_index": current_step_index,
+                            "sub_step_counter": 0,
+                            "total_steps": response.parallel_step_count,
+                        }
+
+                        # Clear cache for this primitive's sub-steps
+                        step_display_cache.clear()
+
+                        # Print parallel execution summary panel
+                        live_log.update(status, refresh=True)
+                        parallel_summary = f"**Parallel Steps:** {response.parallel_step_count}"
+                        # Use get_step_display_number for consistent numbering
+                        step_display = get_step_display_number(current_step_index, current_step_name)
+                        parallel_panel = create_panel(
+                            content=Markdown(parallel_summary) if markdown else parallel_summary,
+                            title=f"{step_display}: {current_step_name}",
+                            border_style="cyan",
+                        )
+                        console.print(parallel_panel)  # type: ignore
+
                         status.update(
                             f"Starting parallel execution: {current_step_name} ({response.parallel_step_count} steps)..."
                         )
@@ -1809,23 +2161,27 @@ class Workflow:
 
                         status.update(f"Completed parallel execution: {step_name}")
 
-                        # Add results from all parallel steps to step_responses
-                        if response.step_results:
-                            for i, step_result in enumerate(response.step_results):
-                                step_responses.append(
-                                    {
-                                        "step_name": f"{step_name}.{i + 1}: {step_result.step_name}",
-                                        "step_index": step_index,
-                                        "content": step_result.content,
-                                        "event": "ParallelStepResult",
-                                    }
-                                )
+                        # Reset context
+                        current_primitive_context = None
+                        step_display_cache.clear()
 
                     elif isinstance(response, ConditionExecutionStartedEvent):
                         current_step_name = response.step_name or "Condition"
-                        current_step_index = response.step_index or 0
+                        current_step_index = response.step_index or 0  # type: ignore
                         current_step_content = ""
                         step_started_printed = False
+
+                        # Set up condition context
+                        current_primitive_context = {
+                            "type": "condition",
+                            "step_index": current_step_index,
+                            "sub_step_counter": 0,
+                            "condition_result": response.condition_result,
+                        }
+
+                        # Clear cache for this primitive's sub-steps
+                        step_display_cache.clear()
+
                         condition_text = "met" if response.condition_result else "not met"
                         status.update(f"Starting condition: {current_step_name} (condition {condition_text})...")
                         live_log.update(status)
@@ -1836,23 +2192,27 @@ class Workflow:
 
                         status.update(f"Completed condition: {step_name}")
 
-                        # Add results from executed steps to step_responses
-                        if response.step_results:
-                            for i, step_result in enumerate(response.step_results):
-                                step_responses.append(
-                                    {
-                                        "step_name": f"{step_name}: {step_result.step_name}",
-                                        "step_index": step_index,
-                                        "content": step_result.content,
-                                        "event": "ConditionStepResult",
-                                    }
-                                )
+                        # Reset context
+                        current_primitive_context = None
+                        step_display_cache.clear()
 
                     elif isinstance(response, RouterExecutionStartedEvent):
                         current_step_name = response.step_name or "Router"
-                        current_step_index = response.step_index or 0
+                        current_step_index = response.step_index or 0  # type: ignore
                         current_step_content = ""
                         step_started_printed = False
+
+                        # Set up router context
+                        current_primitive_context = {
+                            "type": "router",
+                            "step_index": current_step_index,
+                            "sub_step_counter": 0,
+                            "selected_steps": response.selected_steps,
+                        }
+
+                        # Clear cache for this primitive's sub-steps
+                        step_display_cache.clear()
+
                         selected_steps_text = ", ".join(response.selected_steps) if response.selected_steps else "none"
                         status.update(f"Starting router: {current_step_name} (selected: {selected_steps_text})...")
                         live_log.update(status)
@@ -1862,18 +2222,6 @@ class Workflow:
                         step_index = response.step_index or 0
 
                         status.update(f"Completed router: {step_name}")
-
-                        # Add results from executed steps to step_responses
-                        if response.step_results:
-                            for i, step_result in enumerate(response.step_results):
-                                step_responses.append(
-                                    {
-                                        "step_name": f"{step_name}: {step_result.step_name}",
-                                        "step_index": step_index,
-                                        "content": step_result.content,
-                                        "event": "RouterStepResult",
-                                    }
-                                )
 
                         # Print router summary
                         if show_step_details:
@@ -1889,13 +2237,16 @@ class Workflow:
                                 title=f"Router {step_name} (Completed)",
                                 border_style="purple",
                             )
-                            console.print(router_summary_panel)
+                            console.print(router_summary_panel)  # type: ignore
 
+                        # Reset context
+                        current_primitive_context = None
+                        step_display_cache.clear()
                         step_started_printed = True
 
                     elif isinstance(response, StepsExecutionStartedEvent):
                         current_step_name = response.step_name or "Steps"
-                        current_step_index = response.step_index or 0
+                        current_step_index = response.step_index or 0  # type: ignore
                         current_step_content = ""
                         step_started_printed = False
                         status.update(f"Starting steps: {current_step_name} ({response.steps_count} steps)...")
@@ -1910,9 +2261,11 @@ class Workflow:
                         # Add results from executed steps to step_responses
                         if response.step_results:
                             for i, step_result in enumerate(response.step_results):
+                                # Use the same numbering system as other primitives
+                                step_display_number = get_step_display_number(step_index, step_result.step_name or "")
                                 step_responses.append(
                                     {
-                                        "step_name": f"{step_name}.{i + 1}: {step_result.step_name}",
+                                        "step_name": f"{step_display_number}: {step_result.step_name}",
                                         "step_index": step_index,
                                         "content": step_result.content,
                                         "event": "StepsStepResult",
@@ -1930,7 +2283,7 @@ class Workflow:
                                 title=f"Steps {step_name} (Completed)",
                                 border_style="yellow",
                             )
-                            console.print(steps_summary_panel)
+                            console.print(steps_summary_panel)  # type: ignore
 
                         step_started_printed = True
 
@@ -1947,9 +2300,9 @@ class Workflow:
                             final_step_panel = create_panel(
                                 content=Markdown(current_step_content) if markdown else current_step_content,
                                 title="Custom Function (Completed)",
-                                border_style="green",
+                                border_style="orange3",
                             )
-                            console.print(final_step_panel)
+                            console.print(final_step_panel)  # type: ignore
                             step_started_printed = True
 
                         live_log.update(status, refresh=True)
@@ -1967,29 +2320,35 @@ class Workflow:
                                 title="Execution Summary",
                                 border_style="blue",
                             )
-                            console.print(summary_panel)
+                            console.print(summary_panel)  # type: ignore
 
                     else:
+                        # Handle streaming content
                         if isinstance(response, str):
                             response_str = response
                         elif isinstance(response, StepOutputEvent):
-                            # Handle StepOutputEvent objects yielded from workflow
-                            response_str = response.content or ""
+                            response_str = response.content or ""  # type: ignore
                         else:
                             from agno.run.response import RunResponseContentEvent
                             from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
 
                             current_step_executor_type = None
-                            if not is_callable_function and self.steps and current_step_index < len(self.steps):
-                                step = self.steps[current_step_index]
+                            # Handle both integer and tuple step indices for parallel execution
+                            actual_step_index = current_step_index
+                            if isinstance(current_step_index, tuple):
+                                # For tuple indices, use the first element (parent step index)
+                                actual_step_index = current_step_index[0]
+                                # If it's nested tuple, keep extracting until we get an integer
+                                while isinstance(actual_step_index, tuple) and len(actual_step_index) > 0:
+                                    actual_step_index = actual_step_index[0]
+
+                            if not is_callable_function and self.steps and actual_step_index < len(self.steps):  # type: ignore
+                                step = self.steps[actual_step_index]  # type: ignore
                                 if hasattr(step, "executor_type"):
                                     current_step_executor_type = step.executor_type
 
                             # Check if this is a streaming content event from agent or team
-                            if isinstance(
-                                response,
-                                (TeamRunResponseContentEvent, WorkflowRunResponseEvent),
-                            ):
+                            if isinstance(response, (TeamRunResponseContentEvent, WorkflowRunResponseEvent)):  # type: ignore
                                 # Check if this is a team's final structured output
                                 is_structured_output = (
                                     isinstance(response, TeamRunResponseContentEvent)
@@ -1997,16 +2356,14 @@ class Workflow:
                                     and response.content_type != "str"
                                     and response.content_type != ""
                                 )
-
-                                # Extract the content from the streaming event
-                                response_str = response.content
+                                response_str = response.content  # type: ignore
                             elif isinstance(response, RunResponseContentEvent) and current_step_executor_type != "team":
-                                response_str = response.content
+                                response_str = response.content  # type: ignore
                             else:
                                 continue
 
                         # Use the unified formatting function for consistency
-                        response_str = self._format_step_content_for_display(response_str)
+                        response_str = self._format_step_content_for_display(response_str)  # type: ignore
 
                         # Filter out empty responses and add to current step content
                         if response_str and response_str.strip():
@@ -2018,16 +2375,17 @@ class Workflow:
 
                             # Live update the step panel with streaming content
                             if show_step_details and not step_started_printed:
-                                # For callable functions, show different title during streaming
-                                title = f"Step {current_step_index + 1}: {current_step_name} (Streaming...)"
+                                # Generate smart step number for streaming title (will use cached value)
+                                step_display = get_step_display_number(current_step_index, current_step_name)
+                                title = f"{step_display}: {current_step_name} (Streaming...)"
                                 if is_callable_function:
                                     title = "Custom Function (Streaming...)"
 
-                                # Show the streaming content live in green panel
+                                # Show the streaming content live in orange panel
                                 live_step_panel = create_panel(
                                     content=Markdown(current_step_content) if markdown else current_step_content,
                                     title=title,
-                                    border_style="green",
+                                    border_style="orange3",
                                 )
 
                                 # Create group with status and current step content
@@ -2041,7 +2399,7 @@ class Workflow:
                 # Final completion message
                 if show_time:
                     completion_text = Text(f"Completed in {response_timer.elapsed:.1f}s", style="bold green")
-                    console.print(completion_text)
+                    console.print(completion_text)  # type: ignore
 
             except Exception as e:
                 import traceback
@@ -2051,11 +2409,12 @@ class Workflow:
                 error_panel = create_panel(
                     content=f"Workflow execution failed: {str(e)}", title="Execution Error", border_style="red"
                 )
-                console.print(error_panel)
+                console.print(error_panel)  # type: ignore
 
     async def aprint_response(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         audio: Optional[List[Audio]] = None,
@@ -2089,6 +2448,7 @@ class Workflow:
         if stream:
             await self._aprint_response_stream(
                 message=message,
+                additional_data=additional_data,
                 user_id=user_id,
                 session_id=session_id,
                 audio=audio,
@@ -2104,6 +2464,7 @@ class Workflow:
         else:
             await self._aprint_response(
                 message=message,
+                additional_data=additional_data,
                 user_id=user_id,
                 session_id=session_id,
                 audio=audio,
@@ -2119,6 +2480,7 @@ class Workflow:
     async def _aprint_response(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         audio: Optional[List[Audio]] = None,
@@ -2180,7 +2542,7 @@ class Workflow:
             title="Workflow Information",
             border_style="cyan",
         )
-        console.print(workflow_panel)
+        console.print(workflow_panel)  # type: ignore
 
         # Start timer
         response_timer = Timer()
@@ -2194,13 +2556,14 @@ class Workflow:
                 # Execute workflow and get the response directly
                 workflow_response: WorkflowRunResponse = await self.arun(
                     message=message,
+                    additional_data=additional_data,
                     user_id=user_id,
                     session_id=session_id,
                     audio=audio,
                     images=images,
                     videos=videos,
                     **kwargs,
-                )
+                )  # type: ignore
 
                 response_timer.stop()
 
@@ -2216,9 +2579,9 @@ class Workflow:
                                     step_panel = create_panel(
                                         content=Markdown(formatted_content) if markdown else formatted_content,
                                         title=f"Step {i + 1}.{j + 1}: {sub_step_output.step_name} (Completed)",
-                                        border_style="green",
+                                        border_style="orange3",
                                     )
-                                    console.print(step_panel)
+                                    console.print(step_panel)  # type: ignore
                         else:
                             # This is a regular single step
                             if step_output.content:
@@ -2226,22 +2589,22 @@ class Workflow:
                                 step_panel = create_panel(
                                     content=Markdown(formatted_content) if markdown else formatted_content,
                                     title=f"Step {i + 1}: {step_output.step_name} (Completed)",
-                                    border_style="green",
+                                    border_style="orange3",
                                 )
-                                console.print(step_panel)
+                                console.print(step_panel)  # type: ignore
 
                 # For callable functions, show the content directly since there are no step_responses
-                elif show_step_details and isinstance(self.steps, Callable) and workflow_response.content:
+                elif show_step_details and callable(self.steps) and workflow_response.content:
                     step_panel = create_panel(
-                        content=Markdown(workflow_response.content) if markdown else workflow_response.content,
+                        content=Markdown(workflow_response.content) if markdown else workflow_response.content,  # type: ignore
                         title="Custom Function (Completed)",
-                        border_style="green",
+                        border_style="orange3",
                     )
-                    console.print(step_panel)
+                    console.print(step_panel)  # type: ignore
 
                 # Show final summary
                 if workflow_response.extra_data:
-                    status = workflow_response.status.value
+                    status = workflow_response.status.value  # type: ignore
                     summary_content = ""
                     summary_content += f"""\n\n**Status:** {status}"""
                     summary_content += f"""\n\n**Steps Completed:** {len(workflow_response.step_responses) if workflow_response.step_responses else 0}"""
@@ -2252,14 +2615,14 @@ class Workflow:
                         title="Execution Summary",
                         border_style="blue",
                     )
-                    console.print(summary_panel)
+                    console.print(summary_panel)  # type: ignore
 
                 live_log.update("")
 
                 # Final completion message
                 if show_time:
                     completion_text = Text(f"Completed in {response_timer.elapsed:.1f}s", style="bold green")
-                    console.print(completion_text)
+                    console.print(completion_text)  # type: ignore
 
             except Exception as e:
                 import traceback
@@ -2269,11 +2632,12 @@ class Workflow:
                 error_panel = create_panel(
                     content=f"Workflow execution failed: {str(e)}", title="Execution Error", border_style="red"
                 )
-                console.print(error_panel)
+                console.print(error_panel)  # type: ignore
 
     async def _aprint_response_stream(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         audio: Optional[List[Audio]] = None,
@@ -2286,7 +2650,7 @@ class Workflow:
         console: Optional[Any] = None,
         **kwargs: Any,
     ) -> None:
-        """Print workflow execution with clean streaming - green step blocks displayed once"""
+        """Print workflow execution with clean streaming - orange step blocks displayed once"""
         from rich.console import Group
         from rich.live import Live
         from rich.markdown import Markdown
@@ -2339,7 +2703,7 @@ class Workflow:
             title="Workflow Information",
             border_style="cyan",
         )
-        console.print(workflow_panel)
+        console.print(workflow_panel)  # type: ignore
 
         # Start timer
         response_timer = Timer()
@@ -2351,7 +2715,49 @@ class Workflow:
         current_step_index = 0
         step_responses = []
         step_started_printed = False
-        is_callable_function = isinstance(self.steps, Callable)
+        is_callable_function = callable(self.steps)
+
+        # Smart step hierarchy tracking
+        current_primitive_context = None  # Current primitive being executed (parallel, loop, etc.)
+        step_display_cache = {}  # type: ignore
+
+        def get_step_display_number(step_index: Union[int, tuple], step_name: str = "") -> str:
+            """Generate clean two-level step numbering: x.y format only"""
+
+            # Handle tuple format for child steps
+            if isinstance(step_index, tuple):
+                if len(step_index) >= 2:
+                    parent_idx, sub_idx = step_index[0], step_index[1]
+
+                    # Extract base parent index if it's nested
+                    if isinstance(parent_idx, tuple):
+                        base_idx = parent_idx[0] if len(parent_idx) > 0 else 0
+                        while isinstance(base_idx, tuple) and len(base_idx) > 0:
+                            base_idx = base_idx[0]
+                    else:
+                        base_idx = parent_idx
+
+                    # Check context for parallel special case
+                    if current_primitive_context and current_primitive_context["type"] == "parallel":
+                        # For parallel child steps, all get the same number based on their actual step_index
+                        return f"Step {base_idx + 1}.{sub_idx + 1}"
+                    elif current_primitive_context and current_primitive_context["type"] == "loop":
+                        iteration = current_primitive_context.get("current_iteration", 1)
+                        return f"Step {base_idx + 1}.{sub_idx + 1} (Iteration {iteration})"
+                    else:
+                        # Regular child step numbering
+                        return f"Step {base_idx + 1}.{sub_idx + 1}"  # type: ignore
+                else:
+                    # Single element tuple - treat as main step
+                    return f"Step {step_index[0] + 1}"
+
+            # Handle integer step_index - main step
+            if not current_primitive_context:
+                # Regular main step
+                return f"Step {step_index + 1}"
+            else:
+                # This shouldn't happen with the new logic, but fallback
+                return f"Step {step_index + 1}"
 
         with Live(console=console, refresh_per_second=10) as live_log:
             status = Status("Starting async workflow...", spinner="dots")
@@ -2360,6 +2766,7 @@ class Workflow:
             try:
                 async for response in await self.arun(
                     message=message,
+                    additional_data=additional_data,
                     user_id=user_id,
                     session_id=session_id,
                     audio=audio,
@@ -2368,7 +2775,7 @@ class Workflow:
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
                     **kwargs,
-                ):
+                ):  # type: ignore
                     # Handle the new event types
                     if isinstance(response, WorkflowStartedEvent):
                         status.update("Workflow started...")
@@ -2379,17 +2786,22 @@ class Workflow:
 
                     elif isinstance(response, StepStartedEvent):
                         current_step_name = response.step_name or "Unknown"
-                        current_step_index = response.step_index or 0
+                        current_step_index = response.step_index or 0  # type: ignore
                         current_step_content = ""
                         step_started_printed = False
-                        status.update(f"Starting step {current_step_index + 1}: {current_step_name}...")
+
+                        # Generate smart step number
+                        step_display = get_step_display_number(current_step_index, current_step_name)
+                        status.update(f"Starting {step_display}: {current_step_name}...")
                         live_log.update(status)
 
                     elif isinstance(response, StepCompletedEvent):
                         step_name = response.step_name or "Unknown"
                         step_index = response.step_index or 0
 
-                        status.update(f"Completed step {step_index + 1}: {step_name}")
+                        # Generate smart step number for completion (will use cached value)
+                        step_display = get_step_display_number(step_index, step_name)
+                        status.update(f"Completed {step_display}: {step_name}")
 
                         if response.content:
                             step_responses.append(
@@ -2401,29 +2813,48 @@ class Workflow:
                                 }
                             )
 
-                        # Print the final step result in green (only once)
+                        # Print the final step result in orange (only once)
                         if show_step_details and current_step_content and not step_started_printed:
                             live_log.update(status, refresh=True)
 
                             final_step_panel = create_panel(
                                 content=Markdown(current_step_content) if markdown else current_step_content,
-                                title=f"Step {step_index + 1}: {step_name} (Completed)",
-                                border_style="green",
+                                title=f"{step_display}: {step_name} (Completed)",
+                                border_style="orange3",
                             )
-                            console.print(final_step_panel)
+                            console.print(final_step_panel)  # type: ignore
                             step_started_printed = True
 
                     elif isinstance(response, LoopExecutionStartedEvent):
                         current_step_name = response.step_name or "Loop"
-                        current_step_index = response.step_index or 0
+                        current_step_index = response.step_index or 0  # type: ignore
                         current_step_content = ""
                         step_started_printed = False
+
+                        # Set up loop context
+                        current_primitive_context = {
+                            "type": "loop",
+                            "step_index": current_step_index,
+                            "sub_step_counter": 0,
+                            "current_iteration": 1,
+                            "max_iterations": response.max_iterations,
+                        }
+
+                        # Clear cache for this primitive's sub-steps
+                        step_display_cache.clear()
+
                         status.update(
                             f"Starting loop: {current_step_name} (max {response.max_iterations} iterations)..."
                         )
                         live_log.update(status)
 
                     elif isinstance(response, LoopIterationStartedEvent):
+                        if current_primitive_context and current_primitive_context["type"] == "loop":
+                            current_primitive_context["current_iteration"] = response.iteration
+                            current_primitive_context["sub_step_counter"] = 0  # Reset for new iteration
+                            # Clear cache for new iteration
+                            step_display_cache.clear()
+
                         status.update(
                             f"Loop iteration {response.iteration}/{response.max_iterations}: {response.step_name}..."
                         )
@@ -2433,18 +2864,6 @@ class Workflow:
                         status.update(
                             f"Completed iteration {response.iteration}/{response.max_iterations}: {response.step_name}"
                         )
-
-                        # Add iteration results to step_responses
-                        if response.iteration_results:
-                            for i, result in enumerate(response.iteration_results):
-                                step_responses.append(
-                                    {
-                                        "step_name": f"{response.step_name}.{response.iteration}.{i + 1}: {result.step_name}",
-                                        "step_index": response.step_index,
-                                        "content": result.content,
-                                        "event": "LoopIterationResult",
-                                    }
-                                )
 
                     elif isinstance(response, LoopExecutionCompletedEvent):
                         step_name = response.step_name or "Loop"
@@ -2468,42 +2887,42 @@ class Workflow:
                                 title=f"Loop {step_name} (Completed)",
                                 border_style="yellow",
                             )
-                            console.print(loop_summary_panel)
+                            console.print(loop_summary_panel)  # type: ignore
 
+                        # Reset context
+                        current_primitive_context = None
+                        step_display_cache.clear()
                         step_started_printed = True
-
-                    elif isinstance(response, ConditionExecutionStartedEvent):
-                        current_step_name = response.step_name or "Condition"
-                        current_step_index = response.step_index or 0
-                        current_step_content = ""
-                        step_started_printed = False
-                        condition_text = "met" if response.condition_result else "not met"
-                        status.update(f"Starting condition: {current_step_name} (condition {condition_text})...")
-                        live_log.update(status)
-
-                    elif isinstance(response, ConditionExecutionCompletedEvent):
-                        step_name = response.step_name or "Condition"
-                        step_index = response.step_index or 0
-
-                        status.update(f"Completed condition: {step_name}")
-
-                        # Add results from executed steps to step_responses
-                        if response.step_results:
-                            for i, step_result in enumerate(response.step_results):
-                                step_responses.append(
-                                    {
-                                        "step_name": f"{step_name}: {step_result.step_name}",
-                                        "step_index": step_index,
-                                        "content": step_result.content,
-                                        "event": "ConditionStepResult",
-                                    }
-                                )
 
                     elif isinstance(response, ParallelExecutionStartedEvent):
                         current_step_name = response.step_name or "Parallel Steps"
-                        current_step_index = response.step_index or 0
+                        current_step_index = response.step_index or 0  # type: ignore
                         current_step_content = ""
                         step_started_printed = False
+
+                        # Set up parallel context
+                        current_primitive_context = {
+                            "type": "parallel",
+                            "step_index": current_step_index,
+                            "sub_step_counter": 0,
+                            "total_steps": response.parallel_step_count,
+                        }
+
+                        # Clear cache for this primitive's sub-steps
+                        step_display_cache.clear()
+
+                        # Print parallel execution summary panel
+                        live_log.update(status, refresh=True)
+                        parallel_summary = f"**Parallel Steps:** {response.parallel_step_count}"
+                        # Use get_step_display_number for consistent numbering
+                        step_display = get_step_display_number(current_step_index, current_step_name)
+                        parallel_panel = create_panel(
+                            content=Markdown(parallel_summary) if markdown else parallel_summary,
+                            title=f"{step_display}: {current_step_name}",
+                            border_style="cyan",
+                        )
+                        console.print(parallel_panel)  # type: ignore
+
                         status.update(
                             f"Starting parallel execution: {current_step_name} ({response.parallel_step_count} steps)..."
                         )
@@ -2515,23 +2934,58 @@ class Workflow:
 
                         status.update(f"Completed parallel execution: {step_name}")
 
-                        # Add results from all parallel steps to step_responses
-                        if response.step_results:
-                            for i, step_result in enumerate(response.step_results):
-                                step_responses.append(
-                                    {
-                                        "step_name": f"{step_name}.{i + 1}: {step_result.step_name}",
-                                        "step_index": step_index,
-                                        "content": step_result.content,
-                                        "event": "ParallelStepResult",
-                                    }
-                                )
+                        # Reset context
+                        current_primitive_context = None
+                        step_display_cache.clear()
+
+                    elif isinstance(response, ConditionExecutionStartedEvent):
+                        current_step_name = response.step_name or "Condition"
+                        current_step_index = response.step_index or 0  # type: ignore
+                        current_step_content = ""
+                        step_started_printed = False
+
+                        # Set up condition context
+                        current_primitive_context = {
+                            "type": "condition",
+                            "step_index": current_step_index,
+                            "sub_step_counter": 0,
+                            "condition_result": response.condition_result,
+                        }
+
+                        # Clear cache for this primitive's sub-steps
+                        step_display_cache.clear()
+
+                        condition_text = "met" if response.condition_result else "not met"
+                        status.update(f"Starting condition: {current_step_name} (condition {condition_text})...")
+                        live_log.update(status)
+
+                    elif isinstance(response, ConditionExecutionCompletedEvent):
+                        step_name = response.step_name or "Condition"
+                        step_index = response.step_index or 0
+
+                        status.update(f"Completed condition: {step_name}")
+
+                        # Reset context
+                        current_primitive_context = None
+                        step_display_cache.clear()
 
                     elif isinstance(response, RouterExecutionStartedEvent):
                         current_step_name = response.step_name or "Router"
-                        current_step_index = response.step_index or 0
+                        current_step_index = response.step_index or 0  # type: ignore
                         current_step_content = ""
                         step_started_printed = False
+
+                        # Set up router context
+                        current_primitive_context = {
+                            "type": "router",
+                            "step_index": current_step_index,
+                            "sub_step_counter": 0,
+                            "selected_steps": response.selected_steps,
+                        }
+
+                        # Clear cache for this primitive's sub-steps
+                        step_display_cache.clear()
+
                         selected_steps_text = ", ".join(response.selected_steps) if response.selected_steps else "none"
                         status.update(f"Starting router: {current_step_name} (selected: {selected_steps_text})...")
                         live_log.update(status)
@@ -2541,18 +2995,6 @@ class Workflow:
                         step_index = response.step_index or 0
 
                         status.update(f"Completed router: {step_name}")
-
-                        # Add results from executed steps to step_responses
-                        if response.step_results:
-                            for i, step_result in enumerate(response.step_results):
-                                step_responses.append(
-                                    {
-                                        "step_name": f"{step_name}: {step_result.step_name}",
-                                        "step_index": step_index,
-                                        "content": step_result.content,
-                                        "event": "RouterStepResult",
-                                    }
-                                )
 
                         # Print router summary
                         if show_step_details:
@@ -2568,7 +3010,53 @@ class Workflow:
                                 title=f"Router {step_name} (Completed)",
                                 border_style="purple",
                             )
-                            console.print(router_summary_panel)
+                            console.print(router_summary_panel)  # type: ignore
+
+                        # Reset context
+                        current_primitive_context = None
+                        step_display_cache.clear()
+                        step_started_printed = True
+
+                    elif isinstance(response, StepsExecutionStartedEvent):
+                        current_step_name = response.step_name or "Steps"
+                        current_step_index = response.step_index or 0  # type: ignore
+                        current_step_content = ""
+                        step_started_printed = False
+                        status.update(f"Starting steps: {current_step_name} ({response.steps_count} steps)...")
+                        live_log.update(status)
+
+                    elif isinstance(response, StepsExecutionCompletedEvent):
+                        step_name = response.step_name or "Steps"
+                        step_index = response.step_index or 0
+
+                        status.update(f"Completed steps: {step_name}")
+
+                        # Add results from executed steps to step_responses
+                        if response.step_results:
+                            for i, step_result in enumerate(response.step_results):
+                                # Use the same numbering system as other primitives
+                                step_display_number = get_step_display_number(step_index, step_result.step_name or "")
+                                step_responses.append(
+                                    {
+                                        "step_name": f"{step_display_number}: {step_result.step_name}",
+                                        "step_index": step_index,
+                                        "content": step_result.content,
+                                        "event": "StepsStepResult",
+                                    }
+                                )
+
+                        # Print steps summary
+                        if show_step_details:
+                            summary_content = "**Steps Summary:**\n\n"
+                            summary_content += f"- Total steps: {response.steps_count or 0}\n"
+                            summary_content += f"- Executed steps: {response.executed_steps or 0}\n"
+
+                            steps_summary_panel = create_panel(
+                                content=Markdown(summary_content) if markdown else summary_content,
+                                title=f"Steps {step_name} (Completed)",
+                                border_style="yellow",
+                            )
+                            console.print(steps_summary_panel)  # type: ignore
 
                         step_started_printed = True
 
@@ -2585,9 +3073,9 @@ class Workflow:
                             final_step_panel = create_panel(
                                 content=Markdown(current_step_content) if markdown else current_step_content,
                                 title="Custom Function (Completed)",
-                                border_style="green",
+                                border_style="orange3",
                             )
-                            console.print(final_step_panel)
+                            console.print(final_step_panel)  # type: ignore
                             step_started_printed = True
 
                         live_log.update(status, refresh=True)
@@ -2605,31 +3093,35 @@ class Workflow:
                                 title="Execution Summary",
                                 border_style="blue",
                             )
-                            console.print(summary_panel)
+                            console.print(summary_panel)  # type: ignore
 
                     else:
                         if isinstance(response, str):
                             response_str = response
                         elif isinstance(response, StepOutputEvent):
                             # Handle StepOutputEvent objects yielded from workflow
-                            response_str = response.content or ""
+                            response_str = response.content or ""  # type: ignore
                         else:
                             from agno.run.response import RunResponseContentEvent
                             from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
 
                             current_step_executor_type = None
-                            if not is_callable_function and self.steps and current_step_index < len(self.steps):
-                                step = self.steps[current_step_index]
-                                if hasattr(step, "executor_type"):
-                                    current_step_executor_type = step.executor_type
+                            # Handle both integer and tuple step indices for parallel execution
+                            actual_step_index = current_step_index
+                            if isinstance(current_step_index, tuple):
+                                # For tuple indices, use the first element (parent step index)
+                                actual_step_index = current_step_index[0]
+                                # If it's nested tuple, keep extracting until we get an integer
+                                while isinstance(actual_step_index, tuple) and len(actual_step_index) > 0:
+                                    actual_step_index = actual_step_index[0]
 
                             # Check if this is a streaming content event from agent or team
                             if isinstance(
                                 response,
-                                (RunResponseContentEvent, TeamRunResponseContentEvent, WorkflowRunResponseEvent),
-                            ):
+                                (RunResponseContentEvent, TeamRunResponseContentEvent, WorkflowRunResponseEvent),  # type: ignore
+                            ):  # type: ignore
                                 # Extract the content from the streaming event
-                                response_str = response.content
+                                response_str = response.content  # type: ignore
 
                                 # Check if this is a team's final structured output
                                 is_structured_output = (
@@ -2639,12 +3131,12 @@ class Workflow:
                                     and response.content_type != ""
                                 )
                             elif isinstance(response, RunResponseContentEvent) and current_step_executor_type != "team":
-                                response_str = response.content
+                                response_str = response.content  # type: ignore
                             else:
                                 continue
 
                         # Use the unified formatting function for consistency
-                        response_str = self._format_step_content_for_display(response_str)
+                        response_str = self._format_step_content_for_display(response_str)  # type: ignore
 
                         # Filter out empty responses and add to current step content
                         if response_str and response_str.strip():
@@ -2656,16 +3148,17 @@ class Workflow:
 
                             # Live update the step panel with streaming content
                             if show_step_details and not step_started_printed:
-                                # For callable functions, show different title during streaming
-                                title = f"Step {current_step_index + 1}: {current_step_name} (Streaming...)"
+                                # Generate smart step number for streaming title (will use cached value)
+                                step_display = get_step_display_number(current_step_index, current_step_name)
+                                title = f"{step_display}: {current_step_name} (Streaming...)"
                                 if is_callable_function:
                                     title = "Custom Function (Streaming...)"
 
-                                # Show the streaming content live in green panel
+                                # Show the streaming content live in orange panel
                                 live_step_panel = create_panel(
                                     content=Markdown(current_step_content) if markdown else current_step_content,
                                     title=title,
-                                    border_style="green",
+                                    border_style="orange3",
                                 )
 
                                 # Create group with status and current step content
@@ -2679,7 +3172,7 @@ class Workflow:
                 # Final completion message
                 if show_time:
                     completion_text = Text(f"Completed in {response_timer.elapsed:.1f}s", style="bold green")
-                    console.print(completion_text)
+                    console.print(completion_text)  # type: ignore
 
             except Exception as e:
                 import traceback
@@ -2689,11 +3182,18 @@ class Workflow:
                 error_panel = create_panel(
                     content=f"Workflow execution failed: {str(e)}", title="Execution Error", border_style="red"
                 )
-                console.print(error_panel)
+                console.print(error_panel)  # type: ignore
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert workflow to dictionary representation"""
         # TODO: Handle nested
+        if self.steps is None or callable(self.steps):
+            steps_list = []
+        elif isinstance(self.steps, Steps):
+            steps_list = self.steps.steps
+        else:
+            steps_list = self.steps
+
         return {
             "name": self.name,
             "workflow_id": self.workflow_id,
@@ -2703,7 +3203,7 @@ class Workflow:
                     "name": s.name if hasattr(s, "name") else s.__name__,
                     "description": s.description if hasattr(s, "description") else "User-defined callable step",
                 }
-                for s in self.steps
+                for s in steps_list
             ],
             "session_id": self.session_id,
         }
@@ -2714,8 +3214,9 @@ class Workflow:
             self.workflow_session_state = {}
 
         # Collect state from all agents in all steps
-        if self.steps and not isinstance(self.steps, Callable):
-            for step in self.steps:
+        if self.steps and not callable(self.steps):
+            steps_list = self.steps.steps if isinstance(self.steps, Steps) else self.steps
+            for step in steps_list:
                 if isinstance(step, Step):
                     executor = step.active_executor
                     if hasattr(executor, "workflow_session_state") and executor.workflow_session_state:
@@ -2736,11 +3237,19 @@ class Workflow:
             # Update session_state with workflow_session_state
             executor.workflow_session_state = self.workflow_session_state
 
+    def _save_run_to_storage(self, workflow_run_response: WorkflowRunResponse) -> None:
+        """Helper method to save workflow run response to storage"""
+        if self.workflow_session:
+            self.workflow_session.upsert_run(workflow_run_response)
+            self.write_to_storage()
+
     def update_agents_and_teams_session_info(self):
         """Update agents and teams with workflow session information"""
+        log_debug("Updating agents and teams with session information")
         # Initialize steps - only if steps is iterable (not callable)
-        if self.steps and not isinstance(self.steps, Callable):
-            for step in self.steps:
+        if self.steps and not callable(self.steps):
+            steps_list = self.steps.steps if isinstance(self.steps, Steps) else self.steps
+            for step in steps_list:
                 # TODO: Handle properly steps inside other primitives
                 if isinstance(step, Step):
                     active_executor = step.active_executor

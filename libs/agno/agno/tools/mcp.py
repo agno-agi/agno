@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.log import log_debug, log_info, log_warning, logger
 from agno.utils.mcp import get_entrypoint_for_tool
 
 try:
@@ -81,6 +81,9 @@ class MCPTools(Toolkit):
             transport: The transport protocol to use, either "stdio" or "sse" or "streamable-http"
         """
         super().__init__(name="MCPTools", **kwargs)
+
+        if transport == "sse":
+            log_info("SSE as a standalone transport is deprecated. Please use Streamable HTTP instead.")
 
         # Set these after `__init__` to bypass the `_check_tools_filters`
         # because tools are not available until `initialize()` is called.
@@ -303,10 +306,14 @@ class MultiMCPTools(Toolkit):
         """
         super().__init__(name="MultiMCPTools", **kwargs)
 
+        if urls_transports is not None:
+            if "sse" in urls_transports:
+                log_info("SSE as a standalone transport is deprecated. Please use Streamable HTTP instead.")
+
         if urls is not None:
             if urls_transports is None:
                 log_warning(
-                    "The default transport 'sse' will be used. You can explicitly set the transports by providing the urls_transports parameter."
+                    "The default transport 'streamable-http' will be used. You can explicitly set the transports by providing the urls_transports parameter."
                 )
             else:
                 if len(urls) != len(urls_transports):
@@ -355,7 +362,7 @@ class MultiMCPTools(Toolkit):
                         self.server_params_list.append(SSEClientParams(url=url))
             else:
                 for url in urls:
-                    self.server_params_list.append(SSEClientParams(url=url))
+                    self.server_params_list.append(StreamableHTTPClientParams(url=url))
 
         self._async_exit_stack = AsyncExitStack()
 

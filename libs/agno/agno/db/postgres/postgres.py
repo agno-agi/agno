@@ -91,7 +91,6 @@ class PostgresDb(BaseDb):
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
 
     # -- DB methods --
-
     def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
         """
         Create a table with the appropriate schema based on the table type.
@@ -249,7 +248,6 @@ class PostgresDb(BaseDb):
             raise
 
     # -- Session methods --
-
     def delete_session(self, session_id: str) -> bool:
         """
         Delete a session from the database.
@@ -554,13 +552,12 @@ class PostgresDb(BaseDb):
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.AGENT.value,
                         agent_id=session_dict.get("agent_id"),
-                        team_session_id=session_dict.get("team_session_id"),
                         user_id=session_dict.get("user_id"),
                         runs=session_dict.get("runs"),
                         agent_data=session_dict.get("agent_data"),
                         session_data=session_dict.get("session_data"),
                         summary=session_dict.get("summary"),
-                        extra_data=session_dict.get("extra_data"),
+                        metadata=session_dict.get("extra_data"),
                         created_at=session_dict.get("created_at"),
                         updated_at=session_dict.get("created_at"),
                     )
@@ -568,12 +565,11 @@ class PostgresDb(BaseDb):
                         index_elements=["session_id"],
                         set_=dict(
                             agent_id=session_dict.get("agent_id"),
-                            team_session_id=session_dict.get("team_session_id"),
                             user_id=session_dict.get("user_id"),
                             agent_data=session_dict.get("agent_data"),
                             session_data=session_dict.get("session_data"),
                             summary=session_dict.get("summary"),
-                            extra_data=session_dict.get("extra_data"),
+                            metadata=session_dict.get("extra_data"),
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
@@ -600,7 +596,7 @@ class PostgresDb(BaseDb):
                         team_data=session_dict.get("team_data"),
                         session_data=session_dict.get("session_data"),
                         summary=session_dict.get("summary"),
-                        extra_data=session_dict.get("extra_data"),
+                        metadata=session_dict.get("extra_data"),
                         created_at=session_dict.get("created_at"),
                         updated_at=session_dict.get("created_at"),
                     )
@@ -613,7 +609,7 @@ class PostgresDb(BaseDb):
                             team_data=session_dict.get("team_data"),
                             session_data=session_dict.get("session_data"),
                             summary=session_dict.get("summary"),
-                            extra_data=session_dict.get("extra_data"),
+                            metadata=session_dict.get("extra_data"),
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
@@ -628,7 +624,7 @@ class PostgresDb(BaseDb):
                         return session_dict
                     return TeamSession.from_dict(session_dict)
 
-            else:
+            elif isinstance(session, WorkflowSession):
                 with self.Session() as sess, sess.begin():
                     stmt = postgresql.insert(table).values(
                         session_id=session_dict.get("session_id"),
@@ -639,7 +635,7 @@ class PostgresDb(BaseDb):
                         workflow_data=session_dict.get("workflow_data"),
                         session_data=session_dict.get("session_data"),
                         summary=session_dict.get("summary"),
-                        extra_data=session_dict.get("extra_data"),
+                        metadata=session_dict.get("extra_data"),
                         created_at=session_dict.get("created_at"),
                         updated_at=session_dict.get("created_at"),
                     )
@@ -651,7 +647,7 @@ class PostgresDb(BaseDb):
                             workflow_data=session_dict.get("workflow_data"),
                             session_data=session_dict.get("session_data"),
                             summary=session_dict.get("summary"),
-                            extra_data=session_dict.get("extra_data"),
+                            metadata=session_dict.get("extra_data"),
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
@@ -665,6 +661,9 @@ class PostgresDb(BaseDb):
                     if session_dict is None or not deserialize:
                         return session_dict
                     return WorkflowSession.from_dict(session_dict)
+
+            else:
+                raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_error(f"Exception upserting into sessions table: {e}")
@@ -1180,7 +1179,6 @@ class PostgresDb(BaseDb):
             return [], None
 
     # -- Knowledge methods --
-
     def delete_knowledge_content(self, id: str):
         """Delete a knowledge row from the database.
 
@@ -1346,7 +1344,6 @@ class PostgresDb(BaseDb):
             return None
 
     # -- Eval methods --
-
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
         """Create an EvalRunRecord in the database.
 

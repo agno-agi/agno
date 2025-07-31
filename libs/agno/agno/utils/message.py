@@ -10,6 +10,8 @@ def get_text_from_message(message: Optional[Union[List, Dict, str, Message, Base
 
     if isinstance(message, str):
         return message
+    if isinstance(message, BaseModel):
+        return message.model_dump_json(indent=2, exclude_none=True)
     if isinstance(message, list):
         text_messages = []
         if len(message) == 0:

@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Union
 from pydantic import BaseModel
 
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
+from agno.models.metrics import Metrics
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
 
@@ -13,6 +14,8 @@ class WorkflowExecutionInput:
     """Input data for a step execution"""
 
     message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None
+
+    additional_data: Optional[Dict[str, Any]] = None
 
     # Media inputs
     images: Optional[List[ImageArtifact]] = None
@@ -37,7 +40,7 @@ class WorkflowExecutionInput:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
-        message_dict = None
+        message_dict: Optional[Union[str, Dict[str, Any], List[Any]]] = None
         if self.message is not None:
             if isinstance(self.message, BaseModel):
                 message_dict = self.message.model_dump(exclude_none=True)
@@ -48,6 +51,7 @@ class WorkflowExecutionInput:
 
         return {
             "message": message_dict,
+            "additional_data": self.additional_data,
             "images": [img.to_dict() for img in self.images] if self.images else None,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,
             "audio": [aud.to_dict() for aud in self.audio] if self.audio else None,
@@ -62,7 +66,8 @@ class StepInput:
 
     previous_step_content: Optional[Any] = None
     previous_step_outputs: Optional[Dict[str, "StepOutput"]] = None
-    workflow_message: Optional[str] = None  # Original workflow message
+
+    additional_data: Optional[Dict[str, Any]] = None
 
     # Media inputs
     images: Optional[List[ImageArtifact]] = None
@@ -91,10 +96,26 @@ class StepInput:
             return None
         return self.previous_step_outputs.get(step_name)
 
-    def get_step_content(self, step_name: str) -> Optional[str]:
-        """Get content from a specific previous step by name"""
+    def get_step_content(self, step_name: str) -> Optional[Union[str, Dict[str, str]]]:
+        """Get content from a specific previous step by name
+
+        For parallel steps, if you ask for the parallel step name, returns a dict
+        with {step_name: content} for each sub-step.
+        """
         step_output = self.get_step_output(step_name)
-        return step_output.content if step_output else None
+        if not step_output:
+            return None
+
+        # If this is a parallel step with sub-outputs, return structured dict
+        if step_output.parallel_step_outputs:
+            return {
+                sub_step_name: sub_output.content  # type: ignore[misc]
+                for sub_step_name, sub_output in step_output.parallel_step_outputs.items()
+                if sub_output.content
+            }
+
+        # Regular step, return content directly
+        return step_output.content  # type: ignore[return-value]
 
     def get_all_previous_content(self) -> str:
         """Get concatenated content from all previous steps"""
@@ -114,12 +135,12 @@ class StepInput:
             return None
 
         last_output = list(self.previous_step_outputs.values())[-1] if self.previous_step_outputs else None
-        return last_output.content if last_output else None
+        return last_output.content if last_output else None  # type: ignore[return-value]
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         # Handle the unified message field
-        message_dict = None
+        message_dict: Optional[Union[str, Dict[str, Any], List[Any]]] = None
         if self.message is not None:
             if isinstance(self.message, BaseModel):
                 message_dict = self.message.model_dump(exclude_none=True)
@@ -128,16 +149,7 @@ class StepInput:
             else:
                 message_dict = str(self.message)
 
-        # Handle workflow_message (also updated to support all types)
-        workflow_message_dict = None
-        if self.workflow_message is not None:
-            if isinstance(self.workflow_message, BaseModel):
-                workflow_message_dict = self.workflow_message.model_dump(exclude_none=True)
-            elif isinstance(self.workflow_message, (dict, list)):
-                workflow_message_dict = self.workflow_message
-            else:
-                workflow_message_dict = str(self.workflow_message)
-
+        previous_step_content_str: Optional[str] = None
         # Handle previous_step_content (keep existing logic)
         if isinstance(self.previous_step_content, BaseModel):
             previous_step_content_str = self.previous_step_content.model_dump_json(indent=2, exclude_none=True)
@@ -145,8 +157,8 @@ class StepInput:
             import json
 
             previous_step_content_str = json.dumps(self.previous_step_content, indent=2, default=str)
-        else:
-            previous_step_content_str = str(self.previous_step_content) if self.previous_step_content else None
+        elif self.previous_step_content:
+            previous_step_content_str = str(self.previous_step_content)
 
         # Convert previous_step_outputs to serializable format (keep existing logic)
         previous_steps_dict = {}
@@ -156,9 +168,9 @@ class StepInput:
 
         return {
             "message": message_dict,
-            "workflow_message": workflow_message_dict,
             "previous_step_outputs": previous_steps_dict,
             "previous_step_content": previous_step_content_str,
+            "additional_data": self.additional_data,
             "images": [img.to_dict() for img in self.images] if self.images else None,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,
             "audio": [aud.to_dict() for aud in self.audio] if self.audio else None,
@@ -175,7 +187,10 @@ class StepOutput:
     executor_name: Optional[str] = None
 
     # Primary output
-    content: Optional[str] = None
+    content: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, Any]] = None
+
+    # For parallel steps: store individual step outputs
+    parallel_step_outputs: Optional[Dict[str, "StepOutput"]] = None
 
     # Execution response
     response: Optional[Union[RunResponse, TeamRunResponse]] = None
@@ -186,7 +201,7 @@ class StepOutput:
     audio: Optional[List[AudioArtifact]] = None
 
     # Metrics for this step execution
-    metrics: Optional[Dict[str, Any]] = None
+    metrics: Optional[Metrics] = None
 
     success: bool = True
     error: Optional[str] = None
@@ -195,13 +210,23 @@ class StepOutput:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
+        # Handle the unified content field
+        content_dict: Optional[Union[str, Dict[str, Any], List[Any]]] = None
+        if self.content is not None:
+            if isinstance(self.content, BaseModel):
+                content_dict = self.content.model_dump(exclude_none=True)
+            elif isinstance(self.content, (dict, list)):
+                content_dict = self.content
+            else:
+                content_dict = str(self.content)
+
         return {
-            "content": self.content,
+            "content": content_dict,
             "response": self.response.to_dict() if self.response else None,
             "images": [img.to_dict() for img in self.images] if self.images else None,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,
             "audio": [aud.to_dict() for aud in self.audio] if self.audio else None,
-            "metrics": self.metrics,
+            "metrics": self.metrics.to_dict() if hasattr(self.metrics, "to_dict") else self.metrics,
             "success": self.success,
             "error": self.error,
             "stop": self.stop,
@@ -215,7 +240,7 @@ class StepOutput:
 
         # Reconstruct response if present
         response_data = data.get("response")
-        response = None
+        response: Optional[Union[RunResponse, TeamRunResponse]] = None
         if response_data:
             # Determine if it's RunResponse or TeamRunResponse based on structure
             if "team_id" in response_data or "team_name" in response_data:
@@ -258,7 +283,7 @@ class StepMetrics:
     executor_name: str
 
     # For regular steps: actual metrics data
-    metrics: Optional[Dict[str, Any]] = None
+    metrics: Optional[Metrics] = None
 
     # For parallel steps: nested step metrics
     parallel_steps: Optional[Dict[str, "StepMetrics"]] = None
@@ -273,10 +298,10 @@ class StepMetrics:
 
         # Only include the relevant field based on executor type
         if self.executor_type == "parallel" and self.parallel_steps:
-            result["parallel_steps"] = {name: step.to_dict() for name, step in self.parallel_steps.items()}
+            result["parallel_steps"] = {name: step.to_dict() for name, step in self.parallel_steps.items()}  # type: ignore[assignment]
         elif self.executor_type != "parallel":
             # For non-parallel steps, include metrics (even if None)
-            result["metrics"] = self.metrics
+            result["metrics"] = self.metrics.to_dict() if hasattr(self.metrics, "to_dict") else self.metrics  # type: ignore[assignment]
 
         return result
 

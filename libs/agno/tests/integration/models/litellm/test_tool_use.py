@@ -71,9 +71,8 @@ def test_tool_use_stream():
     for chunk in response_stream:
         responses.append(chunk)
         print(chunk.content)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
-                tool_call_seen = True
+        if hasattr(chunk, "event") and chunk.event in ["ToolCallStarted", "ToolCallCompleted"]:
+            tool_call_seen = True
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
@@ -126,9 +125,8 @@ async def test_async_tool_use_streaming():
 
     async for chunk in response_stream:
         responses.append(chunk)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
-                tool_call_seen = True
+        if hasattr(chunk, "event") and chunk.event in ["ToolCallStarted", "ToolCallCompleted"]:
+            tool_call_seen = True
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"

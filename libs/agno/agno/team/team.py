@@ -127,6 +127,8 @@ class Team:
     session_name: Optional[str] = None
     # Session state (stored in the database to persist across runs)
     session_state: Optional[Dict[str, Any]] = None
+    # If True, cache the session in memory
+    cache_session: bool = True
 
     # Team session state (shared between team leaders and team members)
     team_session_state: Optional[Dict[str, Any]] = None
@@ -313,6 +315,7 @@ class Team:
         team_session_state: Optional[Dict[str, Any]] = None,
         workflow_session_state: Optional[Dict[str, Any]] = None,
         add_state_in_messages: bool = False,
+        cache_session: bool = True,
         description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
         expected_output: Optional[str] = None,
@@ -389,6 +392,8 @@ class Team:
         self.team_session_state = team_session_state
         self.workflow_session_state = workflow_session_state
         self.add_state_in_messages = add_state_in_messages
+
+        self.cache_session = cache_session
 
         self.description = description
         self.instructions = instructions
@@ -476,7 +481,7 @@ class Team:
         self.full_team_session_metrics: Optional[Metrics] = None
 
         self.run_id: Optional[str] = None
-        self.run_input: Optional[Union[str, List, Dict]] = None
+        self.run_input: Optional[Union[str, List, Dict, BaseModel]] = None
         self.run_messages: Optional[RunMessages] = None
         self.run_response: Optional[TeamRunResponse] = None
 
@@ -557,7 +562,7 @@ class Team:
                 merge_dictionaries(member.team_session_state, self.team_session_state)
 
         if self.workflow_session_state is not None:
-            if member.workflow_session_state is not None:
+            if member.workflow_session_state is None:
                 member.workflow_session_state = self.workflow_session_state
             else:
                 merge_dictionaries(member.workflow_session_state, self.workflow_session_state)
@@ -618,12 +623,13 @@ class Team:
                 self.enable_session_summaries or self.session_summary_manager is not None
             )
 
-    def _reset_session_state(self) -> None:
+    def _reset_session(self) -> None:
         self.session_name = None
         self.session_state = None
         self.team_session_state = None
         self.workflow_session_state = self.workflow_session_state  # being set by Workflow, at Team.run cannot be None
         self.session_metrics = None
+        self.session_state = None
         self.images = None
         self.videos = None
         self.audio = None
@@ -796,6 +802,71 @@ class Team:
 
         log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
 
+    def _initialize_session_state(self, user_id: Optional[str] = None, session_id: Optional[str] = None) -> None:
+        self.session_state = self.session_state or {}
+
+        if user_id is not None:
+            self.session_state["current_user_id"] = user_id
+            if self.team_session_state is not None:
+                self.team_session_state["current_user_id"] = user_id
+            if self.workflow_session_state is not None:
+                self.workflow_session_state["current_user_id"] = user_id
+
+        if session_id is not None:
+            self.session_state["current_session_id"] = session_id
+            if self.team_session_state is not None:
+                self.team_session_state["current_session_id"] = session_id
+            if self.workflow_session_state is not None:
+                self.workflow_session_state["current_user_id"] = user_id
+
+    def _reset_session_state(self) -> None:
+        """Reset the session state for the agent."""
+        if self.team_session_state is not None:
+            self.team_session_state.pop("current_session_id", None)
+            self.team_session_state.pop("current_user_id", None)
+        if self.session_state is not None:
+            self.session_state.pop("current_session_id", None)
+            self.session_state.pop("current_user_id", None)
+
+    def _initialize_session(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[str, Optional[str]]:
+        """Initialize the session for the agent."""
+
+        self._reset_run_state()
+
+        # Determine the session_id
+        if session_id is not None and session_id != "":
+            # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
+            # Only reset session state if the session_id is different from the current session_id
+            if self.session_id is not None and session_id != self.session_id:
+                self._reset_session()
+
+            self.session_id = session_id
+        else:
+            if not (self.session_id is None or self.session_id == ""):
+                session_id = self.session_id
+            else:
+                # Generate a new session_id and store it in the agent
+                self.session_id = session_id = str(uuid4())
+
+        # Use the default user_id when necessary
+        if user_id is not None and user_id != "":
+            user_id = user_id
+        else:
+            user_id = self.user_id
+
+        # Determine the session_state
+        if session_state is not None:
+            self.session_state = session_state
+
+        self._initialize_session_state(user_id=user_id, session_id=session_id)
+
+        return session_id, user_id
+
     @overload
     def run(
         self,
@@ -804,6 +875,7 @@ class Team:
         stream: Literal[False] = False,
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -822,6 +894,7 @@ class Team:
         stream: Literal[True] = True,
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -839,6 +912,7 @@ class Team:
         stream: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -850,31 +924,9 @@ class Team:
     ) -> Union[TeamRunResponse, Iterator[Union[RunResponseEvent, TeamRunResponseEvent]]]:
         """Run the Team and return the response."""
 
-        self._reset_run_state()
-
-        if session_id is not None:
-            # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
-            self._reset_session_state()
-
-        # Use the default user_id and session_id when necessary
-        if user_id is None:
-            user_id = self.user_id
-
-        if session_id is None or session_id == "":
-            # Default to the team's session_id if no session_id is provided
-            if not (self.session_id is None or self.session_id == ""):
-                session_id = self.session_id
-            else:
-                # Generate a new session_id and store it in the agent
-                session_id = str(uuid4())
-                self.session_id = session_id
-        else:
-            self.session_id = session_id
-
-        session_id = cast(str, session_id)
-
-        self._initialize_session_state(user_id=user_id, session_id=session_id)
-
+        session_id, user_id = self._initialize_session(
+            session_id=session_id, user_id=user_id, session_state=session_state
+        )
         log_debug(f"Session ID: {session_id}", center=True)
 
         # Initialize Team
@@ -1057,6 +1109,8 @@ class Team:
                         from_run_response=run_response,
                         session_id=session_id,
                     )
+            finally:
+                self._reset_session_state()
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -1216,6 +1270,7 @@ class Team:
         stream: Literal[False] = False,
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -1234,6 +1289,7 @@ class Team:
         stream: Literal[True] = True,
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -1251,6 +1307,7 @@ class Team:
         stream: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         retries: Optional[int] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -1261,34 +1318,12 @@ class Team:
         **kwargs: Any,
     ) -> Union[TeamRunResponse, AsyncIterator[Union[RunResponseEvent, TeamRunResponseEvent]]]:
         """Run the Team asynchronously and return the response."""
-
-        self._reset_run_state()
-
-        if session_id is not None:
-            # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
-            self._reset_session_state()
-
-        # Use the default user_id and session_id when necessary
-        if user_id is None:
-            user_id = self.user_id
-
-        if session_id is None or session_id == "":
-            # Default to the team's session_id if no session_id is provided
-            if not (self.session_id is None or self.session_id == ""):
-                session_id = self.session_id
-            else:
-                # Generate a new session_id and store it in the team
-                session_id = str(uuid4())
-                self.session_id = session_id
-        else:
-            self.session_id = session_id
-
-        session_id = cast(str, session_id)
-
-        self._initialize_session_state(user_id=user_id, session_id=session_id)
-
+        session_id, user_id = self._initialize_session(
+            session_id=session_id, user_id=user_id, session_state=session_state
+        )
         log_debug(f"Session ID: {session_id}", center=True)
 
+        # Initialize Team
         self.initialize_team(session_id=session_id)
 
         effective_filters = knowledge_filters
@@ -1450,6 +1485,8 @@ class Team:
                         from_run_response=run_response,
                         session_id=session_id,
                     )
+            finally:
+                self._reset_session_state()
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -1930,29 +1967,6 @@ class Team:
             else:
                 log_warning("Something went wrong. Member run response content is not a string")
 
-    def _initialize_session_state(self, user_id: Optional[str] = None, session_id: Optional[str] = None) -> None:
-        self.session_state = self.session_state or {}
-
-        if user_id is not None:
-            self.session_state["current_user_id"] = user_id
-            if self.team_session_state is not None:
-                self.team_session_state["current_user_id"] = user_id
-
-        if user_id is not None:
-            self.session_state["current_user_id"] = user_id
-            if self.workflow_session_state is not None:
-                self.workflow_session_state["current_user_id"] = user_id
-
-        if session_id is not None:
-            self.session_state["current_session_id"] = session_id
-            if self.team_session_state is not None:
-                self.team_session_state["current_session_id"] = session_id
-
-        if session_id is not None:
-            self.session_state["current_session_id"] = session_id
-            if self.workflow_session_state is not None:
-                self.workflow_session_state["current_session_id"] = session_id
-
     def _update_memory(
         self, run_messages: RunMessages, user_id: Optional[str] = None
     ) -> Iterator[TeamRunResponseEvent]:
@@ -2252,6 +2266,7 @@ class Team:
         stream: bool = False,
         stream_intermediate_steps: bool = False,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -2283,6 +2298,7 @@ class Team:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 session_id=session_id,
+                session_state=session_state,
                 user_id=user_id,
                 audio=audio,
                 images=images,
@@ -2302,6 +2318,7 @@ class Team:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 session_id=session_id,
+                session_state=session_state,
                 user_id=user_id,
                 audio=audio,
                 images=images,
@@ -2321,6 +2338,7 @@ class Team:
         show_full_reasoning: bool = False,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
@@ -2373,6 +2391,7 @@ class Team:
                 files=files,
                 stream=False,
                 session_id=session_id,
+                session_state=session_state,
                 user_id=user_id,
                 knowledge_filters=knowledge_filters,
                 **kwargs,
@@ -2607,6 +2626,7 @@ class Team:
         show_full_reasoning: bool = False,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
@@ -2677,6 +2697,7 @@ class Team:
                 stream=True,
                 stream_intermediate_steps=stream_intermediate_steps,
                 session_id=session_id,
+                session_state=session_state,
                 user_id=user_id,
                 knowledge_filters=knowledge_filters,
                 **kwargs,
@@ -3124,6 +3145,7 @@ class Team:
         stream: bool = False,
         stream_intermediate_steps: bool = False,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
@@ -3155,6 +3177,7 @@ class Team:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 session_id=session_id,
+                session_state=session_state,
                 user_id=user_id,
                 audio=audio,
                 images=images,
@@ -3174,6 +3197,7 @@ class Team:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 session_id=session_id,
+                session_state=session_state,
                 user_id=user_id,
                 audio=audio,
                 images=images,
@@ -3193,6 +3217,7 @@ class Team:
         show_full_reasoning: bool = False,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
@@ -3245,6 +3270,7 @@ class Team:
                 files=files,
                 stream=False,
                 session_id=session_id,
+                session_state=session_state,
                 user_id=user_id,
                 knowledge_filters=knowledge_filters,
                 **kwargs,
@@ -3477,6 +3503,7 @@ class Team:
         show_full_reasoning: bool = False,
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
@@ -3549,6 +3576,7 @@ class Team:
                 stream=True,
                 stream_intermediate_steps=stream_intermediate_steps,
                 session_id=session_id,
+                session_state=session_state,
                 user_id=user_id,
                 **kwargs,
             )
@@ -4673,7 +4701,7 @@ class Team:
         user_id: Optional[str] = None,
         async_mode: bool = False,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        message: Optional[Union[str, List, Dict, Message]] = None,
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -4922,7 +4950,15 @@ class Team:
         if self.instructions is not None:
             _instructions = self.instructions
             if callable(self.instructions):
-                _instructions = self.instructions(agent=self)
+                import inspect
+
+                signature = inspect.signature(self.instructions)
+                if "team" in signature.parameters:
+                    _instructions = self.instructions(team=self)
+                elif "agent" in signature.parameters:
+                    _instructions = self.instructions(agent=self)
+                else:
+                    _instructions = self.instructions()
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)
@@ -5258,6 +5294,8 @@ class Team:
                 message_str = message
             elif callable(message):
                 message_str = message(agent=self)
+            elif isinstance(message, BaseModel):
+                message_str = message.model_dump_json(indent=2, exclude_none=True)
             else:
                 raise Exception("message must be a string or a callable when add_references is True")
 
@@ -5726,7 +5764,7 @@ class Team:
 
             Args:
                 task_description (str): The task description to send to the member agents.
-                expected_output (str): The expected output from the member agents.
+                expected_output (str, optional): The expected output from the member agents.
 
             Returns:
                 str: The responses from the member agents.
@@ -5889,6 +5927,7 @@ class Team:
                         audio=audio,
                         files=files,
                         stream=False,
+                        refresh_session_before_write=True,
                     )
                     check_if_run_cancelled(response)
 
@@ -6007,7 +6046,7 @@ class Team:
             Args:
                 member_id (str): The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
                 task_description (str): A clear and concise description of the task the member should achieve.
-                expected_output (str): The expected output from the member (optional).
+                expected_output (str, optional): The expected output from the member (optional).
             Returns:
                 str: The result of the delegated task.
             """
@@ -6027,7 +6066,10 @@ class Team:
             )
 
             # 3. Create the member agent task
-            member_agent_task = self._formate_member_agent_task(
+            # Don't override the expected output of a member agent
+            if member_agent.expected_output is not None:
+                expected_output = None
+            member_agent_task = self._format_member_agent_task(
                 task_description, expected_output, team_context_str, team_member_interactions_str
             )
 
@@ -6149,7 +6191,7 @@ class Team:
             Args:
                 member_id (str): The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
                 task_description (str): A clear and concise description of the task the member should achieve.
-                expected_output (str): The expected output from the member (optional).
+                expected_output (str, optional): The expected output from the member (optional).
             Returns:
                 str: The result of the delegated task.
             """
@@ -6170,7 +6212,10 @@ class Team:
             )
 
             # 3. Create the member agent task
-            member_agent_task = self._formate_member_agent_task(
+            # Don't override the expected output of a member agent
+            if member_agent.expected_output is not None:
+                expected_output = None
+            member_agent_task = self._format_member_agent_task(
                 task_description, expected_output, team_context_str, team_member_interactions_str
             )
 
@@ -6203,6 +6248,7 @@ class Team:
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
+                    refresh_session_before_write=True,
                 )
                 async for member_agent_run_response_event in member_agent_run_response_stream:
                     check_if_run_cancelled(member_agent_run_response_event)
@@ -6222,6 +6268,7 @@ class Team:
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
+                    refresh_session_before_write=True,
                 )
                 check_if_run_cancelled(member_agent_run_response)
 
@@ -6283,7 +6330,7 @@ class Team:
 
         return transfer_func
 
-    def _formate_member_agent_task(
+    def _format_member_agent_task(
         self,
         task_description: str,
         expected_output: Optional[str] = None,
@@ -6382,7 +6429,7 @@ class Team:
             """Use this function to forward the request to the selected team member.
             Args:
                 member_id (str): The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
-                expected_output (str): The expected output from the member (optional).
+                expected_output (str, optional): The expected output from the member (optional).
             Returns:
                 str: The result of the delegated task.
             """
@@ -6418,7 +6465,8 @@ class Team:
                 if history:
                     history.append(Message(role="user", content=member_agent_task))
 
-            if expected_output:
+            # Don't override the expected output of a member agent
+            if member_agent.expected_output is None and expected_output:
                 member_agent_task += f"\n\n<expected_output>\n{expected_output}\n</expected_output>"
 
             # Handle enable_agentic_knowledge_filters
@@ -6525,7 +6573,7 @@ class Team:
 
             Args:
                 member_id (str): The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
-                expected_output (str): The expected output from the member (optional).
+                expected_output (str, optional): The expected output from the member (optional).
             Returns:
                 str: The result of the delegated task.
             """
@@ -6557,7 +6605,8 @@ class Team:
                 if history:
                     history.append(Message(role="user", content=member_agent_task))
 
-            if expected_output:
+            # Don't override the expected output of a member agent
+            if member_agent.expected_output is None and expected_output:
                 member_agent_task += f"\n\n<expected_output>\n{expected_output}\n</expected_output>"
 
             # Handle enable_agentic_knowledge_filters
@@ -6581,6 +6630,7 @@ class Team:
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
+                    refresh_session_before_write=True,
                 )
                 async for member_agent_run_response_event in member_agent_run_response_stream:
                     check_if_run_cancelled(member_agent_run_response_event)
@@ -6600,6 +6650,7 @@ class Team:
                     knowledge_filters=knowledge_filters
                     if (member_agent.knowledge_filters and member_agent.knowledge)
                     else None,
+                    refresh_session_before_write=True,
                 )
 
                 try:
@@ -6763,7 +6814,6 @@ class Team:
             # Get the session_name from database and update the current session_name if not set
             if self.session_name is None and "session_name" in session.session_data:
                 self.session_name = session.session_data.get("session_name")
-
             # Get the session_state from the database and update the current session_state
             if "session_state" in session.session_data:
                 session_state_from_db = session.session_data.get("session_state")

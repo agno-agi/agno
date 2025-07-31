@@ -22,9 +22,7 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_contents(
-    urls=["https://docs.agno.com/introduction/agents.md"]
-)
+knowledge.add_contents(urls=["https://docs.agno.com/introduction/agents.md"])
 
 agent = Agent(
     model=Claude(id="claude-3-7-sonnet-latest"),

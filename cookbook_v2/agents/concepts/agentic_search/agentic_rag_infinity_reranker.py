@@ -53,7 +53,6 @@ from agno.reranker.infinity import InfinityReranker
 from agno.vectordb.lancedb import LanceDb, SearchType
 
 knowledge = Knowledge(
-  
     # Use LanceDB as the vector database, store embeddings in the `agno_docs_infinity` table
     vector_db=LanceDb(
         uri="tmp/lancedb",
@@ -71,7 +70,7 @@ knowledge = Knowledge(
 )
 
 knowledge.add_contents(
-      urls=[
+    urls=[
         "https://docs.agno.com/introduction/agents.md",
         "https://docs.agno.com/agents/tools.md",
         "https://docs.agno.com/agents/knowledge.md",

@@ -151,7 +151,7 @@ class Function(BaseModel):
             param_type_hints = {
                 name: type_hints.get(name)
                 for name in sig.parameters
-                if name != "return" and name not in ["agent", "team"]
+                if name != "return" and name not in ["agent", "team", "self"]
             }
 
             # Parse docstring for parameters
@@ -177,7 +177,9 @@ class Function(BaseModel):
             # If strict=True mark all fields as required
             # See: https://platform.openai.com/docs/guides/structured-outputs/supported-schemas#all-fields-must-be-required
             if strict:
-                parameters["required"] = [name for name in parameters["properties"] if name not in ["agent", "team"]]
+                parameters["required"] = [
+                    name for name in parameters["properties"] if name not in ["agent", "team", "self"]
+                ]
             else:
                 # Mark a field as required if it has no default value (this would include optional fields)
                 parameters["required"] = [
@@ -235,7 +237,7 @@ class Function(BaseModel):
             # log_info(f"Type hints for {self.name}: {type_hints}")
 
             # Filter out return type and only process parameters
-            excluded_params = ["return", "agent", "team"]
+            excluded_params = ["return", "agent", "team", "self"]
             if self.requires_user_input and self.user_input_fields:
                 if len(self.user_input_fields) == 0:
                     excluded_params.extend(list(type_hints.keys()))
@@ -337,7 +339,9 @@ class Function(BaseModel):
 
     def process_schema_for_strict(self):
         self.parameters["additionalProperties"] = False
-        self.parameters["required"] = [name for name in self.parameters["properties"] if name not in ["agent", "team"]]
+        self.parameters["required"] = [
+            name for name in self.parameters["properties"] if name not in ["agent", "team", "self"]
+        ]
 
     def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
         """Generate a cache key based on function name and arguments."""
@@ -554,7 +558,7 @@ class FunctionCall(BaseModel):
         from functools import reduce
         from inspect import iscoroutinefunction
 
-        def execute_entrypoint():
+        def execute_entrypoint(name, func, args):
             """Execute the entrypoint function."""
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
@@ -572,9 +576,9 @@ class FunctionCall(BaseModel):
                 # Pass the inner function as next_func to the hook
                 # The hook will call next_func to continue the chain
                 def next_func(**kwargs):
-                    return inner_func()
+                    return inner_func(name, func, kwargs)
 
-                hook_args = self._build_hook_args(hook, name, func, args)
+                hook_args = self._build_hook_args(hook, name, next_func, args)
 
                 return hook(**hook_args)
 
@@ -716,7 +720,7 @@ class FunctionCall(BaseModel):
         from functools import reduce
         from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction
 
-        async def execute_entrypoint_async():
+        async def execute_entrypoint_async(name, func, args):
             """Execute the entrypoint function asynchronously."""
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
@@ -729,7 +733,7 @@ class FunctionCall(BaseModel):
                 result = await result
             return result
 
-        def execute_entrypoint():
+        def execute_entrypoint(name, func, args):
             """Execute the entrypoint function synchronously."""
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
@@ -750,11 +754,11 @@ class FunctionCall(BaseModel):
                 # The hook will call next_func to continue the chain
                 async def next_func(**kwargs):
                     if iscoroutinefunction(inner_func):
-                        return await inner_func()
+                        return await inner_func(name, func, kwargs)
                     else:
-                        return inner_func()
+                        return inner_func(name, func, kwargs)
 
-                hook_args = self._build_hook_args(hook, name, func, args)
+                hook_args = self._build_hook_args(hook, name, next_func, args)
 
                 if iscoroutinefunction(hook):
                     return await hook(**hook_args)

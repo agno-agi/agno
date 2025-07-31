@@ -40,9 +40,7 @@ async def main():
     )
 
     # Ask the agent about the knowledge
-    await agent.aprint_response(
-        "Could you tell me about the earth?", markdown=True
-    )
+    await agent.aprint_response("Could you tell me about the earth?", markdown=True)
 
 
 if __name__ == "__main__":

@@ -149,7 +149,6 @@ knowledge.add_content(
 #     name="S3",
 #     config=s3_config,
 #     metadata={"user_tag": "Recipes"},
-#     # reader=S3PDFReader(),s
 # )
 
 

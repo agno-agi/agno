@@ -11,10 +11,10 @@ from uuid import uuid4
 
 from agno.db.base import BaseDb
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.knowledge.cloud_storage.cloud_storage import CloudStorageConfig
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
+from agno.knowledge.remote_content.remote_content import GCSContent, RemoteContent, S3Content
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb import VectorDb
 
@@ -110,6 +110,7 @@ class Knowledge:
         exclude: Optional[List[str]] = None,
         upsert: bool = False,
         skip_if_exists: bool = False,
+        remote_content: Optional[RemoteContent] = None,
     ) -> None: ...
 
     def add_contents(self, *args, **kwargs) -> None:
@@ -128,6 +129,7 @@ class Knowledge:
                     exclude=argument.get("exclude"),
                     upsert=argument.get("upsert", False),
                     skip_if_exists=argument.get("skip_if_exists", False),
+                    remote_content=argument.get("remote_content", None),
                 )
 
         elif kwargs:
@@ -141,6 +143,7 @@ class Knowledge:
             exclude = kwargs.get("exclude")
             upsert = kwargs.get("upsert", False)
             skip_if_exists = kwargs.get("skip_if_exists", False)
+            remote_content = kwargs.get("remote_content", None)
 
             for path in paths:
                 self.add_content(
@@ -172,6 +175,16 @@ class Knowledge:
                     metadata=metadata,
                     include=include,
                     exclude=exclude,
+                    upsert=upsert,
+                    skip_if_exists=skip_if_exists,
+                )
+
+            if remote_content:
+                self.add_content(
+                    name=name,
+                    metadata=metadata,
+                    description=description,
+                    remote_content=remote_content,
                     upsert=upsert,
                     skip_if_exists=skip_if_exists,
                 )
@@ -227,7 +240,7 @@ class Knowledge:
         text_content: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         topics: Optional[List[str]] = None,
-        config: Optional[CloudStorageConfig] = None,
+        remote_content: Optional[RemoteContent] = None,
         reader: Optional[Reader] = None,
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
@@ -235,8 +248,8 @@ class Knowledge:
         skip_if_exists: bool = True,
     ) -> None:
         # Validation: At least one of the parameters must be provided
-        if all(argument is None for argument in [name, path, url, text_content, topics]):
-            log_info("At least one of 'path', 'url', 'text_content', or 'topics' must be provided.")
+        if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
+            log_info("At least one of 'path', 'url', 'text_content', 'topics', or 'remote_content' must be provided.")
             return
 
         if not skip_if_exists:
@@ -257,7 +270,7 @@ class Knowledge:
             file_data=file_data if file_data else None,
             metadata=metadata,
             topics=topics,
-            config=config,
+            remote_content=remote_content,
             reader=reader,
         )
 
@@ -272,7 +285,7 @@ class Knowledge:
         text_content: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         topics: Optional[List[str]] = None,
-        config: Optional[CloudStorageConfig] = None,
+        remote_content: Optional[RemoteContent] = None,
         reader: Optional[Reader] = None,
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
@@ -309,7 +322,7 @@ class Knowledge:
             text_content=text_content,
             metadata=metadata,
             topics=topics,
-            config=config,
+            remote_content=remote_content,
             reader=reader,
             include=include,
             exclude=exclude,
@@ -446,8 +459,8 @@ class Knowledge:
         url_path = Path(parsed_url.path)
         file_extension = url_path.suffix.lower()
 
-        if content.url.endswith("llms-full.txt"):
-            log_info(f"Detected llms-full.txt, using url reader")
+        if content.url.endswith("llms-full.txt") or content.url.endswith("llms.txt"):
+            log_info(f"Detected llms, using url reader")
             reader = self.url_reader
             read_documents = reader.read(content.url, content.name)
 
@@ -653,7 +666,173 @@ class Knowledge:
             content.status = "Completed"
             self._update_content(content)
 
-    def _load_from_cloud_storage(self): ...
+    def _load_from_remote_content(
+        self,
+        content: Content,
+        upsert: bool,
+        skip_if_exists: bool,
+    ):
+        log_info(f"Loading content from cloud storage")
+
+        if content.remote_content is None:
+            log_warning("No remote content provided for content")
+            return
+
+        remote_content = content.remote_content
+
+        if isinstance(remote_content, S3Content):
+            self._load_from_s3(content, upsert, skip_if_exists)
+
+        elif isinstance(remote_content, GCSContent):
+            self._load_from_gcs(content, upsert, skip_if_exists)
+
+        else:
+            log_warning(f"Unsupported remote content type: {type(remote_content)}")
+
+    def _load_from_s3(self, content: Content, upsert: bool, skip_if_exists: bool):
+        from agno.aws.resource.s3.object import S3Object  # type: ignore
+
+        log_info(f"Loading content from S3")
+        if content.reader is None:
+            reader = self.s3_reader
+        else:
+            reader = content.reader
+
+        if reader is None:
+            log_warning("No reader provided for content")
+            return
+
+        remote_content: S3Content = content.remote_content
+
+        objects_to_read: List[S3Object] = []
+
+        if remote_content.bucket is not None:
+            if remote_content.key is not None:
+                _object = S3Object(bucket_name=remote_content.bucket.name, name=remote_content.key)
+                objects_to_read.append(_object)
+            elif remote_content.object is not None:
+                objects_to_read.append(remote_content.object)
+            elif remote_content.prefix is not None:
+                objects_to_read.extend(remote_content.bucket.get_objects(prefix=remote_content.prefix))
+            else:
+                objects_to_read.extend(remote_content.bucket.get_objects())
+
+        for object in objects_to_read:
+            id = str(uuid4())
+            content_entry = Content(
+                id=id,
+                name=content.name + "_" + object.name,
+                description=content.description,
+                status="Processing",
+                metadata=content.metadata,
+                file_type="s3",
+            )
+
+            content_hash = self._build_content_hash(content_entry)
+            if self.vector_db.content_hash_exists(content_hash) and skip_if_exists:
+                log_info(f"Content {content_hash} already exists, skipping")
+                continue
+
+            self._add_to_contents_db(content_entry)
+
+            read_documents = reader.read(content_entry.name, object)
+
+            for read_document in read_documents:
+                read_document.content_id = content.id
+
+            completed = True
+            if upsert:
+                try:
+                    self.vector_db.upsert(content_hash, read_documents, content.metadata)
+                except Exception as e:
+                    log_error(f"Error upserting document: {e}")
+                    content_entry.status = "Failed"
+                    content_entry.status_message = "Could not upsert embedding"
+                    completed = False
+                    self._update_content(content_entry)
+            else:
+                try:
+                    self.vector_db.insert(content_hash, documents=read_documents, filters=content.metadata)
+                except Exception as e:
+                    log_error(f"Error inserting document: {e}")
+                    content_entry.status = "Failed"
+                    content_entry.status_message = "Could not insert embedding"
+                    completed = False
+                    self._update_content(content_entry)
+
+            if completed:
+                content_entry.status = "Completed"
+                self._update_content(content_entry)
+
+    def _load_from_gcs(self, content: Content, upsert: bool, skip_if_exists: bool):
+        log_info(f"Loading content from GCS")
+
+        if content.reader is None:
+            reader = self.gcs_reader
+        else:
+            reader = content.reader
+
+        if reader is None:
+            log_warning("No reader provided for content")
+            return
+
+        remote_content: GCSContent = content.remote_content
+        objects_to_read = []
+
+        if remote_content.blob_name is not None:
+            objects_to_read.append(remote_content.bucket.blob(remote_content.blob_name))
+        elif remote_content.prefix is not None:
+            objects_to_read.extend(remote_content.bucket.list_blobs(prefix=remote_content.prefix))
+        else:
+            objects_to_read.extend(remote_content.bucket.list_blobs())
+
+        for object in objects_to_read:
+            id = str(uuid4())
+            content_entry = Content(
+                id=id,
+                name=content.name + "_" + object.name,
+                description=content.description,
+                status="Processing",
+                metadata=content.metadata,
+                file_type="gcs",
+            )
+
+            content_hash = self._build_content_hash(content_entry)
+            if self.vector_db.content_hash_exists(content_hash) and skip_if_exists:
+                log_info(f"Content {content_hash} already exists, skipping")
+                continue
+
+            self._add_to_contents_db(content_entry)
+
+            read_documents = reader.read(content_entry.name, object)
+
+            for read_document in read_documents:
+                read_document.content_id = content.id
+
+            completed = True
+
+            if upsert:
+                try:
+                    self.vector_db.upsert(content_hash, read_documents, content.metadata)
+                except Exception as e:
+                    log_error(f"Error upserting document: {e}")
+                    content_entry.status = "Failed"
+                    content_entry.status_message = "Could not upsert embedding"
+                    completed = False
+                    self._update_content(content_entry)
+            else:
+                try:
+                    self.vector_db.insert(content_hash, documents=read_documents, filters=content.metadata)
+                except Exception as e:
+                    log_error(f"Error inserting document: {e}")
+                    content_entry.status = "Failed"
+                    content_entry.status_message = "Could not insert embedding"
+                    completed = False
+                    self._update_content(content_entry)
+
+            if completed:
+                content_entry.status = "Completed"
+                self._update_content(content_entry)
 
     def _load_content(
         self,
@@ -680,8 +859,8 @@ class Knowledge:
         if content.topics:
             self._load_from_topics(content, upsert, skip_if_exists)
 
-        # if content.config:
-        #     self._load_from_cloud_storage(content)
+        if content.remote_content:
+            self._load_from_remote_content(content, upsert, skip_if_exists)
 
     def _build_content_hash(self, content: Content) -> str:
         """
@@ -1093,3 +1272,13 @@ class Knowledge:
     def csv_url_reader(self) -> Optional[Reader]:
         """CSV URL reader - lazy loaded via factory."""
         return self._get_reader("csv_url")
+
+    @property
+    def s3_reader(self) -> Optional[Reader]:
+        """S3 reader - lazy loaded via factory."""
+        return self._get_reader("s3")
+
+    @property
+    def gcs_reader(self) -> Optional[Reader]:
+        """GCS reader - lazy loaded via factory."""
+        return self._get_reader("gcs")

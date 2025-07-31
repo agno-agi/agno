@@ -1,6 +1,6 @@
 from agno.agent import Agent
-from agno.team import Team
 from agno.models.openai import OpenAIChat
+from agno.team import Team
 from rich.pretty import pprint
 
 agent = Agent(

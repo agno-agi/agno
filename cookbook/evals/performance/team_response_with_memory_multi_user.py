@@ -98,7 +98,6 @@ team = Team(
     instructions="Be concise, reply with one sentence.",
     memory=memory,
     storage=team_storage,
-    tools=[ReasoningTools()],
     markdown=True,
     enable_user_memories=True,
     add_history_to_messages=True,
@@ -122,7 +121,7 @@ async def run_team():
 
     await asyncio.gather(*tasks)
 
-    print("Team memory runs:", len(team.memory.runs))
+    print("Team memory runs:", sum(len(runs) for runs in team.memory.runs.values()))
     print("Team memory memories:", len(team.memory.memories))
 
     return "Successfully ran team"

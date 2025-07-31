@@ -30,6 +30,7 @@ knowledge_base.add_content(
     metadata={"doc_type": "recipe_book"},
 )
 
+
 def mongodb_agent(user: str = "user"):
     agent = Agent(
         user_id=user,
@@ -46,5 +47,4 @@ def mongodb_agent(user: str = "user"):
 
 
 if __name__ == "__main__":
-
     typer.run(mongodb_agent)
