@@ -240,6 +240,8 @@ class WorkflowRunRequest(BaseModel):
     input: Dict[str, Any]
     user_id: Optional[str] = None
     session_id: Optional[str] = None
+    background: Optional[bool] = False
+    connection_id: Optional[str] = None
 
 
 class SessionSchema(BaseModel):
