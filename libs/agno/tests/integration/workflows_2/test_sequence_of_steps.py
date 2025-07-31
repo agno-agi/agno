@@ -25,7 +25,7 @@ def test_function_sequence_non_streaming(workflow_storage):
     """Test basic function sequence."""
     workflow = Workflow(
         name="Test Workflow",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Step(name="research", executor=research_step_function),
             Step(name="content", executor=content_step_function),
@@ -43,7 +43,7 @@ def test_function_sequence_streaming(workflow_storage):
     """Test function sequence with streaming."""
     workflow = Workflow(
         name="Test Workflow",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Step(name="research", executor=research_step_function),
             Step(name="content", executor=content_step_function),
@@ -63,7 +63,7 @@ def test_agent_sequence_non_streaming(workflow_storage, test_agent):
     test_agent.instructions = "Do research on the topic and return the results."
     workflow = Workflow(
         name="Test Workflow",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Step(name="research", agent=test_agent),
             Step(name="content", executor=content_step_function),
@@ -82,7 +82,7 @@ def test_team_sequence_non_streaming(workflow_storage, test_team):
     test_team.members[0].role = "Do research on the topic and return the results."
     workflow = Workflow(
         name="Test Workflow",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Step(name="research", team=test_team),
             Step(name="content", executor=content_step_function),
@@ -106,7 +106,7 @@ async def test_async_function_sequence(workflow_storage):
 
     workflow = Workflow(
         name="Test Workflow",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Step(name="research", executor=async_research),
             Step(name="content", executor=content_step_function),
@@ -130,7 +130,7 @@ async def test_async_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Test Workflow",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Step(name="research", executor=async_streaming_step),
             Step(name="content", executor=content_step_function),
@@ -158,7 +158,7 @@ def test_step_chaining(workflow_storage):
 
     workflow = Workflow(
         name="Test Workflow",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Step(name="step1", executor=step1),
             Step(name="step2", executor=step2),

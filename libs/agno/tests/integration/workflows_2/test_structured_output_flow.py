@@ -87,7 +87,7 @@ def test_structured_output_function_flow_sync(workflow_storage):
     """Test structured output flow between functions - sync."""
     workflow = Workflow(
         name="Structured Function Flow",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Step(name="research", executor=research_function),
             Step(name="analysis", executor=analysis_function),
@@ -120,7 +120,7 @@ def test_structured_output_function_flow_streaming(workflow_storage):
     """Test structured output flow between functions - streaming."""
     workflow = Workflow(
         name="Structured Function Flow Streaming",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Step(name="research", executor=research_function),
             Step(name="analysis", executor=analysis_function),
@@ -147,7 +147,7 @@ async def test_structured_output_function_flow_async(workflow_storage):
     """Test structured output flow between functions - async."""
     workflow = Workflow(
         name="Async Structured Function Flow",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Step(name="research", executor=research_function),
             Step(name="analysis", executor=analysis_function),
@@ -171,7 +171,7 @@ async def test_structured_output_function_flow_async_streaming(workflow_storage)
     """Test structured output flow between functions - async streaming."""
     workflow = Workflow(
         name="Async Structured Function Flow Streaming",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Step(name="research", executor=research_function),
             Step(name="analysis", executor=analysis_function),
@@ -221,7 +221,7 @@ def test_structured_output_agent_flow_sync(workflow_storage):
 
     workflow = Workflow(
         name="Structured Agent Flow",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Step(name="research", agent=research_agent),
             Step(name="analysis", agent=analysis_agent),
@@ -264,7 +264,7 @@ def test_structured_output_agent_flow_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Structured Agent Flow Streaming",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Step(name="research", agent=research_agent),
             Step(name="analysis", agent=analysis_agent),
@@ -304,7 +304,7 @@ async def test_structured_output_agent_flow_async(workflow_storage):
 
     workflow = Workflow(
         name="Async Structured Agent Flow",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Step(name="research", agent=research_agent),
             Step(name="analysis", agent=analysis_agent),
@@ -344,7 +344,7 @@ async def test_structured_output_agent_flow_async_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Async Structured Agent Flow Streaming",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Step(name="research", agent=research_agent),
             Step(name="analysis", agent=analysis_agent),
@@ -385,7 +385,7 @@ def test_structured_output_team_flow_sync(workflow_storage):
 
     workflow = Workflow(
         name="Simple Team Flow",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Step(name="research", team=research_team),
         ],
@@ -418,7 +418,7 @@ def test_structured_output_team_flow_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Simple Team Flow Streaming",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Step(name="research", team=research_team),
         ],
@@ -457,7 +457,7 @@ async def test_structured_output_team_flow_async(workflow_storage):
 
     workflow = Workflow(
         name="Simple Async Team Flow",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Step(name="research", team=research_team),
         ],
@@ -491,7 +491,7 @@ async def test_structured_output_team_flow_async_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Simple Async Team Flow Streaming",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Step(name="research", team=research_team),
         ],
@@ -539,7 +539,7 @@ def test_mixed_structured_output_flow(workflow_storage):
 
     workflow = Workflow(
         name="Mixed Structured Flow",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Step(name="research", executor=research_function),  # Function (fast)
             Step(name="analysis", agent=analysis_agent),  # Agent
@@ -580,7 +580,7 @@ def test_structured_output_with_workflow_components(workflow_storage):
     # Create a workflow with structured data flowing through different components
     workflow = Workflow(
         name="Simple Component Flow",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Steps(
                 name="research_steps",

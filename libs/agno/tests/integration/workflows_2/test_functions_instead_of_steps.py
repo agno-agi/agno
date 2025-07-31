@@ -50,7 +50,7 @@ def test_simple_custom_execution_non_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Simple Custom Execution Workflow",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=simple_custom_execution,
     )
 
@@ -75,7 +75,7 @@ def test_agent_based_custom_execution_non_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Agent Custom Execution Workflow",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=agent_custom_execution,
     )
 
@@ -109,7 +109,7 @@ def test_multi_step_custom_execution_non_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Multi-Step Custom Execution Workflow",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=multi_step_custom_execution,
     )
 
@@ -142,7 +142,7 @@ def test_custom_execution_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Streaming Custom Execution Workflow",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=streaming_custom_execution,
     )
 
@@ -172,7 +172,7 @@ def test_custom_execution_with_error_handling(workflow_storage):
 
     workflow = Workflow(
         name="Failing Custom Execution Workflow",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=failing_custom_execution,
     )
 
@@ -195,7 +195,7 @@ def test_custom_execution_with_workflow_access(workflow_storage):
 
     workflow = Workflow(
         name="Workflow-Aware Custom Execution",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=workflow_aware_execution,
     )
 
@@ -230,7 +230,7 @@ def test_custom_execution_with_execution_input_properties(workflow_storage):
 
     workflow = Workflow(
         name="Input-Aware Custom Execution",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=input_aware_execution,
     )
 
@@ -260,7 +260,7 @@ async def test_async_custom_execution_non_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Async Custom Execution Workflow",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=async_custom_execution,
     )
 
@@ -294,7 +294,7 @@ async def test_async_custom_execution_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Async Streaming Custom Execution Workflow",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=async_streaming_custom_execution,
     )
 
@@ -326,7 +326,7 @@ def test_custom_execution_return_types(workflow_storage):
 
     workflow = Workflow(
         name="Dict Return Custom Execution",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=dict_return_execution,
     )
 
@@ -375,7 +375,7 @@ def test_custom_execution_complex_workflow_simulation(workflow_storage):
 
     workflow = Workflow(
         name="Complex Workflow Simulation",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=complex_workflow_simulation,
     )
 
@@ -401,7 +401,7 @@ def test_custom_execution_with_none_return(workflow_storage):
 
     workflow = Workflow(
         name="None Return Custom Execution",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=none_return_execution,
     )
 
@@ -421,7 +421,7 @@ def test_custom_execution_with_empty_string_return(workflow_storage):
 
     workflow = Workflow(
         name="Empty String Custom Execution",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=empty_string_execution,
     )
 

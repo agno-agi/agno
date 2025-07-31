@@ -167,7 +167,7 @@ def test_basic_loop(workflow_storage):
 
     workflow = Workflow(
         name="Basic Loop",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Loop(
                 name="test_loop",
@@ -195,7 +195,7 @@ def test_loop_with_parallel(workflow_storage):
 
     workflow = Workflow(
         name="Parallel Loop",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Loop(
                 name="test_loop",
@@ -223,7 +223,7 @@ def test_loop_streaming(workflow_storage):
     """Test loop with streaming events."""
     workflow = Workflow(
         name="Streaming Loop",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Loop(
                 name="test_loop",
@@ -249,7 +249,7 @@ def test_parallel_loop_streaming(workflow_storage):
     """Test parallel steps in loop with streaming."""
     workflow = Workflow(
         name="Parallel Streaming Loop",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Loop(
                 name="test_loop",
@@ -274,7 +274,7 @@ async def test_async_loop(workflow_storage):
 
     workflow = Workflow(
         name="Async Loop",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Loop(
                 name="test_loop",
@@ -302,7 +302,7 @@ async def test_async_parallel_loop(workflow_storage):
 
     workflow = Workflow(
         name="Async Parallel Loop",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Loop(
                 name="test_loop",

@@ -54,7 +54,7 @@ if __name__ == "__main__":
     content_creation_workflow = Workflow(
         name="Content Creation Workflow",
         description="Automated content creation from blog posts to social media",
-        storage=SqliteStorage(
+        db=SqliteStorage(
             table_name="workflow_v2",
             db_file="tmp/workflow_v2.db",
             mode="workflow_v2",

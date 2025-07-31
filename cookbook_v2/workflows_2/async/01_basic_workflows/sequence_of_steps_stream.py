@@ -1,5 +1,13 @@
+"""
+This example shows a basic sequential sequence of steps that run agents and teams.
+
+This shows how to stream the response from the steps.
+"""
+
+import asyncio
+
 from agno.agent import Agent
-from agno.db.json import JsonDb
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -25,10 +33,10 @@ web_agent = Agent(
 research_team = Team(
     name="Research Team",
     mode="coordinate",
+    model=OpenAIChat(id="gpt-4o-mini"),
     members=[hackernews_agent, web_agent],
     instructions="Research tech topics from Hackernews and the web",
 )
-
 content_planner = Agent(
     name="Content Planner",
     model=OpenAIChat(id="gpt-4o"),
@@ -49,18 +57,25 @@ content_planning_step = Step(
     agent=content_planner,
 )
 
+
 # Create and use workflow
-if __name__ == "__main__":
+async def main():
     content_creation_workflow = Workflow(
         name="Content Creation Workflow",
         description="Automated content creation from blog posts to social media",
-        db=JsonDb(
+        db=SqliteDb(
             session_table="workflow_session",
-            db_path="tmp/workflow_v2",
+            db_file="tmp/workflow_v2.db",
         ),
         steps=[research_step, content_planning_step],
     )
-    content_creation_workflow.print_response(
-        message="AI trends in 2024",
+    await content_creation_workflow.aprint_response(
+        message="AI agent frameworks 2025",
         markdown=True,
+        stream=True,
+        stream_intermediate_steps=True,
     )
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

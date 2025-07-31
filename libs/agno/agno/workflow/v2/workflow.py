@@ -102,7 +102,7 @@ class Workflow:
     # Workflow configuration
     steps: Optional[WorkflowSteps] = None
 
-    storage: Optional[BaseDb] = None
+    db: Optional[BaseDb] = None
 
     # Session management
     session_id: Optional[str] = None
@@ -127,13 +127,14 @@ class Workflow:
 
     store_events: bool = False
     events_to_skip: Optional[List[WorkflowRunEvent]] = None
+    os_id: Optional[str] = None
 
     def __init__(
         self,
         workflow_id: Optional[str] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
-        storage: Optional[BaseDb] = None,
+        db: Optional[BaseDb] = None,
         steps: Optional[WorkflowSteps] = None,
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -148,7 +149,7 @@ class Workflow:
         self.workflow_id = workflow_id
         self.name = name
         self.description = description
-        self.storage = storage
+        self.db = db
         self.steps = steps
         self.session_id = session_id
         self.session_name = session_name
@@ -229,10 +230,10 @@ class Workflow:
 
     def delete_session(self, session_id: str):
         """Delete the current session and save to storage"""
-        if self.storage is None:
+        if self.db is None:
             return
         # -*- Delete session
-        self.storage.delete_session(session_id=session_id)
+        self.db.delete_session(session_id=session_id)
 
     def _handle_event(
         self, event: "WorkflowRunResponseEvent", workflow_run_response: WorkflowRunResponse
@@ -1219,8 +1220,8 @@ class Workflow:
 
     def get_run(self, run_id: str) -> Optional[WorkflowRunResponse]:
         """Get the status and details of a background workflow run - SIMPLIFIED"""
-        if self.storage is not None and self.session_id is not None:
-            session = self.storage.get_session(session_id=self.session_id, session_type=SessionType.WORKFLOW)
+        if self.db is not None and self.session_id is not None:
+            session = self.db.get_session(session_id=self.session_id, session_type=SessionType.WORKFLOW)
             if session and isinstance(session, WorkflowSession) and session.runs:
                 # Find the run by ID
                 for run in session.runs:
@@ -1547,8 +1548,8 @@ class Workflow:
 
     def read_from_storage(self) -> Optional[WorkflowSession]:
         """Load the WorkflowSession from storage"""
-        if self.storage is not None and self.session_id is not None:
-            session = self.storage.get_session(session_id=self.session_id, session_type=SessionType.WORKFLOW)
+        if self.db is not None and self.session_id is not None:
+            session = self.db.get_session(session_id=self.session_id, session_type=SessionType.WORKFLOW)
             if session and isinstance(session, WorkflowSession):
                 self.load_workflow_session(session)
                 return session
@@ -1556,9 +1557,9 @@ class Workflow:
 
     def write_to_storage(self) -> Optional[WorkflowSession]:
         """Save the WorkflowSession to storage"""
-        if self.storage is not None:
+        if self.db is not None:
             session_to_save = self.get_workflow_session()
-            saved_session = self.storage.upsert_session(session=session_to_save)
+            saved_session = self.db.upsert_session(session=session_to_save)
             if saved_session and isinstance(saved_session, WorkflowSession):
                 self.workflow_session = saved_session
                 return saved_session
@@ -1571,7 +1572,7 @@ class Workflow:
                 log_debug("Using existing workflow session")
                 return self.workflow_session.session_id
 
-        if self.storage is not None:
+        if self.db is not None:
             # Try to load existing session
             existing_session = self.read_from_storage()
 

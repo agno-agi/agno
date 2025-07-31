@@ -56,7 +56,7 @@ if __name__ == "__main__":
     content_creation_workflow = Workflow(
         name="Content Creation Workflow",
         description="Automated content creation from blog posts to social media",
-        storage=PostgresDb(
+        db=PostgresDb(
             session_table="workflow_session",
             db_url=db_url,
         ),

@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.db.json import JsonDb
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -25,6 +25,7 @@ web_agent = Agent(
 research_team = Team(
     name="Research Team",
     mode="coordinate",
+    model=OpenAIChat(id="gpt-4o-mini"),
     members=[hackernews_agent, web_agent],
     instructions="Research tech topics from Hackernews and the web",
 )
@@ -54,13 +55,18 @@ if __name__ == "__main__":
     content_creation_workflow = Workflow(
         name="Content Creation Workflow",
         description="Automated content creation from blog posts to social media",
-        db=JsonDb(
+        db=SqliteDb(
             session_table="workflow_session",
-            db_path="tmp/workflow_v2",
+            db_file="tmp/workflow_v2.db",
         ),
+        # Define the sequence of steps
+        # First run the research team, then the content planner Agent
+        # You can mix and match agents, teams, and even regular python functions as steps
         steps=[research_step, content_planning_step],
     )
     content_creation_workflow.print_response(
         message="AI trends in 2024",
         markdown=True,
+        stream=True,
+        stream_intermediate_steps=True,
     )

@@ -980,7 +980,7 @@ class Knowledge:
         """Get all currently loaded readers (only returns readers that have been used)."""
         if self.readers is None:
             self.readers = {}
-        
+
         return list(self.readers.values())
 
     def _generate_reader_key(self, reader: Reader) -> str:
@@ -1015,7 +1015,7 @@ class Knowledge:
         """Get a cached reader or create it if not cached, handling missing dependencies gracefully."""
         if self.readers is None:
             self.readers = {}
-        
+
         if reader_type not in self.readers:
             try:
                 reader = ReaderFactory.create_reader(reader_type)
@@ -1027,7 +1027,7 @@ class Knowledge:
             except Exception as e:
                 log_warning(f"Cannot create {reader_type} reader {e}")
                 return None
-        
+
         return self.readers.get(reader_type)
 
     @property

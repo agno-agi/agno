@@ -170,7 +170,7 @@ def test_basic_steps_execution(workflow_storage):
 
     workflow = Workflow(
         name="Basic Steps Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[steps_sequence],
     )
 
@@ -189,7 +189,7 @@ def test_steps_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Streaming Steps Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[steps_sequence],
     )
 
@@ -219,7 +219,7 @@ async def test_async_steps_execution(workflow_storage):
 
     workflow = Workflow(
         name="Async Steps Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[steps_sequence],
     )
 
@@ -239,7 +239,7 @@ async def test_async_steps_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Async Streaming Steps Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[steps_sequence],
     )
 
@@ -265,7 +265,7 @@ def test_steps_chaining(workflow_storage):
 
     workflow = Workflow(
         name="Chaining Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[steps_sequence],
     )
 
@@ -281,7 +281,7 @@ def test_empty_steps(workflow_storage):
 
     workflow = Workflow(
         name="Empty Steps Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[empty_steps],
     )
 
@@ -300,7 +300,7 @@ def test_steps_media_aggregation(workflow_storage):
 
     workflow = Workflow(
         name="Media Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[steps_sequence],
     )
 
@@ -326,7 +326,7 @@ def test_nested_steps(workflow_storage):
 
     workflow = Workflow(
         name="Nested Test",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[outer_steps],
     )
 
@@ -348,7 +348,7 @@ def test_steps_with_other_workflow_steps(workflow_storage):
 
     workflow = Workflow(
         name="Mixed Workflow",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[individual_step, grouped_steps, final_step],
     )
 

@@ -18,7 +18,7 @@ def test_basic_sequence(workflow_storage):
     def step2(step_input: StepInput) -> StepOutput:
         return StepOutput(content=f"Second: {step_input.previous_step_content}")
 
-    workflow = Workflow(name="Basic Sequence", storage=workflow_storage, steps=[step1, step2])
+    workflow = Workflow(name="Basic Sequence", db=workflow_storage, steps=[step1, step2])
 
     response = workflow.run(message="test")
     assert isinstance(response, WorkflowRunResponse)
@@ -32,7 +32,7 @@ def test_function_and_agent_sequence(workflow_storage, test_agent):
     def step(step_input: StepInput) -> StepOutput:
         return StepOutput(content=f"Function: {step_input.message}")
 
-    workflow = Workflow(name="Agent Sequence", storage=workflow_storage, steps=[step, test_agent])
+    workflow = Workflow(name="Agent Sequence", db=workflow_storage, steps=[step, test_agent])
 
     response = workflow.run(message="test")
     assert isinstance(response, WorkflowRunResponse)
@@ -46,7 +46,7 @@ def test_function_and_team_sequence(workflow_storage, test_team):
     def step(step_input: StepInput) -> StepOutput:
         return StepOutput(content=f"Function: {step_input.message}")
 
-    workflow = Workflow(name="Team Sequence", storage=workflow_storage, steps=[step, test_team])
+    workflow = Workflow(name="Team Sequence", db=workflow_storage, steps=[step, test_team])
 
     response = workflow.run(message="test")
     assert isinstance(response, WorkflowRunResponse)
@@ -60,7 +60,7 @@ def test_function_streaming_sequence(workflow_storage):
     def streaming_step(step_input: StepInput) -> Iterator[StepOutput]:
         yield StepOutput(content="Start")
 
-    workflow = Workflow(name="Streaming", storage=workflow_storage, steps=[streaming_step])
+    workflow = Workflow(name="Streaming", db=workflow_storage, steps=[streaming_step])
 
     events = list(workflow.run(message="test", stream=True))
     step_events = [e for e in events if isinstance(e, StepOutputEvent)]
@@ -78,7 +78,7 @@ async def test_async_function_sequence(workflow_storage):
         await asyncio.sleep(0.001)
         return StepOutput(content=f"Async: {step_input.message}")
 
-    workflow = Workflow(name="Async", storage=workflow_storage, steps=[async_step])
+    workflow = Workflow(name="Async", db=workflow_storage, steps=[async_step])
 
     response = await workflow.arun(message="test")
     assert isinstance(response, WorkflowRunResponse)
@@ -92,7 +92,7 @@ async def test_async_function_streaming(workflow_storage):
     async def async_streaming_step(step_input: StepInput) -> AsyncIterator[StepOutput]:
         yield StepOutput(content="Start")
 
-    workflow = Workflow(name="Async Streaming", storage=workflow_storage, steps=[async_streaming_step])
+    workflow = Workflow(name="Async Streaming", db=workflow_storage, steps=[async_streaming_step])
 
     events = []
     async for event in await workflow.arun(message="test", stream=True):
@@ -111,7 +111,7 @@ def test_mixed_sequence(workflow_storage, test_agent, test_team):
     def step(step_input: StepInput) -> StepOutput:
         return StepOutput(content=f"Function: {step_input.message}")
 
-    workflow = Workflow(name="Mixed", storage=workflow_storage, steps=[step, test_agent, test_team])
+    workflow = Workflow(name="Mixed", db=workflow_storage, steps=[step, test_agent, test_team])
 
     response = workflow.run(message="test")
     assert isinstance(response, WorkflowRunResponse)

@@ -1,5 +1,13 @@
+"""
+This example shows a basic sequential sequence of steps that run agents and teams.
+
+It is for a content writer that creates posts about tech trends from Hackernews and the web.
+"""
+
+import asyncio
+
 from agno.agent import Agent
-from agno.db.json import JsonDb
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -49,18 +57,24 @@ content_planning_step = Step(
     agent=content_planner,
 )
 
+content_creation_workflow = Workflow(
+    name="Content Creation Workflow",
+    description="Automated content creation from blog posts to social media",
+    db=SqliteDb(
+        session_table="workflow_session",
+        db_file="tmp/workflow_v2.db",
+    ),
+    steps=[research_step, content_planning_step],
+)
+
+
 # Create and use workflow
-if __name__ == "__main__":
-    content_creation_workflow = Workflow(
-        name="Content Creation Workflow",
-        description="Automated content creation from blog posts to social media",
-        db=JsonDb(
-            session_table="workflow_session",
-            db_path="tmp/workflow_v2",
-        ),
-        steps=[research_step, content_planning_step],
-    )
-    content_creation_workflow.print_response(
-        message="AI trends in 2024",
+async def main():
+    await content_creation_workflow.aprint_response(
+        message="AI agent frameworks 2025",
         markdown=True,
     )
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

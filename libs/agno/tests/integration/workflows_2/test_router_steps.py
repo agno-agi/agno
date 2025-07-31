@@ -192,7 +192,7 @@ def test_basic_routing(workflow_storage):
 
     workflow = Workflow(
         name="Basic Router",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Router(
                 name="router",
@@ -220,7 +220,7 @@ def test_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Stream Router",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Router(
                 name="router",
@@ -247,7 +247,7 @@ def test_agent_routing(workflow_storage, test_agent):
 
     workflow = Workflow(
         name="Agent Router",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Router(
                 name="router",
@@ -277,7 +277,7 @@ def test_mixed_routing(workflow_storage, test_agent, test_team):
 
     workflow = Workflow(
         name="Mixed Router",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Router(
                 name="router",
@@ -314,7 +314,7 @@ def test_multiple_step_routing(workflow_storage):
 
     workflow = Workflow(
         name="Multiple Steps Router",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Router(
                 name="router",
@@ -346,7 +346,7 @@ def test_route_steps(workflow_storage):
 
     workflow = Workflow(
         name="Multiple Steps Router",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Router(
                 name="router",

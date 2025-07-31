@@ -56,7 +56,7 @@ def test_loop_with_parallel(workflow_storage):
     """Test Loop containing Parallel steps."""
     workflow = Workflow(
         name="Loop with Parallel",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Loop(
                 name="research_loop",
@@ -79,7 +79,7 @@ def test_loop_with_condition(workflow_storage):
     """Test Loop containing Condition steps."""
     workflow = Workflow(
         name="Loop with Condition",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Loop(
                 name="research_loop",
@@ -103,7 +103,7 @@ def test_condition_with_loop(workflow_storage):
     """Test Condition containing Loop steps."""
     workflow = Workflow(
         name="Condition with Loop",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             research_step,
             Condition(
@@ -130,7 +130,7 @@ def test_parallel_with_loops(workflow_storage):
     """Test Parallel containing multiple Loops."""
     workflow = Workflow(
         name="Parallel with Loops",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Parallel(
                 Loop(
@@ -159,7 +159,7 @@ def test_nested_conditions_and_loops(workflow_storage):
     """Test nested Conditions and Loops."""
     workflow = Workflow(
         name="Nested Conditions and Loops",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Condition(
                 name="outer_condition",
@@ -188,7 +188,7 @@ def test_parallel_with_conditions_and_loops(workflow_storage):
     """Test Parallel with mix of Conditions and Loops."""
     workflow = Workflow(
         name="Mixed Parallel",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Parallel(
                 Loop(
@@ -214,7 +214,7 @@ async def test_async_complex_combination(workflow_storage):
     """Test async execution of complex step combinations."""
     workflow = Workflow(
         name="Async Complex",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Loop(
                 name="outer_loop",
@@ -241,7 +241,7 @@ def test_complex_streaming(workflow_storage):
     """Test streaming with complex step combinations."""
     workflow = Workflow(
         name="Complex Streaming",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Loop(
                 name="main_loop",
@@ -285,7 +285,7 @@ def test_router_with_loop(workflow_storage):
 
     workflow = Workflow(
         name="Router with Loop",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Router(
                 name="research_router",
@@ -320,7 +320,7 @@ def test_loop_with_router(workflow_storage):
 
     workflow = Workflow(
         name="Loop with Router",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Loop(
                 name="main_loop",
@@ -353,7 +353,7 @@ def test_parallel_with_routers(workflow_storage):
 
     workflow = Workflow(
         name="Parallel Routers",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Parallel(
                 Router(
@@ -396,7 +396,7 @@ def test_router_with_condition_and_loop(workflow_storage):
 
     workflow = Workflow(
         name="Complex Router",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Router(
                 name="complex_router",
@@ -437,7 +437,7 @@ def test_nested_routers(workflow_storage):
 
     workflow = Workflow(
         name="Nested Routers",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Router(
                 name="outer_router",
@@ -472,7 +472,7 @@ def test_router_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Streaming Router",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Router(
                 name="stream_router",

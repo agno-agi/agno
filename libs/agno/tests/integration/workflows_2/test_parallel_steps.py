@@ -112,7 +112,7 @@ def test_basic_parallel(workflow_storage):
     """Test basic parallel execution."""
     workflow = Workflow(
         name="Basic Parallel",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[Parallel(step_a, step_b, name="Parallel Phase"), final_step],
     )
 
@@ -131,7 +131,7 @@ def test_parallel_streaming(workflow_storage):
     """Test parallel execution with streaming."""
     workflow = Workflow(
         name="Streaming Parallel",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[Parallel(step_a, step_b, name="Parallel Phase"), final_step],
     )
 
@@ -147,7 +147,7 @@ def test_parallel_with_agent(workflow_storage, test_agent):
 
     workflow = Workflow(
         name="Agent Parallel",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[Parallel(step_a, agent_step, name="Mixed Parallel"), final_step],
     )
 
@@ -163,7 +163,7 @@ async def test_async_parallel(workflow_storage):
     """Test async parallel execution."""
     workflow = Workflow(
         name="Async Parallel",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[Parallel(step_a, step_b, name="Parallel Phase"), final_step],
     )
 
@@ -177,7 +177,7 @@ async def test_async_parallel_streaming(workflow_storage):
     """Test async parallel execution with streaming."""
     workflow = Workflow(
         name="Async Streaming Parallel",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[Parallel(step_a, step_b, name="Parallel Phase"), final_step],
     )
 

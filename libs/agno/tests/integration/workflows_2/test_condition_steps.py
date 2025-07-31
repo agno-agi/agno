@@ -155,7 +155,7 @@ def test_basic_condition_true(workflow_storage):
     """Test basic condition that evaluates to True."""
     workflow = Workflow(
         name="Basic Condition",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[research_step, Condition(name="stats_check", evaluator=has_statistics, steps=[fact_check_step])],
     )
 
@@ -173,7 +173,7 @@ def test_basic_condition_false(workflow_storage):
     """Test basic condition that evaluates to False."""
     workflow = Workflow(
         name="Basic Condition False",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[research_step, Condition(name="stats_check", evaluator=has_statistics, steps=[fact_check_step])],
     )
 
@@ -190,7 +190,7 @@ def test_parallel_with_conditions(workflow_storage):
     """Test parallel containing multiple conditions."""
     workflow = Workflow(
         name="Parallel with Conditions",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             research_step,  # Add a step before parallel to ensure proper chaining
             Parallel(
@@ -216,7 +216,7 @@ def test_condition_streaming(workflow_storage):
     """Test condition with streaming."""
     workflow = Workflow(
         name="Streaming Condition",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[Condition(name="tech_check", evaluator=is_tech_topic, steps=[research_step, analysis_step])],
     )
 
@@ -241,7 +241,7 @@ def test_condition_error_handling(workflow_storage):
 
     workflow = Workflow(
         name="Error Condition",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[Condition(name="failing_check", evaluator=failing_evaluator, steps=[research_step])],
     )
 
@@ -255,7 +255,7 @@ def test_nested_conditions(workflow_storage):
     """Test nested conditions."""
     workflow = Workflow(
         name="Nested Conditions",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[
             Condition(
                 name="outer",
@@ -279,7 +279,7 @@ async def test_async_condition(workflow_storage):
     """Test async condition."""
     workflow = Workflow(
         name="Async Condition",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[Condition(name="async_check", evaluator=async_evaluator, steps=[research_step])],
     )
 
@@ -295,7 +295,7 @@ async def test_async_condition_streaming(workflow_storage):
     """Test async condition with streaming."""
     workflow = Workflow(
         name="Async Streaming Condition",
-        storage=workflow_storage,
+        db=workflow_storage,
         steps=[Condition(name="async_check", evaluator=async_evaluator, steps=[research_step])],
     )
 

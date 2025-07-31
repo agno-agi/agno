@@ -1,10 +1,12 @@
+import asyncio
+
 from agno.agent import Agent
-from agno.db.json import JsonDb
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
-from agno.workflow.v2.step import Step
+from agno.workflow.v2.types import WorkflowExecutionInput
 from agno.workflow.v2.workflow import Workflow
 
 # Define agents
@@ -38,29 +40,53 @@ content_planner = Agent(
     ],
 )
 
-# Define steps
-research_step = Step(
-    name="Research Step",
-    team=research_team,
-)
 
-content_planning_step = Step(
-    name="Content Planning Step",
-    agent=content_planner,
-)
+async def custom_execution_function(
+    workflow: Workflow, execution_input: WorkflowExecutionInput
+):
+    print(f"Executing workflow: {workflow.name}")
+
+    # Run the research team
+    run_response = research_team.run(execution_input.message)
+    research_content = run_response.content
+
+    # Create intelligent planning prompt
+    planning_prompt = f"""
+        STRATEGIC CONTENT PLANNING REQUEST:
+
+        Core Topic: {execution_input.message}
+
+        Research Results: {research_content[:500]}
+
+        Planning Requirements:
+        1. Create a comprehensive content strategy based on the research
+        2. Leverage the research findings effectively
+        3. Identify content formats and channels
+        4. Provide timeline and priority recommendations
+        5. Include engagement and distribution strategies
+
+        Please create a detailed, actionable content plan.
+    """
+    content_plan = await content_planner.arun(planning_prompt)
+
+    # Return the content plan
+    return content_plan.content
+
 
 # Create and use workflow
 if __name__ == "__main__":
     content_creation_workflow = Workflow(
         name="Content Creation Workflow",
         description="Automated content creation from blog posts to social media",
-        db=JsonDb(
+        db=SqliteDb(
             session_table="workflow_session",
-            db_path="tmp/workflow_v2",
+            db_file="tmp/workflow_v2.db",
         ),
-        steps=[research_step, content_planning_step],
+        steps=custom_execution_function,
     )
-    content_creation_workflow.print_response(
-        message="AI trends in 2024",
-        markdown=True,
+
+    asyncio.run(
+        content_creation_workflow.aprint_response(
+            message="AI trends in 2024",
+        )
     )

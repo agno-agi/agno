@@ -7,6 +7,8 @@ from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.workflow import Workflow
 
+from cookbook.os.dbs.redis_demo import db
+
 # Define agents
 hackernews_agent = Agent(
     name="Hackernews Agent",
@@ -54,7 +56,7 @@ if __name__ == "__main__":
     content_creation_workflow = Workflow(
         name="Content Creation Workflow",
         description="Automated content creation from blog posts to social media",
-        storage=RedisDb(
+        db=RedisDb(
             session_table="workflow_session",
             db_url="redis://localhost:6379",
         ),
