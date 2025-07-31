@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -167,7 +167,7 @@ class TeamResponse(BaseModel):
             session_id=str(uuid4()),
             async_mode=True,
         )
-        team_tools = team._functions_for_model.values()
+        team_tools = list(team._functions_for_model.values()) if team._functions_for_model else []
         formatted_tools = format_team_tools(team_tools)
 
         model_name = team.model.name or team.model.__class__.__name__ if team.model else None
@@ -197,6 +197,8 @@ class TeamResponse(BaseModel):
         memory_table = team.db.memory_table_name if team.db and team.enable_user_memories else None
         knowledge_table = team.db.knowledge_table_name if team.db and team.knowledge else None
 
+        team_instructions = team.instructions() if isinstance(team.instructions, Callable) else team.instructions
+
         return TeamResponse(
             team_id=team.team_id,
             name=team.name,
@@ -205,7 +207,7 @@ class TeamResponse(BaseModel):
                 model=team.model.id if team.model else None,
                 provider=team.model.provider or team.model.__class__.__name__ if team.model else None,
             ),
-            instructions=team.instructions,
+            instructions=team_instructions,
             description=team.description,
             tools=formatted_tools,
             expected_output=team.expected_output,
@@ -217,7 +219,7 @@ class TeamResponse(BaseModel):
             session_table=session_table,
             memory_table=memory_table,
             knowledge_table=knowledge_table,
-            members=[
+            members=[  # type: ignore
                 AgentResponse.from_agent(member)
                 if isinstance(member, Agent)
                 else TeamResponse.from_team(member)

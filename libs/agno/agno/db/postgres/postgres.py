@@ -663,7 +663,7 @@ class PostgresDb(BaseDb):
                     return WorkflowSession.from_dict(session_dict)
 
             else:
-                raise ValueError(f"Invalid session type: {session_type}")
+                raise ValueError(f"Invalid session type: {session.session_type}")
 
         except Exception as e:
             log_error(f"Exception upserting into sessions table: {e}")

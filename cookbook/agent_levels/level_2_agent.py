@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.db.sqlite import SqliteStorage
+from agno.db.sqlite import SqliteDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic import Claude
@@ -18,7 +18,7 @@ knowledge = Knowledge(
 knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/introduction.md")
 
 # Store agent sessions in a SQLite database
-storage = SqliteStorage(table_name="agent_sessions", db_file="tmp/agent.db")
+db = SqliteDb(db_file="tmp/level_two_agents")
 
 agent = Agent(
     name="Agno Assist",
@@ -28,7 +28,7 @@ agent = Agent(
         "Only include the output in your response. No other text.",
     ],
     knowledge=knowledge,
-    storage=storage,
+    db=db,
     add_datetime_to_instructions=True,
     # Add the chat history to the messages
     add_history_to_messages=True,
@@ -38,7 +38,4 @@ agent = Agent(
 )
 
 if __name__ == "__main__":
-    # Load the knowledge base, comment out after first run
-    # Set recreate to True to recreate the knowledge base if needed
-    agent.knowledge.load(recreate=False)
     agent.print_response("What is Agno?", stream=True)

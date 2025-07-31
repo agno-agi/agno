@@ -1,19 +1,12 @@
 from agno.agent import Agent
-from agno.memory.db.sqlite import SqliteMemoryDb
-from agno.memory.memory import Memory
+from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 
-memory = Memory(
-    # Use any model for creating and managing memories
-    model=Claude(id="claude-sonnet-4-20250514"),
-    # Store memories in a SQLite database
-    db=SqliteMemoryDb(table_name="user_memories", db_file="tmp/agent.db"),
-    # We disable deletion by default, enable it if needed
-    delete_memories=True,
-    clear_memories=True,
-)
+from cookbook.agent_concepts.memory import db
+
+db = SqliteDb(db_file="tmp/level_three_agents")
 
 agent = Agent(
     model=Claude(id="claude-sonnet-4-20250514"),
@@ -33,9 +26,8 @@ agent = Agent(
         "Include sources in your response.",
         "Only include the report in your response. No other text.",
     ],
-    memory=memory,
-    # Let the Agent manage its memories
-    enable_agentic_memory=True,
+    db=db,
+    enable_user_memories=True,
     markdown=True,
 )
 
