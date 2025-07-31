@@ -458,28 +458,35 @@ class Knowledge:
         # Determine file type from URL
         url_path = Path(parsed_url.path)
         file_extension = url_path.suffix.lower()
-
-        if content.url.endswith("llms-full.txt") or content.url.endswith("llms.txt"):
-            log_info(f"Detected llms, using url reader")
-            reader = self.url_reader
-            read_documents = reader.read(content.url, content.name)
-
-        elif file_extension and file_extension is not None:
-            log_info(f"Detected file type: {file_extension} from URL: {content.url}")
-            reader = self._select_url_file_reader(file_extension)
-            if reader is not None:
-                log_info(f"Selected reader: {reader.__class__.__name__}")
+        try:
+            if content.url.endswith("llms-full.txt") or content.url.endswith("llms.txt"):
+                log_info(f"Detected llms, using url reader")
+                reader = self.url_reader
                 read_documents = reader.read(content.url, content.name)
+
+            elif file_extension and file_extension is not None:
+                log_info(f"Detected file type: {file_extension} from URL: {content.url}")
+                reader = self._select_url_file_reader(file_extension)
+                if reader is not None:
+                    log_info(f"Selected reader: {reader.__class__.__name__}")
+                    read_documents = reader.read(content.url, content.name)
+                else:
+                    log_info(f"No reader found for file extension: {file_extension}")
             else:
-                log_info(f"No reader found for file extension: {file_extension}")
-        else:
-            log_info(f"No file extension found for URL: {content.url}, determining website type")
-            reader = self._select_url_reader(content.url)
-            if reader is not None:
-                log_info(f"Selected reader: {reader.__class__.__name__}")
-                read_documents = reader.read(content.url, content.name)
-            else:
-                log_info(f"No reader found for URL: {content.url}")
+                log_info(f"No file extension found for URL: {content.url}, determining website type")
+                reader = self._select_url_reader(content.url)
+                if reader is not None:
+                    log_info(f"Selected reader: {reader.__class__.__name__}")
+                    read_documents = reader.read(content.url, content.name)
+                else:
+                    log_info(f"No reader found for URL: {content.url}")
+                    
+        except Exception as e:
+            log_error(f"Error reading URL: {content.url} - {str(e)}")
+            content.status = ContentStatus.FAILED
+            content.status_message = f"Error reading URL: {content.url} - {str(e)}"
+            self._update_content(content)
+            return
 
         file_size = 0
         if read_documents:

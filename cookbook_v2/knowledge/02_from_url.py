@@ -14,14 +14,12 @@ knowledge = Knowledge(
         table_name="vectors", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
     ),
 )
-
 # Add from URL to the knowledge base
 knowledge.add_content(
     name="Recipes",
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
     metadata={"user_tag": "Recipes from website"},
 )
-
 
 agent = Agent(
     name="My Agent",
