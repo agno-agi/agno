@@ -190,6 +190,7 @@ models = [
 # All tools
 tools = [
   "agno[apify]",
+  "agno[arxiv]",
   "agno[brave]",
   "agno[exa]",
   "agno[cartesia]",
