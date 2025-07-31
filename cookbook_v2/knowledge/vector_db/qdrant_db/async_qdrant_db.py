@@ -14,7 +14,8 @@ knowledge = Knowledge(
     vector_db=vector_db,
 )
 
-agent = Agent(knowledge=knowledge, show_tool_calls=True)
+agent = Agent(knowledge=knowledge)
+
 
 if __name__ == "__main__":
     # Comment out after first run

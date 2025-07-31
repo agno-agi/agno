@@ -20,6 +20,5 @@ knowledge_base.load(recreate=True)  # Comment out after first run
 agent = Agent(
     model=LMStudio(id="qwen2.5-7b-instruct-1m"),
     knowledge=knowledge_base,
-    show_tool_calls=True,
 )
 agent.print_response("How to make Thai curry?", markdown=True)

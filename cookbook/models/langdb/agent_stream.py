@@ -10,7 +10,6 @@ agent = Agent(
     tools=[YFinanceTools(stock_price=True)],
     instructions=["Use tables where possible."],
     markdown=True,
-    show_tool_calls=True,
 )
 
 # Get the response in a variable

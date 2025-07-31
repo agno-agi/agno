@@ -61,7 +61,6 @@ shopping_mgmt_team = Team(
     team_id="shopping_management",
     mode="coordinate",
     model=OpenAIChat(id="gpt-4o-mini"),
-    show_tool_calls=True,
     members=[shopping_list_agent],
     instructions=[
         "Manage adding and removing items from the shopping list using the Shopping List Agent",
@@ -176,7 +175,6 @@ shopping_team = Team(
         shopping_mgmt_team,
         meal_planning_team,
     ],
-    show_tool_calls=True,
     markdown=True,
     instructions=[
         "You are a team that manages a shopping list & helps plan meals using that list.",

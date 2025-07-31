@@ -15,7 +15,6 @@ agent = Agent(
         ),
         DuckDuckGoTools(include_tools=["duckduckgo_search"]),
     ],
-    show_tool_calls=True,
 )
 
 asyncio.run(

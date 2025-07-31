@@ -43,7 +43,6 @@ agent = Agent(
     },
     tools=[get_top_hackernews_stories],
     markdown=True,
-    show_tool_calls=True,
 )
 if __name__ == "__main__":
     asyncio.run(agent.aprint_response("What are the top hackernews stories?"))

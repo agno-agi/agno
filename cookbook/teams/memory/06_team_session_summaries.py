@@ -40,7 +40,6 @@ team = Team(
     memory=memory,
     # Enable the team to make session summaries
     enable_session_summaries=True,
-    show_tool_calls=True,
     markdown=True,
     show_members_responses=True,
 )

@@ -73,7 +73,6 @@ agent = Agent(
         ),
     ),
     tools=[DuckDuckGoTools()],
-    show_tool_calls=True,
     markdown=True,
 )
 

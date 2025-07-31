@@ -16,6 +16,5 @@ knowledge_base.load(recreate=False)  # Comment out after first run
 agent = Agent(
     model=Groq(id="llama-3.3-70b-versatile"),
     knowledge=knowledge_base,
-    show_tool_calls=True,
 )
 agent.print_response("How to make Thai curry?", markdown=True)

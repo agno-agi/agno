@@ -205,7 +205,6 @@ agent_team = Team(
         "If the user is only being conversational, don't use any tools, just answer directly.",
     ],
     markdown=True,
-    show_tool_calls=True,
     show_members_responses=True,
     enable_agentic_context=True,
     share_member_interactions=True,

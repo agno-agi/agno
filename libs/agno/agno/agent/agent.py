@@ -174,8 +174,7 @@ class Agent:
     # A list of tools provided to the Model.
     # Tools are functions the model may generate JSON inputs for.
     tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None
-    # Show tool calls in Agent response.
-    show_tool_calls: bool = True
+
     # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
     # Controls which (if any) tool is called by the model.
@@ -361,7 +360,6 @@ class Agent:
         references_format: Literal["json", "yaml"] = "json",
         extra_data: Optional[Dict[str, Any]] = None,
         tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
-        show_tool_calls: bool = True,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
@@ -452,7 +450,6 @@ class Agent:
         self.extra_data = extra_data
 
         self.tools = tools
-        self.show_tool_calls = show_tool_calls
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
@@ -5218,8 +5215,6 @@ class Agent:
             ):
                 log_warning("Reasoning agent response model should be `ReasoningSteps`, continuing regular session...")
                 return
-            # Ensure the reasoning model and agent do not show tool calls
-            reasoning_agent.show_tool_calls = False
 
             step_count = 1
             next_action = NextAction.CONTINUE
@@ -5439,9 +5434,6 @@ class Agent:
             ):
                 log_warning("Reasoning agent response model should be `ReasoningSteps`, continuing regular session...")
                 return
-
-            # Ensure the reasoning model and agent do not show tool calls
-            reasoning_agent.show_tool_calls = False
 
             step_count = 1
             next_action = NextAction.CONTINUE
@@ -6185,11 +6177,7 @@ class Agent:
                         live_log.update(Group(*panels))
 
                     # Add tool calls panel if available
-                    if (
-                        self.show_tool_calls
-                        and self.run_response is not None
-                        and self.run_response.formatted_tool_calls
-                    ):
+                    if self.run_response is not None and self.run_response.formatted_tool_calls:
                         render = True
                         # Create bullet points for each tool call
                         tool_calls_content = Text()
@@ -6364,7 +6352,7 @@ class Agent:
                     live_log.update(Group(*panels))
 
                 # Add tool calls panel if available
-                if self.show_tool_calls and isinstance(run_response, RunResponse) and run_response.formatted_tool_calls:
+                if isinstance(run_response, RunResponse) and run_response.formatted_tool_calls:
                     # Create bullet points for each tool call
                     tool_calls_content = Text()
                     for formatted_tool_call in run_response.formatted_tool_calls:
@@ -6635,11 +6623,7 @@ class Agent:
                         live_log.update(Group(*panels))
 
                     # Add tool calls panel if available
-                    if (
-                        self.show_tool_calls
-                        and self.run_response is not None
-                        and self.run_response.formatted_tool_calls
-                    ):
+                    if self.run_response is not None and self.run_response.formatted_tool_calls:
                         render = True
                         # Create bullet points for each tool call
                         tool_calls_content = Text()
@@ -6812,7 +6796,7 @@ class Agent:
                     panels.append(thinking_panel)
                     live_log.update(Group(*panels))
 
-                if self.show_tool_calls and isinstance(run_response, RunResponse) and run_response.formatted_tool_calls:
+                if isinstance(run_response, RunResponse) and run_response.formatted_tool_calls:
                     tool_calls_content = Text()
                     for formatted_tool_call in run_response.formatted_tool_calls:
                         tool_calls_content.append(f"• {formatted_tool_call}\n")

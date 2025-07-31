@@ -81,7 +81,6 @@ customer_support_team = Team(
     model=OpenAIChat("gpt-4.5-preview"),
     enable_team_history=True,
     members=[doc_researcher_agent, escalation_manager_agent, feedback_collector_agent],
-    show_tool_calls=True,
     markdown=True,
     debug_mode=True,
     show_members_responses=True,

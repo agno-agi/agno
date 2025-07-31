@@ -18,7 +18,6 @@ agent: Agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[OpenAITools()],
     markdown=True,
-    show_tool_calls=True,
 )
 
 # Ask the agent to generate speech, but not save it

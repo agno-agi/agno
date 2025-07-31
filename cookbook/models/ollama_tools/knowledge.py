@@ -33,6 +33,5 @@ knowledge_base.load(recreate=False)  # Comment out after first run
 agent = Agent(
     model=OllamaTools(id="llama3.1:8b"),
     knowledge=knowledge_base,
-    show_tool_calls=True,
 )
 agent.print_response("How to make Thai curry?", markdown=True)

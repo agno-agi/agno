@@ -23,7 +23,6 @@ custom_dalle = DalleTools(
 agent_custom = Agent(
     tools=[custom_dalle],
     name="Custom DALL-E Generator",
-    show_tool_calls=True,
 )
 
 response = agent_custom.run(

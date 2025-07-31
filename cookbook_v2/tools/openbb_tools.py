@@ -1,8 +1,7 @@
 from agno.agent import Agent
 from agno.tools.openbb import OpenBBTools
 
-agent = Agent(tools=[OpenBBTools()], show_tool_calls=True)
-
+agent = Agent(tools=[OpenBBTools()])
 # Example usage showing stock analysis
 agent.print_response(
     "Get me the current stock price and key information for Apple (AAPL)"

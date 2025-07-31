@@ -26,7 +26,6 @@ research_team = Team(
     You are a research team that helps users with research and content creation.
     First, use the researcher to gather information, then use the writer to create content.
     """,
-    show_tool_calls=True,
     show_members_responses=True,
     get_member_information_tool=True,
     add_member_tools_to_system_message=True,

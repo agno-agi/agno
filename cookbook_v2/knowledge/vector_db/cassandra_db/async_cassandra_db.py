@@ -35,7 +35,6 @@ knowledge = Knowledge(
 agent = Agent(
     model=MistralChat(),
     knowledge=knowledge,
-    show_tool_calls=True,
 )
 
 if __name__ == "__main__":

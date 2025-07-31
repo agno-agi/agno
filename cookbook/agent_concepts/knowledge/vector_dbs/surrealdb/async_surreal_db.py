@@ -42,7 +42,7 @@ async def async_demo():
 
     await knowledge_base.aload(recreate=True)
 
-    agent = Agent(knowledge=knowledge_base, show_tool_calls=True)
+    agent = Agent(knowledge=knowledge_base)
     await agent.aprint_response(
         "What are the 3 categories of Thai SELECT is given to restaurants overseas?",
         markdown=True,

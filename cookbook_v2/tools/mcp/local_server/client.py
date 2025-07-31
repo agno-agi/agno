@@ -15,7 +15,6 @@ async def run_agent(message: str) -> None:
         agent = Agent(
             model=Groq(id="llama-3.3-70b-versatile"),
             tools=[mcp_tools],
-            show_tool_calls=True,
             markdown=True,
         )
         await agent.aprint_response(message, stream=True)

@@ -34,7 +34,6 @@ knowledge_tools = KnowledgeTools(
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[knowledge_tools],
-    show_tool_calls=True,
     markdown=True,
 )
 
