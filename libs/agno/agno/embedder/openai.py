@@ -30,7 +30,6 @@ class OpenAIEmbedder(Embedder):
         if self.dimensions is None:
             self.dimensions = 3072 if self.id == "text-embedding-3-large" else 1536
 
-
     @property
     def client(self) -> OpenAIClient:
         if self.openai_client:

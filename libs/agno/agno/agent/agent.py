@@ -5282,7 +5282,7 @@ class Agent:
         """
         from agno.document import Document
 
-        if num_documents is None:
+        if num_documents is None and self.knowledge is not None:
             num_documents = self.knowledge.num_documents
         # Validate the filters against known valid filter keys
         if self.knowledge is not None:
@@ -5343,7 +5343,7 @@ class Agent:
         """Get relevant documents from knowledge base asynchronously."""
         from agno.document import Document
 
-        if num_documents is None:
+        if num_documents is None and self.knowledge is not None:
             num_documents = self.knowledge.num_documents
 
         # Validate the filters against known valid filter keys

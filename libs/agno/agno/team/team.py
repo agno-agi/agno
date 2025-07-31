@@ -7372,7 +7372,7 @@ class Team:
         """Return a list of references from the knowledge base"""
         from agno.document import Document
 
-        if num_documents is None:
+        if num_documents is None and self.knowledge is not None:
             num_documents = self.knowledge.num_documents
 
         # Validate the filters against known valid filter keys
@@ -7429,7 +7429,7 @@ class Team:
         """Get relevant documents from knowledge base asynchronously."""
         from agno.document import Document
 
-        if num_documents is None:
+        if num_documents is None and self.knowledge is not None:
             num_documents = self.knowledge.num_documents
 
         # Validate the filters against known valid filter keys
