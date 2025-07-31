@@ -10,7 +10,6 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[YFinanceTools(stock_price=True)],
     markdown=True,
-    
 )
 
 run_stream: Iterator[RunResponse] = agent.run(

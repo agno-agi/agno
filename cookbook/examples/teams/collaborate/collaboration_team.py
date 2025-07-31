@@ -86,7 +86,6 @@ agent_team = Team(
     ],
     success_criteria="The team has reached a consensus.",
     enable_agentic_context=True,
-    
     markdown=True,
     show_members_responses=True,
 )

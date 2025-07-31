@@ -10,7 +10,6 @@ agent = Agent(
             show_result_tools=["google_search"],
         )
     ],
-    
 )
 
 agent.print_response("Whats the latest about gpt 4.5?", markdown=True)

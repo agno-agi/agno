@@ -79,7 +79,6 @@ StudyBuddy = Agent(
         - Address learning obstacles
         - Maintain learning continuity\
         """),
-    
     markdown=True,
 )
 

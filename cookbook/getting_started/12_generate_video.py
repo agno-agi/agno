@@ -41,7 +41,6 @@ video_agent = Agent(
         Always aim to create captivating and meaningful videos that bring the user's vision to life!\
     """),
     markdown=True,
-    
 )
 
 # Example usage

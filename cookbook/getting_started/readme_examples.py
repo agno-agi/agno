@@ -68,7 +68,6 @@ web_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[DuckDuckGoTools()],
     instructions="Always include sources",
-    
     markdown=True,
 )
 
@@ -80,7 +79,6 @@ finance_agent = Agent(
         YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)
     ],
     instructions="Use tables to display data",
-    
     markdown=True,
 )
 
@@ -90,7 +88,6 @@ level_3_agent_team = Team(
     mode="coordinate",
     success_criteria="A comprehensive financial news report with clear sections and data-driven insights.",
     instructions=["Always include sources", "Use tables to display data"],
-    
     markdown=True,
 )
 level_3_agent_team.print_response(

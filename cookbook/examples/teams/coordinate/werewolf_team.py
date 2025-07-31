@@ -86,7 +86,6 @@ werewolf_team = Team(
     ],
     enable_agentic_context=True,
     enable_team_history=True,
-    
     markdown=True,
     show_members_responses=True,
     debug_mode=True,

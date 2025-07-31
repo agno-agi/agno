@@ -109,7 +109,6 @@ def create_agent(session_id: Optional[str] = None) -> Agent:
         storage=agent_storage,
         add_history_to_messages=True,
         num_history_responses=3,
-        
         read_chat_history=True,
         markdown=True,
     )

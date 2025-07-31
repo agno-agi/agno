@@ -81,7 +81,6 @@ agent_with_knowledge = Agent(
     - Model support and configuration
     - Best practices and common patterns"""),
     knowledge=agent_knowledge,
-    
     markdown=True,
 )
 

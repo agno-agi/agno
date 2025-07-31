@@ -94,7 +94,6 @@ social_media_agent = Agent(
     Remember: your insights will directly inform the product strategy, customer-experience efforts, and brand reputation.  Be objective, evidence-backed, and solution-oriented.
 """,
     markdown=True,
-    
 )
 
 social_media_agent.print_response(

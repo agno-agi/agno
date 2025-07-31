@@ -54,7 +54,6 @@ class ApifyTools(Toolkit):
                         "compass/crawler-google-places"
                     ])
                 ],
-
             )
             agent.print_response(
                 '''
