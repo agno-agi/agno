@@ -227,8 +227,7 @@ def test_read_url_with_truncation(mock_httpx_get):
 
 
 @patch("agno.tools.jina.httpx.post")
-@patch("agno.tools.jina.log_info")
-def test_search_query_successful(mock_log_info, mock_httpx_post, sample_search_query_response):
+def test_search_query_successful(mock_httpx_post, sample_search_query_response):
     """Test successful search query"""
     # Setup mock response
     mock_response = MagicMock()

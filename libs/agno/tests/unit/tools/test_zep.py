@@ -47,7 +47,7 @@ def test_initialization_no_api_key(monkeypatch):
 
 
 def test_add_zep_message(zep_tools):
-    result = zep_tools.add_zep_message("user", "test message")
+    result = zep_tools.add_zep_message(role="user", content="test message")
     assert result == f"Message from 'user' added successfully to session {MOCK_SESSION_ID}."
     zep_tools.zep_client.memory.add.assert_called_once()
 
@@ -55,14 +55,14 @@ def test_add_zep_message(zep_tools):
     call_args = zep_tools.zep_client.memory.add.call_args
     messages = call_args[1]["messages"]
     assert len(messages) == 1
-    assert messages[0].role_type == "user"
+    assert messages[0].role == "user"
     assert messages[0].content == "test message"
 
 
 def test_add_zep_message_not_initialized():
     tools = ZepTools(api_key=MOCK_API_KEY)  # Don't initialize
     tools.zep_client = None  # Ensure client is None
-    result = tools.add_zep_message("user", "test message")
+    result = tools.add_zep_message(role="user", content="test message")
     assert result == "Error: Zep client/session not initialized."
 
 
@@ -205,7 +205,7 @@ async def test_async_initialization(async_zep_tools):
 
 @pytest.mark.asyncio
 async def test_async_add_zep_message(async_zep_tools):
-    result = await async_zep_tools.add_zep_message("user", "test message")
+    result = await async_zep_tools.add_zep_message(role="user", content="test message")
     assert result == f"Message from 'user' added successfully to session {MOCK_SESSION_ID}."
     async_zep_tools.zep_client.memory.add.assert_called_once()
 
@@ -213,7 +213,7 @@ async def test_async_add_zep_message(async_zep_tools):
     call_args = async_zep_tools.zep_client.memory.add.call_args
     messages = call_args[1]["messages"]
     assert len(messages) == 1
-    assert messages[0].role_type == "user"
+    assert messages[0].role == "user"
     assert messages[0].content == "test message"
 
 
