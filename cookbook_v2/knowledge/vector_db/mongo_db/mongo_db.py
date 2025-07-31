@@ -56,5 +56,5 @@ knowledge.add_content(
 )
 
 # Create and use the agent
-
+agent = Agent(knowledge=knowledge)
 agent.print_response("How to make Thai curry?", markdown=True)

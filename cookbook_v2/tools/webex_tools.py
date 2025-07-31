@@ -18,6 +18,7 @@ Steps:
 from agno.agent import Agent
 from agno.tools.webex import WebexTools
 
+agent = Agent(tools=[WebexTools()])
 
 # List all space in Webex
 agent.print_response("List all space on our Webex", markdown=True)

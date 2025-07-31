@@ -12,6 +12,7 @@ knowledge_base = Knowledge(
     vector_db=vector_db,
 )
 
+agent = Agent(knowledge=knowledge_base)
 
 if __name__ == "__main__":
     # Comment out after first run

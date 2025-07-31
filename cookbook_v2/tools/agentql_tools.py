@@ -28,9 +28,13 @@ custom_query = """
 """
 
 # Create AgentQL tool with custom query
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"), tools=[AgentQLTools()]
+)
 custom_scraper = AgentQLTools(agentql_query=custom_query)
 
 # Create agent with custom AgentQL tool
 custom_agent = Agent(
+    model=OpenAIChat(id="gpt-4o"), tools=[custom_scraper]
 )
 custom_agent.print_response("https://docs.agno.com/introduction", markdown=True)

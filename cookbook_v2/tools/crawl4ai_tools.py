@@ -13,6 +13,7 @@ agent.print_response(
 )
 
 # Example 2: Extract main content only (remove navigation, ads, etc.)
+# agent_clean = Agent(tools=[Crawl4aiTools(use_pruning=True)])
 # agent_clean.print_response(
 #     "Get the History from https://en.wikipedia.org/wiki/Python_(programming_language)"
 # )
@@ -28,6 +29,7 @@ agent.print_response(
 
 # Example 4: Multiple URLs with clean extraction
 # agent_multi = Agent(
+#     tools=[Crawl4aiTools(use_pruning=True, headless=False)]
 # )
 # agent_multi.print_response(
 #     "Compare the main content from https://en.wikipedia.org/wiki/Artificial_intelligence and https://en.wikipedia.org/wiki/Machine_learning"
