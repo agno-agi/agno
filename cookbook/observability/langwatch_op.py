@@ -6,18 +6,17 @@ This example shows how to instrument your agno agent and send traces to LangWatc
 3. Set your LangWatch API key as an environment variables:
   - export LANGWATCH_API_KEY=<your-key>
 """
-import os
-import langwatch
 
+import os
+
+import langwatch
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.yfinance import YFinanceTools
 from openinference.instrumentation.agno import AgnoInstrumentor
 
 # Initialize LangWatch and instrument Agno
-langwatch.setup(
-    instrumentors=[AgnoInstrumentor()]
-)
+langwatch.setup(instrumentors=[AgnoInstrumentor()])
 
 # Create and configure your Agno agent
 agent = Agent(

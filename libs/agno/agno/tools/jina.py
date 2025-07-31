@@ -1,4 +1,3 @@
-import json
 from os import getenv
 from typing import Any, Dict, List, Optional
 
@@ -6,7 +5,7 @@ import httpx
 from pydantic import BaseModel, Field, HttpUrl
 
 from agno.tools import Toolkit
-from agno.utils.log import log_info, logger
+from agno.utils.log import logger
 
 
 class JinaReaderToolsConfig(BaseModel):
