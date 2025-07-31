@@ -138,7 +138,6 @@ web_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[DuckDuckGoTools()],
     instructions="Always include sources",
-
     markdown=True,
 )
 

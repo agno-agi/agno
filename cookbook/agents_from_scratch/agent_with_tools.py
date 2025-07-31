@@ -37,7 +37,6 @@ agent_with_tools = Agent(
         Remember: Always verify facts through web searches and maintain that authentic NYC energy!\
     """),
     tools=[DuckDuckGoTools()],
-    
     markdown=True,
 )
 

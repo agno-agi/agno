@@ -25,7 +25,6 @@ level_1_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     description="You are an enthusiastic news reporter with a flair for storytelling!",
     tools=[DuckDuckGoTools()],
-    
     markdown=True,
 )
 level_1_agent.print_response(
@@ -51,7 +50,6 @@ level_2_agent = Agent(
         ),
     ),
     tools=[DuckDuckGoTools()],
-    
     markdown=True,
 )
 

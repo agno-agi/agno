@@ -183,7 +183,6 @@ knowledge_agent = Agent(
     name="Knowledge Agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[knowledge_tools],
-    
     markdown=True,
     storage=SqliteStorage(
         table_name="knowledge_agent",
