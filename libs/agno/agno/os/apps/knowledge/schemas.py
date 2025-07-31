@@ -74,21 +74,10 @@ class ContentResponseSchema(BaseModel):
 
 class ContentUpdateSchema(BaseModel):
     """Schema for updating content."""
-
     name: Optional[str] = Field(None, description="Content name", min_length=1, max_length=255)
     description: Optional[str] = Field(None, description="Content description", max_length=1000)
     metadata: Optional[Dict[str, Any]] = Field(None, description="Content metadata as key-value pairs")
     reader_id: Optional[str] = Field(None, description="ID of the reader to use for processing", min_length=1)
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "name": "Updated Document Name",
-                "description": "Updated description for the document",
-                "metadata": {"category": "research", "priority": "high", "tags": ["ml", "ai"]},
-                "reader_id": "pdf_reader",
-            }
-        }
 
 
 class ReaderSchema(BaseModel):
