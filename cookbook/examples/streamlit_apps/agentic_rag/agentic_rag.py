@@ -1,7 +1,5 @@
-"""🤖 Agentic RAG Agent - Your AI Knowledge Assistant!
-
-This advanced example shows how to build a sophisticated RAG (Retrieval Augmented Generation) system that
-leverages vector search and LLMs to provide deep insights from any knowledge base.
+"""🤖 Agentic RAG Agent
+This advanced example shows how to build a sophisticated Agentic RAG (Retrieval Augmented Generation) system that leverages vector search and Language Models to provide deep insights from any knowledge base.
 
 The agent can:
 - Process and understand documents from multiple sources (PDFs, websites, text files)
@@ -30,17 +28,14 @@ View the README for instructions on how to run the application.
 """
 
 from typing import Optional
-
+from textwrap import dedent
 from agno.agent import Agent
-from agno.db.agent.postgres import PostgresAgentStorage
+from agno.db.postgres import PostgresDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.models.anthropic import Claude
-from agno.models.google import Gemini
-from agno.models.groq import Groq
-from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.vectordb.pgvector import PgVector
+from utils import get_model_from_id
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
@@ -51,82 +46,70 @@ def get_agentic_rag_agent(
     session_id: Optional[str] = None,
     debug_mode: bool = True,
 ) -> Agent:
-    """Get an Agentic RAG Agent with Memory."""
-    # Parse model provider and name
-    provider, model_name = model_id.split(":")
+    """Get an Agentic RAG Agent"""
 
-    # Select appropriate model class based on provider
-    if provider == "openai":
-        model = OpenAIChat(id=model_name)
-    elif provider == "google":
-        model = Gemini(id=model_name)
-    elif provider == "anthropic":
-        model = Claude(id=model_name)
-    elif provider == "groq":
-        model = Groq(id=model_name)
-    else:
-        raise ValueError(f"Unsupported model provider: {provider}")
-    # Define persistent memory for chat history
-
-    # Define the knowledge base
+    # Set up the knowledge base
     knowledge_base = Knowledge(
+        name="Agentic RAG Knowledge Base",
+        description="Knowledge base for agentic RAG application",
         vector_db=PgVector(
             db_url=db_url,
             table_name="agentic_rag_documents",
             schema="ai",
-            # Use OpenAI embeddings
             embedder=OpenAIEmbedder(id="text-embedding-3-small"),
         ),
-        max_results=3,  # Retrieve 3 most relevant documents
+        max_results=5,
     )
 
-    # Create the Agent
-    return Agent(
-        name="agentic_rag_agent",
-        session_id=session_id,  # Track session ID for persistent conversations
+    db = PostgresDb(
+        db_url=db_url,
+        session_table="agentic_rag_sessions",
+    )
+
+    agent = Agent(
+        name="Agentic RAG Agent",
+        model=get_model_from_id(model_id),
+        agent_id="agentic-rag-agent",
         user_id=user_id,
-        model=model,
-        storage=PostgresAgentStorage(
-            table_name="agentic_rag_agent_sessions", db_url=db_url
-        ),  # Persist session data
-        knowledge=knowledge_base,  # Add knowledge base
+        db=db,
+        knowledge=knowledge_base,
+        search_knowledge=True,
+        read_tool_call_history=True,
+        add_history_to_messages=True,
+        num_history_runs=3,
+        session_id=session_id,
         description="You are a helpful Agent called 'Agentic RAG' and your goal is to assist the user in the best way possible.",
-        instructions=[
-            "1. Knowledge Base Search:",
-            "   - ALWAYS start by searching the knowledge base using search_knowledge_base tool",
-            "   - Analyze ALL returned documents thoroughly before responding",
-            "   - If multiple documents are returned, synthesize the information coherently",
-            "2. External Search:",
-            "   - If knowledge base search yields insufficient results, use duckduckgo_search",
-            "   - Focus on reputable sources and recent information",
-            "   - Cross-reference information from multiple sources when possible",
-            "3. Context Management:",
-            "   - Use get_chat_history tool to maintain conversation continuity",
-            "   - Reference previous interactions when relevant",
-            "   - Keep track of user preferences and prior clarifications",
-            "4. Response Quality:",
-            "   - Provide specific citations and sources for claims",
-            "   - Structure responses with clear sections and bullet points when appropriate",
-            "   - Include relevant quotes from source materials",
-            "   - Avoid hedging phrases like 'based on my knowledge' or 'depending on the information'",
-            "5. User Interaction:",
-            "   - Ask for clarification if the query is ambiguous",
-            "   - Break down complex questions into manageable parts",
-            "   - Proactively suggest related topics or follow-up questions",
-            "6. Error Handling:",
-            "   - If no relevant information is found, clearly state this",
-            "   - Suggest alternative approaches or questions",
-            "   - Be transparent about limitations in available information",
-        ],
-        search_knowledge=True,  # This setting gives the model a tool to search the knowledge base for information
-        read_chat_history=True,  # This setting gives the model a tool to get chat history
+        instructions=dedent("""
+            1. Knowledge Base Search:
+            - ALWAYS start by searching the knowledge base using search_knowledge_base tool
+            - Analyze ALL returned documents thoroughly before responding
+            - If multiple documents are returned, synthesize the information coherently
+            2. External Search:
+            - If knowledge base search yields insufficient results, use duckduckgo_search
+            - Focus on reputable sources and recent information
+            - Cross-reference information from multiple sources when possible
+            3. Context Management:
+            - Use get_chat_history tool to maintain conversation continuity
+            - Reference previous interactions when relevant
+            - Keep track of user preferences and prior clarifications
+            4. Response Quality:
+            - Provide specific citations and sources for claims
+            - Structure responses with clear sections and bullet points when appropriate
+            - Include relevant quotes from source materials
+            - Avoid hedging phrases like 'based on my knowledge' or 'depending on the information'
+            5. User Interaction:
+            - Ask for clarification if the query is ambiguous
+            - Break down complex questions into manageable parts
+            - Proactively suggest related topics or follow-up questions
+            6. Error Handling:
+            - If no relevant information is found, clearly state this
+            - Suggest alternative approaches or questions
+            - Be transparent about limitations in available information
+        """),
         tools=[DuckDuckGoTools()],
-        markdown=True,  # This setting tellss the model to format messages in markdown
-        # add_chat_history_to_messages=True,
-        show_tool_calls=True,
-        add_history_to_messages=True,  # Adds chat history to messages
+        markdown=True,
         add_datetime_to_instructions=True,
         debug_mode=debug_mode,
-        read_tool_call_history=True,
-        num_history_responses=3,
     )
+
+    return agent

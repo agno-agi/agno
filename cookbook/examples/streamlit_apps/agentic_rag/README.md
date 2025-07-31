@@ -5,6 +5,8 @@ It allows users to ask questions based on custom knowledge bases, documents, and
 
 > Note: Fork and clone this repository if needed
 
+## Getting Started
+
 ### 1. Create a virtual environment
 
 ```shell
@@ -19,6 +21,8 @@ pip install -r cookbook/examples/streamlit_apps/agentic_rag/requirements.txt
 ```
 
 ### 3. Configure API Keys
+
+Required:
 
 Required:
 ```bash
@@ -59,12 +63,10 @@ docker run -d \
 ### 5. Run Agentic RAG App
 
 ```shell
-streamlit run cookbook/examples/streamlit_apps/agentic_rag/app.py 
+streamlit run cookbook/examples/streamlit_apps/agentic_rag/app.py
 ```
 
-## 🔧 Customization
-
-### Model Selection
+### Model Support
 
 The application supports multiple model providers:
 - OpenAI (o3-mini, gpt-4o)
@@ -72,25 +74,27 @@ The application supports multiple model providers:
 - Google (gemini-2.0-flash-exp)
 - Groq (llama-3.3-70b-versatile)
 
-### How to Use
-- Open [localhost:8501](http://localhost:8501) in your browser.
-- Upload documents or provide URLs (websites, csv, txt, and PDFs) to build a knowledge base.
-- Enter questions in the chat interface and get context-aware answers.
-- The app can also answer question using duckduckgo search without any external documents added.
+## How to Use
 
-### Troubleshooting
-- **Docker Connection Refused**: Ensure `pgvector`  containers are running (`docker ps`).
-- **OpenAI API Errors**: Verify that the `OPENAI_API_KEY` is set and valid.
+1. **Open the App**: Navigate to [localhost:8501](http://localhost:8501) in your browser
+2. **Add Documents**: Upload files or provide URLs to build your knowledge base
+3. **Ask Questions**: Enter questions in the chat interface for context-aware answers
+4. **General Queries**: The app can also answer questions using DuckDuckGo search without external documents
+
+## Troubleshooting
+
+- **Docker Connection Refused**: Ensure `pgvector` container is running (`docker ps`)
+- **OpenAI API Errors**: Verify that `OPENAI_API_KEY` is set and valid
+- **Import Errors**: Run `pip install -r requirements.in` to ensure all dependencies are installed
+- **Database Issues**: Restart the pgvector container if you encounter connection problems
 
 ## 📚 Documentation
 
 For more detailed information:
+
 - [Agno Documentation](https://docs.agno.com)
 - [Streamlit Documentation](https://docs.streamlit.io)
 
 ## 🤝 Support
 
 Need help? Join our [Discord community](https://agno.link/discord)
-
-
-

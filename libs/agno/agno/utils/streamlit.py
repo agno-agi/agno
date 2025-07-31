@@ -1,0 +1,337 @@
+import json
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Union
+
+try:
+    import streamlit as st
+except ImportError:
+    raise ImportError("Streamlit is not installed. Please install it with `pip install streamlit`")
+
+from agno.agent import Agent
+from agno.models.message import Message
+from agno.models.response import ToolExecution
+from agno.utils.log import log_debug, log_error, log_warning
+
+
+def add_message(role: str, content: str, tool_calls: Optional[List[ToolExecution]] = None) -> None:
+    """Add a message to the Streamlit session state."""
+    if "messages" not in st.session_state:
+        st.session_state["messages"] = []
+
+    message = {
+        "role": role,
+        "content": content,
+        "tool_calls": tool_calls,
+    }
+    st.session_state["messages"].append(message)
+
+
+def display_tool_calls(container, tools: List[Union[ToolExecution, Dict[str, Any]]]) -> None:
+    """Display tool calls in expandable sections."""
+    if not tools:
+        log_debug("No tools calls to display")
+        return None
+
+    with container.container():
+        for tool in tools:
+            if hasattr(tool, "tool_name"):
+                name = tool.tool_name or "Tool"
+                args = tool.tool_args or {}
+                result = tool.result or ""
+            else:
+                name = tool.get("tool_name") or tool.get("name") or "Tool"
+                args = tool.get("tool_args") or tool.get("args") or {}
+                result = tool.get("result") or tool.get("content") or ""
+
+            with st.expander(f"🛠️ {name.replace('_', ' ')}", expanded=False):
+                if args:
+                    st.markdown("**Arguments:**")
+                    st.json(args)
+
+                if result:
+                    st.markdown("**Result:**")
+
+                    try:
+                        if isinstance(result, str):
+                            parsed_result = json.loads(result)
+                        elif isinstance(result, (list, dict)):
+                            parsed_result = result
+                        else:
+                            log_warning(f"Failed to parse tool result: {result}")
+
+                        st.json(parsed_result)
+
+                    except (json.JSONDecodeError, ValueError, TypeError):
+                        log_warning(f"Failed to parse tool result: {result}")
+
+
+def export_chat_history(app_name: str = "Agno App") -> str:
+    if "messages" not in st.session_state or not st.session_state["messages"]:
+        return f"# {app_name} Chat History\n\n*No messages to export*"
+
+    chat_text = f"# {app_name} Chat\n\n"
+    chat_text += f"**Exported:** {datetime.now().strftime('%B %d, %Y at %I:%M %p')}\n\n"
+    chat_text += "---\n\n"
+
+    for msg in st.session_state["messages"]:
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+
+        if not content or str(content).strip().lower() == "none":
+            continue
+
+        role_display = "## 🙋 User" if role == "user" else "## 🤖 Assistant"
+        chat_text += f"{role_display}\n\n{content}\n\n---\n\n"
+    return chat_text
+
+
+def restart_session(**session_keys: str) -> None:
+    for key in session_keys.values():
+        if key in st.session_state:
+            st.session_state[key] = None
+    if "messages" in st.session_state:
+        st.session_state["messages"] = []
+    st.rerun()
+
+
+def session_selector_widget(
+    agent: Agent,
+    agent_name: str = "agent",
+) -> None:
+    if not agent or not agent.db:
+        log_debug("Memory not configured. Sessions will not be saved.")
+        return
+
+    try:
+        sessions = agent.db.get_sessions(
+            session_type="agent",
+            deserialize=True,
+            sort_by="created_at",
+            sort_order="desc",
+        )
+    except Exception as e:
+        log_error(f"Error fetching sessions: {e}")
+        return
+
+    if not sessions:
+        st.sidebar.info("🆕 New Chat - Start your conversation!")
+        return
+
+    session_options = []
+    session_dict = {}
+
+    for session in sessions:
+        if not hasattr(session, "session_id") or not session.session_id:
+            continue
+
+        session_id = session.session_id
+        session_name = None
+
+        if hasattr(session, "session_data") and session.session_data:
+            session_name = session.session_data.get("session_name")
+
+        name = session_name or session_id
+
+        session_options.append(name)
+        session_dict[name] = session_id
+
+    current_session_id = st.session_state.get("session_id")
+    current_selection = None
+
+    for display_name, session_id in session_dict.items():
+        if session_id == current_session_id:
+            current_selection = display_name
+            break
+
+    if current_session_id:
+        if current_selection and current_selection in session_options:
+            display_options = session_options
+            selected_index = session_options.index(current_selection)
+        else:
+            display_options = ["🆕 New Chat"] + session_options
+            selected_index = 0
+    else:
+        display_options = ["🆕 New Chat"] + session_options
+        selected_index = 0
+
+    selected = st.sidebar.selectbox(
+        label="Session Name",
+        options=display_options,
+        index=selected_index,
+        help="Select a session to continue or start new chat",
+    )
+
+    if selected != "🆕 New Chat" and selected in session_dict:
+        selected_session_id = session_dict[selected]
+
+        _is_session_changed = (current_session_id is None or current_session_id == "") or (
+            current_selection and current_selection in session_options and selected_session_id != current_session_id
+        )
+
+        if _is_session_changed:
+            _load_session(selected_session_id, agent, agent_name)
+
+    # Rename session
+    if agent.session_id:
+        if "session_edit_mode" not in st.session_state:
+            st.session_state.session_edit_mode = False
+
+        current_name = agent.session_name or agent.session_id
+
+        if not st.session_state.session_edit_mode:
+            col1, col2 = st.sidebar.columns([3, 1])
+            with col1:
+                st.write(f"**Session Name:** {current_name}")
+            with col2:
+                if st.button("✎", help="Rename session", key="rename_session_button"):
+                    st.session_state.session_edit_mode = True
+                    st.rerun()
+        else:
+            new_name = st.sidebar.text_input("Enter new name:", value=current_name, key="session_name_input")
+
+            col1, col2 = st.sidebar.columns([1, 1])
+            with col1:
+                if st.button(
+                    "💾 Save",
+                    type="primary",
+                    use_container_width=True,
+                    key="save_session_name",
+                ):
+                    if new_name and new_name.strip():
+                        try:
+                            agent.rename_session(new_name.strip())
+                            st.session_state.session_edit_mode = False
+                            st.sidebar.success("Session renamed!")
+                            st.rerun()
+                        except Exception as e:
+                            st.sidebar.error(f"Error: {str(e)}")
+                    else:
+                        st.sidebar.error("Please enter a valid name")
+
+            with col2:
+                if st.button("❌ Cancel", use_container_width=True, key="cancel_session_rename"):
+                    st.session_state.session_edit_mode = False
+                    st.rerun()
+
+
+def _load_session(
+    session_id: str,
+    agent: Agent,
+    agent_name: str = "agent",
+):
+    try:
+        agent.session_id = session_id
+        agent.reset_session_state()
+        agent.load_session()
+
+        st.session_state[agent_name] = agent
+        st.session_state["session_id"] = session_id
+        st.session_state["messages"] = []
+
+        try:
+            chat_history = agent.get_messages_for_session(session_id)
+
+            if chat_history:
+                for message in chat_history:
+                    if message.role == "user":
+                        content_str = str(message.content).strip()
+                        if content_str.startswith("[{'type': 'tool_result'") or content_str.startswith(
+                            '[{"type": "tool_result"'
+                        ):
+                            continue
+
+                        add_message("user", str(message.content))
+                    elif message.role == "assistant":
+                        tool_executions = get_tool_executions_for_message(agent, message)
+                        add_message("assistant", str(message.content), tool_executions)
+
+        except Exception as e:
+            log_warning(f"Could not load chat history: {e}")
+
+        st.rerun()
+    except Exception as e:
+        log_error(f"Error loading session {session_id}: {e}")
+        st.error(f"Error loading session: {e}")
+
+
+def get_tool_executions_for_message(agent: Agent, message: Message) -> Optional[List[ToolExecution]]:
+    """Get tool executions for a message from the agent's session data."""
+    if not hasattr(message, "tool_calls") or not message.tool_calls:
+        return None
+
+    message_tool_call_ids = set()
+    for tool_call in message.tool_calls:
+        if isinstance(tool_call, dict) and "id" in tool_call:
+            message_tool_call_ids.add(tool_call["id"])
+
+    if not message_tool_call_ids:
+        return None
+
+    if hasattr(agent, "agent_session") and agent.agent_session and agent.agent_session.runs:
+        matching_tools = []
+
+        for run in agent.agent_session.runs:
+            if hasattr(run, "tools") and run.tools:
+                for tool_exec in run.tools:
+                    if (
+                        hasattr(tool_exec, "tool_call_id")
+                        and tool_exec.tool_call_id
+                        and tool_exec.tool_call_id in message_tool_call_ids
+                    ):
+                        matching_tools.append(tool_exec)
+
+        return matching_tools if matching_tools else None
+
+    return None
+
+
+def knowledge_base_info_widget(agent: Agent) -> None:
+    """Display knowledge base information widget."""
+    if not agent.knowledge:
+        st.sidebar.info("No knowledge base configured")
+        return
+
+    vector_db = getattr(agent.knowledge, "vector_db", None)
+    if not vector_db:
+        st.sidebar.info("No vector store configured")
+        return
+
+    try:
+        doc_count = vector_db.get_count()
+        if doc_count == 0:
+            st.sidebar.info("💡 Upload documents to populate the knowledge base")
+        else:
+            st.sidebar.metric("Documents Loaded", doc_count)
+    except Exception as e:
+        log_error(f"Error getting knowledge base info: {e}")
+        st.sidebar.warning("Could not retrieve knowledge base information")
+
+
+COMMON_CSS: str = """
+    <style>
+    .main-title {
+        text-align: center;
+        background: linear-gradient(45deg, #FF4B2B, #FF416C);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-size: 3em;
+        font-weight: bold;
+        padding: 1em 0;
+    }
+    .subtitle {
+        text-align: center;
+        color: #666;
+        margin-bottom: 2em;
+    }
+    .stButton button {
+        width: 100%;
+        border-radius: 20px;
+        margin: 0.2em 0;
+        transition: all 0.3s ease;
+    }
+    .stButton button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+    }
+    </style>
+"""

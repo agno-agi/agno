@@ -1,9 +1,10 @@
-agno
+agno==2.0.0
 anthropic
 duckduckgo_search
 google-genai
 groq
 nest_asyncio
 openai
+psycopg[binary]
 sqlalchemy
 streamlit
