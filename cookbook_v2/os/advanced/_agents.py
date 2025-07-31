@@ -1,6 +1,7 @@
 from textwrap import dedent
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
+from agno.models.anthropic.claude import Claude
 from agno.models.openai.chat import OpenAIChat
 from agno.tools.exa import ExaTools
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -108,7 +109,8 @@ EXPECTED_OUTPUT_TEMPLATE = dedent("""\
 
 sage = Agent(
     name="Sage",
-    model=OpenAIChat(id="gpt-4.1"),
+    agent_id="sage",
+    model=Claude(id="claude-3-7-sonnet-latest"),
     db=PostgresDb(db_url=db_url, session_table="sage_sessions"),
     tools=[
         ExaTools(
@@ -129,6 +131,7 @@ sage = Agent(
     num_history_runs=5,
     add_datetime_to_instructions=True,
     add_name_to_instructions=True,
+    enable_user_memories=True,
     description=AGENT_DESCRIPTION,
     instructions=AGENT_INSTRUCTIONS,
     expected_output=EXPECTED_OUTPUT_TEMPLATE,
@@ -136,6 +139,8 @@ sage = Agent(
 )
 
 knowledge = Knowledge(
+    name="Agno Docs",
+    contents_db=PostgresDb(db_url=db_url, knowledge_table="agno-assist-knowledge"),
     vector_db=PgVector(
         db_url=db_url,
         table_name="agno_assist_knowledge",
@@ -143,11 +148,11 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt", skip_if_exists=True)
+# knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt", skip_if_exists=True)
 
 agno_assist = Agent(
     name="Agno Assist",
-    model=OpenAIChat(id="gpt-4o"),
+    model=Claude(id="claude-3-7-sonnet-latest"),
     description="You help answer questions about the Agno framework.",
     instructions="Search your knowledge before answering the question.",
     knowledge=knowledge,
