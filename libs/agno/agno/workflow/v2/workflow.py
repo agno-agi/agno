@@ -227,10 +227,10 @@ class Workflow:
 
         workflow_session = self.get_workflow_session()
         datetime_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-        new_session_name = f"Workflow Session - {datetime_str}"
+        new_session_name = f"Workflow Session-{datetime_str}"
 
         if self.description:
-            truncated_desc = self.description[:40] + "..." if len(self.description) > 40 else self.description
+            truncated_desc = self.description[:40] + "-" if len(self.description) > 40 else self.description
             new_session_name = f"{truncated_desc} - {datetime_str}"
         return new_session_name
 
@@ -250,16 +250,6 @@ class Workflow:
             raise Exception("Session name is not set")
 
         self.get_workflow_session()
-        self.session_name = session_name
-        # -*- Save to storage
-        self.write_to_storage()
-
-    def rename_session(self, session_name: str):
-        """Rename the current session and save to storage"""
-
-        # -*- Read from storage
-        self.read_from_storage()
-        # -*- Rename session
         self.session_name = session_name
         # -*- Save to storage
         self.write_to_storage()
