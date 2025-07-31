@@ -301,15 +301,8 @@ class Agent:
     # Optional app ID. Indicates this agent is part of an app.
     app_id: Optional[str] = None
 
-    # Optional workflow ID. Indicates this agent is part of a workflow.
-    workflow_id: Optional[str] = None
-    # Set when this agent is part of a workflow.
-    workflow_session_id: Optional[str] = None
-
     # Optional team session state. Set by the team leader agent.
     team_session_state: Optional[Dict[str, Any]] = None
-    # Optional workflow session state. Set by the workflow.
-    workflow_session_state: Optional[Dict[str, Any]] = None
 
     # --- If this Agent is part of an OS ---
     # Optional OS ID. Indicates this agent is part of an OS.
@@ -3117,23 +3110,6 @@ class Agent:
             rr.model = model
         return rr
 
-    def _initialize_session_state(self, user_id: Optional[str] = None, session_id: Optional[str] = None) -> None:
-        self.session_state = self.session_state or {}
-        if user_id is not None:
-            self.session_state["current_user_id"] = user_id
-            if self.team_session_state is not None:
-                self.team_session_state["current_user_id"] = user_id
-
-            if self.workflow_session_state is not None:
-                self.workflow_session_state["current_user_id"] = user_id
-        if session_id is not None:
-            self.session_state["current_session_id"] = session_id
-            if self.team_session_state is not None:
-                self.team_session_state["current_session_id"] = session_id
-
-            if self.workflow_session_state is not None:
-                self.workflow_session_state["current_session_id"] = session_id
-
     def _make_memories_and_summaries(
         self,
         run_messages: RunMessages,
@@ -3181,7 +3157,7 @@ class Agent:
                         log_warning(f"Unsupported message type: {type(_im)}")
                         continue
 
-                if len(parsed_messages) > 0:
+                if len(parsed_messages) > 0 and self.memory_manager is not None:
                     futures.append(
                         executor.submit(
                             self.memory_manager.create_user_memories,
@@ -3371,9 +3347,7 @@ class Agent:
             self._rebuild_tools = True
         if self.search_previous_sessions_history:
             agent_tools.append(
-                self.get_previous_sessions_messages_function(
-                    num_history_sessions=self.num_history_sessions, user_id=user_id
-                )
+                self.get_previous_sessions_messages_function(num_history_sessions=self.num_history_sessions)
             )
             self._rebuild_tools = True
 
@@ -3816,6 +3790,11 @@ class Agent:
         # If the agent is a member of a team, do not save the session to the database
         if self.db is not None and self.team_id is None:
             session = self.get_agent_session(session_id=session_id, user_id=user_id)
+
+            if session is None:
+                log_error(f"Failed to save AgentSession. Cannot get it from the database: {session_id}")
+                return None
+
             # Update the session_data with the latest data
             session.session_data = self.get_agent_session_data()
 
@@ -4113,7 +4092,11 @@ class Agent:
                 )
 
         # 3.3.11 Then add a summary of the interaction to the system prompt
-        if self.add_session_summary_references and self.agent_session.summary is not None:
+        if (
+            self.add_session_summary_references
+            and self.agent_session is not None
+            and self.agent_session.summary is not None
+        ):
             system_message_content += "Here is a brief summary of your previous interactions:\n\n"
             system_message_content += "<summary_of_previous_interactions>\n"
             system_message_content += self.agent_session.summary.summary
@@ -4392,7 +4375,7 @@ class Agent:
                         self.run_response.extra_data.additional_messages.extend(messages_to_add_to_run_response)
 
         # 3. Add history to run_messages
-        if self.add_history_to_messages:
+        if self.add_history_to_messages and self.agent_session is not None:
             from copy import deepcopy
 
             history: List[Message] = self.agent_session.get_messages_from_last_n_runs(
@@ -4548,7 +4531,8 @@ class Agent:
 
         self.get_agent_session(session_id=session_id)
 
-        return self.agent_session.get_session_summary()
+        if self.agent_session is not None:
+            return self.agent_session.get_session_summary()
 
     def get_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
         """Get the user memories for the given user ID."""
@@ -4952,7 +4936,11 @@ class Agent:
             raise Exception("Model not set")
 
         gen_session_name_prompt = "Conversation\n"
-        messages_for_generating_session_name = self.agent_session.get_messages_for_session()
+
+        if self.agent_session is not None:
+            messages_for_generating_session_name = self.agent_session.get_messages_for_session()
+        else:
+            messages_for_generating_session_name = []
 
         for message in messages_for_generating_session_name:
             gen_session_name_prompt += f"{message.role.upper()}: {message.content}\n"
