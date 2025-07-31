@@ -51,7 +51,6 @@ async def run_agent(message: str) -> None:
                 - Use tables where possible\
                 """),
             markdown=True,
-            show_tool_calls=True,
         )
 
         await agent.aprint_response(message, stream=True)

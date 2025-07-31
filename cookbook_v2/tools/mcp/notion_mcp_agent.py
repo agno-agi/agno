@@ -52,7 +52,6 @@ async def run_agent():
                 - Confirm with the user before making modifications.
             """),
             markdown=True,
-            show_tool_calls=True,
         )
 
         await agent.acli_app(
