@@ -214,7 +214,7 @@ class Agent:
     # Role for the system message
     system_message_role: str = "system"
     # Set to False to skip context building
-    process_context: bool = True
+    build_context: bool = True
 
     # --- Settings for building the default system message ---
     # A description of the Agent that is added to the start of the system message.
@@ -252,7 +252,7 @@ class Agent:
     # Role for the user message
     user_message_role: str = "user"
     # Set to False to skip building the user context
-    process_user_context: bool = True
+    build_user_context: bool = True
 
     # --- Agent Response Settings ---
     # Number of retries to attempt
@@ -376,7 +376,7 @@ class Agent:
         read_tool_call_history: bool = False,
         system_message: Optional[Union[str, Callable, Message]] = None,
         system_message_role: str = "system",
-        process_context: bool = True,
+        build_context: bool = True,
         description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
         expected_output: Optional[str] = None,
@@ -390,7 +390,7 @@ class Agent:
         additional_messages: Optional[List[Union[Dict, Message]]] = None,
         user_message: Optional[Union[List, Dict, str, Callable, Message]] = None,
         user_message_role: str = "user",
-        process_user_context: bool = True,
+        build_user_context: bool = True,
         retries: int = 0,
         delay_between_retries: int = 1,
         exponential_backoff: bool = False,
@@ -470,7 +470,7 @@ class Agent:
 
         self.system_message = system_message
         self.system_message_role = system_message_role
-        self.process_context = process_context
+        self.build_context = build_context
 
         self.description = description
         self.instructions = instructions
@@ -486,7 +486,7 @@ class Agent:
 
         self.user_message = user_message
         self.user_message_role = user_message_role
-        self.process_user_context = process_user_context
+        self.build_user_context = build_user_context
 
         self.retries = retries
         self.delay_between_retries = delay_between_retries
@@ -3893,7 +3893,7 @@ class Agent:
         """Return the system message for the Agent.
 
         1. If the system_message is provided, use that.
-        2. If process_context is False, return None.
+        2. If build_context is False, return None.
         3. Build and return the default system message for the Agent.
         """
 
@@ -3917,8 +3917,8 @@ class Agent:
             # type: ignore
             return Message(role=self.system_message_role, content=sys_message_content)
 
-        # 2. If process_context is False, return None.
-        if not self.process_context:
+        # 2. If build_context is False, return None.
+        if not self.build_context:
             return None
 
         if self.model is None:
@@ -4148,7 +4148,7 @@ class Agent:
         """Return the user message for the Agent.
 
         1. If the user_message is provided, use that.
-        2. If process_user_context is False or if the message is a list, return the message as is.
+        2. If build_user_context is False or if the message is a list, return the message as is.
         3. Build the default user message for the Agent
         """
         # Get references from the knowledge base to use in the user message
@@ -4209,8 +4209,8 @@ class Agent:
                 **kwargs,
             )
 
-        # 2. If process_user_context is False or message is a list, return the message as is.
-        if not self.process_user_context or isinstance(message, list):
+        # 2. If build_user_context is False or message is a list, return the message as is.
+        if not self.build_user_context or isinstance(message, list):
       
             return Message(
                 role=self.user_message_role,

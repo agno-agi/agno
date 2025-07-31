@@ -101,7 +101,7 @@ def test_image_generation():
         markdown=True,
         telemetry=False,
         monitoring=False,
-        process_context=False,
+        build_context=False,
         system_message=None,
     )
 
@@ -128,7 +128,7 @@ def test_image_generation_streaming():
         markdown=True,
         telemetry=False,
         monitoring=False,
-        process_context=False,
+        build_context=False,
         system_message=None,
     )
 
@@ -158,7 +158,7 @@ def test_image_editing():
         markdown=True,
         telemetry=False,
         monitoring=False,
-        process_context=False,
+        build_context=False,
         system_message=None,
     )
 
@@ -187,7 +187,7 @@ def test_image_generation_with_detailed_prompt():
         markdown=True,
         telemetry=False,
         monitoring=False,
-        process_context=False,
+        build_context=False,
         system_message=None,
     )
 
@@ -222,7 +222,7 @@ def test_combined_text_and_image_generation():
         markdown=True,
         telemetry=False,
         monitoring=False,
-        process_context=False,
+        build_context=False,
         system_message=None,
     )
 
