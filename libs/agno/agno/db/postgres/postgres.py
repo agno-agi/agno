@@ -1124,7 +1124,6 @@ class PostgresDb(BaseDb):
             for date_to_process in dates_to_process:
                 date_key = date_to_process.isoformat()
                 sessions_for_date = all_sessions_data.get(date_key, {})
-                print(f"{date_to_process}, {sessions_for_date}")
 
                 # Skip dates with no sessions
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
