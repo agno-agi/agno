@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from agno.db.base import BaseDb
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.knowledge.content import Content, FileData
+from agno.knowledge.content import Content, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
 from agno.knowledge.remote_content.remote_content import GCSContent, RemoteContent, S3Content
@@ -348,7 +348,7 @@ class Knowledge:
                 content.content_hash = self._build_content_hash(content)
                 if self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
                     log_info(f"Content {content.content_hash} already exists, skipping")
-                    content.status = "Completed"
+                    content.status = ContentStatus.COMPLETED
                     self._update_content(content)
                     return
 
@@ -382,7 +382,7 @@ class Knowledge:
                         self.vector_db.upsert(content.content_hash, read_documents, content.metadata)
                     except Exception as e:
                         log_error(f"Error upserting document: {e}")
-                        content.status = "Failed"
+                        content.status = ContentStatus.FAILED
                         content.status_message = "Could not upsert embedding"
                         completed = False
                         self._update_content(content)
@@ -391,13 +391,13 @@ class Knowledge:
                         self.vector_db.insert(content.content_hash, documents=read_documents, filters=content.metadata)
                     except Exception as e:
                         log_error(f"Error inserting document: {e}")
-                        content.status = "Failed"
+                        content.status = ContentStatus.FAILED
                         content.status_message = "Could not insert embedding"
                         completed = False
                         self._update_content(content)
 
                 if completed:
-                    content.status = "Completed"
+                    content.status = ContentStatus.COMPLETED
                     self._update_content(content)
 
         elif path.is_dir():
@@ -432,7 +432,7 @@ class Knowledge:
         content.content_hash = self._build_content_hash(content)
         if self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
             log_info(f"Content {content.content_hash} already exists, skipping")
-            content.status = "Completed"
+            content.status = ContentStatus.COMPLETED
             self._update_content(content)
 
             return
@@ -445,12 +445,12 @@ class Knowledge:
 
             parsed_url = urlparse(content.url)
             if not all([parsed_url.scheme, parsed_url.netloc]):
-                content.status = "Failed"
+                content.status = ContentStatus.FAILED
                 content.status_message = f"Invalid URL format: {content.url}"
                 self._update_content(content)
                 log_warning(f"Invalid URL format: {content.url}")
         except Exception as e:
-            content.status = "Failed"
+            content.status = ContentStatus.FAILED
             content.status_message = f"Invalid URL: {content.url} - {str(e)}"
             self._update_content(content)
             log_warning(f"Invalid URL: {content.url} - {str(e)}")
@@ -493,7 +493,7 @@ class Knowledge:
                 self.vector_db.upsert(content.content_hash, documents=read_documents, filters=content.metadata)
             except Exception as e:
                 log_error(f"Error upserting document: {e}")
-                content.status = "Failed"
+                content.status = ContentStatus.FAILED
                 content.status_message = "Could not upsert embedding"
                 self._update_content(content)
         else:
@@ -501,12 +501,12 @@ class Knowledge:
                 self.vector_db.insert(content.content_hash, documents=read_documents, filters=content.metadata)
             except Exception as e:
                 log_error(f"Error inserting document: {e}")
-                content.status = "Failed"
+                content.status = ContentStatus.FAILED
                 content.status_message = "Could not insert embedding"
                 self._update_content(content)
 
         content.size = file_size
-        content.status = "Completed"
+        content.status = ContentStatus.COMPLETED
         self._update_content(content)
 
     def _load_from_content(
@@ -530,7 +530,7 @@ class Knowledge:
         content.content_hash = self._build_content_hash(content)
         if self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
             log_info(f"Content {content.content_hash} already exists, skipping")
-            content.status = "Completed"
+            content.status = ContentStatus.COMPLETED
             self._update_content(content)
             return
 
@@ -552,7 +552,7 @@ class Knowledge:
                 if text_reader:
                     read_documents = text_reader.read(content_io, name=name)
                 else:
-                    content.status = "Failed"
+                    content.status = ContentStatus.FAILED
                     content.status_message = "Text reader not available"
                     completed = False
                     self._update_content(content)
@@ -585,13 +585,13 @@ class Knowledge:
                     read_document.content_id = content.id
 
                 if len(read_documents) == 0:
-                    content.status = "Failed"
+                    content.status = ContentStatus.FAILED
                     content.status_message = "Content could not be read"
                     completed = False
                     self._update_content(content)
 
         else:
-            content.status = "Failed"
+            content.status = ContentStatus.FAILED
             content.status_message = "No content provided"
             self._update_content(content)
             return
@@ -602,7 +602,7 @@ class Knowledge:
                 self.vector_db.upsert(content.content_hash, documents=read_documents, filters=content.metadata)
             except Exception as e:
                 log_error(f"Error upserting document: {e}")
-                content.status = "Failed"
+                content.status = ContentStatus.FAILED
                 content.status_message = "Could not upsert embedding"
                 completed = False
                 self._update_content(content)
@@ -611,13 +611,13 @@ class Knowledge:
                 self.vector_db.insert(content.content_hash, documents=read_documents, filters=content.metadata)
             except Exception as e:
                 log_error(f"Error inserting document: {e}")
-                content.status = "Failed"
+                content.status = ContentStatus.FAILED
                 content.status_message = "Could not insert embedding"
                 completed = False
                 self._update_content(content)
 
         if completed:
-            content.status = "Completed"
+            content.status = ContentStatus.COMPLETED
             self._update_content(content)
 
     def _load_from_topics(
@@ -635,7 +635,7 @@ class Knowledge:
                 name=topic,
                 metadata=content.metadata,
                 reader=content.reader,
-                status="Processing" if content.reader else "Failed: No reader provided",
+                status=ContentStatus.PROCESSING if content.reader else ContentStatus.FAILED,
                 file_data=FileData(
                     type="Topic",
                 ),
@@ -655,7 +655,7 @@ class Knowledge:
                     if read_document.content:
                         read_document.size = len(read_document.content.encode("utf-8"))
             else:
-                content.status = "Failed"
+                content.status = ContentStatus.FAILED
                 content.status_message = "No content found for topic"
                 self._update_content(content)
 
@@ -663,7 +663,7 @@ class Knowledge:
                 self.vector_db.upsert(content.content_hash, documents=read_documents, filters=content.metadata)
             else:
                 self.vector_db.insert(content.content_hash, documents=read_documents, filters=content.metadata)
-            content.status = "Completed"
+            content.status = ContentStatus.COMPLETED
             self._update_content(content)
 
     def _load_from_remote_content(
@@ -723,7 +723,7 @@ class Knowledge:
                 id=id,
                 name=content.name + "_" + object.name,
                 description=content.description,
-                status="Processing",
+                status=ContentStatus.PROCESSING,
                 metadata=content.metadata,
                 file_type="s3",
             )
@@ -746,7 +746,7 @@ class Knowledge:
                     self.vector_db.upsert(content_hash, read_documents, content.metadata)
                 except Exception as e:
                     log_error(f"Error upserting document: {e}")
-                    content_entry.status = "Failed"
+                    content_entry.status = ContentStatus.FAILED
                     content_entry.status_message = "Could not upsert embedding"
                     completed = False
                     self._update_content(content_entry)
@@ -755,13 +755,13 @@ class Knowledge:
                     self.vector_db.insert(content_hash, documents=read_documents, filters=content.metadata)
                 except Exception as e:
                     log_error(f"Error inserting document: {e}")
-                    content_entry.status = "Failed"
+                    content_entry.status = ContentStatus.FAILED
                     content_entry.status_message = "Could not insert embedding"
                     completed = False
                     self._update_content(content_entry)
 
             if completed:
-                content_entry.status = "Completed"
+                content_entry.status = ContentStatus.COMPLETED
                 self._update_content(content_entry)
 
     def _load_from_gcs(self, content: Content, upsert: bool, skip_if_exists: bool):
@@ -792,7 +792,7 @@ class Knowledge:
                 id=id,
                 name=content.name + "_" + object.name,
                 description=content.description,
-                status="Processing",
+                status=ContentStatus.PROCESSING,
                 metadata=content.metadata,
                 file_type="gcs",
             )
@@ -816,7 +816,7 @@ class Knowledge:
                     self.vector_db.upsert(content_hash, read_documents, content.metadata)
                 except Exception as e:
                     log_error(f"Error upserting document: {e}")
-                    content_entry.status = "Failed"
+                    content_entry.status = ContentStatus.FAILED
                     content_entry.status_message = "Could not upsert embedding"
                     completed = False
                     self._update_content(content_entry)
@@ -825,13 +825,13 @@ class Knowledge:
                     self.vector_db.insert(content_hash, documents=read_documents, filters=content.metadata)
                 except Exception as e:
                     log_error(f"Error inserting document: {e}")
-                    content_entry.status = "Failed"
+                    content_entry.status = ContentStatus.FAILED
                     content_entry.status_message = "Could not insert embedding"
                     completed = False
                     self._update_content(content_entry)
 
             if completed:
-                content_entry.status = "Completed"
+                content_entry.status = ContentStatus.COMPLETED
                 self._update_content(content_entry)
 
     def _load_content(
@@ -914,7 +914,7 @@ class Knowledge:
                 else None,
                 linked_to=self.name,
                 access_count=0,
-                status=content.status if content.status else "Processing",
+                status=content.status if content.status else ContentStatus.PROCESSING,
                 status_message="",
                 created_at=created_at,
                 updated_at=updated_at,
@@ -1063,8 +1063,6 @@ class Knowledge:
         # Validation:At least one of the parameters must be provided
         if not content.id:
             content.id = str(uuid4())
-        print("PROCESSING", content.name)
-        pprint(content)
         self._load_content(content, upsert=False, skip_if_exists=True)
 
     def patch_content(self, content: Content) -> Optional[Dict[str, Any]]:
@@ -1121,13 +1119,27 @@ class Knowledge:
             result.append(content)
         return result, count
 
-    def get_content_status(self, content_id: str) -> Tuple[Optional[str], Optional[str]]:
+    def get_content_status(self, content_id: str) -> Tuple[Optional[ContentStatus], Optional[str]]:
         if self.contents_db is None:
             raise ValueError("No contents db provided")
         content_row = self.contents_db.get_knowledge_content(content_id)
         if content_row is None:
-            return None
-        return content_row.status, content_row.status_message
+            return None, "Content not found"
+
+        # Convert string status to enum, defaulting to PROCESSING if unknown
+        status_str = content_row.status
+        try:
+            status = ContentStatus(status_str.lower()) if status_str else ContentStatus.PROCESSING
+        except ValueError:
+            # Handle legacy or unknown statuses
+            if status_str and "failed" in status_str.lower():
+                status = ContentStatus.FAILED
+            elif status_str and "completed" in status_str.lower():
+                status = ContentStatus.COMPLETED
+            else:
+                status = ContentStatus.PROCESSING
+
+        return status, content_row.status_message
 
     def remove_content_by_id(self, content_id: str):
         if self.contents_db is not None:
