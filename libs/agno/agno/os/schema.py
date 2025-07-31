@@ -38,6 +38,10 @@ class AgentSummaryResponse(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
 
+    @classmethod
+    def from_agent(cls, agent: Agent) -> "AgentSummaryResponse":
+        return cls(agent_id=agent.agent_id, name=agent.name, description=agent.description)
+
 
 class TeamSummaryResponse(BaseModel):
     team_id: Optional[str] = None
@@ -82,6 +86,9 @@ class AgentResponse(BaseModel):
     tools: Optional[List[Dict[str, Any]]] = None
     memory: Optional[Dict[str, Any]] = None
     knowledge: Optional[Dict[str, Any]] = None
+    session_table: Optional[str] = None
+    memory_table: Optional[str] = None
+    knowledge_table: Optional[str] = None
 
     @classmethod
     def from_agent(self, agent: Agent) -> "AgentResponse":
@@ -111,6 +118,10 @@ class AgentResponse(BaseModel):
                     provider=agent.memory_manager.model.provider,
                 )
 
+        session_table = agent.db.session_table_name if agent.db else None
+        memory_table = agent.db.memory_table_name if agent.db and agent.enable_user_memories else None
+        knowledge_table = agent.db.knowledge_table_name if agent.db and agent.knowledge else None
+
         return AgentResponse(
             agent_id=agent.agent_id,
             name=agent.name,
@@ -124,6 +135,9 @@ class AgentResponse(BaseModel):
             tools=formatted_tools,
             memory=memory_dict,
             knowledge={"name": agent.knowledge.__class__.__name__} if agent.knowledge else None,
+            session_table=session_table,
+            memory_table=memory_table,
+            knowledge_table=knowledge_table,
         )
 
 
@@ -143,6 +157,9 @@ class TeamResponse(BaseModel):
     memory: Optional[Dict[str, Any]] = None
     knowledge: Optional[Dict[str, Any]] = None
     async_mode: bool = False
+    session_table: Optional[str] = None
+    memory_table: Optional[str] = None
+    knowledge_table: Optional[str] = None
 
     @classmethod
     def from_team(self, team: Team) -> "TeamResponse":
@@ -177,6 +194,10 @@ class TeamResponse(BaseModel):
                     provider=team.memory_manager.model.provider,
                 )
 
+        session_table = team.db.session_table_name if team.db else None
+        memory_table = team.db.memory_table_name if team.db and team.enable_user_memories else None
+        knowledge_table = team.db.knowledge_table_name if team.db and team.knowledge else None
+
         return TeamResponse(
             team_id=team.team_id,
             name=team.name,
@@ -195,6 +216,9 @@ class TeamResponse(BaseModel):
             mode=team.mode,
             memory=memory_dict,
             knowledge={"name": team.knowledge.__class__.__name__} if team.knowledge else None,
+            session_table=session_table,
+            memory_table=memory_table,
+            knowledge_table=knowledge_table,
             members=[
                 AgentResponse.from_agent(member)
                 if isinstance(member, Agent)
@@ -263,7 +287,7 @@ class AgentSessionDetailSchema(BaseModel):
 
     @classmethod
     def from_session(cls, session: AgentSession) -> "AgentSessionDetailSchema":
-        session_name = get_session_name(session.to_dict())
+        session_name = get_session_name({**session.to_dict(), "session_type": "agent"})
 
         return cls(
             user_id=session.user_id,
@@ -301,7 +325,8 @@ class TeamSessionDetailSchema(BaseModel):
     @classmethod
     def from_session(cls, session: TeamSession) -> "TeamSessionDetailSchema":
         session_dict = session.to_dict()
-        session_name = get_session_name(session_dict)
+        session_name = get_session_name({**session_dict, "session_type": "team"})
+
         return cls(
             session_id=session.session_id,
             team_id=session.team_id,

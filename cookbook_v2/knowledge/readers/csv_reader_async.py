@@ -5,7 +5,6 @@ from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
 
-
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 knowledge = Knowledge(
@@ -25,11 +24,7 @@ agent = Agent(
 
 if __name__ == "__main__":
     # Comment out after first run
-    asyncio.run(
-        knowledge.async_add_content(
-          path=Path("data/csv")
-        )
-    )
+    asyncio.run(knowledge.async_add_content(path=Path("data/csv")))
 
     # Create and use the agent
     asyncio.run(agent.aprint_response("What is the csv file about", markdown=True))

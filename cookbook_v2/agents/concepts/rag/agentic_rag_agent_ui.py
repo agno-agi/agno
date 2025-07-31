@@ -7,15 +7,13 @@
 from agno.agent import Agent
 from agno.db.agent.postgres import PostgresAgentStorage
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.playground import Playground
 from agno.vectordb.pgvector import PgVector, SearchType
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-# Create a knowledge base of PDFs from URLs
-knowledge_base = PDFUrlKnowledgeBase(
-    urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
+knowledge = Knowledge(
     # Use PgVector as the vector database and store embeddings in the `ai.recipes` table
     vector_db=PgVector(
         table_name="recipes",
@@ -24,12 +22,15 @@ knowledge_base = PDFUrlKnowledgeBase(
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
 )
+knowledge.add_content(
+    name="Recipes", url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+)
 
 rag_agent = Agent(
     name="RAG Agent",
     agent_id="rag-agent",
     model=OpenAIChat(id="gpt-4o"),
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     # Add a tool to search the knowledge base which enables agentic RAG.
     # This is enabled by default when `knowledge` is provided to the Agent.
     search_knowledge=True,

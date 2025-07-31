@@ -81,13 +81,13 @@ class SqliteDb(BaseDb):
             elif db_file is not None:
                 db_path = Path(db_file).resolve()
                 db_path.parent.mkdir(parents=True, exist_ok=True)
-                self.db_file = str(db_path)
+                db_file = str(db_path)
                 _engine = create_engine(f"sqlite:///{db_path}")
             else:
                 # If none of db_engine, db_url, or db_file are provided, create a db in the current directory
                 default_db_path = Path("./agno.db").resolve()
                 _engine = create_engine(f"sqlite:///{default_db_path}")
-                self.db_file = str(default_db_path)
+                db_file = str(default_db_path)
                 log_debug(f"Created SQLite database: {default_db_path}")
 
         self.db_engine: Engine = _engine
@@ -311,8 +311,8 @@ class SqliteDb(BaseDb):
     def get_session(
         self,
         session_id: str,
+        session_type: SessionType,
         user_id: Optional[str] = None,
-        session_type: Optional[SessionType] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
@@ -358,6 +358,8 @@ class SqliteDb(BaseDb):
                 return TeamSession.from_dict(session_raw)
             elif session_type == SessionType.WORKFLOW:
                 return WorkflowSession.from_dict(session_raw)
+            else:
+                raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_debug(f"Exception reading from sessions table: {e}")
@@ -514,6 +516,8 @@ class SqliteDb(BaseDb):
                 return TeamSession.from_dict(session_raw)
             elif session_type == SessionType.WORKFLOW:
                 return WorkflowSession.from_dict(session_raw)
+            else:
+                raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_error(f"Exception renaming session: {e}")
@@ -622,7 +626,7 @@ class SqliteDb(BaseDb):
                         return session_raw
                     return TeamSession.from_dict(session_raw)
 
-            elif isinstance(session, WorkflowSession):
+            else:
                 with self.Session() as sess, sess.begin():
                     stmt = sqlite.insert(table).values(
                         session_id=serialized_session.get("session_id"),
@@ -667,7 +671,7 @@ class SqliteDb(BaseDb):
 
     # -- Memory methods --
 
-    def delete_user_memory(self, memory_id: str) -> bool:
+    def delete_user_memory(self, memory_id: str):
         """Delete a user memory from the database.
 
         Returns:
@@ -689,11 +693,8 @@ class SqliteDb(BaseDb):
                 else:
                     log_debug(f"No user memory found with id: {memory_id}")
 
-                return success
-
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
-            return False
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
         """Delete user memories from the database.
@@ -1222,6 +1223,7 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error getting knowledge content: {e}")
+            return None
 
     def get_knowledge_contents(
         self,
@@ -1438,8 +1440,8 @@ class SqliteDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        eval_type: Optional[List[EvalType]] = None,
         filter_type: Optional[EvalFilterType] = None,
+        eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.

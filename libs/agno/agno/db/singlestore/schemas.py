@@ -92,8 +92,6 @@ METRICS_TABLE_SCHEMA = {
     "completed": {"type": Boolean, "nullable": False, "default": False},
 }
 
-LEARNING_TABLE_SCHEMA = {}
-
 
 def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
@@ -109,9 +107,10 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "metrics": METRICS_TABLE_SCHEMA,
         "user_memories": USER_MEMORY_TABLE_SCHEMA,
         "knowledge_contents": KNOWLEDGE_TABLE_SCHEMA,
-        "learnings": {},
     }
     schema = schemas.get(table_type, {})
+
     if not schema:
         raise ValueError(f"Unknown table type: {table_type}")
-    return schema
+
+    return schema  # type: ignore[return-value]

@@ -6,14 +6,12 @@
 
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.url import UrlKnowledge
+from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.reranker.cohere import CohereReranker
 from agno.vectordb.lancedb import LanceDb, SearchType
 
-# Create a knowledge base containing information from a URL
-knowledge_base = UrlKnowledge(
-    urls=["https://docs.agno.com/introduction.md"],
+knowledge = Knowledge(
     # Use LanceDB as the vector database and store embeddings in the `agno_docs` table
     vector_db=LanceDb(
         uri="tmp/lancedb",
@@ -28,10 +26,12 @@ knowledge_base = UrlKnowledge(
     ),
 )
 
+knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/introduction.md")
+
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     # Agentic RAG is enabled by default when `knowledge` is provided to the Agent.
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     show_tool_calls=True,
     markdown=True,
 )

@@ -21,11 +21,16 @@ class EvalApp(BaseApp):
     router: APIRouter
 
     def __init__(self, db: BaseDb, name: Optional[str] = None):
-        self.name = name
+        self.name = name or "Eval App"
         self.db = db
 
-    def get_router(
-        self, index: int, agents: List[Agent], teams: List[Team], settings: AgnoAPISettings = AgnoAPISettings()
+    def get_router(  # type: ignore[override]
+        self,
+        index: int,
+        agents: List[Agent],
+        teams: List[Team],
+        settings: AgnoAPISettings = AgnoAPISettings(),
+        **kwargs,
     ) -> APIRouter:
         if not self.name:
             self.name = f"Eval App {index}"

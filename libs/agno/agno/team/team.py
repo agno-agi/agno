@@ -1357,7 +1357,7 @@ class Team:
         self.stream_intermediate_steps = self.stream_intermediate_steps or (stream_intermediate_steps and self.stream)
 
         # Read existing session from storage
-        self.get_team_session(session_id=session_id)
+        self.get_team_session(session_id=session_id, user_id=user_id)
 
         # Read existing session from storage
         if self.context is not None:

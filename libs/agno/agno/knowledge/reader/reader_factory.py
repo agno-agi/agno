@@ -124,6 +124,24 @@ class ReaderFactory:
         return CSVUrlReader(**config)
 
     @classmethod
+    def _get_s3_reader(cls, **kwargs) -> Reader:
+        """Get S3 reader instance."""
+        from agno.knowledge.reader.s3_reader import S3Reader
+
+        config = {"name": "S3 Reader", "description": "Reads S3 files"}
+        config.update(kwargs)
+        return S3Reader(**config)
+
+    @classmethod
+    def _get_gcs_reader(cls, **kwargs) -> Reader:
+        """Get GCS reader instance."""
+        from agno.knowledge.reader.gcs_reader import GCSReader
+
+        config = {"name": "GCS Reader", "description": "Reads GCS files"}
+        config.update(kwargs)
+        return GCSReader(**config)
+
+    @classmethod
     def _get_reader_method(cls, reader_key: str):
         """Get the appropriate reader method for the given key."""
         method_name = f"_get_{reader_key}_reader"

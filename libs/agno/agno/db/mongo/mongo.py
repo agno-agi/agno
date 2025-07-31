@@ -212,10 +212,10 @@ class MongoDb(BaseDb):
     def get_session(
         self,
         session_id: str,
+        session_type: SessionType,
         user_id: Optional[str] = None,
-        session_type: Optional[SessionType] = None,
         deserialize: Optional[bool] = True,
-    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Read a session from the database.
 
         Args:
@@ -254,7 +254,7 @@ class MongoDb(BaseDb):
                 return AgentSession.from_dict(session)
             elif session_type == SessionType.TEAM.value:
                 return TeamSession.from_dict(session)
-            elif session_type == SessionType.WORKFLOW.value:
+            else:
                 return WorkflowSession.from_dict(session)
 
         except Exception as e:
@@ -302,7 +302,7 @@ class MongoDb(BaseDb):
             collection = self._get_collection(table_type="sessions")
 
             # Filtering
-            query = {}
+            query: Dict[str, Any] = {}
             if user_id is not None:
                 query["user_id"] = user_id
             if session_type is not None:
@@ -414,7 +414,7 @@ class MongoDb(BaseDb):
                 return AgentSession.from_dict(deserialized_session)
             elif session_type == SessionType.TEAM.value:
                 return TeamSession.from_dict(deserialized_session)
-            elif session_type == SessionType.WORKFLOW.value:
+            else:
                 return WorkflowSession.from_dict(deserialized_session)
 
         except Exception as e:
@@ -509,7 +509,7 @@ class MongoDb(BaseDb):
 
                 return TeamSession.from_dict(session)  # type: ignore
 
-            elif isinstance(session, WorkflowSession):
+            else:
                 record = {
                     "session_id": serialized_session_dict.get("session_id"),
                     "session_type": SessionType.WORKFLOW.value,
@@ -549,7 +549,7 @@ class MongoDb(BaseDb):
 
     # -- Memory methods --
 
-    def delete_user_memory(self, memory_id: str) -> bool:
+    def delete_user_memory(self, memory_id: str):
         """Delete a user memory from the database.
 
         Args:
@@ -571,11 +571,8 @@ class MongoDb(BaseDb):
             else:
                 log_debug(f"No memory found with id: {memory_id}")
 
-            return success
-
         except Exception as e:
             log_error(f"Error deleting memory: {e}")
-            return False
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
         """Delete user memories from the database.
@@ -679,7 +676,7 @@ class MongoDb(BaseDb):
         try:
             collection = self._get_collection(table_type="memories")
 
-            query = {}
+            query: Dict[str, Any] = {}
             if user_id is not None:
                 query["user_id"] = user_id
             if agent_id is not None:
@@ -1052,7 +1049,7 @@ class MongoDb(BaseDb):
         try:
             collection = self._get_collection(table_type="knowledge")
 
-            query = {}
+            query: Dict[str, Any] = {}
 
             # Get total count
             total_count = collection.count_documents(query)
@@ -1208,8 +1205,8 @@ class MongoDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        eval_type: Optional[List[EvalType]] = None,
         filter_type: Optional[EvalFilterType] = None,
+        eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
@@ -1238,7 +1235,7 @@ class MongoDb(BaseDb):
         try:
             collection = self._get_collection(table_type="evals")
 
-            query = {}
+            query: Dict[str, Any] = {}
             if agent_id is not None:
                 query["agent_id"] = agent_id
             if team_id is not None:

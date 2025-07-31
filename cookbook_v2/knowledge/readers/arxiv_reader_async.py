@@ -21,6 +21,7 @@ agent = Agent(
     search_knowledge=True,
 )
 
+
 def main():
     # Load the knowledge
     asyncio.run(

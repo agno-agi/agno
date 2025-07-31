@@ -19,10 +19,10 @@ class MetricsApp(BaseApp):
     router: APIRouter
 
     def __init__(self, db: BaseDb, name: Optional[str] = None):
-        self.name = name
+        self.name = name or "Metrics App"
         self.db = db
 
-    def get_router(self, index: int, settings: AgnoAPISettings = AgnoAPISettings()) -> APIRouter:
+    def get_router(self, index: int, settings: AgnoAPISettings = AgnoAPISettings(), **kwargs) -> APIRouter:
         if not self.name:
             self.name = f"Metrics App {index}"
 

@@ -21,7 +21,7 @@ from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
 
 try:
-    from google.cloud.firestore import Client, FieldFilter
+    from google.cloud.firestore import Client, FieldFilter  # type: ignore[import-untyped]
 except ImportError:
     raise ImportError(
         "`google-cloud-firestore` not installed. Please install it using `pip install google-cloud-firestore`"
@@ -159,6 +159,7 @@ class FirestoreDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to delete.
+            session_type (SessionType): The type of session to delete. Defaults to SessionType.AGENT.
 
         Returns:
             bool: True if the session was deleted, False otherwise.
@@ -209,10 +210,10 @@ class FirestoreDb(BaseDb):
     def get_session(
         self,
         session_id: str,
+        session_type: SessionType,
         user_id: Optional[str] = None,
-        session_type: Optional[SessionType] = None,
         deserialize: Optional[bool] = True,
-    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Read a session from the database.
 
         Args:
@@ -256,7 +257,7 @@ class FirestoreDb(BaseDb):
                 return AgentSession.from_dict(session)
             elif session_type == SessionType.TEAM:
                 return TeamSession.from_dict(session)
-            elif session_type == SessionType.WORKFLOW:
+            else:
                 return WorkflowSession.from_dict(session)
 
         except Exception as e:
@@ -276,7 +277,7 @@ class FirestoreDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-    ) -> Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
+    ) -> Union[List[Session], List[Dict[str, Any]], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions.
 
         Args:
@@ -413,7 +414,7 @@ class FirestoreDb(BaseDb):
                 return AgentSession.from_dict(deserialized_session)
             elif session_type == SessionType.TEAM:
                 return TeamSession.from_dict(deserialized_session)
-            elif session_type == SessionType.WORKFLOW:
+            else:
                 return WorkflowSession.from_dict(deserialized_session)
 
         except Exception as e:
@@ -514,7 +515,7 @@ class FirestoreDb(BaseDb):
                 return AgentSession.from_dict(deserialized_session)
             elif isinstance(session, TeamSession):
                 return TeamSession.from_dict(deserialized_session)
-            elif isinstance(session, WorkflowSession):
+            else:
                 return WorkflowSession.from_dict(deserialized_session)
 
         except Exception as e:
@@ -523,7 +524,7 @@ class FirestoreDb(BaseDb):
 
     # -- Memory methods --
 
-    def delete_user_memory(self, memory_id: str) -> bool:
+    def delete_user_memory(self, memory_id: str):
         """Delete a user memory from the database.
 
         Args:
@@ -550,11 +551,8 @@ class FirestoreDb(BaseDb):
             else:
                 log_debug(f"No user memory found with id: {memory_id}")
 
-            return success
-
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
-            return False
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
         """Delete user memories from the database.
@@ -915,7 +913,7 @@ class FirestoreDb(BaseDb):
             first_session_date = None
 
             if isinstance(first_session_result, list) and len(first_session_result) > 0:
-                first_session_date = first_session_result[0].created_at
+                first_session_date = first_session_result[0].created_at  # type: ignore
             elif isinstance(first_session_result, tuple) and len(first_session_result[0]) > 0:
                 first_session_date = first_session_result[0][0].get("created_at")
 
@@ -1261,8 +1259,8 @@ class FirestoreDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        eval_type: Optional[List[EvalType]] = None,
         filter_type: Optional[EvalFilterType] = None,
+        eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.

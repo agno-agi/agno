@@ -199,8 +199,10 @@ class JsonDb(BaseDb):
                         return AgentSession.from_dict(session)
                     elif session_type == SessionType.TEAM:
                         return TeamSession.from_dict(session)
-                    elif session_type == SessionType.WORKFLOW:
+                    else:
                         return WorkflowSession.from_dict(session)
+
+            return None
 
         except Exception as e:
             log_error(f"Exception reading from session file: {e}")
@@ -326,7 +328,7 @@ class JsonDb(BaseDb):
                         return AgentSession.from_dict(session)
                     elif session_type == SessionType.TEAM:
                         return TeamSession.from_dict(session)
-                    elif session_type == SessionType.WORKFLOW:
+                    else:
                         return WorkflowSession.from_dict(session)
 
             return None
@@ -393,7 +395,7 @@ class JsonDb(BaseDb):
         return False
 
     # -- Memory methods --
-    def delete_user_memory(self, memory_id: str) -> bool:
+    def delete_user_memory(self, memory_id: str):
         """Delete a user memory from the JSON file."""
         try:
             memories = self._read_json_file(self.memory_table_name)
@@ -403,14 +405,11 @@ class JsonDb(BaseDb):
             if len(memories) < original_count:
                 self._write_json_file(self.memory_table_name, memories)
                 log_debug(f"Successfully deleted user memory id: {memory_id}")
-                return True
             else:
                 log_debug(f"No memory found with id: {memory_id}")
-                return False
 
         except Exception as e:
             log_error(f"Error deleting memory: {e}")
-            return False
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
         """Delete multiple user memories from the JSON file."""
@@ -966,8 +965,8 @@ class JsonDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        eval_type: Optional[List[EvalType]] = None,
         filter_type: Optional[EvalFilterType] = None,
+        eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the JSON file with filtering and pagination."""

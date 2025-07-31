@@ -325,10 +325,10 @@ class MySQLDb(BaseDb):
     def get_session(
         self,
         session_id: str,
+        session_type: SessionType,
         user_id: Optional[str] = None,
-        session_type: Optional[SessionType] = None,
         deserialize: Optional[bool] = True,
-    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Read a session from the database.
 
@@ -372,6 +372,8 @@ class MySQLDb(BaseDb):
                 return TeamSession.from_dict(session)
             elif session_type == SessionType.WORKFLOW:
                 return WorkflowSession.from_dict(session)
+            else:
+                raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_error(f"Exception reading from session table: {e}")
@@ -522,6 +524,8 @@ class MySQLDb(BaseDb):
                 return TeamSession.from_dict(session)
             elif session_type == SessionType.WORKFLOW:
                 return WorkflowSession.from_dict(session)
+            else:
+                raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_error(f"Exception renaming session: {e}")
@@ -627,7 +631,7 @@ class MySQLDb(BaseDb):
                         return session
                     return TeamSession.from_dict(session)
 
-            elif isinstance(session, WorkflowSession):
+            else:
                 with self.Session() as sess, sess.begin():
                     stmt = mysql.insert(table).values(
                         session_id=session_dict.get("session_id"),
@@ -670,7 +674,7 @@ class MySQLDb(BaseDb):
             return None
 
     # -- Memory methods --
-    def delete_user_memory(self, memory_id: str) -> bool:
+    def delete_user_memory(self, memory_id: str):
         """Delete a user memory from the database.
 
         Returns:
@@ -692,11 +696,8 @@ class MySQLDb(BaseDb):
                 else:
                     log_debug(f"No user memory found with id: {memory_id}")
 
-                return success
-
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
-            return False
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
         """Delete user memories from the database.
@@ -1273,7 +1274,10 @@ class MySQLDb(BaseDb):
                         stmt = stmt.offset((page - 1) * limit)
 
                     result = sess.execute(stmt).fetchall()
-                    return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
+                    if not result:
+                        return [], 0
+
+                return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
 
         except Exception as e:
             log_error(f"Exception getting knowledge contents: {e}")
@@ -1468,8 +1472,8 @@ class MySQLDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        eval_type: Optional[List[EvalType]] = None,
         filter_type: Optional[EvalFilterType] = None,
+        eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.

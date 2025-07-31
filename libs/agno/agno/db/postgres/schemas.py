@@ -14,12 +14,11 @@ SESSION_TABLE_SCHEMA = {
     "team_id": {"type": String, "nullable": True},
     "workflow_id": {"type": String, "nullable": True},
     "user_id": {"type": String, "nullable": True},
-    "team_session_id": {"type": String, "nullable": True},  # TODO: remove this column
     "session_data": {"type": JSON, "nullable": True},
     "agent_data": {"type": JSON, "nullable": True},
     "team_data": {"type": JSON, "nullable": True},
     "workflow_data": {"type": JSON, "nullable": True},
-    "extra_data": {"type": JSON, "nullable": True},
+    "metadata": {"type": JSON, "nullable": True},
     "runs": {"type": JSON, "nullable": True},
     "summary": {"type": JSON, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
@@ -38,7 +37,6 @@ MEMORY_TABLE_SCHEMA = {
     "input": {"type": String, "nullable": True},
     "agent_id": {"type": String, "nullable": True},
     "team_id": {"type": String, "nullable": True},
-    "workflow_id": {"type": String, "nullable": True},
     "user_id": {"type": String, "nullable": True, "index": True},
     "topics": {"type": JSON, "nullable": True},
     "last_updated": {"type": BigInteger, "nullable": True, "index": True},
@@ -51,7 +49,7 @@ EVAL_TABLE_SCHEMA = {
     "name": {"type": String, "nullable": True},
     "agent_id": {"type": String, "nullable": True},
     "team_id": {"type": String, "nullable": True},
-    "workflow_id": {"type": String, "nullable": True},
+    "workflow_id": {"type": String, "nullable": True},  # Do we need a workflow_id here?
     "model_id": {"type": String, "nullable": True},
     "model_provider": {"type": String, "nullable": True},
     "evaluated_component_name": {"type": String, "nullable": True},
@@ -98,8 +96,6 @@ METRICS_TABLE_SCHEMA = {
     ],
 }
 
-LEARNING_TABLE_SCHEMA = {}
-
 
 def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
@@ -117,11 +113,10 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "metrics": METRICS_TABLE_SCHEMA,
         "memories": MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
-        "learnings": {},
     }
 
     schema = schemas.get(table_type, {})
     if not schema:
         raise ValueError(f"Unknown table type: {table_type}")
 
-    return schema
+    return schema  # type: ignore[return-value]

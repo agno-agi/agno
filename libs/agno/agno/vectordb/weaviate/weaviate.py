@@ -160,24 +160,23 @@ class Weaviate(VectorDb):
             await client.close()
 
     def content_hash_exists(self, content_hash: str) -> bool:
-        """
-        Check if documents with the given content hash exist in the collection.
+        """Check if a document with the given content hash exists in the collection.
 
         Args:
             content_hash (str): The content hash to check.
 
         Returns:
-            bool: True if documents with the content hash exist, False otherwise.
+            bool: True if the document exists, False otherwise.
         """
         try:
+            doc_uuid = uuid.UUID(hex=content_hash[:32])
             collection = self.get_client().collections.get(self.collection)
-            result = collection.query.fetch_objects(
-                limit=1,
-                filters=Filter.by_property("content_hash").equal(content_hash),
-            )
-            return len(result.objects) > 0
+            return collection.data.exists(doc_uuid)
+        except ValueError:
+            log_info(f"Invalid UUID format for content_hash '{content_hash}' - treating as non-existent")
+            return False
         except Exception as e:
-            logger.error(f"Error checking if content_hash {content_hash} exists: {e}")
+            logger.error(f"Error checking if content_hash '{content_hash}' exists: {e}")
             return False
 
     def name_exists(self, name: str) -> bool:
@@ -884,24 +883,4 @@ class Weaviate(VectorDb):
             return False
         except Exception as e:
             logger.error(f"Error checking if ID '{id}' exists: {e}")
-            return False
-
-    def content_hash_exists(self, content_hash: str) -> bool:
-        """Check if a document with the given content hash exists in the collection.
-
-        Args:
-            content_hash (str): The content hash to check.
-
-        Returns:
-            bool: True if the document exists, False otherwise.
-        """
-        try:
-            doc_uuid = uuid.UUID(hex=content_hash[:32])
-            collection = self.get_client().collections.get(self.collection)
-            return collection.data.exists(doc_uuid)
-        except ValueError:
-            log_info(f"Invalid UUID format for content_hash '{content_hash}' - treating as non-existent")
-            return False
-        except Exception as e:
-            logger.error(f"Error checking if content_hash '{content_hash}' exists: {e}")
             return False

@@ -27,14 +27,14 @@ from agno.db.dynamo.utils import (
     serialize_knowledge_row,
     serialize_to_dynamo_item,
 )
-from agno.db.schemas.evals import EvalRunRecord, EvalType
+from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error
 
 try:
-    import boto3
+    import boto3  # type: ignore[import-untyped]
 except ImportError:
     raise ImportError("`boto3` not installed. Please install it using `pip install boto3`")
 
@@ -173,7 +173,7 @@ class DynamoDb(BaseDb):
 
     # --- Sessions ---
 
-    def delete_session(self, session_id: Optional[str] = None):
+    def delete_session(self, session_id: Optional[str] = None, session_type: Optional[SessionType] = None) -> bool:
         """
         Delete a session from the database.
 
@@ -184,13 +184,14 @@ class DynamoDb(BaseDb):
             Exception: If any error occurs while deleting the session.
         """
         if not session_id:
-            return None
+            return False
 
         try:
             self.client.delete_item(
                 TableName=self.session_table_name,
                 Key={"session_id": {"S": session_id}},
             )
+            return True
 
         except Exception as e:
             log_error(f"Failed to delete session {session_id}: {e}")
@@ -254,28 +255,28 @@ class DynamoDb(BaseDb):
             )
 
             item = response.get("Item")
-            if item:
-                session = deserialize_from_dynamodb_item(item)
+            if not item:
+                return None
 
-                if session_type and session.get("session_type") != session_type.value:
-                    return None
-                if user_id and session.get("user_id") != user_id:
-                    return None
+            session = deserialize_from_dynamodb_item(item)
 
-                if not session:
-                    return None
+            if session_type and session.get("session_type") != session_type.value:
+                return None
+            if user_id and session.get("user_id") != user_id:
+                return None
 
-                if not deserialize:
-                    return session
+            if not session:
+                return None
 
-                if session_type == SessionType.AGENT:
-                    return AgentSession.from_dict(session)
-                elif session_type == SessionType.TEAM:
-                    return TeamSession.from_dict(session)
-                elif session_type == SessionType.WORKFLOW:
-                    return WorkflowSession.from_dict(session)
+            if not deserialize:
+                return session
 
-            return None
+            if session_type == SessionType.AGENT:
+                return AgentSession.from_dict(session)
+            elif session_type == SessionType.TEAM:
+                return TeamSession.from_dict(session)
+            else:
+                return WorkflowSession.from_dict(session)
 
         except Exception as e:
             log_error(f"Failed to get session {session_id}: {e}")
@@ -287,6 +288,8 @@ class DynamoDb(BaseDb):
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
         session_name: Optional[str] = None,
+        start_timestamp: Optional[int] = None,
+        end_timestamp: Optional[int] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
@@ -314,11 +317,9 @@ class DynamoDb(BaseDb):
                 elif session_type == SessionType.TEAM:
                     component_filter = "#team_id = :component_id"
                     expression_attribute_names["#team_id"] = "team_id"
-                elif session_type == SessionType.WORKFLOW:
+                else:
                     component_filter = "#workflow_id = :component_id"
                     expression_attribute_names["#workflow_id"] = "workflow_id"
-                else:
-                    component_filter = None
 
                 if component_filter:
                     expression_attribute_values[":component_id"] = {"S": component_id}
@@ -350,11 +351,11 @@ class DynamoDb(BaseDb):
 
             # Apply sorting
             if sort_by == "created_at":
-                query_kwargs["ScanIndexForward"] = sort_order != "desc"
+                query_kwargs["ScanIndexForward"] = sort_order != "desc"  # type: ignore
 
             # Apply limit at DynamoDB level
             if limit and not page:
-                query_kwargs["Limit"] = limit
+                query_kwargs["Limit"] = limit  # type: ignore
 
             items = []
             response = self.client.query(**query_kwargs)
@@ -460,7 +461,7 @@ class DynamoDb(BaseDb):
                 return AgentSession.from_dict(session)
             elif session_type == SessionType.TEAM:
                 return TeamSession.from_dict(session)
-            elif session_type == SessionType.WORKFLOW:
+            else:
                 return WorkflowSession.from_dict(session)
 
         except Exception as e:
@@ -1319,13 +1320,13 @@ class DynamoDb(BaseDb):
         for key, value in data.items():
             if value is not None:
                 if isinstance(value, bool):
-                    item[key] = {"BOOL": value}
+                    item[key] = {"BOOL": str(value)}
                 elif isinstance(value, (int, float)):
                     item[key] = {"N": str(value)}
                 elif isinstance(value, str):
-                    item[key] = {"S": value}
+                    item[key] = {"S": str(value)}
                 elif isinstance(value, (dict, list)):
-                    item[key] = {"S": json.dumps(value)}
+                    item[key] = {"S": json.dumps(str(value))}
                 else:
                     item[key] = {"S": str(value)}
         return item
@@ -1616,6 +1617,7 @@ class DynamoDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
+        filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
@@ -1641,6 +1643,22 @@ class DynamoDb(BaseDb):
             if model_id:
                 filter_expressions.append("model_id = :model_id")
                 expression_values[":model_id"] = {"S": model_id}
+
+            if eval_type is not None and len(eval_type) > 0:
+                eval_type_conditions = []
+                for i, et in enumerate(eval_type):
+                    param_name = f":eval_type_{i}"
+                    eval_type_conditions.append(f"eval_type = {param_name}")
+                    expression_values[param_name] = {"S": str(et.value)}
+                filter_expressions.append(f"({' OR '.join(eval_type_conditions)})")
+
+            if filter_type is not None:
+                if filter_type == EvalFilterType.AGENT:
+                    filter_expressions.append("agent_id IS NOT NULL")
+                elif filter_type == EvalFilterType.TEAM:
+                    filter_expressions.append("team_id IS NOT NULL")
+                elif filter_type == EvalFilterType.WORKFLOW:
+                    filter_expressions.append("workflow_id IS NOT NULL")
 
             if filter_expressions:
                 scan_kwargs["FilterExpression"] = " AND ".join(filter_expressions)
@@ -1685,7 +1703,9 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to get eval runs: {e}")
             return [] if deserialize else ([], 0)
 
-    def rename_eval_run(self, eval_run_id: str, name: str) -> Optional[Dict[str, Any]]:
+    def rename_eval_run(
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         if not self.eval_table_name:
             return None
 
@@ -1703,12 +1723,13 @@ class DynamoDb(BaseDb):
             )
 
             item = response.get("Attributes")
+            if item is None:
+                return None
 
             log_debug(f"Renamed eval run with id '{eval_run_id}' to '{name}'")
 
-            if item:
-                return deserialize_from_dynamodb_item(item)
-            return None
+            item = deserialize_from_dynamodb_item(item)
+            return EvalRunRecord.model_validate(item) if deserialize else item
 
         except Exception as e:
             log_error(f"Failed to rename eval run {eval_run_id}: {e}")

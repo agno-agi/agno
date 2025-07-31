@@ -27,7 +27,11 @@ agent = Agent(knowledge=knowledge)
 
 if __name__ == "__main__":
     # Comment out after first run
-    asyncio.run(knowledge.async_add_content(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"))
+    asyncio.run(
+        knowledge.async_add_content(
+            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+        )
+    )
 
     # Create and use the agent
     asyncio.run(agent.aprint_response("How to make Tom Kha Gai", markdown=True))

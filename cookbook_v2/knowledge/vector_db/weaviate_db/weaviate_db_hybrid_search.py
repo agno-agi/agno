@@ -25,6 +25,7 @@ knowledge_base.add_content(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
 )
 
+
 def weaviate_agent(user: str = "user"):
     agent = Agent(
         user_id=user,

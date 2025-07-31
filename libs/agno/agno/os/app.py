@@ -2,7 +2,7 @@ from os import getenv
 from typing import Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from rich import box
 from rich.panel import Panel
@@ -145,10 +145,13 @@ class AgentOS:
             if entity.knowledge:
                 if not entity.knowledge.contents_db:
                     log_warning("Knowledge contents_db is required to use knowledge inside AgentOS.")
-                    return
+                    return []
+
                 db = entity.knowledge.contents_db
-                if _add_unique_component("knowledge", f"{db.knowledge_table_name}"):
-                    discovered_apps.append(KnowledgeApp(knowledge=agent.knowledge))
+                if _add_unique_component("knowledge", f"{db.knowledge_table_name}") and entity.knowledge:
+                    discovered_apps.append(KnowledgeApp(knowledge=entity.knowledge))
+
+            return discovered_apps
 
         # Process agents
         if self.agents:

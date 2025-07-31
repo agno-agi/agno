@@ -3,7 +3,7 @@
 from agno.agent import Agent
 from agno.db.agent.sqlite import SqliteAgentStorage
 from agno.knowledge.embedder.ollama import OllamaEmbedder
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.models.ollama import Ollama
 from agno.vectordb.lancedb import LanceDb
 
@@ -23,15 +23,14 @@ vector_db = LanceDb(
     embedder=embedder,  # Without using this, it will use OpenAIChat embeddings by default
 )
 
-# Create a knowledge base from a PDF URL using LanceDb for vector storage and OllamaEmbedder for embedding
-knowledge_base = PDFUrlKnowledgeBase(
-    urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
+knowledge = Knowledge(
     vector_db=vector_db,
 )
 
-# Load the knowledge base without recreating it if it already exists in Vector LanceDB
-knowledge_base.load(recreate=False)
-# agent.knowledge_base.load(recreate=False) # You can also use this to load a knowledge base after creating agent
+knowledge.add_content(
+    name="Recipes", url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+)
+
 
 # Set up SQL storage for the agent's data
 storage = SqliteAgentStorage(table_name="recipes", db_file="data.db")
@@ -42,7 +41,7 @@ agent = Agent(
     session_id="session_id",  # use any unique identifier to identify the run
     user_id="user",  # user identifier to identify the user
     model=model,
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     storage=storage,
     show_tool_calls=True,
     debug_mode=True,  # Enable debug mode for additional information

@@ -283,10 +283,10 @@ class RedisDb(BaseDb):
     def get_session(
         self,
         session_id: str,
+        session_type: SessionType,
         user_id: Optional[str] = None,
-        session_type: Optional[SessionType] = None,
         deserialize: Optional[bool] = True,
-    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Read a session from Redis.
 
         Args:
@@ -320,6 +320,8 @@ class RedisDb(BaseDb):
                 return TeamSession.from_dict(session)
             elif session_type == SessionType.WORKFLOW.value:
                 return WorkflowSession.from_dict(session)
+            else:
+                raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_error(f"Exception reading session: {e}")
@@ -358,7 +360,7 @@ class RedisDb(BaseDb):
         try:
             all_sessions = self._get_all_records("sessions")
 
-            conditions = {}
+            conditions: Dict[str, Any] = {}
             if session_type is not None:
                 conditions["session_type"] = session_type
             if user_id is not None:
@@ -448,6 +450,8 @@ class RedisDb(BaseDb):
                 return TeamSession.from_dict(session)
             elif session_type == SessionType.WORKFLOW:
                 return WorkflowSession.from_dict(session)
+            else:
+                raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_error(f"Error renaming session: {e}")
@@ -540,7 +544,7 @@ class RedisDb(BaseDb):
 
                 return TeamSession.from_dict(data)
 
-            elif isinstance(session, WorkflowSession):
+            else:
                 data = {
                     "session_id": session_dict.get("session_id"),
                     "session_type": SessionType.WORKFLOW.value,
@@ -582,7 +586,7 @@ class RedisDb(BaseDb):
 
     # -- Memory methods --
 
-    def delete_user_memory(self, memory_id: str) -> bool:
+    def delete_user_memory(self, memory_id: str):
         """Delete a user memory from Redis.
 
         Args:
@@ -599,14 +603,11 @@ class RedisDb(BaseDb):
                 "memories", memory_id, index_fields=["user_id", "agent_id", "team_id", "workflow_id"]
             ):
                 log_debug(f"Successfully deleted user memory id: {memory_id}")
-                return True
             else:
                 log_debug(f"No user memory found with id: {memory_id}")
-                return False
 
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
-            return False
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
         """Delete user memories from Redis.
@@ -1263,8 +1264,8 @@ class RedisDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        eval_type: Optional[List[EvalType]] = None,
         filter_type: Optional[EvalFilterType] = None,
+        eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from Redis.
@@ -1329,7 +1330,9 @@ class RedisDb(BaseDb):
             log_error(f"Exception getting eval runs: {e}")
             return []
 
-    def rename_eval_run(self, eval_run_id: str, name: str) -> Optional[Dict[str, Any]]:
+    def rename_eval_run(
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Update the name of an eval run in Redis.
 
         Args:
@@ -1351,10 +1354,15 @@ class RedisDb(BaseDb):
             eval_run_data["updated_at"] = int(time.time())
 
             success = self._store_record("evals", eval_run_id, eval_run_data)
+            if not success:
+                return None
 
             log_debug(f"Renamed eval run with id '{eval_run_id}' to '{name}'")
 
-            return eval_run_data if success else None
+            if not deserialize:
+                return eval_run_data
+
+            return EvalRunRecord.model_validate(eval_run_data)
 
         except Exception as e:
             log_error(f"Error updating eval run name {eval_run_id}: {e}")

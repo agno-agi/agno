@@ -19,10 +19,10 @@ class KnowledgeApp(BaseApp):
     router: APIRouter
 
     def __init__(self, knowledge: Knowledge, name: Optional[str] = None):
-        self.name = name
+        self.name = name or "Knowledge App"
         self.knowledge = knowledge
 
-    def get_router(self, index: int, settings: AgnoAPISettings = AgnoAPISettings()) -> APIRouter:
+    def get_router(self, index: int, settings: AgnoAPISettings = AgnoAPISettings(), **kwargs) -> APIRouter:
         if not self.name:
             self.name = f"Knowledge App {index}"
 

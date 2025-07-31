@@ -20,6 +20,7 @@ class EvalRunInput(BaseModel):
     eval_type: EvalType
     input: str
     additional_guidelines: Optional[str] = None
+    additional_context: Optional[str] = None
     num_iterations: Optional[int] = 1
     name: Optional[str] = None
 

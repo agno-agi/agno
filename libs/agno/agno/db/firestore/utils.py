@@ -10,8 +10,8 @@ from agno.db.firestore.schemas import get_collection_indexes
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
-    from google.cloud.firestore import Client
-    from google.cloud.firestore_admin_v1 import FirestoreAdminClient, Index
+    from google.cloud.firestore import Client  # type: ignore[import-untyped]
+    from google.cloud.firestore_admin_v1 import FirestoreAdminClient, Index  # type: ignore[import-untyped]
 except ImportError:
     raise ImportError(
         "`google-cloud-firestore` not installed. Please install it using `pip install google-cloud-firestore`"
@@ -147,7 +147,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
         "cache_write_tokens": 0,
         "reasoning_tokens": 0,
     }
-    model_counts = {}
+    model_counts: Dict[str, int] = {}
 
     session_types = [
         ("agent", "agent_sessions_count", "agent_runs_count"),
@@ -211,7 +211,7 @@ def fetch_all_sessions_data(
     if not dates_to_process:
         return None
 
-    all_sessions_data = {
+    all_sessions_data: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
         date_to_process.isoformat(): {"agent": [], "team": [], "workflow": []} for date_to_process in dates_to_process
     }
 

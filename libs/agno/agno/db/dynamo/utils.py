@@ -31,7 +31,7 @@ def serialize_to_dynamo_item(data: Dict[str, Any]) -> Dict[str, Any]:
             elif isinstance(value, str):
                 item[key] = {"S": value}
             elif isinstance(value, bool):
-                item[key] = {"BOOL": value}
+                item[key] = {"BOOL": str(value)}
             elif isinstance(value, (dict, list)):
                 item[key] = {"S": json.dumps(value)}
             else:
@@ -327,7 +327,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
         "cache_write_tokens": 0,
         "reasoning_tokens": 0,
     }
-    model_counts = {}
+    model_counts: Dict[str, int] = {}
     session_types = [
         ("agent", "agent_sessions_count", "agent_runs_count"),
         ("team", "team_sessions_count", "team_runs_count"),
@@ -405,7 +405,7 @@ def fetch_all_sessions_data(
     """
     if not dates_to_process:
         return None
-    all_sessions_data = {
+    all_sessions_data: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
         date_to_process.isoformat(): {"agent": [], "team": [], "workflow": []} for date_to_process in dates_to_process
     }
     for session in sessions:
@@ -495,7 +495,7 @@ def bulk_upsert_metrics(dynamodb_client, table_name: str, metrics_data: List[Dic
         for i in range(0, len(metrics_data), batch_size):
             batch = metrics_data[i : i + batch_size]
 
-            request_items = {table_name: []}
+            request_items: Dict[str, List[Dict[str, Any]]] = {table_name: []}
 
             for metric in batch:
                 request_items[table_name].append({"PutRequest": {"Item": metric}})
@@ -599,11 +599,11 @@ def execute_query_with_pagination(
 
     # Apply sorting at query level if sorting by created_at
     if sort_by == "created_at":
-        query_kwargs["ScanIndexForward"] = sort_order != "desc"
+        query_kwargs["ScanIndexForward"] = sort_order != "desc"  # type: ignore
 
     # Apply limit at DynamoDB level if no pagination
     if limit and not page:
-        query_kwargs["Limit"] = limit
+        query_kwargs["Limit"] = limit  # type: ignore
 
     items = []
     response = dynamodb_client.query(**query_kwargs)

@@ -5,7 +5,7 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteStorage
-from agno.knowledge.url import UrlKnowledge
+from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.playground import Playground
 from agno.team import Team
@@ -160,8 +160,7 @@ thinking_tool_agent = Agent(
 )
 
 
-agno_docs = UrlKnowledge(
-    urls=["https://www.paulgraham.com/read.html"],
+agno_docs = Knowledge(
     # Use LanceDB as the vector database and store embeddings in the `agno_docs` table
     vector_db=LanceDb(
         uri="tmp/lancedb",
@@ -169,6 +168,8 @@ agno_docs = UrlKnowledge(
         search_type=SearchType.hybrid,
     ),
 )
+
+agno_docs.add_content(name="Agno Docs", url="https://www.paulgraham.com/read.html")
 
 knowledge_tools = KnowledgeTools(
     knowledge=agno_docs,

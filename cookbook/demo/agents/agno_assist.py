@@ -4,7 +4,7 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.db.agent.postgres import PostgresAgentStorage
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.url import UrlKnowledge
+from agno.knowledge.knowledge import Knowledge
 from agno.memory.db.postgres import PostgresMemoryDb
 from agno.memory.memory import Memory
 from agno.models.openai import OpenAIChat
@@ -96,6 +96,17 @@ instructions = dedent("""\
     - Best practices and common patterns""")
 # *******************************
 
+knowledge = Knowledge(
+    vector_db=PgVector(
+        db_url=db_url,
+        table_name="agno_assist_knowledge",
+        search_type=SearchType.hybrid,
+        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
+    ),
+)
+
+knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt")
+
 # Create the agent
 agno_assist = Agent(
     name="Agno Assist",
@@ -110,15 +121,7 @@ agno_assist = Agent(
         clear_memories=True,
     ),
     enable_agentic_memory=True,
-    knowledge=UrlKnowledge(
-        urls=["https://docs.agno.com/llms-full.txt"],
-        vector_db=PgVector(
-            db_url=db_url,
-            table_name="agno_assist_knowledge",
-            search_type=SearchType.hybrid,
-            embedder=OpenAIEmbedder(id="text-embedding-3-small"),
-        ),
-    ),
+    knowledge=knowledge,
     search_knowledge=True,
     storage=PostgresAgentStorage(
         db_url=db_url,

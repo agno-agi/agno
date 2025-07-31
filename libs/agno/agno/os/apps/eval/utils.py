@@ -30,6 +30,7 @@ async def run_accuracy_eval(
         input=eval_run_input.input,
         expected_output=eval_run_input.expected_output,
         additional_guidelines=eval_run_input.additional_guidelines,
+        additional_context=eval_run_input.additional_context,
         num_iterations=eval_run_input.num_iterations or 1,
         name=eval_run_input.name,
     )
