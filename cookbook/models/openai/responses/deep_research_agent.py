@@ -15,7 +15,6 @@ agent = Agent(
         - instructions (str): The research topic/question
         - output_schema (dict, optional): A JSON schema for structured output
     """),
-    show_tool_calls=True,
 )
 
 agent.print_response(
