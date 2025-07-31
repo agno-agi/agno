@@ -114,6 +114,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         content_id: str = Path(..., description="Content ID"),
         update_data: ContentUpdateSchema = Body(..., description="Content update data"),
     ) -> Optional[ContentResponseSchema]:
+        print("UPDATE DATA", update_data)
         content = Content(
             id=content_id,
             name=update_data.name,
