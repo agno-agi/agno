@@ -823,8 +823,6 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.agent_id == agent_id)
                 if team_id is not None:
                     stmt = stmt.where(table.c.team_id == team_id)
-                if workflow_id is not None:
-                    stmt = stmt.where(table.c.workflow_id == workflow_id)
                 if topics is not None:
                     topic_conditions = [text(f"topics::text LIKE '%\"{topic}\"%'") for topic in topics]
                     stmt = stmt.where(and_(*topic_conditions))
