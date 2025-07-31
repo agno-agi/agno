@@ -105,7 +105,6 @@ class PostgresDb(BaseDb):
             Table: SQLAlchemy Table object
         """
         try:
-            # TODO: ???
             table_schema = get_table_schema_definition(table_type).copy()
 
             columns, indexes, unique_constraints = [], [], []
