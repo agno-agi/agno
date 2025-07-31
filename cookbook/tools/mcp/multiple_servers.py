@@ -7,6 +7,7 @@ Prerequisites:
 """
 
 import asyncio
+from os import getenv
 
 from agno.agent import Agent
 from agno.tools.mcp import MultiMCPTools
@@ -17,8 +18,11 @@ async def run_agent(message: str) -> None:
     mcp_tools = MultiMCPTools(
         [
             "npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt",
-            "npx -y @timlukahorstmann/mcp-weather",
+            "npx -y @modelcontextprotocol/server-brave-search",
         ],
+        env={
+            "BRAVE_API_KEY": getenv("BRAVE_API_KEY"),
+        },
         timeout_seconds=30,
     )
 
@@ -40,4 +44,4 @@ async def run_agent(message: str) -> None:
 # Example usage
 if __name__ == "__main__":
     asyncio.run(run_agent("What listings are available in Barcelona tonight?"))
-    asyncio.run(run_agent("Will it be sunny in Barcelona tomorrow?"))
+    asyncio.run(run_agent("What's the fastest way to get to Barcelona from London?"))

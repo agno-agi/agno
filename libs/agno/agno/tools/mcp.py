@@ -441,8 +441,15 @@ class MultiMCPTools(Toolkit):
         # Setup cleanup logic before the instance is garbage collected
         self._cleanup_finalizer = weakref.finalize(self, cleanup)
 
+    async def connect(self):
+        """Initialize a MultiMCPTools instance and connect to the MCP servers"""
+        if self._initialized:
+            return
+
+        await self._connect()
+
     @classmethod
-    async def connect(
+    async def create_and_connect(
         cls,
         commands: Optional[List[str]] = None,
         urls: Optional[List[str]] = None,
