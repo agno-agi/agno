@@ -307,9 +307,6 @@ class PgVector(VectorDb):
                                 cleaned_content = self._clean_content(doc.content)
                                 record_id = doc.id or content_hash
 
-                                content_hash = safe_content_hash(doc.content)
-                                _id = doc.id or content_hash
-
                                 meta_data = doc.meta_data or {}
                                 if filters:
                                     meta_data.update(filters)
@@ -404,10 +401,7 @@ class PgVector(VectorDb):
                             try:
                                 doc.embed(embedder=self.embedder)
                                 cleaned_content = self._clean_content(doc.content)
-
                                 record_id = md5(cleaned_content.encode()).hexdigest()
-
-                                content_hash = safe_content_hash(doc.content)
 
                                 meta_data = doc.meta_data or {}
                                 if filters:
