@@ -33,6 +33,7 @@ server_params = StdioServerParameters(
 )
 
 
+# This is required to start the MCP connection correctly in the FastAPI lifecycle
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage MCP connection lifecycle inside a FastAPI app"""
