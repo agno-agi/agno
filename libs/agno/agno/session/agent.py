@@ -66,6 +66,9 @@ class AgentSession:
         if summary is not None and isinstance(summary, dict):
             summary = SessionSummary.from_dict(summary)
 
+        # TODO: remove after extra_data is renamed to metadata everywhere
+        extra_data = data.get("extra_data", data.get("metadata"))
+
         return cls(
             session_id=data.get("session_id"),  # type: ignore
             agent_id=data.get("agent_id"),
@@ -75,7 +78,7 @@ class AgentSession:
             team_id=data.get("team_id"),
             agent_data=data.get("agent_data"),
             session_data=data.get("session_data"),
-            extra_data=data.get("extra_data"),
+            extra_data=extra_data,
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
             runs=runs,
