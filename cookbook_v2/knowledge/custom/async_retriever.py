@@ -70,7 +70,6 @@ async def amain():
         retriever=retriever,
         search_knowledge=True,
         instructions="Search the knowledge base for information",
-        show_tool_calls=True,
     )
 
     # Example query

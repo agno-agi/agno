@@ -16,6 +16,5 @@ knowledge_base.load(recreate=True)  # Comment out after first run
 agent = Agent(
     model=v0(id="v0-1.0-md"),
     knowledge=knowledge_base,
-    show_tool_calls=True,
 )
 agent.print_response("How to make Thai curry?", markdown=True)

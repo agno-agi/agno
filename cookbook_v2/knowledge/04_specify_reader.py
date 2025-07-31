@@ -24,6 +24,6 @@ knowledge.add_content(
     reader=PDFReader(),
 )
 
-agent = Agent(knowledge=knowledge, show_tool_calls=True)
+agent = Agent(knowledge=knowledge)
 
 agent.print_response("What can you tell me about my documents?", markdown=True)

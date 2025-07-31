@@ -43,7 +43,6 @@ agent = Agent(
     model=model,
     knowledge=knowledge,
     storage=storage,
-    show_tool_calls=True,
     debug_mode=True,  # Enable debug mode for additional information
 )
 

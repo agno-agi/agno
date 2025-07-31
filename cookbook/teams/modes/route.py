@@ -64,7 +64,6 @@ multi_language_team = Team(
         german_agent,
         chinese_agent,
     ],
-    show_tool_calls=True,
     markdown=True,
     instructions=[
         "You are a language router that directs questions to the appropriate language agent.",
