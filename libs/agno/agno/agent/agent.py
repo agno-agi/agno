@@ -113,7 +113,7 @@ class Agent:
     session_name: Optional[str] = None
     # Session state (stored in the database to persist across runs)
     session_state: Optional[Dict[str, Any]] = None
-    search_previous_sessions_history: Optional[bool] = False
+    search_session_history: Optional[bool] = False
     num_history_sessions: Optional[int] = None
     # If True, the agent creates/updates session summaries at the end of runs
     enable_session_summaries: bool = False
@@ -213,7 +213,7 @@ class Agent:
     system_message: Optional[Union[str, Callable, Message]] = None
     # Role for the system message
     system_message_role: str = "system"
-    # Set to False to skip context building```
+    # Set to False to skip context building
     process_context: bool = True
 
     # --- Settings for building the default system message ---
@@ -337,7 +337,7 @@ class Agent:
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
-        search_previous_sessions_history: Optional[bool] = False,
+        search_session_history: Optional[bool] = False,
         num_history_sessions: Optional[int] = None,
         cache_session: bool = True,
         context: Optional[Dict[str, Any]] = None,
@@ -419,7 +419,7 @@ class Agent:
         self.session_id = session_id
         self.session_name = session_name
         self.session_state = session_state
-        self.search_previous_sessions_history = search_previous_sessions_history
+        self.search_session_history = search_session_history
         self.num_history_sessions = num_history_sessions
 
         self.cache_session = cache_session
@@ -3345,7 +3345,7 @@ class Agent:
         if self.read_tool_call_history:
             agent_tools.append(self.get_tool_call_history_function(session_id=session_id))
             self._rebuild_tools = True
-        if self.search_previous_sessions_history:
+        if self.search_session_history:
             agent_tools.append(
                 self.get_previous_sessions_messages_function(num_history_sessions=self.num_history_sessions)
             )
@@ -4916,7 +4916,7 @@ class Agent:
 
         if autogenerate:
             # -*- Generate name for session
-            session_name = self.generate_session_name(session_id=session_id)
+            session_name = self._generate_session_name(session_id=session_id)
             log_debug(f"Generated Session Name: {session_name}")
         elif session_name is None:
             raise Exception("Session Name is not set")
@@ -4929,7 +4929,7 @@ class Agent:
         # -*- Save to storage
         self.save_session(user_id=self.user_id, session_id=session_id)  # type: ignore
 
-    def generate_session_name(self, session_id: str) -> str:
+    def _generate_session_name(self, session_id: str) -> str:
         """Generate a name for the session using the first 6 messages from the memory"""
 
         if self.model is None:
@@ -4958,10 +4958,10 @@ class Agent:
         content = generated_name.content
         if content is None:
             log_error("Generated name is None. Trying again.")
-            return self.generate_session_name(session_id=session_id)
+            return self._generate_session_name(session_id=session_id)
         if len(content.split()) > 15:
             log_error("Generated name is too long. Trying again.")
-            return self.generate_session_name(session_id=session_id)
+            return self._generate_session_name(session_id=session_id)
         return content.replace('"', "").strip()
 
     def delete_session(self, session_id: str):
