@@ -210,7 +210,7 @@ class Agent:
     system_message: Optional[Union[str, Callable, Message]] = None
     # Role for the system message
     system_message_role: str = "system"
-    # If True, create a default system message using agent settings and use that
+    # Set to False to skip context building```
     process_context: bool = True
 
     # --- Settings for building the default system message ---
