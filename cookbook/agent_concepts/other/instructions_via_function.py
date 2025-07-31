@@ -15,6 +15,6 @@ agent = Agent(
     name="AgentX",
     instructions=get_instructions,
     markdown=True,
-    show_tool_calls=True,
+    
 )
 agent.print_response("Who are you?", stream=True)

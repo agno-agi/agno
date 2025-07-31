@@ -94,7 +94,7 @@ calculator_agent = Agent(
             square_root=True,
         )
     ],
-    show_tool_calls=True,
+    
     markdown=True,
 )
 
@@ -110,7 +110,7 @@ calculator_writer_team = Team(
         "You need to coordinate the work between the two agents and give the final response to the user.",
         "You need to give the final response to the user in the requested format and style.",
     ],
-    show_tool_calls=True,
+    
     markdown=True,
     show_members_responses=True,
 )
@@ -121,7 +121,7 @@ reasoning_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     reasoning_model=DeepSeek(id="deepseek-reasoner"),
     instructions=["You are a reasoning agent that can reason about math."],
-    show_tool_calls=True,
+    
     markdown=True,
     debug_mode=True,
 )
@@ -132,7 +132,7 @@ code_execution_agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[E2BTools()],
     markdown=True,
-    show_tool_calls=True,
+    
     instructions=[
         "You are an expert at writing and validating Python code using a secure E2B sandbox environment.",
         "Your primary purpose is to:",
@@ -164,7 +164,7 @@ agent_team = Team(
         "if you are asked about a file, use the file analysis agent to analyze the file.",
         "You can also answer directly, you don't HAVE to forward the question to a member agent.",
     ],
-    show_tool_calls=True,
+    
     markdown=True,
     show_members_responses=True,
 )

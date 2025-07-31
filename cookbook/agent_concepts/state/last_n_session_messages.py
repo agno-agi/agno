@@ -15,7 +15,7 @@ agent = Agent(
     num_history_runs=3,
     search_previous_sessions_history=True,  # allow searching previous sessions
     num_history_sessions=2,  # only include the last 2 sessions in the search to avoid context length issues
-    show_tool_calls=True,
+    
 )
 
 session_1_id = "session_1_id"

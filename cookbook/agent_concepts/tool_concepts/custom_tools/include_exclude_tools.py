@@ -51,7 +51,7 @@ class CustomerDBTools(Toolkit):
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[CustomerDBTools(include_tools=["retrieve_customer_profile"])],
-    show_tool_calls=True,
+    
 )
 
 asyncio.run(

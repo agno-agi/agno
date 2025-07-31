@@ -63,7 +63,7 @@ agent = Agent(
         Transform every image into a compelling news story that informs and inspires!\
     """),
     tools=[DuckDuckGoTools()],
-    show_tool_calls=True,
+    
     markdown=True,
 )
 

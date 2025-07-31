@@ -51,7 +51,7 @@ agent = Agent(
 
         Starting state (count) is: {count}\
     """),
-    show_tool_calls=True,
+    
     add_state_in_messages=True,
     markdown=True,
 )

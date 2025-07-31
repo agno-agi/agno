@@ -41,7 +41,7 @@ web_agent = Agent(
         - End with a brief analysis of the overall narrative
         - Pay special attention to regulatory news, earnings reports, and strategic announcements\
     """),
-    show_tool_calls=True,
+    
     markdown=True,
 )
 
@@ -71,7 +71,7 @@ finance_agent = Agent(
         - Compare current values with historical averages
         - End with a data-driven financial outlook\
     """),
-    show_tool_calls=True,
+    
     markdown=True,
 )
 
@@ -104,7 +104,7 @@ agent_team = Team(
         - Sign off with 'Market Watch Team' and the current date\
     """),
     add_datetime_to_instructions=True,
-    show_tool_calls=True,
+    
     markdown=True,
     enable_agentic_context=True,
     show_members_responses=False,

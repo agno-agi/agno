@@ -83,7 +83,7 @@ recipe_agent = Agent(
         - Suggest side dish pairings"""),
     markdown=True,
     add_datetime_to_instructions=True,
-    show_tool_calls=True,
+    
 )
 
 # Example usage with different types of recipe queries

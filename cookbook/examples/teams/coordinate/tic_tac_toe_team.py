@@ -46,7 +46,7 @@ agent_team = Team(
     ],
     enable_agentic_context=True,
     share_member_interactions=True,
-    show_tool_calls=True,
+    
     debug_mode=True,
     markdown=True,
     show_members_responses=True,

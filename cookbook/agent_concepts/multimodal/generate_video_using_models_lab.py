@@ -12,7 +12,7 @@ video_agent = Agent(
         "Politely and courteously let the user know that the video has been generated and will be displayed below as soon as its ready.",
     ],
     markdown=True,
-    show_tool_calls=True,
+    
 )
 
 video_agent.print_response("Generate a video of a cat playing with a ball")

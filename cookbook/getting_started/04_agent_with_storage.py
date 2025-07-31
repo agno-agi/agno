@@ -107,7 +107,7 @@ def recipe_agent(user: str = "user"):
         knowledge=agent_knowledge,
         tools=[DuckDuckGoTools()],
         # Show tool calls in the response
-        show_tool_calls=True,
+        
         # To provide the agent with the chat history
         # We can either:
         # 1. Provide the agent with a tool to read the chat history

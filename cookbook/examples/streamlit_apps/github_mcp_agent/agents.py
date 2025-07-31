@@ -36,7 +36,7 @@ async def run_github_agent(message):
                         - Include links to relevant GitHub pages when helpful
                     """),
                     markdown=True,
-                    show_tool_calls=True,
+                    
                 )
 
                 # Run agent

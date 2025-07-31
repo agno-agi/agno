@@ -152,7 +152,7 @@ async def run_team():
             ],
             tools=[ReasoningTools(add_instructions=True)],
             response_model=TravelPlan,
-            show_tool_calls=True,
+            
             markdown=True,
             debug_mode=True,
             show_members_responses=True,

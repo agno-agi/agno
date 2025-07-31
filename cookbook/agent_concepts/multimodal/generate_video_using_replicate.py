@@ -19,7 +19,7 @@ video_agent = Agent(
         "Don't convert video URL to markdown or anything else.",
     ],
     markdown=True,
-    show_tool_calls=True,
+    
 )
 
 video_agent.print_response("Generate a video of a horse in the dessert.")

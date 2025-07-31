@@ -15,7 +15,7 @@ agent = Agent(
         )
     ],
     instructions=["Use tables where possible"],
-    show_tool_calls=True,
+    
     markdown=True,
 )
 

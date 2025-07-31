@@ -53,7 +53,7 @@ multi_language_team = Team(
         "For unsupported languages like Italian, respond in English with the above message.",
     ],
     markdown=True,
-    show_tool_calls=True,
+    
     show_members_responses=True,
 )
 

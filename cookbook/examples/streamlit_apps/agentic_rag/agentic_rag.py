@@ -123,7 +123,7 @@ def get_agentic_rag_agent(
         tools=[DuckDuckGoTools()],
         markdown=True,  # This setting tellss the model to format messages in markdown
         # add_chat_history_to_messages=True,
-        show_tool_calls=True,
+        
         add_history_to_messages=True,  # Adds chat history to messages
         add_datetime_to_instructions=True,
         debug_mode=debug_mode,

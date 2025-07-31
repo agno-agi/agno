@@ -41,7 +41,7 @@ agent = Agent(
     instructions=agent_instructions,
     model=OpenAIChat(id="gpt-4o"),
     tools=[CartesiaTools(voice_localize_enabled=True)],
-    show_tool_calls=True,
+    
 )
 
 agent.print_response(

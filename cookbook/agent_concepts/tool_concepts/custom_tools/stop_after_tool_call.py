@@ -13,6 +13,6 @@ def get_answer_to_life_universe_and_everything() -> str:
 agent = Agent(
     tools=[get_answer_to_life_universe_and_everything],
     markdown=True,
-    show_tool_calls=True,
+    
 )
 agent.print_response("What is the answer to life, the universe and everything?")
