@@ -17,7 +17,6 @@ knowledge_base = PDFUrlKnowledgeBase(
 agent = Agent(
     model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
     knowledge=knowledge_base,
-    show_tool_calls=True,
 )
 
 if __name__ == "__main__":
