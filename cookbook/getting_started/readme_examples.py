@@ -3,7 +3,7 @@ Run `pip install openai duckduckgo-search yfinance lancedb tantivy pypdf agno` t
 
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -32,30 +32,32 @@ level_1_agent.print_response(
 )
 
 # Level 2: Agents with knowledge, combining memory and reasoning.
+knowledge = Knowledge(
+    vector_db=LanceDb(
+        uri="tmp/lancedb",
+        table_name="recipes",
+        search_type=SearchType.hybrid,
+        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
+    ),
+)
+# Add content to the knowledge
+knowledge.add_content(
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+)
+
 level_2_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     description="You are a Thai cuisine expert!",
     instructions=[
-        "Search your knowledge base for Thai recipes.",
+        "Search your knowledge for Thai recipes.",
         "If the question is better suited for the web, search the web to fill in gaps.",
-        "Prefer the information in your knowledge base over the web results.",
+        "Prefer the information in your knowledge over the web results.",
     ],
-    knowledge=PDFUrlKnowledgeBase(
-        urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
-        vector_db=LanceDb(
-            uri="tmp/lancedb",
-            table_name="recipes",
-            search_type=SearchType.hybrid,
-            embedder=OpenAIEmbedder(id="text-embedding-3-small"),
-        ),
-    ),
+    knowledge=knowledge,
     tools=[DuckDuckGoTools()],
     markdown=True,
 )
 
-# Comment out after first run
-# if level_2_agent.knowledge is not None:
-#     level_2_agent.knowledge.load()
 level_2_agent.print_response(
     "How do I make chicken and galangal in coconut milk soup", stream=True
 )

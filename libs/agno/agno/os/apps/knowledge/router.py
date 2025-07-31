@@ -216,14 +216,13 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
     def get_content_status(content_id: str) -> ContentStatusResponse:
         log_info(f"Getting content status: {content_id}")
         status, status_message = knowledge.get_content_status(content_id=content_id)
-        
+
         # Handle the case where content is not found
         if status is None:
             return ContentStatusResponse(
-                status=ContentStatus.FAILED, 
-                status_message=status_message or "Content not found"
+                status=ContentStatus.FAILED, status_message=status_message or "Content not found"
             )
-        
+
         # Convert string status to ContentStatus enum if needed (for backward compatibility and mocks)
         if isinstance(status, str):
             try:
@@ -236,11 +235,8 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
                     status = ContentStatus.COMPLETED
                 else:
                     status = ContentStatus.PROCESSING
-            
-        return ContentStatusResponse(
-            status=status,
-            status_message=status_message or ""
-        )
+
+        return ContentStatusResponse(status=status, status_message=status_message or "")
 
     @router.get("/config", status_code=200)
     def get_config() -> ConfigResponseSchema:

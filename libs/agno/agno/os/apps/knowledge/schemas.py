@@ -74,6 +74,7 @@ class ContentResponseSchema(BaseModel):
 
 class ContentUpdateSchema(BaseModel):
     """Schema for updating content."""
+
     name: Optional[str] = Field(None, description="Content name", min_length=1, max_length=255)
     description: Optional[str] = Field(None, description="Content description", max_length=1000)
     metadata: Optional[Dict[str, Any]] = Field(None, description="Content metadata as key-value pairs")

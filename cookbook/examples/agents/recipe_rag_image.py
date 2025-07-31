@@ -9,14 +9,13 @@ from pathlib import Path
 
 from agno.agent import Agent
 from agno.knowledge.embedder.cohere import CohereEmbedder
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.models.groq import Groq
 from agno.tools.openai import OpenAITools
 from agno.utils.media import download_image
 from agno.vectordb.pgvector import PgVector
 
-knowledge_base = PDFUrlKnowledgeBase(
-    urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
+knowledge = Knowledge(
     vector_db=PgVector(
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
         table_name="embed_vision_documents",
@@ -26,13 +25,15 @@ knowledge_base = PDFUrlKnowledgeBase(
     ),
 )
 
-knowledge_base.load()
+knowledge.add_content(
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+)
 
 agent = Agent(
     name="EmbedVisionRAGAgent",
     model=Groq(id="meta-llama/llama-4-scout-17b-16e-instruct"),
     tools=[OpenAITools()],
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     instructions=[
         "You are a specialized recipe assistant.",
         "When asked for a recipe:",

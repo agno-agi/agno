@@ -1,7 +1,7 @@
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.knowledge.url import UrlKnowledge
+from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
@@ -11,8 +11,7 @@ from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 
-agno_docs = UrlKnowledge(
-    urls=["https://www.paulgraham.com/read.html"],
+agno_docs = Knowledge(
     # Use LanceDB as the vector database and store embeddings in the `agno_docs` table
     vector_db=LanceDb(
         uri="tmp/lancedb",
@@ -20,6 +19,8 @@ agno_docs = UrlKnowledge(
         search_type=SearchType.hybrid,
     ),
 )
+# Add content to the knowledge
+agno_docs.add_content(url="https://www.paulgraham.com/read.html")
 
 knowledge_tools = KnowledgeTools(
     knowledge=agno_docs,
@@ -70,8 +71,6 @@ team_leader = Team(
 
 
 def run_team(task: str):
-    # Comment out after first run
-    agno_docs.load(recreate=True)
     team_leader.print_response(
         task,
         stream=True,
