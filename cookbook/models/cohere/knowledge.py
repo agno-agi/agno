@@ -16,6 +16,5 @@ knowledge_base.load(recreate=False)  # Comment out after first run
 agent = Agent(
     model=Cohere(id="command-a-03-2025"),
     knowledge=knowledge_base,
-    show_tool_calls=True,
 )
 agent.print_response("How to make Thai curry?", markdown=True)
