@@ -59,7 +59,6 @@ def test_agent_session_state(chat_agent, agent_storage):
     assert chat_agent.session_state == {"current_session_id": session_id, "test_key": "test_value"}
 
 
-
 def test_agent_session_state_stream(chat_agent):
     session_id = "session_1"
 
@@ -76,7 +75,7 @@ def test_agent_session_state_stream(chat_agent):
     assert chat_agent.session_name == "my_test_session"
     assert chat_agent.session_state == {"current_session_id": session_id, "test_key": "test_value"}
     assert chat_agent.team_session_state == {"current_session_id": session_id, "team_test_key": "team_test_value"}
-    
+
 
 def test_agent_session_state_switch_session_id(chat_agent):
     session_id_1 = "session_1"
@@ -131,6 +130,8 @@ def test_agent_session_state_on_run(chat_agent):
     )
     assert response.run_id is not None
     assert chat_agent.session_id == session_id_1
-    assert chat_agent.session_state == {"current_session_id": session_id_1, "test_key": "test_value", "something_else": "other_value"}, (
-        "Merging session state should work"
-    )
+    assert chat_agent.session_state == {
+        "current_session_id": session_id_1,
+        "test_key": "test_value",
+        "something_else": "other_value",
+    }, "Merging session state should work"

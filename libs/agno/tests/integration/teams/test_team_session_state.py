@@ -63,7 +63,6 @@ def test_team_session_state(route_team, team_storage):
     assert route_team.session_state == {"current_session_id": session_id, "test_key": "test_value"}
 
 
-
 def test_team_session_state_stream(route_team):
     session_id = "session_1"
 
@@ -138,6 +137,8 @@ def test_team_session_state_on_run(route_team):
     assert response.run_id is not None
     assert route_team.session_id == session_id_1
     assert route_team.session_name == "my_test_session"  # Should load what was set on the first run
-    assert route_team.session_state == {"current_session_id": session_id_1, "test_key": "test_value", "something_else": "other_value"}, (
-        "Merging session state should work"
-    )
+    assert route_team.session_state == {
+        "current_session_id": session_id_1,
+        "test_key": "test_value",
+        "something_else": "other_value",
+    }, "Merging session state should work"
