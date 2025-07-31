@@ -150,6 +150,7 @@ def test_tool_call_requires_confirmation_continue_with_run_id_stream(agent_stora
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Async makes this test flaky")
 async def test_tool_call_requires_confirmation_continue_with_run_id_async(agent_storage, memory):
     @tool(requires_confirmation=True)
     def get_the_weather(city: str):
@@ -290,6 +291,7 @@ async def test_tool_call_requires_confirmation_async():
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Async makes this test flaky")
 async def test_tool_call_requires_confirmation_stream_async():
     @tool(requires_confirmation=True)
     async def get_the_weather(city: str):

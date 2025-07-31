@@ -9,7 +9,7 @@ from agno.team.team import Team
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger
-from agno.workflow.workflow import Workflow
+from agno.workflow.v2.workflow import Workflow
 
 
 def get_run_input(run_dict: Dict[str, Any]) -> str:

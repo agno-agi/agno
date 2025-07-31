@@ -4,8 +4,6 @@ AgentOS Demo
 Set the OS_SECURITY_KEY environment variable to your OS security key to enable authentication.
 """
 
-from textwrap import dedent
-
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.eval.accuracy import AccuracyEval
@@ -48,7 +46,7 @@ agno_agent = Agent(
 finance_agent = Agent(
     name="Finance Agent",
     model=OpenAIChat(id="gpt-4.1"),
-    db=PostgresDb(db_url=db_url),
+    db=db,
     tools=[YFinanceTools()],
     markdown=True,
 )
@@ -96,7 +94,7 @@ research_team = Team(
 
 # Setting up and running an eval for our agent
 evaluation = AccuracyEval(
-    db=PostgresDb(db_url=db_url),
+    db=db,
     name="Calculator Evaluation",
     model=OpenAIChat(id="gpt-4o"),
     agent=agno_agent,

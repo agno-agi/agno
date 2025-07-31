@@ -636,8 +636,8 @@ class SqliteDb(BaseDb):
                         runs=serialized_session.get("runs"),
                         chat_history=serialized_session.get("chat_history"),
                         summary=serialized_session.get("summary"),
-                        created_at=serialized_session.get("created_at"),
-                        updated_at=serialized_session.get("created_at"),
+                        created_at=serialized_session.get("created_at") or int(time.time()),
+                        updated_at=serialized_session.get("updated_at") or int(time.time()),
                         workflow_data=serialized_session.get("workflow_data"),
                         session_data=serialized_session.get("session_data"),
                         extra_data=serialized_session.get("extra_data"),
@@ -1559,3 +1559,25 @@ class SqliteDb(BaseDb):
         except Exception as e:
             log_error(f"Error renaming eval run {eval_run_id}: {e}")
             raise
+
+    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+        """Get knowledge content by ID."""
+        raise NotImplementedError
+
+    def get_knowledge_contents(
+        self,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+    ) -> Tuple[List[KnowledgeRow], int]:
+        """Get all knowledge content from the database."""
+        raise NotImplementedError
+
+    def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
+        """Upsert knowledge content in the database."""
+        raise NotImplementedError
+
+    def delete_knowledge_content(self, id: str):
+        """Delete knowledge content by ID."""
+        raise NotImplementedError

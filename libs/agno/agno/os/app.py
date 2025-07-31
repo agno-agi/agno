@@ -25,7 +25,7 @@ from agno.os.router import get_base_router
 from agno.os.settings import AgnoAPISettings
 from agno.team.team import Team
 from agno.utils.log import log_debug, log_info, log_warning
-from agno.workflow.workflow import Workflow
+from agno.workflow.v2.workflow import Workflow
 
 
 class AgentOS:

@@ -10,7 +10,7 @@ from agno.run.v2.workflow import (
     WorkflowRunResponse,
     WorkflowRunResponseEvent,
 )
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.types import StepInput, StepOutput
 
@@ -20,11 +20,11 @@ WorkflowSteps = List[
             [StepInput], Union[StepOutput, Awaitable[StepOutput], Iterator[StepOutput], AsyncIterator[StepOutput]]
         ],
         Step,
-        "Steps",  # noqa: F821
-        "Loop",  # noqa: F821
-        "Parallel",  # noqa: F821
-        "Condition",  # noqa: F821
-        "Router",  # noqa: F821
+        "Steps",  # type: ignore # noqa: F821
+        "Loop",  # type: ignore # noqa: F821
+        "Parallel",  # type: ignore # noqa: F821
+        "Condition",  # type: ignore # noqa: F821
+        "Router",  # type: ignore # noqa: F821
     ]
 ]
 
@@ -53,9 +53,9 @@ class Router:
         from agno.workflow.v2.step import Step
         from agno.workflow.v2.steps import Steps
 
-        prepared_steps = []
+        prepared_steps: WorkflowSteps = []
         for step in self.choices:
-            if isinstance(step, Callable):
+            if callable(step) and hasattr(step, "__name__"):
                 prepared_steps.append(Step(name=step.__name__, description="User-defined callable step", executor=step))
             elif isinstance(step, Agent):
                 prepared_steps.append(Step(name=step.name, description=step.description, agent=step))
@@ -66,7 +66,7 @@ class Router:
             else:
                 raise ValueError(f"Invalid step type: {type(step).__name__}")
 
-        self.choices = prepared_steps
+        self.steps = prepared_steps
 
     def _update_step_input_from_outputs(
         self,
@@ -100,13 +100,13 @@ class Router:
             message=step_input.message,
             previous_step_content=previous_step_content,
             previous_step_outputs=updated_previous_step_outputs,
-            workflow_message=step_input.workflow_message,
+            additional_data=step_input.additional_data,
             images=current_images + all_images,
             videos=current_videos + all_videos,
             audio=current_audio + all_audio,
         )
 
-    def _route_steps(self, step_input: StepInput) -> List[Step]:
+    def _route_steps(self, step_input: StepInput) -> List[Step]:  # type: ignore[return-value]
         """Route to the appropriate steps based on input"""
         if callable(self.selector):
             result = self.selector(step_input)
@@ -115,14 +115,14 @@ class Router:
             if isinstance(result, Step):
                 return [result]
             elif isinstance(result, list):
-                return result
+                return result  # type: ignore
             else:
                 logger.warning(f"Router function returned unexpected type: {type(result)}")
                 return []
 
         return []
 
-    async def _aroute_steps(self, step_input: StepInput) -> List[Step]:
+    async def _aroute_steps(self, step_input: StepInput) -> List[Step]:  # type: ignore[return-value]
         """Async version of step routing"""
         if callable(self.selector):
             if inspect.iscoroutinefunction(self.selector):
@@ -145,19 +145,18 @@ class Router:
         self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> List[StepOutput]:
         """Execute the router and its selected steps with sequential chaining"""
-        logger.info(f"Executing router: {self.name}")
+        log_debug(f"Router Start: {self.name}", center=True, symbol="-")
 
         self._prepare_steps()
 
         # Route to appropriate steps
         steps_to_execute = self._route_steps(step_input)
-
-        logger.info(f"Router {self.name} selected: {len(steps_to_execute)} steps to execute")
+        log_debug(f"Router {self.name}: Selected {len(steps_to_execute)} steps to execute")
 
         if not steps_to_execute:
             return []
 
-        all_results = []
+        all_results: List[StepOutput] = []
         current_step_input = step_input
         router_step_outputs = {}
 
@@ -200,6 +199,7 @@ class Router:
                 all_results.append(error_output)
                 break
 
+        log_debug(f"Router End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
         return all_results
 
     def execute_stream(
@@ -209,17 +209,18 @@ class Router:
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunResponse] = None,
-        step_index: Optional[int] = None,
+        step_index: Optional[Union[int, tuple]] = None,
     ) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
         """Execute the router with streaming support"""
-        logger.info(f"Streaming router: {self.name}")
+        log_debug(f"Router Start: {self.name}", center=True, symbol="-")
 
         self._prepare_steps()
 
         # Route to appropriate steps
         steps_to_execute = self._route_steps(step_input)
+        log_debug(f"Router {self.name}: Selected {len(steps_to_execute)} steps to execute")
 
-        if stream_intermediate_steps:
+        if stream_intermediate_steps and workflow_run_response:
             # Yield router started event
             yield RouterExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -233,17 +234,18 @@ class Router:
 
         if not steps_to_execute:
             # Yield router completed event for empty case
-            yield RouterExecutionCompletedEvent(
-                run_id=workflow_run_response.run_id or "",
-                workflow_name=workflow_run_response.workflow_name or "",
-                workflow_id=workflow_run_response.workflow_id or "",
-                session_id=workflow_run_response.session_id or "",
-                step_name=self.name,
-                step_index=step_index,
-                selected_steps=[],
-                executed_steps=0,
-                step_results=[],
-            )
+            if stream_intermediate_steps and workflow_run_response:
+                yield RouterExecutionCompletedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_name=workflow_run_response.workflow_name or "",
+                    workflow_id=workflow_run_response.workflow_id or "",
+                    session_id=workflow_run_response.session_id or "",
+                    step_name=self.name,
+                    step_index=step_index,
+                    selected_steps=[],
+                    executed_steps=0,
+                    step_results=[],
+                )
             return
 
         all_results = []
@@ -270,7 +272,7 @@ class Router:
                         yield event
 
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.info(f"Router step {step_name} streaming completed")
+                log_debug(f"Router step {step_name} streaming completed")
 
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
@@ -307,7 +309,9 @@ class Router:
                 all_results.append(error_output)
                 break
 
-        if stream_intermediate_steps:
+        log_debug(f"Router End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
+
+        if stream_intermediate_steps and workflow_run_response:
             # Yield router completed event
             yield RouterExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -328,20 +332,19 @@ class Router:
         self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
     ) -> List[StepOutput]:
         """Async execute the router and its selected steps with sequential chaining"""
-        logger.info(f"Async executing router: {self.name}")
+        log_debug(f"Router Start: {self.name}", center=True, symbol="-")
 
         self._prepare_steps()
 
         # Route to appropriate steps
         steps_to_execute = await self._aroute_steps(step_input)
-
-        logger.info(f"Router {self.name} selected: {len(steps_to_execute)} steps to execute")
+        log_debug(f"Router {self.name} selected: {len(steps_to_execute)} steps to execute")
 
         if not steps_to_execute:
             return []
 
         # Chain steps sequentially like Loop does
-        all_results = []
+        all_results: List[StepOutput] = []
         current_step_input = step_input
         router_step_outputs = {}
 
@@ -368,7 +371,7 @@ class Router:
                         break
 
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.info(f"Router step {step_name} async completed")
+                log_debug(f"Router step {step_name} async completed")
 
                 current_step_input = self._update_step_input_from_outputs(
                     current_step_input, step_output, router_step_outputs
@@ -386,6 +389,7 @@ class Router:
                 all_results.append(error_output)
                 break  # Stop on first error
 
+        log_debug(f"Router End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
         return all_results
 
     async def aexecute_stream(
@@ -395,17 +399,18 @@ class Router:
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunResponse] = None,
-        step_index: Optional[int] = None,
+        step_index: Optional[Union[int, tuple]] = None,
     ) -> AsyncIterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
         """Async execute the router with streaming support"""
-        logger.info(f"Async streaming router: {self.name}")
+        log_debug(f"Router Start: {self.name}", center=True, symbol="-")
 
         self._prepare_steps()
 
         # Route to appropriate steps
         steps_to_execute = await self._aroute_steps(step_input)
+        log_debug(f"Router {self.name} selected: {len(steps_to_execute)} steps to execute")
 
-        if stream_intermediate_steps:
+        if stream_intermediate_steps and workflow_run_response:
             # Yield router started event
             yield RouterExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
@@ -418,18 +423,19 @@ class Router:
             )
 
         if not steps_to_execute:
-            # Yield router completed event for empty case
-            yield RouterExecutionCompletedEvent(
-                run_id=workflow_run_response.run_id or "",
-                workflow_name=workflow_run_response.workflow_name or "",
-                workflow_id=workflow_run_response.workflow_id or "",
-                session_id=workflow_run_response.session_id or "",
-                step_name=self.name,
-                step_index=step_index,
-                selected_steps=[],
-                executed_steps=0,
-                step_results=[],
-            )
+            if stream_intermediate_steps and workflow_run_response:
+                # Yield router completed event for empty case
+                yield RouterExecutionCompletedEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_name=workflow_run_response.workflow_name or "",
+                    workflow_id=workflow_run_response.workflow_id or "",
+                    session_id=workflow_run_response.session_id or "",
+                    step_name=self.name,
+                    step_index=step_index,
+                    selected_steps=[],
+                    executed_steps=0,
+                    step_results=[],
+                )
             return
 
         # Chain steps sequentially like Loop does
@@ -458,7 +464,7 @@ class Router:
                         yield event
 
                 step_name = getattr(step, "name", f"step_{i}")
-                logger.info(f"Router step {step_name} async streaming completed")
+                log_debug(f"Router step {step_name} async streaming completed")
 
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
@@ -495,7 +501,9 @@ class Router:
                 all_results.append(error_output)
                 break  # Stop on first error
 
-        if stream_intermediate_steps:
+        log_debug(f"Router End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
+
+        if stream_intermediate_steps and workflow_run_response:
             # Yield router completed event
             yield RouterExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",

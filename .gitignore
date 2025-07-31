@@ -71,3 +71,4 @@ agno_json_data/
 
 # AI
 .claude/
+.cursor/
