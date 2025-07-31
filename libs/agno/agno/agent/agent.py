@@ -4208,7 +4208,6 @@ class Agent:
 
         # 2. If build_user_context is False or message is a list, return the message as is.
         if not self.build_user_context or isinstance(message, list):
-      
             return Message(
                 role=self.user_message_role,
                 content=message,
@@ -4364,7 +4363,9 @@ class Agent:
             if len(messages_to_add_to_run_response) > 0:
                 log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
                 if self.run_response.extra_data is None:
-                    self.run_response.extra_data = RunResponseExtraData(additional_messages=messages_to_add_to_run_response)
+                    self.run_response.extra_data = RunResponseExtraData(
+                        additional_messages=messages_to_add_to_run_response
+                    )
                 else:
                     if self.run_response.extra_data.additional_messages is None:
                         self.run_response.extra_data.additional_messages = messages_to_add_to_run_response
@@ -4905,7 +4906,9 @@ class Agent:
         # -*- Save to storage
         self.save_session(user_id=self.user_id, session_id=session_id)  # type: ignore
 
-    def set_session_name(self, session_id: str, autogenerate: bool = False, name: Optional[str] = None) -> None:
+    def set_session_name(
+        self, session_id: Optional[str] = None, autogenerate: bool = False, session_name: Optional[str] = None
+    ) -> None:
         """Set the session name and save to storage"""
         if self.session_id is None and session_id is None:
             raise Exception("Session ID is not set")
@@ -4917,7 +4920,6 @@ class Agent:
             log_debug(f"Generated Session Name: {session_name}")
         elif session_name is None:
             raise Exception("Session Name is not set")
-
         # -*- Read from storage
         self.get_agent_session(session_id=session_id)  # type: ignore
         # -*- Rename session

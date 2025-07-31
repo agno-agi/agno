@@ -6753,41 +6753,62 @@ class Team:
             self.db.upsert_session(session=session)
         return self.team_session
 
+    def _generate_team_session_name(self, session_id: str) -> str:
+        """Generate a name for the team session"""
+
+        if self.model is None:
+            raise Exception("Model not set")
+
+        gen_session_name_prompt = "Team Conversation\n"
+
+        # Get team session messages for generating the name
+        if self.team_session is not None:
+            messages_for_generating_session_name = self.get_messages_for_session()
+        else:
+            messages_for_generating_session_name = []
+
+        for message in messages_for_generating_session_name:
+            gen_session_name_prompt += f"{message.role.upper()}: {message.content}\n"
+
+        gen_session_name_prompt += "\n\nTeam Session Name: "
+
+        system_message = Message(
+            role=self.system_message_role,
+            content="Please provide a suitable name for this conversation in maximum 5 words. "
+            "Remember, do not exceed 5 words.",
+        )
+        user_message = Message(role="user", content=gen_session_name_prompt)
+        generate_name_messages = [system_message, user_message]
+        generated_name = self.model.response(messages=generate_name_messages)
+        content = generated_name.content
+        if content is None:
+            log_error("Generated name is None. Trying again.")
+            return self._generate_team_session_name(session_id=session_id)
+        if len(content.split()) > 15:
+            log_error("Generated name is too long. Trying again.")
+            return self._generate_team_session_name(session_id=session_id)
+        return content.replace('"', "").strip()
+
     def set_session_name(
-        self, session_id: str, autogenerate: bool = False, session_name: Optional[str] = None
+        self, session_id: Optional[str] = None, autogenerate: bool = False, session_name: Optional[str] = None
     ) -> Optional[TeamSession]:
-        """Set the session name either manually or by auto-generating it.
+        """Set the session name and save to storage"""
+        if self.session_id is None and session_id is None:
+            raise Exception("Session ID is not set")
+        session_id = session_id or self.session_id
 
-        Args:
-            session_id: The session ID to rename
-            autogenerate: If True, auto-generate the session name using AI
-            session_name: The name to set (required if autogenerate=False)
-
-        Returns:
-            The updated TeamSession if successful
-
-        Raises:
-            ValueError: If session_id is invalid or parameters are conflicting
-        """
-        # Validate parameters
-        if autogenerate and session_name is not None:
-            raise ValueError("Cannot provide session_name when autogenerate=True")
-        if not autogenerate and session_name is None:
-            raise ValueError("session_name is required when autogenerate=False")
+        if autogenerate:
+            # -*- Generate name for session
+            session_name = self._generate_team_session_name(session_id=session_id)
+            log_debug(f"Generated Team Session Name: {session_name}")
+        elif session_name is None:
+            raise Exception("Session name is not set")
 
         # Read from storage
         self.get_team_session(session_id=session_id)  # type: ignore
 
-        # Determine the session name to use
-        if autogenerate:
-            # TODO: Agentic 
-            import datetime
-
-            generated_name = f"Team Session {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"
-            log_debug(f"Generated Team Session Name: {generated_name}")
-            self.session_name = generated_name
-        else:
-            self.session_name = session_name
+        # -*- Rename session
+        self.session_name = session_name
 
         # Save to storage
         return self.save_session(session_id=session_id, user_id=self.user_id)  # type: ignore
