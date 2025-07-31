@@ -5,11 +5,18 @@
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
+from agno.db.postgres.postgres import PostgresDb
+
+contents_db = PostgresDb(
+    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
+    knowledge_table="knowledge_contents",
+)
 
 # Create Knowledge Instance
 knowledge = Knowledge(
     name="Basic SDK Knowledge Base",
     description="Agno 2.0 Knowledge Implementation",
+    contents_db=contents_db,
     vector_db=PgVector(
         table_name="vectors", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
     ),

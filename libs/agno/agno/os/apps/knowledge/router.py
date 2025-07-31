@@ -112,9 +112,27 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
     @router.patch("/content/{content_id}", response_model=ContentResponseSchema, status_code=200)
     async def update_content(
         content_id: str = Path(..., description="Content ID"),
-        update_data: ContentUpdateSchema = Body(..., description="Content update data"),
+        name: Optional[str] = Form(None, description="Content name"),
+        description: Optional[str] = Form(None, description="Content description"),
+        metadata: Optional[str] = Form(None, description="Content metadata as JSON string"),
+        reader_id: Optional[str] = Form(None, description="ID of the reader to use for processing"),
     ) -> Optional[ContentResponseSchema]:
-        print("UPDATE DATA", update_data)
+        # Parse metadata JSON string if provided
+        parsed_metadata = None
+        if metadata and metadata.strip():
+            try:
+                parsed_metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="Invalid JSON format for metadata")
+        
+        # Create ContentUpdateSchema object from form data
+        update_data = ContentUpdateSchema(
+            name=name if name and name.strip() else None,
+            description=description if description and description.strip() else None,
+            metadata=parsed_metadata,
+            reader_id=reader_id if reader_id and reader_id.strip() else None
+        )
+        
         content = Content(
             id=content_id,
             name=update_data.name,

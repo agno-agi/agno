@@ -3,8 +3,8 @@ from typing import Optional
 
 from google.cloud import storage
 
-from agno.aws.resource.s3.bucket import S3Bucket
-from agno.aws.resource.s3.object import S3Object
+from agno.infra.aws.s3.bucket import S3Bucket
+from agno.infra.aws.s3.object import S3Object
 
 
 class RemoteContent(ABC):
