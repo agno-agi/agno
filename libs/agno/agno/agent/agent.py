@@ -251,7 +251,7 @@ class Agent:
     user_message: Optional[Union[List, Dict, str, Callable, Message]] = None
     # Role for the user message
     user_message_role: str = "user"
-    # If True, create a default user message using references and chat history
+    # Set to False to skip building the user context
     process_user_context: bool = True
 
     # --- Agent Response Settings ---
