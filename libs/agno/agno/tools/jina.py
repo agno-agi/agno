@@ -28,7 +28,7 @@ class JinaReaderTools(Toolkit):
         timeout: Optional[int] = None,
         read_url: bool = True,
         search_query: bool = False,
-        search_query_content: bool = False,
+        search_query_content: bool = True,
         **kwargs,
     ):
         self.api_key = api_key or getenv("JINA_API_KEY")
@@ -52,7 +52,6 @@ class JinaReaderTools(Toolkit):
     def read_url(self, url: str) -> str:
         """Reads a URL and returns the truncated content using Jina Reader API."""
         full_url = f"{self.config.base_url}{url}"
-        log_info(f"Reading URL: {full_url}")
         try:
             response = httpx.get(full_url, headers=self._get_headers())
             response.raise_for_status()
@@ -71,7 +70,6 @@ class JinaReaderTools(Toolkit):
             headers["X-Respond-With"] = "no-content"  # to avoid returning full content in search results
 
         body = {"q": query}
-        log_info(f"Performing search: {full_url} {json.dumps(body)}")
         try:
             response = httpx.post(full_url, headers=headers, json=body)
             response.raise_for_status()

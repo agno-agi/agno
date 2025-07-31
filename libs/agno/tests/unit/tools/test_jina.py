@@ -7,7 +7,7 @@ import pytest
 from agno.tools.jina import JinaReaderTools, JinaReaderToolsConfig
 
 
-@pytest.fixture
+@pytest.fixture()
 def jina_tools():
     os.environ["JINA_API_KEY"] = "test_api_key"
     return JinaReaderTools()
@@ -158,8 +158,7 @@ def test_init_tools_selection_none():
 
 
 @patch("agno.tools.jina.httpx.get")
-@patch("agno.tools.jina.log_info")
-def test_read_url_successful(mock_log_info, mock_httpx_get, sample_read_url_response):
+def test_read_url_successful(mock_httpx_get, sample_read_url_response):
     """Test successful URL reading"""
     # Setup mock response
     mock_response = MagicMock()
@@ -174,7 +173,6 @@ def test_read_url_successful(mock_log_info, mock_httpx_get, sample_read_url_resp
         # Verify the call
         expected_url = f"{tools.config.base_url}https://example.com"
         mock_httpx_get.assert_called_once_with(expected_url, headers=tools._get_headers())
-        mock_log_info.assert_called_once_with(f"Reading URL: {expected_url}")
 
         # Verify result contains the response data
         assert str(sample_read_url_response) in result
