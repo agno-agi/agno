@@ -52,7 +52,6 @@ async def atask3(delay: int):
 async_agent = Agent(
     model=Groq(id="llama-3.3-70b-versatile"),
     tools=[atask2, atask1, atask3],
-    show_tool_calls=True,
     markdown=True,
 )
 
@@ -109,7 +108,6 @@ def task3(delay: int):
 sync_agent = Agent(
     model=Groq(id="llama-3.3-70b-versatile"),
     tools=[task2, task1, task3],
-    show_tool_calls=True,
     markdown=True,
 )
 

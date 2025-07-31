@@ -42,7 +42,6 @@ knowledge_base = CombinedKnowledgeBase(
 agent = Agent(
     knowledge=knowledge_base,
     search_knowledge=True,
-    show_tool_calls=True,
     tools=[
         WebsiteTools(
             knowledge_base=knowledge_base

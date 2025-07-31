@@ -33,7 +33,6 @@ agent = Agent(
         "For videos: show live recording with countdown timer",
     ],
     tools=[OpenCVTools(show_preview=True)],  # Enable live preview
-    show_tool_calls=True,
 )
 
 agent.print_response("Take a quick test photo to verify the camera is working")
