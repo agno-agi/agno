@@ -248,6 +248,7 @@ class Message(BaseModel):
             "tool_calls": self.tool_calls,
             "thinking": self.thinking,
             "redacted_thinking": self.redacted_thinking,
+            "provider_data": self.provider_data,
         }
         # Filter out None and empty collections
         message_dict = {
