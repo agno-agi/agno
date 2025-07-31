@@ -18,7 +18,6 @@ class DeepResearcherAgent(Workflow):
     searcher: Agent = Agent(
         tools=[ScrapeGraphTools()],
         model=Nebius(id="deepseek-ai/DeepSeek-V3-0324"),
-        show_tool_calls=True,
         markdown=True,
         description=(
             "You are ResearchBot-X, an expert at finding and extracting high-quality, "
