@@ -51,7 +51,7 @@ reddit_researcher = Agent(
     role="Research a topic on Reddit",
     model=Claude(id="claude-3-5-sonnet-latest"),
     tools=[DuckDuckGoTools(cache_results=True)],
-    add_name_to_instructions=True,
+    add_name_to_context=True,
     instructions=dedent("""
     You are a Reddit researcher.
     You will be given a topic to research on Reddit.
@@ -143,7 +143,7 @@ agno_assist = Agent(
         ),
     ],
     add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 github_agent = Agent(

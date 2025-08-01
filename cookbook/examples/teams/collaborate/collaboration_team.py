@@ -18,7 +18,7 @@ reddit_researcher = Agent(
     role="Research a topic on Reddit",
     model=OpenAIChat(id="gpt-4o"),
     tools=[DuckDuckGoTools()],
-    add_name_to_instructions=True,
+    add_name_to_context=True,
     instructions=dedent("""
     You are a Reddit researcher.
     You will be given a topic to research on Reddit.
@@ -31,7 +31,7 @@ hackernews_researcher = Agent(
     model=OpenAIChat("gpt-4o"),
     role="Research a topic on HackerNews.",
     tools=[HackerNewsTools()],
-    add_name_to_instructions=True,
+    add_name_to_context=True,
     instructions=dedent("""
     You are a HackerNews researcher.
     You will be given a topic to research on HackerNews.
@@ -44,7 +44,7 @@ academic_paper_researcher = Agent(
     model=OpenAIChat("gpt-4o"),
     role="Research academic papers and scholarly content",
     tools=[GoogleSearchTools(), ArxivTools(download_dir=arxiv_download_dir)],
-    add_name_to_instructions=True,
+    add_name_to_context=True,
     instructions=dedent("""
     You are a academic paper researcher.
     You will be given a topic to research in academic literature.
@@ -59,7 +59,7 @@ twitter_researcher = Agent(
     model=OpenAIChat("gpt-4o"),
     role="Research trending discussions and real-time updates",
     tools=[DuckDuckGoTools()],
-    add_name_to_instructions=True,
+    add_name_to_context=True,
     instructions=dedent("""
     You are a Twitter/X researcher.
     You will be given a topic to research on Twitter/X.
@@ -84,7 +84,6 @@ agent_team = Team(
         "You are a discussion master.",
         "You have to stop the discussion when you think the team has reached a consensus.",
     ],
-    success_criteria="The team has reached a consensus.",
     enable_agentic_context=True,
     markdown=True,
     show_members_responses=True,

@@ -24,7 +24,7 @@ searcher = Agent(
         "You are writing for the New York Times, so the quality of the sources is important.",
     ],
     tools=[DuckDuckGoTools()],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 writer = Agent(
     name="Writer",
@@ -44,7 +44,7 @@ writer = Agent(
         "Remember: you are writing for the New York Times, so the quality of the article is important.",
     ],
     tools=[Newspaper4kTools()],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 editor = Team(
@@ -61,7 +61,7 @@ editor = Team(
         "Focus on clarity, coherence, and overall quality.",
         "Remember: you are the final gatekeeper before the article is published, so make sure the article is perfect.",
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     enable_agentic_context=True,
     markdown=True,
     debug_mode=True,

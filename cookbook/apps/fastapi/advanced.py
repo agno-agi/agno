@@ -31,7 +31,7 @@ simple_agent = Agent(
     enable_user_memories=True,
     add_history_to_messages=True,
     num_history_responses=5,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -52,7 +52,7 @@ web_agent = Agent(
     enable_user_memories=True,
     add_history_to_messages=True,
     num_history_responses=5,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -77,7 +77,7 @@ finance_agent = Agent(
     enable_user_memories=True,
     add_history_to_messages=True,
     num_history_responses=5,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -104,7 +104,6 @@ research_team = Team(
     model=OpenAIChat(id="gpt-4o"),
     mode="coordinate",
     team_id="research-team",
-    success_criteria=dedent("""\
         A comprehensive research report with clear sections and data-driven insights.
     """),
     instructions=[
@@ -112,7 +111,7 @@ research_team = Team(
     ],
     memory=memory,
     enable_user_memories=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
     enable_agentic_context=True,
     storage=SqliteStorage(

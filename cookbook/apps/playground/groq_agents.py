@@ -32,8 +32,8 @@ web_agent = Agent(
     ),
     add_history_to_messages=True,
     num_history_responses=2,
-    add_name_to_instructions=True,
-    add_datetime_to_instructions=True,
+    add_name_to_context=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -57,8 +57,8 @@ finance_agent = Agent(
     ),
     add_history_to_messages=True,
     num_history_responses=5,
-    add_name_to_instructions=True,
-    add_datetime_to_instructions=True,
+    add_name_to_context=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -83,8 +83,8 @@ youtube_agent = Agent(
     ),
     add_history_to_messages=True,
     num_history_responses=5,
-    add_name_to_instructions=True,
-    add_datetime_to_instructions=True,
+    add_name_to_context=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 

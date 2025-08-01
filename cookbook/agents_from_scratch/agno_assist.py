@@ -111,7 +111,7 @@ agno_assist = Agent(
     - Tool integration
     - Model support and configuration
     - Best practices and common patterns"""),
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     knowledge=agent_knowledge,
     storage=agent_storage,
     tools=[

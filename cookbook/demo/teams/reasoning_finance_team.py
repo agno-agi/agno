@@ -40,7 +40,7 @@ web_agent = Agent(
         "Focus on reputable financial news sources",
         "Provide context and background information",
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 finance_agent = Agent(
@@ -70,7 +70,7 @@ finance_agent = Agent(
         "Focus on delivering actionable financial insights.",
         "Delegate tasks and run tools in parallel if needed.",
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 # *******************************
 
@@ -105,8 +105,7 @@ def get_reasoning_finance_team():
         enable_agentic_memory=True,
         show_members_responses=True,
         enable_agentic_context=True,
-        add_datetime_to_instructions=True,
-        success_criteria="The team has provided a complete financial analysis with data, visualizations, risk assessment, and actionable investment recommendations supported by quantitative analysis and market research.",
+        add_datetime_to_context=True,
     )
 
 

@@ -16,8 +16,11 @@ agent = Agent(
 
 agent.print_response("Tell me a new interesting fact about space")
 agent.set_session_name(session_name="Interesting Space Facts") 
-print(agent.session_name)
 
-# Autogenerate session name
+session = agent.get_agent_session(session_id=agent.session_id)
+print(session.session_data.get("session_name"))
+
 agent.set_session_name(autogenerate=True)
-print(agent.session_name)
+
+session = agent.get_agent_session(session_id=agent.session_id)
+print(session.session_data.get("session_name"))

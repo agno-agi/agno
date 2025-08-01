@@ -43,7 +43,7 @@ web_agent = Agent(
     markdown=True,
     enable_agentic_memory=True,
     add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 finance_agent = Agent(
@@ -76,7 +76,7 @@ finance_agent = Agent(
     markdown=True,
     enable_agentic_memory=True,
     add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 # *******************************
 
@@ -106,9 +106,8 @@ reasoning_finance_team = Team(
     markdown=True,
     enable_agentic_memory=True,
     enable_agentic_context=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     enable_team_history=True,
-    success_criteria="The team has provided a complete financial analysis with data, visualizations, risk assessment, and actionable investment recommendations supported by quantitative analysis and market research.",
 )
 # *******************************
 

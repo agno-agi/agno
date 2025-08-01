@@ -110,7 +110,7 @@ idea_clarifier_agent = Agent(
         "Provide clear, actionable insights about the core business concept.",
     ],
     add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     response_model=IdeaClarification,
     debug_mode=False,
 )
@@ -127,7 +127,7 @@ market_research_agent = Agent(
         "Provide specific market size estimates with supporting data sources.",
     ],
     add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     response_model=MarketResearch,
 )
 
@@ -143,7 +143,7 @@ competitor_analysis_agent = Agent(
         "Search for recent competitor information and market positioning.",
     ],
     add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     response_model=CompetitorAnalysis,
     debug_mode=False,
 )
@@ -159,7 +159,7 @@ report_agent = Agent(
         "Include specific next steps for the entrepreneur.",
     ],
     add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     response_model=ValidationReport,
     debug_mode=False,
 )

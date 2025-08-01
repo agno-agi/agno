@@ -179,8 +179,7 @@ class RunResponseExtraData:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunResponseExtraData":
-        # Handle both old and new field names for backwards compatibility
-        additional_messages = data.pop("additional_messages", None) or data.pop("add_messages", None)
+        additional_messages = data.pop("additional_messages", None)
         if additional_messages is not None:
             additional_messages = [Message.model_validate(message) for message in additional_messages]
 

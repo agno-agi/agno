@@ -135,9 +135,7 @@ def test_history():
 @pytest.mark.asyncio
 async def test_async_basic():
     """Test basic async agent functionality."""
-    agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False
-    )
+    agent = Agent(model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False)
 
     response: RunResponse = await agent.arun("Share a 2 sentence horror story")
 
@@ -151,9 +149,7 @@ async def test_async_basic():
 @pytest.mark.asyncio
 async def test_async_basic_stream():
     """Test basic async streaming functionality."""
-    agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False
-    )
+    agent = Agent(model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False)
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 

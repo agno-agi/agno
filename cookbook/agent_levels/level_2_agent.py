@@ -29,7 +29,7 @@ agent = Agent(
     ],
     knowledge=knowledge,
     db=db,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     # Add the chat history to the messages
     add_history_to_messages=True,
     # Number of history runs

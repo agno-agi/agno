@@ -80,13 +80,12 @@ research_team = Team(
     model=OpenAIChat(id="gpt-4o"),
     mode="coordinate",
     team_id="research_team",
-    success_criteria="A comprehensive research report with clear sections and data-driven insights.",
     instructions=[
         "You are the lead researcher of a research team! 🔍",
     ],
     db=db,
     enable_user_memories=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
     enable_agentic_context=True,
 )

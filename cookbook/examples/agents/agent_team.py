@@ -14,7 +14,7 @@ web_agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[DuckDuckGoTools()],
     instructions="Always include sources.",
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 finance_agent = Agent(
@@ -25,7 +25,7 @@ finance_agent = Agent(
         YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)
     ],
     instructions="Use tables to display data.",
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 team_leader = Team(
@@ -41,8 +41,7 @@ team_leader = Team(
     markdown=True,
     show_members_responses=True,
     enable_agentic_context=True,
-    add_datetime_to_instructions=True,
-    success_criteria="The team has successfully completed the task.",
+    add_datetime_to_context=True,
 )
 
 task = """\

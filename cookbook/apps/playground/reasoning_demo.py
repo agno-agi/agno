@@ -41,7 +41,7 @@ finance_agent = Agent(
     ),
     add_history_to_messages=True,
     num_history_responses=5,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -55,7 +55,7 @@ cot_agent = Agent(
     ),
     add_history_to_messages=True,
     num_history_responses=3,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
     reasoning=True,
 )
@@ -88,7 +88,7 @@ reasoning_tool_agent = Agent(
     ),
     add_history_to_messages=True,
     num_history_responses=3,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
     tools=[ReasoningTools()],
 )
@@ -101,7 +101,7 @@ web_agent = Agent(
     agent_id="web_agent",
     tools=[DuckDuckGoTools()],
     instructions="Always include sources",
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     storage=SqliteStorage(
         table_name="web_agent",
         db_file=agent_storage_file,
@@ -147,7 +147,7 @@ thinking_tool_agent = Agent(
         - Note market uncertainties
         - Mention relevant regulatory concerns\
     """),
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
     stream_intermediate_steps=True,
     storage=SqliteStorage(
@@ -210,8 +210,7 @@ reasoning_finance_team = Team(
     markdown=True,
     show_members_responses=True,
     enable_agentic_context=True,
-    add_datetime_to_instructions=True,
-    success_criteria="The team has successfully completed the task.",
+    add_datetime_to_context=True,
     storage=SqliteStorage(
         table_name="reasoning_finance_team",
         db_file=agent_storage_file,
