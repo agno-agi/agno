@@ -316,7 +316,7 @@ class WebsiteReader(Reader):
 
         return crawler_result
 
-    def read(self, url: str) -> List[Document]:
+    def read(self, url: str, name: Optional[str] = None) -> List[Document]:
         """
         Reads a website and returns a list of documents.
 
@@ -338,7 +338,7 @@ class WebsiteReader(Reader):
                     documents.extend(
                         self.chunk_document(
                             Document(
-                                name=url,
+                                name=name or url,
                                 id=str(crawled_url),
                                 meta_data={"url": str(crawled_url)},
                                 content=crawled_content,
@@ -348,7 +348,7 @@ class WebsiteReader(Reader):
                 else:
                     documents.append(
                         Document(
-                            name=url,
+                            name=name or url,
                             id=str(crawled_url),
                             meta_data={"url": str(crawled_url)},
                             content=crawled_content,
@@ -359,7 +359,7 @@ class WebsiteReader(Reader):
             logger.error(f"Error reading website {url}: {e}")
             raise
 
-    async def async_read(self, url: str) -> List[Document]:
+    async def async_read(self, url: str, name: Optional[str] = None) -> List[Document]:
         """
         Asynchronously reads a website and returns a list of documents.
 
@@ -380,13 +380,16 @@ class WebsiteReader(Reader):
             async def process_document(crawled_url, crawled_content):
                 if self.chunk:
                     doc = Document(
-                        name=url, id=str(crawled_url), meta_data={"url": str(crawled_url)}, content=crawled_content
+                        name=name or url,
+                        id=str(crawled_url),
+                        meta_data={"url": str(crawled_url)},
+                        content=crawled_content,
                     )
                     return self.chunk_document(doc)
                 else:
                     return [
                         Document(
-                            name=url,
+                            name=name or url,
                             id=str(crawled_url),
                             meta_data={"url": str(crawled_url)},
                             content=crawled_content,

@@ -40,7 +40,6 @@ async def run_agent(message: str) -> None:
             - Verify that the planned action completes the task\
             """),
             add_datetime_to_instructions=True,
-            show_tool_calls=True,
             markdown=True,
         )
         await agent.aprint_response(message, stream=True)

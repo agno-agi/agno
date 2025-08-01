@@ -49,7 +49,6 @@ chat_team = Team(
     instructions=["You can search the web for information."],
     memory=memory,
     enable_user_memories=True,
-    show_tool_calls=True,
     markdown=True,
     show_members_responses=True,
 )
@@ -74,7 +73,6 @@ multi_language_team = Team(
         french_agent,
         german_agent,
     ],
-    show_tool_calls=True,
     markdown=True,
     instructions=[
         "You are a language router that directs questions to the appropriate language agent. You can also answer questions in English.",

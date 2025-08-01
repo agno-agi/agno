@@ -79,14 +79,11 @@ def get_default_reasoning_agent(
         - Only create a single instance of ReasoningSteps for your response.\
         """),
         tools=tools,
-        show_tool_calls=False,
         response_model=ReasoningSteps,
         use_json_mode=use_json_mode,
         telemetry=telemetry,
         debug_mode=debug_mode,
         debug_level=debug_level,
     )
-
-    agent.model.show_tool_calls = False  # type: ignore
 
     return agent

@@ -6,7 +6,7 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.db.sqlite import SqliteStorage
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.url import UrlKnowledge
+from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.tools.dalle import DalleTools
 from agno.tools.eleven_labs import ElevenLabsTools
@@ -18,9 +18,8 @@ cwd = Path(__file__).parent.parent
 tmp_dir = cwd.joinpath("tmp")
 tmp_dir.mkdir(parents=True, exist_ok=True)
 
-# Initialize knowledge base
-agent_knowledge = UrlKnowledge(
-    urls=["https://docs.agno.com/llms-full.txt"],
+# Initialize knowledge
+agent_knowledge = Knowledge(
     vector_db=LanceDb(
         uri=str(tmp_dir.joinpath("lancedb")),
         table_name="agno_assist_knowledge",
@@ -28,6 +27,8 @@ agent_knowledge = UrlKnowledge(
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
 )
+# Add content to the knowledge
+agent_knowledge.add_content(url="https://docs.agno.com/llms-full.txt")
 
 _description = dedent("""\
     You are AgnoAssist, an advanced AI Agent specialized in the Agno framework.
@@ -35,8 +36,6 @@ _description = dedent("""\
 
 _instructions = dedent("""\
     Your mission is to provide comprehensive support for Agno developers...""")
-
-agent_knowledge.load(recreate=False)
 
 agno_support = Agent(
     name="Agno_Assist",

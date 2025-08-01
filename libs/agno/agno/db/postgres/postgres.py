@@ -590,7 +590,6 @@ class PostgresDb(BaseDb):
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.TEAM.value,
                         team_id=session_dict.get("team_id"),
-                        team_session_id=session_dict.get("team_session_id"),
                         user_id=session_dict.get("user_id"),
                         runs=session_dict.get("runs"),
                         team_data=session_dict.get("team_data"),
@@ -604,7 +603,6 @@ class PostgresDb(BaseDb):
                         index_elements=["session_id"],
                         set_=dict(
                             team_id=session_dict.get("team_id"),
-                            team_session_id=session_dict.get("team_session_id"),
                             user_id=session_dict.get("user_id"),
                             team_data=session_dict.get("team_data"),
                             session_data=session_dict.get("session_data"),
@@ -824,8 +822,6 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.agent_id == agent_id)
                 if team_id is not None:
                     stmt = stmt.where(table.c.team_id == team_id)
-                if workflow_id is not None:
-                    stmt = stmt.where(table.c.workflow_id == workflow_id)
                 if topics is not None:
                     topic_conditions = [text(f"topics::text LIKE '%\"{topic}\"%'") for topic in topics]
                     stmt = stmt.where(and_(*topic_conditions))

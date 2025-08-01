@@ -16,7 +16,6 @@ def test_basic_events():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         telemetry=False,
-        monitoring=False,
     )
 
     response_generator = agent.run("Hello, how are you?", stream=True, stream_intermediate_steps=False)
@@ -36,12 +35,9 @@ async def test_async_basic_events():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         telemetry=False,
-        monitoring=False,
     )
-    response_generator = await agent.arun("Hello, how are you?", stream=True, stream_intermediate_steps=False)
-
     event_counts = {}
-    async for run_response in response_generator:
+    async for run_response in agent.arun("Hello, how are you?", stream=True, stream_intermediate_steps=False):
         event_counts[run_response.event] = event_counts.get(run_response.event, 0) + 1
 
     assert event_counts.keys() == {RunEvent.run_response_content}
@@ -54,7 +50,6 @@ def test_basic_intermediate_steps_events():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         telemetry=False,
-        monitoring=False,
     )
 
     response_generator = agent.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
@@ -85,7 +80,6 @@ def test_basic_intermediate_steps_events_persisted(agent_storage):
         storage=agent_storage,
         store_events=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response_generator = agent.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
@@ -112,7 +106,6 @@ def test_intermediate_steps_with_tools():
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[YFinanceTools(cache_results=True)],
         telemetry=False,
-        monitoring=False,
     )
 
     response_generator = agent.run("What is the stock price of Apple?", stream=True, stream_intermediate_steps=True)
@@ -149,7 +142,6 @@ def test_intermediate_steps_with_tools_events_persisted(agent_storage):
         storage=agent_storage,
         store_events=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response_generator = agent.run("What is the stock price of Apple?", stream=True, stream_intermediate_steps=True)
@@ -189,7 +181,6 @@ def test_intermediate_steps_with_reasoning():
             \
         """),
         telemetry=False,
-        monitoring=False,
     )
 
     response_generator = agent.run(
@@ -243,7 +234,6 @@ def test_intermediate_steps_with_user_confirmation(agent_storage):
         add_history_to_messages=True,
         num_history_responses=2,
         telemetry=False,
-        monitoring=False,
     )
 
     response_generator = agent.run("What is the weather in Tokyo?", stream=True, stream_intermediate_steps=True)
@@ -329,7 +319,6 @@ def test_intermediate_steps_with_memory(agent_storage, memory):
         storage=agent_storage,
         enable_user_memories=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response_generator = agent.run("Hello, how are you?", stream=True, stream_intermediate_steps=True)
@@ -368,7 +357,6 @@ def test_intermediate_steps_with_structured_output(agent_storage):
         storage=agent_storage,
         response_model=Person,
         telemetry=False,
-        monitoring=False,
     )
 
     response_generator = agent.run("Describe Elon Musk", stream=True, stream_intermediate_steps=True)
@@ -418,7 +406,6 @@ def test_intermediate_steps_with_parser_model(agent_storage):
         response_model=Person,
         parser_model=OpenAIChat(id="gpt-4o-mini"),
         telemetry=False,
-        monitoring=False,
     )
 
     response_generator = agent.run("Describe Elon Musk", stream=True, stream_intermediate_steps=True)

@@ -25,7 +25,6 @@ discord_agent = Agent(
         "You can send messages, read message history, manage channels, and delete messages.",
     ],
     tools=[discord_tools],
-    show_tool_calls=True,
     markdown=True,
 )
 

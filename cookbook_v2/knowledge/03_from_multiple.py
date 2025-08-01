@@ -15,26 +15,24 @@ knowledge = Knowledge(
     ),
 )
 
+# As a list
 knowledge.add_contents(
     [
         {
             "name": "CV's",
-            "path": "cookbook/agent_concepts/knowledge/testing_resources/",
+            "path": "cookbook_v2/knowledge/data/filters/cv_1.pdf",
             "metadata": {"user_tag": "Engineering candidates"},
         },
         {
             "name": "Docs",
-            "path": "my_documents/",
+            "url": "https://docs.agno.com/introduction",
             "metadata": {"user_tag": "Documents"},
         },
     ]
 )
 
+# Using specifc fields
 knowledge.add_contents(
-    name="CV's",
-    description="Engineering candidates",
-    metadata={"user_tag": "Engineering candidates"},
-    paths=["tmp/", "docs/"],
     urls=[
         "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
         "https://docs.agno.com/introduction",
@@ -42,6 +40,6 @@ knowledge.add_contents(
     ],
 )
 
-agent = Agent(knowledge=knowledge, show_tool_calls=True)
+agent = Agent(knowledge=knowledge)
 
 agent.print_response("What can you tell me about my documents?", markdown=True)

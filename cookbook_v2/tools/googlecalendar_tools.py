@@ -59,7 +59,6 @@ except (ModuleNotFoundError, ImportError):
 
 agent = Agent(
     tools=[GoogleCalendarTools(credentials_path="<PATH_TO_YOUR_CREDENTIALS_FILE>")],
-    show_tool_calls=True,
     instructions=[
         f"""
 You are scheduling assistant . Today is {datetime.datetime.now()} and the users timezone is {get_localzone_name()}.

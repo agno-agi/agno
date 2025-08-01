@@ -51,6 +51,5 @@ agent = Agent(
     },
     tools=[get_top_hackernews_stories],
     markdown=True,
-    show_tool_calls=True,
 )
 agent.print_response("What are the top hackernews stories?", stream=True)

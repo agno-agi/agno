@@ -18,7 +18,6 @@ from agno.utils.media import save_base64_data
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[GeminiTools()],
-    show_tool_calls=True,
 )
 
 agent.print_response(

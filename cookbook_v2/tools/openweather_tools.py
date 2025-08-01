@@ -25,7 +25,6 @@ agent = Agent(
             units="imperial",  # Options: 'standard', 'metric', 'imperial'
         )
     ],
-    # show_tool_calls=True,
     markdown=True,
 )
 

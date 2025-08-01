@@ -17,7 +17,6 @@ download_file(url, local_audio_path)
 
 transcription_agent = Agent(
     tools=[OpenAITools(transcription_model="gpt-4o-transcribe")],
-    show_tool_calls=True,
     markdown=True,
 )
 transcription_agent.print_response(
@@ -28,7 +27,6 @@ transcription_agent.print_response(
 agent = Agent(
     tools=[OpenAITools(image_model="gpt-image-1")],
     markdown=True,
-    show_tool_calls=True,
 )
 
 response = agent.run(

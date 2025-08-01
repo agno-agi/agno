@@ -441,7 +441,6 @@ def test_delete_by_content_id(vector_db, mock_session, sample_documents):
 
 def test_delete_by_name_multiple_documents(vector_db, mock_session):
     """Test deleting multiple documents with the same name."""
-
     # Mock name_exists to return True (documents exist)
     with patch.object(vector_db, "name_exists") as mock_name_exists:
         mock_name_exists.return_value = True

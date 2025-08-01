@@ -29,7 +29,6 @@ agent = Agent(
         "4. Taking visual snapshots of responsive layouts",
         "5. Automated web testing and verification",
     ],
-    show_tool_calls=True,
     markdown=True,
 )
 

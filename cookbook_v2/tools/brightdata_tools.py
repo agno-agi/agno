@@ -10,7 +10,6 @@ agent = Agent(
         )
     ],
     markdown=True,
-    show_tool_calls=True,
 )
 
 # Example 1: Scrape a webpage as Markdown

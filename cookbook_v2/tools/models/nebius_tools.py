@@ -23,7 +23,6 @@ agent = Agent(
         )
     ],
     name="Nebius Image Generator",
-    show_tool_calls=True,
     markdown=True,
 )
 
@@ -52,7 +51,6 @@ high_quality_agent = Agent(
         )
     ],
     name="Nebius High-Quality Image Generator",
-    show_tool_calls=True,
     markdown=True,
 )
 
@@ -80,7 +78,6 @@ sdxl_agent = Agent(
         )
     ],
     name="Nebius SDXL Image Generator",
-    show_tool_calls=True,
     markdown=True,
 )
 
