@@ -170,7 +170,7 @@ class TestPostgresDb:
         for index in table.indexes:
             for column in index.columns:
                 indexed_columns.append(column.name)
-        assert set(indexed_columns) == {"user_id", "last_updated"}
+        assert set(indexed_columns) == {"user_id", "updated_at"}
 
     def test_create_eval_table(self, postgres_db, mock_session):
         """Test creation of eval table with correct schema"""

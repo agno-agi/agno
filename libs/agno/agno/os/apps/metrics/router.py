@@ -31,7 +31,9 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             result = db.calculate_metrics()
             if result is None:
                 return []
+
             return [DayAggregatedMetrics.from_dict(metric) for metric in result]
+
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error refreshing metrics: {str(e)}")
 

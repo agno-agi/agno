@@ -20,7 +20,7 @@ USER_MEMORY_COLLECTION_SCHEMA = [
     {"key": "team_id"},
     {"key": "workflow_id"},
     {"key": "topics"},
-    {"key": "last_updated"},
+    {"key": "updated_at"},
 ]
 
 EVAL_COLLECTION_SCHEMA = [

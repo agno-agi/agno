@@ -40,7 +40,7 @@ MEMORY_TABLE_SCHEMA = {
     "team_id": {"type": String, "nullable": True},
     "user_id": {"type": String, "nullable": True, "index": True},
     "topics": {"type": JSON, "nullable": True},
-    "last_updated": {"type": BigInteger, "nullable": True, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True, "index": True},
 }
 
 EVAL_TABLE_SCHEMA = {
