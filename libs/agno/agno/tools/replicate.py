@@ -24,9 +24,9 @@ class ReplicateTools(Toolkit):
         model: str = "minimax/video-01",
         **kwargs,
     ):
-        self.api_key = api_key or getenv("REPLICATE_API_TOKEN")
+        self.api_key = api_key or getenv("REPLICATE_API_KEY")
         if not self.api_key:
-            logger.error("REPLICATE_API_TOKEN not set. Please set the REPLICATE_API_TOKEN environment variable.")
+            logger.error("REPLICATE_API_KEY not set. Please set the REPLICATE_API_KEY environment variable.")
         self.model = model
 
         tools: List[Any] = []
