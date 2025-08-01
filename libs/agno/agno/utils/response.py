@@ -65,13 +65,15 @@ def format_tool_calls(tool_calls: List[ToolExecution]) -> List[str]:
         List[str]: List of formatted tool call strings
     """
     formatted_tool_calls = []
+
     for tool_call in tool_calls:
-        if tool_call.tool_name and tool_call.tool_args:
+        if tool_call.tool_name is not None:
             tool_name = tool_call.tool_name
             args_str = ""
             if tool_call.tool_args is not None:
                 args_str = ", ".join(f"{k}={v}" for k, v in tool_call.tool_args.items())
             formatted_tool_calls.append(f"{tool_name}({args_str})")
+
     return formatted_tool_calls
 
 

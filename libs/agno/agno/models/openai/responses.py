@@ -47,7 +47,7 @@ class OpenAIResponses(Model):
     top_p: Optional[float] = None
     truncation: Optional[Literal["auto", "disabled"]] = None
     user: Optional[str] = None
-
+    service_tier: Optional[Literal["auto", "default", "flex", "priority"]] = None
     request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
@@ -178,6 +178,7 @@ class OpenAIResponses(Model):
             "top_p": self.top_p,
             "truncation": self.truncation,
             "user": self.user,
+            "service_tier": self.service_tier,
         }
         # Set the response format
         if response_format is not None:
