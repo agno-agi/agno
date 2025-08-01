@@ -62,7 +62,7 @@ if TYPE_CHECKING:
     from agno.os.app import AgentOS
 
 
-class WorkflowWebSocketManager:
+class WebSocketManager:
     """Manages WebSocket connections for workflow runs"""
 
     active_connections: Dict[str, WebSocket]
@@ -121,7 +121,7 @@ class WorkflowWebSocketManager:
 
 
 # Global manager instance
-workflow_websocket_manager = WorkflowWebSocketManager(
+websocket_manager = WebSocketManager(
     active_connections={},
     workflow_connections={},
 )
@@ -264,26 +264,6 @@ def get_base_router(
     @router.get("/health")
     async def health_check():
         return JSONResponse(content={"status": "ok"})
-
-    # -- WebSocket Routes ---
-    @router.websocket("/workflows/ws")
-    async def workflow_websocket_endpoint(websocket: WebSocket):
-        """WebSocket endpoint for receiving real-time workflow events"""
-        connection_id = await workflow_websocket_manager.connect(websocket)
-
-        try:
-            while True:
-                data = await websocket.receive_text()
-                message = json.loads(data)
-
-                if message.get("action") == "ping":
-                    await websocket.send_text(json.dumps({"event": "pong"}))
-
-        except WebSocketDisconnect:
-            workflow_websocket_manager.disconnect(connection_id)
-        except Exception as e:
-            logger.error(f"WebSocket error: {e}")
-            workflow_websocket_manager.disconnect(connection_id)
 
     @router.get(
         "/config",
@@ -940,6 +920,25 @@ def get_base_router(
 
     # -- Workflow routes ---
 
+    @router.websocket("/workflows/ws")
+    async def workflow_websocket_endpoint(websocket: WebSocket):
+        """WebSocket endpoint for receiving real-time workflow events"""
+        connection_id = await websocket_manager.connect(websocket)
+
+        try:
+            while True:
+                data = await websocket.receive_text()
+                message = json.loads(data)
+
+                if message.get("action") == "ping":
+                    await websocket.send_text(json.dumps({"event": "pong"}))
+
+        except WebSocketDisconnect:
+            websocket_manager.disconnect(connection_id)
+        except Exception as e:
+            logger.error(f"WebSocket error: {e}")
+            websocket_manager.disconnect(connection_id)
+
     @router.get(
         "/workflows",
         response_model=List[WorkflowResponse],
@@ -1009,7 +1008,7 @@ def get_base_router(
             elif stream and background:
                 websocket_instance = None
                 if connection_id:
-                    websocket_instance = workflow_websocket_manager.active_connections.get(connection_id)
+                    websocket_instance = websocket_manager.active_connections.get(connection_id)
                     if not websocket_instance:
                         raise HTTPException(status_code=400, detail="Invalid WebSocket connection ID")
 
@@ -1034,7 +1033,7 @@ def get_base_router(
 
                 # Register the workflow run with the WebSocket connection
                 if connection_id:
-                    await workflow_websocket_manager.register_workflow_run(run_response.run_id, connection_id)
+                    await websocket_manager.register_workflow_run(run_response.run_id, connection_id)
 
                 return {
                     "status": "started",
