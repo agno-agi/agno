@@ -6,7 +6,6 @@ from uuid import uuid4
 from sqlalchemy import Index, UniqueConstraint
 
 from agno.db.base import BaseDb, SessionType
-from agno.db.migrations.utils import parse_workflow_v2_sessions
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.postgres.utils import (
     apply_sorting,
@@ -1584,61 +1583,65 @@ class PostgresDb(BaseDb):
 
     # -- Migrations --
 
-    def migrate_table_from_v1_to_v2(self, old_db_schema: str, old_table_name: str, old_table_type: str):
+    def migrate_table_from_v1_to_v2(self, v1_db_schema: str, v1_table_name: str, v1_table_type: str):
         """Migrate all content in the given table to the right v2 table"""
 
         from agno.db.migrations.v1_to_v2 import (
             get_all_table_content,
             parse_agent_sessions,
+            parse_memories,
             parse_team_sessions,
             parse_workflow_sessions,
+            parse_workflow_v2_sessions,
         )
 
         # Get all content from the old table
         old_content: list[dict[str, Any]] = get_all_table_content(
             db=self,
-            db_schema=old_db_schema,
-            table_name=old_table_name,
+            db_schema=v1_db_schema,
+            table_name=v1_table_name,
         )
         if not old_content:
-            log_info(f"No content to migrate from table {old_table_name}")
+            log_info(f"No content to migrate from table {v1_table_name}")
             return
 
         # Parse the content into the new format
         memories = []
-        if old_table_type == "agent_sessions":
-            sessions, memories = parse_agent_sessions(old_content)
-        elif old_table_type == "team_sessions":
-            sessions, memories = parse_team_sessions(old_content)
-        elif old_table_type == "workflow_sessions":
+        if v1_table_type == "agent_sessions":
+            sessions = parse_agent_sessions(old_content)
+        elif v1_table_type == "team_sessions":
+            sessions = parse_team_sessions(old_content)
+        elif v1_table_type == "workflow_sessions":
             sessions = parse_workflow_sessions(old_content)
-        elif old_table_type == "workflow_v2_sessions":
+        elif v1_table_type == "workflow_v2_sessions":
             sessions = parse_workflow_v2_sessions(old_content)
+        elif v1_table_type == "memories":
+            memories = parse_memories(old_content)
         else:
-            raise ValueError(f"Invalid table type: {old_table_type}")
+            raise ValueError(f"Invalid table type: {v1_table_type}")
 
         # Insert the new content into the new table
-        if old_table_type == "agent_sessions":
+        if v1_table_type == "agent_sessions":
             for session in sessions:
                 self.upsert_session(session)
             log_info(f"Migrated {len(sessions)} Agent sessions to table: {self.session_table}")
 
-        elif old_table_type == "team_sessions":
+        elif v1_table_type == "team_sessions":
             for session in sessions:
                 self.upsert_session(session)
             log_info(f"Migrated {len(sessions)} Team sessions to table: {self.session_table}")
 
-        elif old_table_type == "workflow_sessions":
+        elif v1_table_type == "workflow_sessions":
             for session in sessions:
                 self.upsert_session(session)
             log_info(f"Migrated {len(sessions)} Workflow sessions to table: {self.session_table}")
 
-        elif old_table_type == "workflow_v2_sessions":
+        elif v1_table_type == "workflow_v2_sessions":
             for session in sessions:
                 self.upsert_session(session)
             log_info(f"Migrated {len(sessions)} Workflow v2 sessions to table: {self.session_table}")
 
-        if memories:
+        elif v1_table_type == "memories":
             for memory in memories:
                 self.upsert_user_memory(memory)
             log_info(f"Migrated {len(memories)} memories to table: {self.memory_table}")

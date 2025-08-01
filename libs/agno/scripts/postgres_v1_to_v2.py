@@ -10,33 +10,35 @@ from agno.db.postgres.postgres import PostgresDb
 # --- Set these variables before running the script ---
 
 # Your db_url
-db_url = ""
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 # The schema and names of your v1 tables. Leave the names of tables you don't need to migrate blank.
-old_tables_schema = ""
-old_agent_sessions_table_name = ""
-old_team_sessions_table_name = ""
-old_workflow_sessions_table_name = ""
-old_workflow_v2_sessions_table_name = ""
+v1_tables_schema = "ai"
+v1_agent_sessions_table_name = "agent_sessions"
+v1_team_sessions_table_name = ""
+v1_workflow_sessions_table_name = ""
+v1_workflow_v2_sessions_table_name = ""
+v1_memories_table_name = "memory"
 
-# Names for the new tables
-new_sessions_table_name = ""
-new_memories_table_name = ""
+# Names for the v2 tables
+v2_sessions_table_name = "agno_sessions"
+v2_memories_table_name = "agno_memories"
 
 
 # --- Migration logic ---
 
 db = PostgresDb(
     db_url,
-    session_table=new_sessions_table_name,
-    memory_table=new_memories_table_name,
+    session_table=v2_sessions_table_name,
+    memory_table=v2_memories_table_name,
 )
 
 migrate(
     db=db,
-    old_db_schema=old_tables_schema,
-    agent_sessions_table_name=old_agent_sessions_table_name,
-    team_sessions_table_name=old_team_sessions_table_name,
-    workflow_sessions_table_name=old_workflow_sessions_table_name,
-    workflow_v2_sessions_table_name=old_workflow_v2_sessions_table_name,
+    v1_db_schema=v1_tables_schema,
+    agent_sessions_table_name=v1_agent_sessions_table_name,
+    team_sessions_table_name=v1_team_sessions_table_name,
+    workflow_sessions_table_name=v1_workflow_sessions_table_name,
+    workflow_v2_sessions_table_name=v1_workflow_v2_sessions_table_name,
+    memories_table_name=v1_memories_table_name,
 )
