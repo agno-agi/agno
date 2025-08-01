@@ -1,17 +1,15 @@
 from agno.agent import Agent
 from agno.models.google import Gemini
 
-model = Gemini(id="gemini-2.5-pro", thinking_budget=1000, include_thoughts=True)
-
-agent = Agent(
-    model=model,
-    description="You are a problem-solving assistant that shows your reasoning.",
-    markdown=True,
+task = (
+    "Three missionaries and three cannibals need to cross a river. "
+    "They have a boat that can carry up to two people at a time. "
+    "If, at any time, the cannibals outnumber the missionaries on either side of the river, the cannibals will eat the missionaries. "
+    "How can all six people get across the river safely? Provide a step-by-step solution and show the solutions as an ascii diagram"
 )
 
-problem = """
-A farmer has 17 sheep, and all but 9 die. How many sheep are left?
-Think through this step by step and explain your reasoning.
-"""
-
-agent.print_response(problem, stream=True)
+agent = Agent(
+    model=Gemini(id="gemini-2.5-pro", thinking_budget=1280, include_thoughts=True),
+    markdown=True,
+)
+agent.print_response(task, stream=True)
