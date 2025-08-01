@@ -30,7 +30,7 @@ class WhatsAppTools(Toolkit):
             async_mode: Whether to use async methods (default: False)
         """
         # Core credentials
-        self.access_token = access_token or os.getenv("WHATSAPP_ACCESS_TOKEN") or os.getenv("WHATSAPP_ACCESS_TOKEN")
+        self.access_token = access_token or os.getenv("WHATSAPP_ACCESS_TOKEN")
         if not self.access_token:
             logger.error("WHATSAPP_ACCESS_TOKEN not set. Please set the WHATSAPP_ACCESS_TOKEN environment variable.")
 

@@ -20,14 +20,14 @@ def mock_todoist_api():
 @pytest.fixture
 def todoist_tools(mock_todoist_api):
     """Create TodoistTools instance with mocked API."""
-    with patch.dict("os.environ", {"TODOIST_API_TOKEN": "test_token"}):
+    with patch.dict("os.environ", {"TODOIST_API_KEY": "test_token"}):
         tools = TodoistTools()
         tools.api = mock_todoist_api
         return tools
 
 
-def test_init_with_api_token():
-    """Test initialization with provided API token."""
+def test_init_with_api_key():
+    """Test initialization with provided API key."""
     with patch("agno.tools.todoist.TodoistAPI") as mock_api:
         with patch("os.getenv") as mock_getenv:
             mock_getenv.return_value = "test_token"
@@ -45,15 +45,15 @@ def test_init_with_env_var():
 
 
 def test_init_without_token():
-    """Test initialization without API token."""
+    """Test initialization without API key."""
     with patch.dict("os.environ", clear=True):
-        with pytest.raises(ValueError, match="TODOIST_API_TOKEN not set"):
+        with pytest.raises(ValueError, match="TODOIST_API_KEY not set"):
             TodoistTools()
 
 
 def test_init_with_selective_tools():
     """Test initialization with only selected tools."""
-    with patch.dict("os.environ", {"TODOIST_API_TOKEN": "test_token"}):
+    with patch.dict("os.environ", {"TODOIST_API_KEY": "test_token"}):
         tools = TodoistTools(
             create_task=True,
             get_task=False,

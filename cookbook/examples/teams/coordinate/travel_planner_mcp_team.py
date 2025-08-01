@@ -11,7 +11,7 @@ Prerequisites:
     https://console.developers.google.com/apis/api/addressvalidation.googleapis.com
 
 - Apify:
-    - Set the environment variable `APIFY_TOKEN` with your Apify API token.
+    - Set the environment variable `APIFY_API_KEY` with your Apify API key.
     You can obtain the API key from the Apify Console:
     https://console.apify.com/settings/integrations
 

@@ -15,20 +15,20 @@ except ImportError:
 
 
 class ApifyTools(Toolkit):
-    def __init__(self, actors: Optional[Union[str, List[str]]] = None, apify_api_token: Optional[str] = None):
+    def __init__(self, actors: Optional[Union[str, List[str]]] = None, apify_api_key: Optional[str] = None):
         """Initialize ApifyTools with specific Actors.
 
         Args:
             actors (Optional[Union[str, List[str]]]): Single Actor ID as string or list of Actor IDs to register as individual tools
-            apify_api_token (Optional[str]): Apify API token (defaults to APIFY_API_TOKEN env variable)
+            apify_api_key (Optional[str]): Apify API key (defaults to APIFY_API_KEY env variable)
 
         Examples:
             Configuration Instructions:
             1. Install required dependencies:
             pip install agno apify-client
 
-            2. Set the APIFY_API_TOKEN environment variable:
-            Add a .env file with APIFY_API_TOKEN=your_apify_api_key
+            2. Set the APIFY_API_KEY environment variable:
+            Add a .env file with APIFY_API_KEY=your_apify_api_key
 
             Import necessary components:
 
@@ -65,12 +65,12 @@ class ApifyTools(Toolkit):
                 markdown=True
             )
         """
-        # Get API token from args or environment
-        self.apify_api_token = apify_api_token or os.getenv("APIFY_API_TOKEN")
-        if not self.apify_api_token:
-            raise ValueError("APIFY_API_TOKEN environment variable or apify_api_token parameter must be set")
+        # Get API key from args or environment
+        self.apify_api_key = apify_api_key or os.getenv("APIFY_API_KEY")
+        if not self.apify_api_key:
+            raise ValueError("APIFY_API_KEY environment variable or apify_api_key parameter must be set")
 
-        self.client = create_apify_client(self.apify_api_token)
+        self.client = create_apify_client(self.apify_api_key)
 
         tools: List[Any] = []
         if actors:
@@ -268,16 +268,16 @@ def create_apify_client(token: str) -> ApifyClient:
     """Create an Apify client instance with a custom user-agent.
 
     Args:
-        token (str): API token
+        token (str): API key
 
     Returns:
         ApifyClient: Apify client instance
 
     Raises:
-        ValueError: If the API token is not provided
+        ValueError: If the API key is not provided
     """
     if not token:
-        raise ValueError("API token is required to create an Apify client.")
+        raise ValueError("API key is required to create an Apify client.")
 
     client = ApifyClient(token)
     if http_client := getattr(client.http_client, "httpx_client", None):
