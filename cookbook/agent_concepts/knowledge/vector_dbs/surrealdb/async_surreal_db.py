@@ -4,8 +4,8 @@
 import asyncio
 
 from agno.agent import Agent
-from agno.embedder.openai import OpenAIEmbedder
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.embedder.openai import OpenAIEmbedder
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.surrealdb import SurrealDb
 from surrealdb import AsyncSurreal
 
@@ -25,6 +25,7 @@ surrealdb = SurrealDb(
     efc=150,  # HNSW construction time/accuracy trade-off
     m=12,  # HNSW max number of connections per element
     search_ef=40,  # HNSW search time/accuracy trade-off
+    embedder=OpenAIEmbedder(),
 )
 
 
@@ -34,15 +35,15 @@ async def async_demo():
     await client.signin({"username": SURREALDB_USER, "password": SURREALDB_PASSWORD})
     await client.use(namespace=SURREALDB_NAMESPACE, database=SURREALDB_DATABASE)
 
-    knowledge_base = PDFUrlKnowledgeBase(
-        urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
+    knowledge = Knowledge(
         vector_db=surrealdb,
-        embedder=OpenAIEmbedder(),
     )
 
-    await knowledge_base.aload(recreate=True)
+    await knowledge.async_add_content(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+    )
 
-    agent = Agent(knowledge=knowledge_base)
+    agent = Agent(knowledge=knowledge, show_tool_calls=True)
     await agent.aprint_response(
         "What are the 3 categories of Thai SELECT is given to restaurants overseas?",
         markdown=True,

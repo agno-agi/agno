@@ -1,5 +1,8 @@
-"""This cookbook shows how to add content from a local file to the knowledge base.
-1. Run: `python cookbook/agent_concepts/knowledge/01_from_path.py` to run the cookbook
+"""This cookbook shows how to remove content from Knowledge when using a ContentDB.
+
+You can remove content by id or by name.
+
+1. Run: `python cookbook/agent_concepts/knowledge/07_remove_content.py` to run the cookbook
 """
 
 from agno.db.postgres.postgres import PostgresDb
@@ -21,7 +24,7 @@ knowledge = Knowledge(
 
 knowledge.add_content(
     name="CV",
-    path="cookbook/agent_concepts/knowledge/testing_resources/",
+    path="cookbook_v2/knowledge/data/filters/cv_1.pdf",
     metadata={"user_tag": "Engineering Candidates"},
 )
 

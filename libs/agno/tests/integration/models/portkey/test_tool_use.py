@@ -17,7 +17,7 @@ def test_tool_use():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
+
     )
 
     response = agent.run("What is the current price of TSLA?")
@@ -34,7 +34,7 @@ def test_tool_use_stream():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
+
     )
 
     response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
@@ -65,7 +65,7 @@ async def test_async_tool_use():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
+
     )
 
     response = await agent.arun("What is the current price of TSLA?")
@@ -83,7 +83,7 @@ async def test_async_tool_use_stream():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
+
     )
 
     response_stream = await agent.arun(
@@ -115,7 +115,7 @@ def test_parallel_tool_calls():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
+
     )
 
     response = agent.run("What is the current price of TSLA and AAPL?")
@@ -136,7 +136,7 @@ def test_multiple_tool_calls():
         tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
+
     )
 
     response = agent.run("What is the current price of TSLA and what is the latest news about it?")
@@ -163,7 +163,7 @@ def test_tool_call_custom_tool_no_parameters():
         tools=[get_the_weather_in_tokyo],
         markdown=True,
         telemetry=False,
-        monitoring=False,
+
     )
 
     response = agent.run("What is the weather in Tokyo?")
@@ -192,7 +192,7 @@ def test_tool_call_custom_tool_optional_parameters():
         tools=[get_the_weather],
         markdown=True,
         telemetry=False,
-        monitoring=False,
+
     )
 
     response = agent.run("What is the weather in Paris?")
@@ -210,7 +210,7 @@ def test_tool_call_list_parameters():
         instructions="Use a single tool call if possible",
         markdown=True,
         telemetry=False,
-        monitoring=False,
+
     )
 
     response = agent.run(

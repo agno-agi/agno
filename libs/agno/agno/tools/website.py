@@ -1,23 +1,19 @@
 import json
-from typing import Any, List, Optional, Union, cast
+from typing import Any, List, Optional
 
-from agno.knowledge.combined import CombinedKnowledgeBase
 from agno.knowledge.document import Document
-from agno.knowledge.website import WebsiteKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.tools import Toolkit
 from agno.utils.log import log_debug
 
 
 class WebsiteTools(Toolkit):
-    def __init__(self, knowledge_base: Optional[Union[WebsiteKnowledgeBase, CombinedKnowledgeBase]] = None, **kwargs):
-        self.knowledge_base: Optional[Union[WebsiteKnowledgeBase, CombinedKnowledgeBase]] = knowledge_base
+    def __init__(self, knowledge_base: Optional[Knowledge] = None, **kwargs):
+        self.knowledge_base: Optional[Knowledge] = knowledge_base
 
         tools: List[Any] = []
         if self.knowledge_base is not None:
-            if isinstance(self.knowledge_base, WebsiteKnowledgeBase):
-                tools.append(self.add_website_to_knowledge_base)
-            elif isinstance(self.knowledge_base, CombinedKnowledgeBase):
-                tools.append(self.add_website_to_combined_knowledge_base)
+            tools.append(self.add_website_to_knowledge_base)
         else:
             tools.append(self.read_url)
 
@@ -32,7 +28,6 @@ class WebsiteTools(Toolkit):
         :param url: The url of the website to add.
         :return: 'Success' if the website was added to the knowledge base.
         """
-        self.knowledge_base = cast(WebsiteKnowledgeBase, self.knowledge_base)
         if self.knowledge_base is None:
             return "Knowledge base not provided"
 
@@ -51,13 +46,12 @@ class WebsiteTools(Toolkit):
         :param url: The url of the website to add.
         :return: 'Success' if the website was added to the knowledge base.
         """
-        self.knowledge_base = cast(CombinedKnowledgeBase, self.knowledge_base)
         if self.knowledge_base is None:
             return "Knowledge base not provided"
 
         website_knowledge_base = None
         for knowledge_base in self.knowledge_base.sources:
-            if isinstance(knowledge_base, WebsiteKnowledgeBase):
+            if isinstance(knowledge_base, Knowledge):
                 website_knowledge_base = knowledge_base
                 break
 

@@ -28,7 +28,6 @@ knowledge.add_content(
     name="S3 PDF",
     remote_content=S3Content(bucket_name="agno-public", key="recipes/ThaiRecipes.pdf"),
     metadata={"remote_content": "S3"},
-    skip_if_exists=True,
 )
 
 agent = Agent(

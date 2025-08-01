@@ -51,7 +51,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         search_content: Optional[str] = Query(default=None, description="Fuzzy search memory content"),
         limit: Optional[int] = Query(default=20, description="Number of memories to return"),
         page: Optional[int] = Query(default=1, description="Page number"),
-        sort_by: Optional[str] = Query(default="last_updated", description="Field to sort by"),
+        sort_by: Optional[str] = Query(default="updated_at", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
     ) -> PaginatedResponse[UserMemorySchema]:
         user_memories, total_count = db.get_user_memories(

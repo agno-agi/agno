@@ -40,7 +40,7 @@ agent = Agent(
 
 
 async def main():
-    async for run_response in await agent.arun(
+    async for run_response in agent.arun(
         "What files do I have in my current directory?", stream=True
     ):
         if run_response.is_paused:
@@ -53,10 +53,9 @@ async def main():
                     result = execute_shell_command.entrypoint(**tool.tool_args)
                     # We have to set the result on the tool execution object so that the agent can continue
                     tool.result = result
-            run_response = await agent.acontinue_run(
+            async for resp in agent.acontinue_run(
                 run_response=run_response, stream=True
-            )
-            async for resp in run_response:
+            ):
                 print(resp.content, end="")
         else:
             print(run_response.content, end="")

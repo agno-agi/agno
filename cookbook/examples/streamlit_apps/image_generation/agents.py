@@ -4,8 +4,7 @@ from typing import Optional
 
 from agno.agent import Agent
 from agno.knowledge.embedder.cohere import CohereEmbedder
-from agno.knowledge.pdf import PDFKnowledgeBase
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.pdf_reader import PDFImageReader
 from agno.models.groq import Groq
 from agno.tools.openai import OpenAITools
@@ -28,23 +27,24 @@ def get_recipe_agent(
     """
     # Choose the appropriate knowledge base
     if local_pdf_path:
-        knowledge_base = PDFKnowledgeBase(
-            path=local_pdf_path,
-            reader=PDFImageReader(),
+        knowledge = Knowledge(
             vector_db=PgVector(
                 db_url=DB_URL,
                 table_name=DEFAULT_RECIPE_TABLE,
                 embedder=CohereEmbedder(id="embed-v4.0"),
             ),
         )
+        knowledge.add_content(path=local_pdf_path, reader=PDFImageReader())
     else:
-        knowledge_base = PDFUrlKnowledgeBase(
-            urls=[DEFAULT_RECIPE_URL],
+        knowledge = Knowledge(
             vector_db=PgVector(
                 db_url=DB_URL,
                 table_name=DEFAULT_RECIPE_TABLE,
                 embedder=CohereEmbedder(id="embed-v4.0"),
             ),
+        )
+        knowledge.add_content(
+            url=DEFAULT_RECIPE_URL,
         )
 
     model = Groq(id="meta-llama/llama-4-scout-17b-16e-instruct")
@@ -53,7 +53,7 @@ def get_recipe_agent(
     return Agent(
         name="RecipeImageAgent",
         model=model,
-        knowledge=knowledge_base,
+        knowledge=knowledge,
         tools=[OpenAITools(image_model="gpt-image-1")],
         instructions=[
             dedent("""\

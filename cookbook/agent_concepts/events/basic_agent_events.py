@@ -15,7 +15,7 @@ finance_agent = Agent(
 
 async def run_agent_with_events(prompt: str):
     content_started = False
-    async for run_response_event in await finance_agent.arun(
+    async for run_response_event in finance_agent.arun(
         prompt,
         stream=True,
         stream_intermediate_steps=True,

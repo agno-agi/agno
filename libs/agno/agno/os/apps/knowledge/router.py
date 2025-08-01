@@ -1,19 +1,26 @@
 import json
 import math
-from typing import Dict, Optional
+from typing import Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Path, Query, UploadFile
 
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
-from agno.os.apps.knowledge.schemas import ConfigResponseSchema, ContentResponseSchema, ReaderSchema
+from agno.os.apps.knowledge.schemas import (
+    ConfigResponseSchema,
+    ContentResponseSchema,
+    ContentStatus,
+    ContentStatusResponse,
+    ContentUpdateSchema,
+    ReaderSchema,
+)
 from agno.os.apps.utils import PaginatedResponse, PaginationInfo, SortOrder
 from agno.utils.log import log_debug, log_info
 
 
 def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
-    @router.post("/content")
+    @router.post("/content", response_model=ContentResponseSchema, status_code=202)
     async def upload_content(
         background_tasks: BackgroundTasks,
         name: Optional[str] = Form(None),
@@ -93,37 +100,51 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
 
         background_tasks.add_task(process_content, knowledge, content_id, content, reader_id)
 
-        return {"content_id": content_id, "status": "processing"}
-
-    # TODO: add and use a ContentUpdatePayload schema. Validate input fields there
-    @router.patch("/content/{content_id}", response_model=ContentResponseSchema, status_code=200)
-    async def update_content(
-        content_id: str = Path(..., description="Content ID"),
-        name: Optional[str] = Form(None),
-        description: Optional[str] = Form(None),
-        metadata: Optional[str] = Form(None, description="JSON metadata"),
-        reader_id: Optional[str] = Form(None),
-    ) -> Optional[ContentResponseSchema]:
-        parsed_metadata = None
-        if metadata:
-            try:
-                parsed_metadata = json.loads(metadata)
-            except json.JSONDecodeError:
-                # If it's not valid JSON, treat as a simple key-value pair
-                parsed_metadata = {"value": metadata} if metadata != "string" else None
-
-        content = Content(
+        response = ContentResponseSchema(
             id=content_id,
             name=name,
             description=description,
             metadata=parsed_metadata,
+            status=ContentStatus.PROCESSING,
+        )
+        return response
+
+    @router.patch("/content/{content_id}", response_model=ContentResponseSchema, status_code=200)
+    async def update_content(
+        content_id: str = Path(..., description="Content ID"),
+        name: Optional[str] = Form(None, description="Content name"),
+        description: Optional[str] = Form(None, description="Content description"),
+        metadata: Optional[str] = Form(None, description="Content metadata as JSON string"),
+        reader_id: Optional[str] = Form(None, description="ID of the reader to use for processing"),
+    ) -> Optional[ContentResponseSchema]:
+        # Parse metadata JSON string if provided
+        parsed_metadata = None
+        if metadata and metadata.strip():
+            try:
+                parsed_metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                raise HTTPException(status_code=400, detail="Invalid JSON format for metadata")
+
+        # Create ContentUpdateSchema object from form data
+        update_data = ContentUpdateSchema(
+            name=name if name and name.strip() else None,
+            description=description if description and description.strip() else None,
+            metadata=parsed_metadata,
+            reader_id=reader_id if reader_id and reader_id.strip() else None,
         )
 
-        if reader_id:
-            if reader_id in knowledge.readers:
-                content.reader = knowledge.readers[reader_id]
+        content = Content(
+            id=content_id,
+            name=update_data.name,
+            description=update_data.description,
+            metadata=update_data.metadata,
+        )
+
+        if update_data.reader_id:
+            if update_data.reader_id in knowledge.readers:
+                content.reader = knowledge.readers[update_data.reader_id]
             else:
-                raise HTTPException(status_code=400, detail=f"Invalid reader_id: {reader_id}")
+                raise HTTPException(status_code=400, detail=f"Invalid reader_id: {update_data.reader_id}")
 
         content = knowledge.patch_content(content)
         if not content:
@@ -142,18 +163,19 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
 
         return PaginatedResponse(
             data=[
-                ContentResponseSchema(
-                    id=content.id,
-                    name=content.name,
-                    description=content.description,
-                    type=content.file_type,
-                    size=str(content.size) if content.size else "0",
-                    metadata=content.metadata,
-                    linked_to=knowledge.name,
-                    status=content.status,
-                    status_message=content.status_message,
-                    created_at=str(content.created_at) if content.created_at else None,
-                    updated_at=str(content.updated_at) if content.updated_at else None,
+                ContentResponseSchema.from_dict(
+                    {
+                        "id": content.id,
+                        "name": content.name,
+                        "description": content.description,
+                        "file_type": content.file_type,
+                        "size": content.size,
+                        "metadata": content.metadata,
+                        "status": content.status,
+                        "status_message": content.status_message,
+                        "created_at": content.created_at,
+                        "updated_at": content.updated_at,
+                    }
                 )
                 for content in contents
             ],
@@ -172,19 +194,19 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         content = knowledge.get_content_by_id(content_id=content_id)
         if not content:
             raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
-        response = ContentResponseSchema(
-            id=content_id,
-            name=content.name,
-            description=content.description,
-            type=content.file_type,
-            size=str(len(content.file_data.content)) if content.file_data else "0",
-            linked_to=knowledge.name,
-            metadata=content.metadata,
-            access_count=0,
-            status=content.status,
-            status_message=content.status_message,
-            created_at=str(content.created_at) if content.created_at else None,
-            updated_at=str(content.updated_at) if content.updated_at else None,
+        response = ContentResponseSchema.from_dict(
+            {
+                "id": content_id,
+                "name": content.name,
+                "description": content.description,
+                "file_type": content.file_type,
+                "size": len(content.file_data.content) if content.file_data and content.file_data.content else 0,
+                "metadata": content.metadata,
+                "status": content.status,
+                "status_message": content.status_message,
+                "created_at": content.created_at,
+                "updated_at": content.updated_at,
+            }
         )
 
         return response
@@ -209,18 +231,31 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         knowledge.remove_all_content()
         return "success"
 
-    @router.get("/content/{content_id}/status", status_code=200)
-    def get_content_status(content_id: str) -> Dict[str, str]:
+    @router.get("/content/{content_id}/status", status_code=200, response_model=ContentStatusResponse)
+    def get_content_status(content_id: str) -> ContentStatusResponse:
         log_info(f"Getting content status: {content_id}")
-        result = knowledge.get_content_status(content_id=content_id)
+        status, status_message = knowledge.get_content_status(content_id=content_id)
 
-        if isinstance(result, tuple) and len(result) == 2:
-            status, status_message = result
-            return {"status": status, "status_message": status_message}
-        elif isinstance(result, str):
-            return {"status": result, "status_message": ""}
-        else:
-            return {"status": "Unknown", "status_message": "Status not available"}
+        # Handle the case where content is not found
+        if status is None:
+            return ContentStatusResponse(
+                status=ContentStatus.FAILED, status_message=status_message or "Content not found"
+            )
+
+        # Convert string status to ContentStatus enum if needed (for backward compatibility and mocks)
+        if isinstance(status, str):
+            try:
+                status = ContentStatus(status.lower())
+            except ValueError:
+                # Handle legacy or unknown statuses gracefully
+                if "failed" in status.lower():
+                    status = ContentStatus.FAILED
+                elif "completed" in status.lower():
+                    status = ContentStatus.COMPLETED
+                else:
+                    status = ContentStatus.PROCESSING
+
+        return ContentStatusResponse(status=status, status_message=status_message or "")
 
     @router.get("/config", status_code=200)
     def get_config() -> ConfigResponseSchema:

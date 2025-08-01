@@ -160,10 +160,9 @@ async def body() -> None:
                 response = ""
                 try:
                     # Run the agent and stream the response
-                    run_response = await uagi.arun(
+                    async for resp_chunk in uagi.arun(
                         user_message, stream=True, stream_intermediate_steps=True
-                    )
-                    async for resp_chunk in run_response:
+                    ):
                         # Display tool calls if available
                         if resp_chunk.tool:
                             display_tool_calls(tool_calls_container, [resp_chunk.tool])

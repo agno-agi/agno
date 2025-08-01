@@ -5,10 +5,8 @@ from typing import Optional
 
 from agno.agent import Agent
 from agno.db.agent.postgres import PostgresAgentStorage
-from agno.knowledge.combined import CombinedKnowledgeBase
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.json import JSONKnowledgeBase
-from agno.knowledge.text import TextKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.memory.db.postgres import PostgresMemoryDb
 from agno.memory.memory import Memory
 from agno.models.anthropic import Claude
@@ -44,16 +42,7 @@ reasoning_sql_agent_storage = PostgresAgentStorage(
     table_name="reasoning_sql_agent_sessions",
     schema="ai",
 )
-agent_knowledge = CombinedKnowledgeBase(
-    sources=[
-        # Reads text files, SQL files, and markdown files
-        TextKnowledgeBase(
-            path=knowledge_dir,
-            formats=[".txt", ".sql", ".md"],
-        ),
-        # Reads JSON files
-        JSONKnowledgeBase(path=knowledge_dir),
-    ],
+agent_knowledge = Knowledge(
     # Store agent knowledge in the ai.sql_agent_knowledge table
     vector_db=PgVector(
         db_url=db_url,
@@ -62,7 +51,11 @@ agent_knowledge = CombinedKnowledgeBase(
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
     # 5 references are added to the prompt
-    num_documents=5,
+    max_results=5,
+)
+
+agent_knowledge.add_content(
+    path=knowledge_dir,
 )
 # *******************************
 

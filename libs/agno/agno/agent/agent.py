@@ -315,12 +315,12 @@ class Agent:
     # Optional workflow session state. Set by the workflow.
     workflow_session_state: Optional[Dict[str, Any]] = None
 
-    # --- Debug & Monitoring ---
+    # --- Debug ---
     # Enable debug logs
     debug_mode: bool = False
+    debug_level: Literal[1, 2] = 1
 
-    # monitoring=True logs Agent information to agno.com for monitoring
-    monitoring: bool = False
+    # --- Telemetry ---
     # telemetry=True logs minimal telemetry for analytics
     # This helps us improve the Agent and provide better support
     telemetry: bool = True
@@ -544,9 +544,9 @@ class Agent:
             self.agent_id = str(uuid4())
         return self.agent_id
 
-    def set_debug(self) -> None:
-        if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
-            self.debug_mode = True
+    def set_debug(self, debug_mode: Optional[bool] = None) -> None:
+        # If the default debug mode is set, or passed on run, or via environment variable, set the debug mode to True
+        if self.debug_mode or debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
             set_log_level_to_debug(level=self.debug_level)
         else:
             set_log_level_to_info()
@@ -620,9 +620,9 @@ class Agent:
         self.run_messages = None
         self.run_response = None
 
-    def initialize_agent(self) -> None:
+    def initialize_agent(self, debug_mode: Optional[bool] = None) -> None:
         self.set_default_model()
-        self.set_debug()
+        self.set_debug(debug_mode=debug_mode)
         self.set_agent_id()
         if self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None:
             self.set_memory_manager()
@@ -899,6 +899,7 @@ class Agent:
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         refresh_session_before_write: Optional[bool] = False,
         **kwargs: Any,
     ) -> RunResponse: ...
@@ -920,6 +921,7 @@ class Agent:
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         refresh_session_before_write: Optional[bool] = False,
         **kwargs: Any,
     ) -> Iterator[RunResponseEvent]: ...
@@ -940,6 +942,7 @@ class Agent:
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         refresh_session_before_write: Optional[bool] = False,
         **kwargs: Any,
     ) -> Union[RunResponse, Iterator[RunResponseEvent]]:
@@ -949,7 +952,7 @@ class Agent:
         )
 
         # Initialize the Agent
-        self.initialize_agent()
+        self.initialize_agent(debug_mode=debug_mode)
 
         log_debug(f"Session ID: {session_id}", center=True)
 
@@ -1279,7 +1282,47 @@ class Agent:
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
+    @overload
     async def arun(
+        self,
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
+        *,
+        stream: Literal[False] = False,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
+        stream_intermediate_steps: Optional[bool] = None,
+        retries: Optional[int] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> RunResponse: ...
+
+    @overload
+    def arun(
+        self,
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
+        *,
+        stream: Literal[True] = True,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
+        stream_intermediate_steps: Optional[bool] = None,
+        retries: Optional[int] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[RunResponseEvent]: ...
+
+    def arun(
         self,
         message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         *,
@@ -1295,9 +1338,10 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         refresh_session_before_write: Optional[bool] = False,
         **kwargs: Any,
-    ) -> Any:
+    ) -> Union[RunResponse, AsyncIterator[RunResponseEvent]]:
         """Async Run the Agent and return the response."""
 
         session_id, user_id = self._initialize_session(
@@ -1307,7 +1351,7 @@ class Agent:
         log_debug(f"Session ID: {session_id}", center=True)
 
         # Initialize the Agent
-        self.initialize_agent()
+        self.initialize_agent(debug_mode=debug_mode)
 
         effective_filters = knowledge_filters
         # When filters are passed manually
@@ -1407,7 +1451,7 @@ class Agent:
 
                 # Pass the new run_response to _arun
                 if stream:
-                    response_iterator = self._arun_stream(
+                    return self._arun_stream(
                         run_response=run_response,
                         run_messages=run_messages,
                         user_id=user_id,
@@ -1416,9 +1460,8 @@ class Agent:
                         stream_intermediate_steps=stream_intermediate_steps,
                         refresh_session_before_write=refresh_session_before_write,
                     )  # type: ignore[assignment]
-                    return response_iterator
                 else:
-                    response = await self._arun(
+                    return self._arun(
                         run_response=run_response,
                         run_messages=run_messages,
                         user_id=user_id,
@@ -1426,7 +1469,6 @@ class Agent:
                         response_format=response_format,
                         refresh_session_before_write=refresh_session_before_write,
                     )
-                    return response
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
@@ -1480,6 +1522,7 @@ class Agent:
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
     ) -> RunResponse: ...
 
     @overload
@@ -1495,6 +1538,7 @@ class Agent:
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
     ) -> Iterator[RunResponseEvent]: ...
 
     def continue_run(
@@ -1509,6 +1553,7 @@ class Agent:
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
     ) -> Union[RunResponse, Iterator[RunResponseEvent]]:
         """Continue a previous run.
 
@@ -1524,7 +1569,7 @@ class Agent:
             knowledge_filters: The knowledge filters to use for the run.
         """
         # Initialize the Agent
-        self.initialize_agent()
+        self.initialize_agent(debug_mode=debug_mode)
 
         if session_id is not None:
             self.reset_run_state()
@@ -1859,7 +1904,39 @@ class Agent:
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
+    @overload
     async def acontinue_run(
+        self,
+        run_response: Optional[RunResponse] = None,
+        *,
+        stream: Literal[False] = False,
+        stream_intermediate_steps: Optional[bool] = None,
+        run_id: Optional[str] = None,
+        updated_tools: Optional[List[ToolExecution]] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        retries: Optional[int] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+    ) -> RunResponse: ...
+
+    @overload
+    def acontinue_run(
+        self,
+        run_response: Optional[RunResponse] = None,
+        *,
+        stream: Literal[True] = True,
+        stream_intermediate_steps: Optional[bool] = None,
+        run_id: Optional[str] = None,
+        updated_tools: Optional[List[ToolExecution]] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        retries: Optional[int] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
+    ) -> AsyncIterator[RunResponseEvent]: ...
+
+    def acontinue_run(
         self,
         run_response: Optional[RunResponse] = None,
         *,
@@ -1871,7 +1948,8 @@ class Agent:
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-    ) -> Any:
+        debug_mode: Optional[bool] = None,
+    ) -> Union[RunResponse, AsyncIterator[RunResponseEvent]]:
         """Continue a previous run.
 
         Args:
@@ -1886,7 +1964,7 @@ class Agent:
             knowledge_filters: The knowledge filters to use for the run.
         """
         # Initialize the Agent
-        self.initialize_agent()
+        self.initialize_agent(debug_mode=debug_mode)
 
         if session_id is not None:
             self.reset_run_state()
@@ -2022,7 +2100,7 @@ class Agent:
 
             try:
                 if stream:
-                    response_iterator = self._acontinue_run_stream(
+                    return self._acontinue_run_stream(
                         run_response=run_response,
                         run_messages=run_messages,
                         user_id=user_id,
@@ -2030,16 +2108,14 @@ class Agent:
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
                     )
-                    return response_iterator
                 else:
-                    response = await self._acontinue_run(
+                    return self._acontinue_run(
                         run_response=run_response,
                         run_messages=run_messages,
                         user_id=user_id,
                         session_id=session_id,
                         response_format=response_format,
                     )
-                    return response
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
@@ -6019,6 +6095,7 @@ class Agent:
         # Add tags to include in markdown content
         tags_to_include_in_markdown: Set[str] = {"think", "thinking"},
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
         import json
@@ -6080,6 +6157,7 @@ class Agent:
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
                     knowledge_filters=knowledge_filters,
+                    debug_mode=debug_mode,
                     **kwargs,
                 ):
                     if isinstance(resp, tuple(get_args(RunResponseEvent))):
@@ -6296,6 +6374,7 @@ class Agent:
                     stream=False,
                     stream_intermediate_steps=stream_intermediate_steps,
                     knowledge_filters=knowledge_filters,
+                    debug_mode=debug_mode,
                     **kwargs,
                 )
                 response_timer.stop()
@@ -6462,6 +6541,7 @@ class Agent:
         # Add tags to include in markdown content
         tags_to_include_in_markdown: Set[str] = {"think", "thinking"},
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
         import json
@@ -6510,7 +6590,7 @@ class Agent:
                 if render:
                     live_log.update(Group(*panels))
 
-                result = await self.arun(
+                result = self.arun(
                     message=message,
                     messages=messages,
                     session_id=session_id,
@@ -6523,6 +6603,7 @@ class Agent:
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
                     knowledge_filters=knowledge_filters,
+                    debug_mode=debug_mode,
                     **kwargs,
                 )
 
@@ -6742,6 +6823,7 @@ class Agent:
                     stream=False,
                     stream_intermediate_steps=stream_intermediate_steps,
                     knowledge_filters=knowledge_filters,
+                    debug_mode=debug_mode,
                     **kwargs,
                 )
                 response_timer.stop()
@@ -7193,19 +7275,21 @@ class Agent:
         if not self.telemetry:
             return
 
-        try:
-            agent_session: Optional[AgentSession] = self.agent_session or self.get_agent_session(
-                session_id=session_id, user_id=user_id
-            )
+        # # from agno.api.agent import AgentRunCreate, create_agent_run
 
-            # TODO: Telemetry data
-            # create_agent_run(
-            #     run=AgentRunCreate(
-            #         agent_data=agent_session.telemetry_data(),
-            #     ),
-            # )
-        except Exception as e:
-            log_debug(f"Could not create agent event: {e}")
+        # try:
+        #     # agent_session: Optional[AgentSession] = self.agent_session or self.get_agent_session(
+        #     #     session_id=session_id, user_id=user_id
+        #     # )
+
+        #     # TODO: Telemetry data
+        #     # create_agent_run(
+        #     #     run=AgentRunCreate(
+        #     #         agent_data=agent_session.telemetry_data(),
+        #     #     ),
+        #     # )
+        # except Exception as e:
+        #     log_debug(f"Could not create agent event: {e}")
 
     async def _alog_agent_run(self, session_id: str, user_id: Optional[str] = None) -> None:
         self.set_telemetry()
@@ -7213,16 +7297,18 @@ class Agent:
         if not self.telemetry:
             return
 
-        try:
-            agent_session: Optional[AgentSession] = self.agent_session or self.get_agent_session(
-                session_id=session_id, user_id=user_id
-            )
+        # from agno.api.agent import AgentRunCreate, acreate_agent_run
 
-            # TODO: Telemetry data
-            # await acreate_agent_run(
-            #     run=AgentRunCreate(
-            #         agent_data=agent_session.telemetry_data(),
-            #     ),
-            # )
-        except Exception as e:
-            log_debug(f"Could not create agent event: {e}")
+        # try:
+        #     agent_session: Optional[AgentSession] = self.agent_session or self.get_agent_session(
+        #         session_id=session_id, user_id=user_id
+        #     )
+
+        #     # TODO: Telemetry data
+        #     # await acreate_agent_run(
+        #     #     run=AgentRunCreate(
+        #     #         agent_data=agent_session.telemetry_data(),
+        #     #     ),
+        #     # )
+        # except Exception as e:
+        #     log_debug(f"Could not create agent event: {e}")

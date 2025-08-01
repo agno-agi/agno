@@ -178,7 +178,7 @@ def get_async_router(
             else:
                 # Check for knowledge base before processing documents
                 if agent.knowledge is None:
-                    raise HTTPException(status_code=404, detail="KnowledgeBase not found")
+                    raise HTTPException(status_code=404, detail="Knowledge not found")
 
                 if file.content_type == "application/pdf":
                     from agno.knowledge.reader.pdf_reader import PDFReader
@@ -342,13 +342,6 @@ def get_async_router(
                 workflow_input = parsed_workflow_input
             except json.JSONDecodeError:
                 pass
-
-        if agent:
-            agent.monitoring = bool(monitor)
-        elif team:
-            team.monitoring = bool(monitor)
-        elif workflow:
-            workflow.monitoring = bool(monitor)
 
         base64_images: List[Image] = []
         base64_audios: List[Audio] = []

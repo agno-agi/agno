@@ -7,7 +7,7 @@ try:
     from chromadb import PersistentClient as PersistentChromaDbClient
     from chromadb.api.client import ClientAPI
     from chromadb.api.models.Collection import Collection
-    from chromadb.api.types import GetResult, QueryResult
+    from chromadb.api.types import QueryResult
 
 except ImportError:
     raise ImportError("The `chromadb` package is not installed. Please install it via `pip install chromadb`.")

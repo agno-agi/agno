@@ -15,7 +15,6 @@ def test_image_input():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run(
@@ -40,7 +39,6 @@ def test_audio_input_bytes():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
     response = agent.run("What is in this audio?", audio=[Audio(content=wav_data, format="wav")])
 
@@ -54,7 +52,6 @@ def test_audio_input_url():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run(
@@ -72,7 +69,6 @@ def test_video_input_bytes():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     url = "https://videos.pexels.com/video-files/5752729/5752729-uhd_2560_1440_30fps.mp4"
@@ -220,7 +216,6 @@ def test_combined_text_and_image_generation():
         exponential_backoff=True,
         delay_between_retries=5,
         markdown=True,
-        telemetry=False,
         monitoring=False,
         build_context=False,
         system_message=None,

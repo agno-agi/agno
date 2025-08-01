@@ -22,14 +22,13 @@ import typer
 from agno.agent import Agent
 from agno.db.sqlite import SqliteStorage
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 from rich import print
 
-agent_knowledge = PDFUrlKnowledgeBase(
-    urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
+agent_knowledge = Knowledge(
     vector_db=LanceDb(
         uri="tmp/lancedb",
         table_name="recipe_knowledge",
@@ -37,9 +36,11 @@ agent_knowledge = PDFUrlKnowledgeBase(
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
 )
-# Comment out after the knowledge base is loaded
-# if agent_knowledge is not None:
-#     agent_knowledge.load()
+
+# Add content to the knowledge
+agent_knowledge.add_content(
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+)
 
 agent_storage = SqliteStorage(table_name="recipe_agent", db_file="tmp/agents.db")
 
