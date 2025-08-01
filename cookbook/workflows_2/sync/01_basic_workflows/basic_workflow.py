@@ -1,21 +1,25 @@
-from pydantic import BaseModel, Field
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.storage.postgres import PostgresStorage
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.workflow import Workflow
+from pydantic import BaseModel, Field
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+
 
 # Define response format
 class Source(BaseModel):
     name: str = Field(description="The name of the source")
     page_number: int = Field(description="The page number of the source")
 
+
 class Response(BaseModel):
     response: str = Field(description="The response to the user's query")
-    sources: list[Source] = Field(description="The sources used to generate the response")
+    sources: list[Source] = Field(
+        description="The sources used to generate the response"
+    )
+
 
 # Define agents
 information_agent = Agent(
