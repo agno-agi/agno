@@ -1570,3 +1570,51 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_error(f"Error upserting eval run name {eval_run_id}: {e}")
             return None
+
+    # -- Migrations --
+
+    def migrate_v1_to_v2(
+        self,
+        old_db_schema: str,
+        old_table_name: str,
+        old_table_type: str,
+        new_db_schema: str,
+        new_table_name: str,
+    ):
+        """Migrate the given table from v1 to v2"""
+        from agno.db.migrations.utils import (
+            get_all_table_content,
+            parse_agent_sessions,
+            parse_memories,
+            parse_team_sessions,
+            parse_workflow_sessions,
+        )
+
+        # Get all content from the v1 table
+        old_content: list[dict[str, Any]] = get_all_table_content(
+            db=self, db_schema=old_db_schema, table_name=old_table_name
+        )
+
+        # Parse the content into the new format
+        if old_table_type == "agent_sessions":
+            new_content = parse_agent_sessions(old_content)
+        elif old_table_type == "team_sessions":
+            new_content = parse_team_sessions(old_content)
+        elif old_table_type == "workflow_sessions":
+            new_content = parse_workflow_sessions(old_content)
+        elif old_table_type == "memories":
+            new_content = parse_memories(old_content)
+        else:
+            raise ValueError(f"Invalid table type: {old_table_type}")
+
+        # Insert the new content into the new table
+        if old_table_type in ["agent_sessions", "team_sessions", "workflow_sessions"]:
+            for item in new_content:
+                self.upsert_session(item)
+
+        elif old_table_type == "memories":
+            for item in new_content:
+                self.upsert_user_memory(item)
+
+        else:
+            raise ValueError(f"Invalid table type: {old_table_type}")
