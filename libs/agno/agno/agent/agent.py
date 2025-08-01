@@ -124,13 +124,11 @@ class Agent:
     # If True, cache the session in memory
     cache_session: bool = True
 
-    # --- Agent Context ---
-    # Context available for tools and prompt functions
-    context: Optional[Dict[str, Any]] = None
-    # If True, add the context to the user prompt
-    add_context: bool = False
-    # If True, resolve the context (i.e. call any functions in the context) before running the agent
-    resolve_context: bool = True
+    # --- Agent Dependencies ---
+    # Dependencies available for tools and prompt functions
+    dependencies: Optional[Dict[str, Any]] = None
+    # If True, add the dependencies to the user prompt
+    add_dependencies: bool = False
 
     # --- Agent Memory ---
     # Memory manager to use for this agent
@@ -342,9 +340,8 @@ class Agent:
         search_previous_sessions_history: Optional[bool] = False,
         num_history_sessions: Optional[int] = None,
         cache_session: bool = True,
-        context: Optional[Dict[str, Any]] = None,
-        add_context: bool = False,
-        resolve_context: bool = True,
+        dependencies: Optional[Dict[str, Any]] = None,
+        add_dependencies: bool = False,
         db: Optional[BaseDb] = None,
         memory_manager: Optional[MemoryManager] = None,
         enable_agentic_memory: bool = False,
@@ -427,9 +424,8 @@ class Agent:
 
         self.cache_session = cache_session
 
-        self.context = context
-        self.add_context = add_context
-        self.resolve_context = resolve_context
+        self.dependencies = dependencies
+        self.add_dependencies = add_dependencies
 
         self.db = db
 
@@ -989,9 +985,9 @@ class Agent:
         # Read existing session from database
         self.get_agent_session(session_id=session_id, user_id=user_id)
 
-        # Resolve context
-        if self.context is not None:
-            self.resolve_run_context()
+        # Resolve dependencies
+        if self.dependencies is not None:
+            self.resolve_run_dependencies()
 
         # Prepare arguments for the model
         self.set_default_model()
@@ -1384,9 +1380,9 @@ class Agent:
         # Read existing session from storage
         self.get_agent_session(session_id=session_id, user_id=user_id)
 
-        # Read existing session from storage
-        if self.context is not None:
-            self.resolve_run_context()
+        # Resolve dependencies
+        if self.dependencies is not None:
+            self.resolve_run_dependencies()
 
         # Prepare arguments for the model
         self.set_default_model()
@@ -1661,8 +1657,8 @@ class Agent:
             self.run_id = self.run_response.run_id
 
         # Read existing session from storage
-        if self.context is not None:
-            self.resolve_run_context()
+        if self.dependencies is not None:
+            self.resolve_run_dependencies()
 
         # Prepare arguments for the model
         self.set_default_model()
@@ -2055,8 +2051,8 @@ class Agent:
             self.run_id = self.run_response.run_id
 
         # Read existing session from storage
-        if self.context is not None:
-            self.resolve_run_context()
+        if self.dependencies is not None:
+            self.resolve_run_dependencies()
 
         # Prepare arguments for the model
         self.set_default_model()
@@ -3597,37 +3593,37 @@ class Agent:
                 log_debug("Model does not support structured or JSON schema outputs.")
                 return json_response_format
 
-    def resolve_run_context(self) -> None:
+    def resolve_run_dependencies(self) -> None:
         from inspect import signature
 
-        log_debug("Resolving context")
-        if not isinstance(self.context, dict):
-            log_warning("Context is not a dict")
+        log_debug("Resolving dependencies")
+        if not isinstance(self.dependencies, dict):
+            log_warning("Dependencies is not a dict")
             return
 
-        for key, value in self.context.items():
+        for key, value in self.dependencies.items():
             if callable(value):
                 try:
                     sig = signature(value)
                     result = value(agent=self) if "agent" in sig.parameters else value()
                     if result is not None:
-                        self.context[key] = result
+                        self.dependencies[key] = result
                 except Exception as e:
-                    log_warning(f"Failed to resolve context for '{key}': {e}")
+                    log_warning(f"Failed to resolve dependencies for '{key}': {e}")
             else:
-                self.context[key] = value
+                self.dependencies[key] = value
 
-    async def aresolve_run_context(self) -> None:
+    async def aresolve_run_dependencies(self) -> None:
         from inspect import iscoroutine, signature
 
         log_debug("Resolving context (async)")
-        if not isinstance(self.context, dict):
+        if not isinstance(self.dependencies, dict):
             log_warning("Context is not a dict")
             return
 
-        for key, value in self.context.items():
+        for key, value in self.dependencies.items():
             if not callable(value):
-                self.context[key] = value
+                self.dependencies[key] = value
                 continue
 
             try:
@@ -3637,7 +3633,7 @@ class Agent:
                 if iscoroutine(result):
                     result = await result
 
-                self.context[key] = result
+                self.dependencies[key] = result
             except Exception as e:
                 log_warning(f"Failed to resolve context for '{key}': {e}")
 
@@ -3949,7 +3945,7 @@ class Agent:
             self.session_state or {},
             self.team_session_state or {},
             self.workflow_session_state or {},
-            self.context or {},
+            self.dependencies or {},
             self.extra_data or {},
             {"user_id": self.user_id} if self.user_id is not None else {},
         )
@@ -4377,9 +4373,9 @@ class Agent:
             user_msg_content_str += self.convert_documents_to_string(references.references) + "\n"
             user_msg_content_str += "</references>"
         # 4.2 Add context to user message
-        if self.add_context and self.context is not None:
+        if self.add_dependencies and self.dependencies is not None:
             user_msg_content_str += "\n\n<context>\n"
-            user_msg_content_str += self.convert_context_to_string(self.context) + "\n"
+            user_msg_content_str += self.convert_context_to_string(self.dependencies) + "\n"
             user_msg_content_str += "</context>"
 
         # Use the string version for the final content

@@ -11,7 +11,7 @@ class DemoTools:
     @tool(description="Get the top hackernews stories")
     @staticmethod
     async def get_top_hackernews_stories(agent: Agent) -> str:
-        num_stories = agent.context.get("num_stories", 5) if agent.context else 5
+        num_stories = agent.dependencies.get("num_stories", 5) if agent.dependencies else 5
 
         # Fetch top story IDs
         response = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json")
@@ -33,8 +33,8 @@ class DemoTools:
     )
     async def get_current_weather(agent: Agent) -> str:
         city = (
-            agent.context.get("city", "San Francisco")
-            if agent.context
+            agent.dependencies.get("city", "San Francisco")
+            if agent.dependencies
             else "San Francisco"
         )
 
@@ -77,7 +77,7 @@ class DemoTools:
 
 agent = Agent(
     name="HackerNewsAgent",
-    context={
+    dependencies={
         "num_stories": 2,
     },
     tools=[DemoTools.get_top_hackernews_stories],
@@ -87,7 +87,7 @@ asyncio.run(agent.aprint_response("What are the top hackernews stories?"))
 
 agent = Agent(
     name="WeatherAgent",
-    context={
+    dependencies={
         "city": "San Francisco",
     },
     tools=[DemoTools().get_current_weather],

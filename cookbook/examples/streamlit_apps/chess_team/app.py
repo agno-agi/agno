@@ -293,7 +293,7 @@ Do not include any other text in your response."""
             response = st.session_state.team.run(
                 task_message,
                 stream=False,
-                context={
+                dependencies={
                     "current_player": current_agent_name,
                     "board_state": board_state,
                     "legal_moves": legal_moves,
@@ -370,7 +370,7 @@ Respond with a JSON object containing:
                         st.session_state.team.run(
                             message=analysis_message,
                             stream=False,
-                            context={
+                            dependencies={
                                 "board_state": board_state,
                                 "last_move": move_str,
                                 "last_move_description": move_description,
@@ -415,7 +415,7 @@ Please choose a valid move from the list above.
 Respond with ONLY your chosen move in UCI notation (e.g., 'e2e4').
 Do not include any other text in your response.""",
                         stream=False,
-                        context={
+                        dependencies={
                             "current_player": current_agent_name,
                             "board_state": board_state,
                             "legal_moves": legal_moves,

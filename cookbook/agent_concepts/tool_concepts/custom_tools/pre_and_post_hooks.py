@@ -20,7 +20,7 @@ def post_hook(fc: FunctionCall):
 
 @tool(pre_hook=pre_hook, post_hook=post_hook)
 def get_top_hackernews_stories(agent: Agent) -> Iterator[str]:
-    num_stories = agent.context.get("num_stories", 5) if agent.context else 5
+    num_stories = agent.dependencies.get("num_stories", 5) if agent.dependencies else 5
 
     # Fetch top story IDs
     response = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json")
@@ -38,7 +38,7 @@ def get_top_hackernews_stories(agent: Agent) -> Iterator[str]:
 
 
 agent = Agent(
-    context={
+    dependencies={
         "num_stories": 2,
     },
     tools=[get_top_hackernews_stories],

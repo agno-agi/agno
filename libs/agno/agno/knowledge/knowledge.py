@@ -438,7 +438,6 @@ class Knowledge:
 
             return
 
-
         # Validate URL
         try:
             from urllib.parse import urlparse
