@@ -1,12 +1,12 @@
 from agno.api.api import api
 from agno.api.routes import ApiRoutes
 from agno.api.schemas.team import TeamRunCreate
-from agno.cli.settings import agno_cli_settings
+from agno.api.settings import agno_api_settings
 from agno.utils.log import log_debug
 
 
 def create_team_run(run: TeamRunCreate) -> None:
-    if not agno_cli_settings.api_enabled:
+    if not agno_api_settings.api_enabled:
         return
 
     log_debug("--**-- Logging Team Run")
@@ -23,7 +23,7 @@ def create_team_run(run: TeamRunCreate) -> None:
 
 
 async def acreate_team_run(run: TeamRunCreate) -> None:
-    if not agno_cli_settings.api_enabled:
+    if not agno_api_settings.api_enabled:
         return
 
     log_debug("--**-- Logging Team Run")

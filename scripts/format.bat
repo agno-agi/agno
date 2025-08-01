@@ -10,8 +10,7 @@ REM Get current directory
 SET "CURR_DIR=%~dp0"
 SET "REPO_ROOT=%CURR_DIR%\.."
 SET "AGNO_DIR=%REPO_ROOT%\libs\agno"
-SET "AGNO_DOCKER_DIR=%REPO_ROOT%\libs\infra\agno_docker"
-SET "AGNO_AWS_DIR=%REPO_ROOT%\libs\infra\agno_aws"
+SET "AGNO_OS_DIR=%REPO_ROOT%\libs\agno_os"
 SET "COOKBOOK_DIR=%REPO_ROOT%\cookbook"
 
 REM Function to print headings
@@ -23,13 +22,8 @@ IF NOT EXIST "%AGNO_DIR%" (
     EXIT /B 1
 )
 
-IF NOT EXIST "%AGNO_DOCKER_DIR%" (
-    ECHO [ERROR] AGNO_DOCKER_DIR: %AGNO_DOCKER_DIR% does not exist
-    EXIT /B 1
-)
-
-IF NOT EXIST "%AGNO_AWS_DIR%" (
-    ECHO [ERROR] AGNO_AWS_DIR: %AGNO_AWS_DIR% does not exist
+IF NOT EXIST "%AGNO_OS_DIR%" (
+    ECHO [ERROR] AGNO_OS_DIR: %AGNO_OS_DIR% does not exist
     EXIT /B 1
 )
 
@@ -47,20 +41,12 @@ IF EXIST %AGNO_FORMAT% (
     ECHO [WARNING] %AGNO_FORMAT% does not exist, skipping
 )
 
-SET AGNO_DOCKER_FORMAT="%AGNO_DOCKER_DIR%\scripts\format.bat"
-IF EXIST %AGNO_DOCKER_FORMAT% (
-    ECHO [INFO] Running %AGNO_DOCKER_FORMAT%
-    CALL %AGNO_DOCKER_FORMAT%
+SET AGNO_OS_FORMAT="%AGNO_OS_DIR%\scripts\format.bat"
+IF EXIST %AGNO_OS_FORMAT% (
+    ECHO [INFO] Running %AGNO_OS_FORMAT%
+    CALL %AGNO_OS_FORMAT%
 ) ELSE (
-    ECHO [WARNING] %AGNO_DOCKER_FORMAT% does not exist, skipping
-)
-
-SET AGNO_AWS_FORMAT="%AGNO_AWS_DIR%\scripts\format.bat"
-IF EXIST %AGNO_AWS_FORMAT% (
-    ECHO [INFO] Running %AGNO_AWS_FORMAT%
-    CALL %AGNO_AWS_FORMAT%
-) ELSE (
-    ECHO [WARNING] %AGNO_AWS_FORMAT% does not exist, skipping
+    ECHO [WARNING] %AGNO_OS_FORMAT% does not exist, skipping
 )
 
 REM Format all cookbook examples
