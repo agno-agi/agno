@@ -21,7 +21,7 @@ vector_db = LanceDb(
 )
 
 knowledge = Knowledge(
-      vector_db=vector_db,
+    vector_db=vector_db,
 )
 
 knowledge.add_contents(

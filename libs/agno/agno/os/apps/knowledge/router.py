@@ -1,9 +1,9 @@
 import json
 import math
-from typing import Dict, Optional
+from typing import Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Body, File, Form, HTTPException, Path, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Path, Query, UploadFile
 
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
@@ -124,15 +124,15 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
                 parsed_metadata = json.loads(metadata)
             except json.JSONDecodeError:
                 raise HTTPException(status_code=400, detail="Invalid JSON format for metadata")
-        
+
         # Create ContentUpdateSchema object from form data
         update_data = ContentUpdateSchema(
             name=name if name and name.strip() else None,
             description=description if description and description.strip() else None,
             metadata=parsed_metadata,
-            reader_id=reader_id if reader_id and reader_id.strip() else None
+            reader_id=reader_id if reader_id and reader_id.strip() else None,
         )
-        
+
         content = Content(
             id=content_id,
             name=update_data.name,

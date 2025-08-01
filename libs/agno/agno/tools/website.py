@@ -1,5 +1,5 @@
 import json
-from typing import Any, List, Optional, Union, cast
+from typing import Any, List, Optional
 
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge

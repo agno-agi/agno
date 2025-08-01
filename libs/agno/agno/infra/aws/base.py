@@ -1,7 +1,7 @@
 from typing import Any, Optional
 
-from agno.infra.aws.s3.api_client import AwsApiClient
 from agno.cli.console import print_info
+from agno.infra.aws.s3.api_client import AwsApiClient
 from agno.infra.resource import InfraResource
 from agno.utils.log import logger
 

@@ -28,8 +28,8 @@ from typing import Optional
 
 from agno.agent import Agent
 from agno.db.agent.postgres import PostgresAgentStorage
-from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.embedder.openai import OpenAIEmbedder
+from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.groq import Groq

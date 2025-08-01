@@ -5,8 +5,8 @@ from typing import Optional
 
 from agno.agent import Agent
 from agno.db.agent.postgres import PostgresAgentStorage
-from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.embedder.openai import OpenAIEmbedder
+from agno.knowledge.knowledge import Knowledge
 from agno.memory.db.postgres import PostgresMemoryDb
 from agno.memory.memory import Memory
 from agno.models.anthropic import Claude

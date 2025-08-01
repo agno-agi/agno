@@ -1,8 +1,8 @@
 from pathlib import Path
 
 from agno.agent import Agent
-from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.chunking.row import RowChunking
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"

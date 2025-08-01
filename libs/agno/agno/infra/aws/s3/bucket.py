@@ -2,10 +2,10 @@ from typing import Any, Dict, List, Optional
 
 from typing_extensions import Literal
 
+from agno.cli.console import print_info
 from agno.infra.aws.base import AwsResource
 from agno.infra.aws.s3.api_client import AwsApiClient
 from agno.infra.aws.s3.object import S3Object
-from agno.cli.console import print_info
 from agno.utils.log import logger
 
 

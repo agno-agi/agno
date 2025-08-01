@@ -5,7 +5,6 @@ import time
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
-from pprint import pprint
 from typing import Any, Dict, List, Optional, Tuple, Union, overload
 from uuid import uuid4
 
@@ -461,26 +460,32 @@ class Knowledge:
         try:
             if content.url.endswith("llms-full.txt") or content.url.endswith("llms.txt"):
                 log_info(f"Detected llms, using url reader")
-                reader = self.url_reader
-                read_documents = reader.read(content.url, content.name)
+                reader = content.reader or self.url_reader
+                read_documents = reader.read(url=content.url, name=content.name)
 
             elif file_extension and file_extension is not None:
                 log_info(f"Detected file type: {file_extension} from URL: {content.url}")
-                reader = self._select_url_file_reader(file_extension)
-                if reader is not None:
-                    log_info(f"Selected reader: {reader.__class__.__name__}")
-                    read_documents = reader.read(content.url, content.name)
+                if content.reader:
+                    reader = content.reader
                 else:
-                    log_info(f"No reader found for file extension: {file_extension}")
+                    reader = self._select_url_file_reader(file_extension)
+                    if reader is not None:
+                        log_info(f"Selected reader: {reader.__class__.__name__}")
+                        read_documents = reader.read(url=content.url, name=content.name)
+                    else:
+                        log_info(f"No reader found for file extension: {file_extension}")
             else:
                 log_info(f"No file extension found for URL: {content.url}, determining website type")
-                reader = self._select_url_reader(content.url)
+                if content.reader:
+                    reader = content.reader
+                else:
+                    reader = self._select_url_reader(content.url)
                 if reader is not None:
                     log_info(f"Selected reader: {reader.__class__.__name__}")
-                    read_documents = reader.read(content.url, content.name)
+                    read_documents = reader.read(url=content.url, name=content.name)
                 else:
                     log_info(f"No reader found for URL: {content.url}")
-                    
+
         except Exception as e:
             log_error(f"Error reading URL: {content.url} - {str(e)}")
             content.status = ContentStatus.FAILED
@@ -679,8 +684,6 @@ class Knowledge:
         upsert: bool,
         skip_if_exists: bool,
     ):
-        log_info(f"Loading content from cloud storage")
-
         if content.remote_content is None:
             log_warning("No remote content provided for content")
             return
@@ -699,7 +702,6 @@ class Knowledge:
     def _load_from_s3(self, content: Content, upsert: bool, skip_if_exists: bool):
         from agno.aws.resource.s3.object import S3Object  # type: ignore
 
-        log_info(f"Loading content from S3")
         if content.reader is None:
             reader = self.s3_reader
         else:
@@ -772,8 +774,6 @@ class Knowledge:
                 self._update_content(content_entry)
 
     def _load_from_gcs(self, content: Content, upsert: bool, skip_if_exists: bool):
-        log_info(f"Loading content from GCS")
-
         if content.reader is None:
             reader = self.gcs_reader
         else:

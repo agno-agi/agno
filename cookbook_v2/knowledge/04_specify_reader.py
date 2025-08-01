@@ -1,4 +1,8 @@
 """This cookbook shows how to specify a reader for reading content.
+Readers are assigned by default to the content based on the file extension.
+You can specify a reader for a specific content by passing the reader to the add_content method
+if you want to use a different reader for a specific content.
+
 1. Run: `python cookbook/agent_concepts/knowledge/04_specify_reader.py` to run the cookbook
 """
 
@@ -19,7 +23,7 @@ knowledge = Knowledge(
 # Use a specific reader
 knowledge.add_content(
     name="CV",
-    path="cookbook/agent_concepts/knowledge/testing_resources/",
+    path="cookbook_v2/knowledge/data/filters/cv_1.pdf",
     metadata={"user_tag": "Engineering Candidates"},
     reader=PDFReader(),
 )

@@ -13,8 +13,8 @@ Run: `uv run cookbook/agent_concepts/rag/rag_sentence_transformer.py`
 """
 
 from agno.agent import Agent
-from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.embedder.sentence_transformer import SentenceTransformerEmbedder
+from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.reranker.sentence_transformer import SentenceTransformerReranker
 from agno.vectordb.pgvector import PgVector
@@ -63,7 +63,6 @@ agent = Agent(
 )
 
 if __name__ == "__main__":
-
     test_queries = [
         "What organic skincare products are good for sensitive skin?",
         "Tell me about makeup trends in different languages",

@@ -26,7 +26,6 @@ surrealdb = SurrealDb(
     m=12,  # HNSW max number of connections per element
     search_ef=40,  # HNSW search time/accuracy trade-off
     embedder=OpenAIEmbedder(),
-
 )
 
 

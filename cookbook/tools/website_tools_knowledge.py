@@ -25,9 +25,7 @@ agent = Agent(
     search_knowledge=True,
     show_tool_calls=True,
     tools=[
-        WebsiteTools(
-            knowledge_base=kb
-        )  #
+        WebsiteTools(knowledge_base=kb)  #
     ],
 )
 
