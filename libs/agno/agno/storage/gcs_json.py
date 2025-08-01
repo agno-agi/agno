@@ -222,7 +222,7 @@ class GCSJsonStorage(JsonStorage):
         try:
             data = session.to_dict()
             data["updated_at"] = int(time.time())
-            if "created_at" not in data:
+            if "created_at" not in data or data["created_at"] is None:
                 data["created_at"] = data["updated_at"]
             json_data = self.serialize(data)
             blob.upload_from_string(json_data, content_type="application/json")
