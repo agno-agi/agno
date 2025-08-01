@@ -323,10 +323,10 @@ class Function(BaseModel):
     @staticmethod
     def _wrap_callable(func: Callable) -> Callable:
         """Wrap a callable with Pydantic's validate_call decorator, if relevant"""
-        from inspect import isasyncgenfunction
+        from inspect import isasyncgenfunction, iscoroutinefunction
 
-        # Don't wrap async generator with validate_call
-        if isasyncgenfunction(func):
+        # Don't wrap async generators and coroutines with validate_call
+        if isasyncgenfunction(func) or iscoroutinefunction(func):
             return func
         # Don't wrap callables that are already wrapped with validate_call
         elif getattr(func, "_wrapped_for_validation", False):
@@ -599,7 +599,7 @@ class FunctionCall(BaseModel):
 
     def execute(self) -> FunctionExecutionResult:
         """Runs the function call."""
-        from inspect import isgenerator
+        from inspect import isgenerator, isgeneratorfunction
 
         if self.function.entrypoint is None:
             return FunctionExecutionResult(status="failure", error="Entrypoint is not set")
@@ -612,7 +612,7 @@ class FunctionCall(BaseModel):
         entrypoint_args = self._build_entrypoint_args()
 
         # Check cache if enabled and not a generator function
-        if self.function.cache_results and not isgenerator(self.function.entrypoint):
+        if self.function.cache_results and not isgeneratorfunction(self.function.entrypoint):
             cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
             cache_file = self.function._get_cache_file_path(cache_key)
             cached_result = self.function._get_cached_result(cache_file)
@@ -718,7 +718,7 @@ class FunctionCall(BaseModel):
         Similar to _build_nested_execution_chain but for async execution.
         """
         from functools import reduce
-        from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction
+        from inspect import isasyncgenfunction, iscoroutinefunction
 
         async def execute_entrypoint_async(name, func, args):
             """Execute the entrypoint function asynchronously."""
@@ -727,9 +727,7 @@ class FunctionCall(BaseModel):
                 arguments.update(self.arguments)
 
             result = self.function.entrypoint(**arguments)  # type: ignore
-            if iscoroutinefunction(self.function.entrypoint) and not (
-                isasyncgen(self.function.entrypoint) or isasyncgenfunction(self.function.entrypoint)
-            ):
+            if iscoroutinefunction(self.function.entrypoint) and not isasyncgenfunction(self.function.entrypoint):
                 result = await result
             return result
 
@@ -779,7 +777,7 @@ class FunctionCall(BaseModel):
 
     async def aexecute(self) -> FunctionExecutionResult:
         """Runs the function call asynchronously."""
-        from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgenerator
+        from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgenerator, isgeneratorfunction
 
         if self.function.entrypoint is None:
             return FunctionExecutionResult(status="failure", error="Entrypoint is not set")
@@ -796,7 +794,7 @@ class FunctionCall(BaseModel):
 
         # Check cache if enabled and not a generator function
         if self.function.cache_results and not (
-            isasyncgen(self.function.entrypoint) or isgenerator(self.function.entrypoint)
+            isasyncgenfunction(self.function.entrypoint) or isgeneratorfunction(self.function.entrypoint)
         ):
             cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
             cache_file = self.function._get_cache_file_path(cache_key)
@@ -818,7 +816,7 @@ class FunctionCall(BaseModel):
                 else:
                     result = self.function.entrypoint(**entrypoint_args, **self.arguments)
 
-                if isasyncgen(self.function.entrypoint) or isasyncgenfunction(self.function.entrypoint):
+                if isasyncgenfunction(self.function.entrypoint):
                     self.result = result  # Store async generator directly
                 else:
                     self.result = await result
