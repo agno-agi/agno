@@ -24,7 +24,6 @@ team = Team(
     instructions="You have no members, answer directly",
     description="You are an expert on national parks and provide concise guides.",
     telemetry=False,
-    monitoring=False,
 )
 
 

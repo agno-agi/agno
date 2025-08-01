@@ -57,7 +57,7 @@ company_info_team = Team(
 
 async def run_team_with_events(prompt: str):
     content_started = False
-    async for run_response_event in await company_info_team.arun(
+    async for run_response_event in company_info_team.arun(
         prompt,
         stream=True,
         stream_intermediate_steps=True,

@@ -187,7 +187,7 @@ async def recruitment_execution(
         Evaluate how well this candidate matches the job requirements and provide a score from 0-10.
         """
 
-        async for response in await screening_agent.arun(
+        async for response in screening_agent.arun(
             screening_prompt, stream=True, stream_intermediate_steps=True
         ):
             if hasattr(response, "content") and response.content:
@@ -225,7 +225,7 @@ async def recruitment_execution(
             Use the simulate_zoom_scheduling tool to create the meeting.
             """
 
-            async for response in await scheduler_agent.arun(
+            async for response in scheduler_agent.arun(
                 schedule_prompt, stream=True, stream_intermediate_steps=True
             ):
                 if hasattr(response, "content") and response.content:
@@ -244,7 +244,7 @@ async def recruitment_execution(
             - Include next steps and what to expect
             """
 
-            async for response in await email_writer_agent.arun(
+            async for response in email_writer_agent.arun(
                 email_prompt, stream=True, stream_intermediate_steps=True
             ):
                 if hasattr(response, "content") and response.content:
@@ -261,7 +261,7 @@ async def recruitment_execution(
             Use the simulate_email_sending tool.
             """
 
-            async for response in await email_sender_agent.arun(
+            async for response in email_sender_agent.arun(
                 send_prompt, stream=True, stream_intermediate_steps=True
             ):
                 yield response

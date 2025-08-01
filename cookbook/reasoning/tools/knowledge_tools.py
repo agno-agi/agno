@@ -6,14 +6,13 @@
 
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.url import UrlKnowledge
+from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.tools.knowledge import KnowledgeTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 
-# Create a knowledge base containing information from a URL
-agno_docs = UrlKnowledge(
-    urls=["https://docs.agno.com/llms-full.txt"],
+# Create a knowledge containing information from a URL
+agno_docs = Knowledge(
     # Use LanceDB as the vector database and store embeddings in the `agno_docs` table
     vector_db=LanceDb(
         uri="tmp/lancedb",
@@ -22,6 +21,8 @@ agno_docs = UrlKnowledge(
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
 )
+# Add content to the knowledge
+agno_docs.add_content(url="https://docs.agno.com/llms-full.txt")
 
 knowledge_tools = KnowledgeTools(
     knowledge=agno_docs,
@@ -38,6 +39,9 @@ agent = Agent(
 )
 
 if __name__ == "__main__":
-    # Load the knowledge base, comment after first run
-    agno_docs.load(recreate=True)
-    agent.print_response("How do I build multi-agent teams with Agno?", stream=True)
+    agent.print_response(
+        "How do I build a team of agents in agno?",
+        markdown=True,
+        stream=True,
+        stream_tools=True,
+    )

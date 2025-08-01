@@ -20,21 +20,21 @@ class SessionSummary:
 
     summary: str
     topics: Optional[List[str]] = None
-    last_updated: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
             "summary": self.summary,
             "topics": self.topics,
-            "last_updated": self.last_updated.isoformat() if self.last_updated else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
         return {k: v for k, v in _dict.items() if v is not None}
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SessionSummary":
-        last_updated = data.get("last_updated")
-        if last_updated:
-            data["last_updated"] = datetime.fromisoformat(last_updated)
+        updated_at = data.get("updated_at")
+        if updated_at:
+            data["updated_at"] = datetime.fromisoformat(updated_at)
         return cls(**data)
 
 
@@ -145,7 +145,7 @@ class SessionSummaryManager:
             session_summary = SessionSummary(
                 summary=summary_response.parsed.summary,
                 topics=summary_response.parsed.topics,
-                last_updated=datetime.now(),
+                updated_at=datetime.now(),
             )
             self.summary = session_summary
             log_debug("Session summary created", center=True)
@@ -160,7 +160,7 @@ class SessionSummaryManager:
 
                 if parsed_summary is not None:
                     session_summary = SessionSummary(
-                        summary=parsed_summary.summary, topics=parsed_summary.topics, last_updated=datetime.now()
+                        summary=parsed_summary.summary, topics=parsed_summary.topics, updated_at=datetime.now()
                     )
                     self.summary = session_summary
                     log_debug("Session summary created", center=True)

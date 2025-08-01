@@ -832,7 +832,7 @@ class SingleStoreDb(BaseDb):
                         if isinstance(topic_list, list):
                             topics.extend(topic_list)
 
-                return topics
+                return list(set(topics))
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
@@ -989,11 +989,11 @@ class SingleStoreDb(BaseDb):
                     select(
                         table.c.user_id,
                         func.count(table.c.memory_id).label("total_memories"),
-                        func.max(table.c.last_updated).label("last_memory_updated_at"),
+                        func.max(table.c.updated_at).label("last_memory_updated_at"),
                     )
                     .where(table.c.user_id.is_not(None))
                     .group_by(table.c.user_id)
-                    .order_by(func.max(table.c.last_updated).desc())
+                    .order_by(func.max(table.c.updated_at).desc())
                 )
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
@@ -1054,8 +1054,7 @@ class SingleStoreDb(BaseDb):
                     agent_id=memory.agent_id,
                     team_id=memory.team_id,
                     topics=memory.topics,
-                    workflow_id=memory.workflow_id,
-                    last_updated=int(time.time()),
+                    updated_at=int(time.time()),
                 )
                 stmt = stmt.on_duplicate_key_update(
                     memory=stmt.inserted.memory,
@@ -1064,8 +1063,7 @@ class SingleStoreDb(BaseDb):
                     user_id=stmt.inserted.user_id,
                     agent_id=stmt.inserted.agent_id,
                     team_id=stmt.inserted.team_id,
-                    workflow_id=stmt.inserted.workflow_id,
-                    last_updated=int(time.time()),
+                    updated_at=int(time.time()),
                 )
 
                 sess.execute(stmt)

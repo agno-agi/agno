@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from os import getenv
 from typing import Any, Dict, Optional, Union
 from uuid import uuid4
 
@@ -10,10 +9,9 @@ from fastapi.routing import APIRouter
 from starlette.middleware.cors import CORSMiddleware
 
 from agno.agent.agent import Agent
-from agno.api.app import AppCreate, create_app
 from agno.app.settings import APIAppSettings
 from agno.team.team import Team
-from agno.utils.log import log_debug, log_info
+from agno.utils.log import log_info
 
 
 class BaseAPIApp(ABC):
@@ -26,7 +24,6 @@ class BaseAPIApp(ABC):
         settings: Optional[APIAppSettings] = None,
         api_app: Optional[FastAPI] = None,
         router: Optional[APIRouter] = None,
-        monitoring: bool = True,
         app_id: Optional[str] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
@@ -43,7 +40,6 @@ class BaseAPIApp(ABC):
         self.settings: APIAppSettings = settings or APIAppSettings()
         self.api_app: Optional[FastAPI] = api_app
         self.router: Optional[APIRouter] = router
-        self.monitoring = monitoring
         self.app_id: Optional[str] = app_id
         self.name: Optional[str] = name
         self.description = description
@@ -75,11 +71,6 @@ class BaseAPIApp(ABC):
 
         # Don't override existing app_id
         return self.app_id
-
-    def _set_monitoring(self) -> None:
-        monitor_env = getenv("AGNO_MONITOR")
-        if monitor_env is not None:
-            self.monitoring = monitor_env.lower() == "true"
 
     @abstractmethod
     def get_router(self) -> APIRouter:
@@ -160,22 +151,9 @@ class BaseAPIApp(ABC):
         **kwargs,
     ):
         self.set_app_id()
-        self.register_app_on_platform()
         log_info(f"Starting API on {host}:{port}")
 
         uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)
-
-    def register_app_on_platform(self) -> None:
-        self._set_monitoring()
-        if not self.monitoring:
-            return
-
-        try:
-            log_debug(f"Creating app on Platform: {self.name}, {self.app_id}")
-            create_app(app=AppCreate(name=self.name, app_id=self.app_id, config=self.to_dict()))
-        except Exception as e:
-            log_debug(f"Could not create Agent app: {e}")
-        log_debug(f"Agent app created: {self.name}, {self.app_id}")
 
     def to_dict(self) -> Dict[str, Any]:
         payload = {

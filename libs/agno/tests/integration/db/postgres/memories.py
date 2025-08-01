@@ -31,7 +31,7 @@ def sample_user_memory() -> UserMemory:
         topics=["preferences", "work_habits"],
         user_id="test_user_1",
         input="I prefer coffee and work best in the morning",
-        last_updated=datetime.now(),
+        updated_at=datetime.now(),
         feedback="positive",
         agent_id="test_agent_1",
         team_id="test_team_1",
@@ -123,7 +123,7 @@ def test_delete_multiple_user_memories(postgres_db_real: PostgresDb):
     memory_ids = []
     for i in range(3):
         memory = UserMemory(
-            memory_id=f"memory_{i}", memory=f"Test memory {i}", user_id="test_user", last_updated=datetime.now()
+            memory_id=f"memory_{i}", memory=f"Test memory {i}", user_id="test_user", updated_at=datetime.now()
         )
         postgres_db_real.upsert_user_memory(memory)
         memory_ids.append(memory.memory_id)
@@ -152,21 +152,21 @@ def test_get_all_memory_topics(postgres_db_real: PostgresDb):
             memory="Memory 1",
             topics=["topic1", "topic2"],
             user_id="user1",
-            last_updated=datetime.now(),
+            updated_at=datetime.now(),
         ),
         UserMemory(
             memory_id="memory_2",
             memory="Memory 2",
             topics=["topic2", "topic3"],
             user_id="user2",
-            last_updated=datetime.now(),
+            updated_at=datetime.now(),
         ),
         UserMemory(
             memory_id="memory_3",
             memory="Memory 3",
             topics=["topic1", "topic4"],
             user_id="user3",
-            last_updated=datetime.now(),
+            updated_at=datetime.now(),
         ),
     ]
 
@@ -184,10 +184,10 @@ def test_get_user_memory_stats(postgres_db_real: PostgresDb):
     # Inserting some memories
     memories = [
         UserMemory(
-            memory_id="memory_1", memory="Memory 1", user_id="user1", agent_id="agent1", last_updated=datetime.now()
+            memory_id="memory_1", memory="Memory 1", user_id="user1", agent_id="agent1", updated_at=datetime.now()
         ),
         UserMemory(
-            memory_id="memory_2", memory="Memory 2", user_id="user1", agent_id="agent2", last_updated=datetime.now()
+            memory_id="memory_2", memory="Memory 2", user_id="user1", agent_id="agent2", updated_at=datetime.now()
         ),
     ]
 
@@ -212,7 +212,7 @@ def test_comprehensive_user_memory_fields(postgres_db_real: PostgresDb):
         topics=["preferences", "behavior", "detailed", "comprehensive"],
         user_id="comprehensive_user",
         input="Original input that led to this memory being created",
-        last_updated=datetime(2021, 1, 1, 12, 0, 0),
+        updated_at=datetime(2021, 1, 1, 12, 0, 0),
         feedback="Very positive feedback about this memory",
         agent_id="comprehensive_agent",
         team_id="comprehensive_team",

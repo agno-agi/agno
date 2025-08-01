@@ -18,7 +18,7 @@ class UserMemorySchema(BaseModel):
     workflow_id: Optional[str]
     user_id: Optional[str]
 
-    last_updated: Optional[datetime]
+    updated_at: Optional[datetime]
 
     @classmethod
     def from_dict(cls, memory_dict: Dict[str, Any]) -> "UserMemorySchema":
@@ -30,7 +30,7 @@ class UserMemorySchema(BaseModel):
             workflow_id=memory_dict.get("workflow_id"),
             memory=memory_dict["memory"],
             topics=memory_dict.get("topics", []),
-            last_updated=memory_dict["last_updated"],
+            updated_at=memory_dict["updated_at"],
         )
 
 
@@ -51,12 +51,10 @@ class UserStatsSchema(BaseModel):
 
     @classmethod
     def from_dict(cls, user_stats_dict: Dict[str, Any]) -> "UserStatsSchema":
-        last_updated_at = user_stats_dict.get("last_memory_updated_at")
+        updated_at = user_stats_dict.get("last_memory_updated_at")
 
         return cls(
             user_id=str(user_stats_dict["user_id"]),
             total_memories=user_stats_dict["total_memories"],
-            last_memory_updated_at=datetime.fromtimestamp(last_updated_at, tz=timezone.utc)
-            if last_updated_at
-            else None,
+            last_memory_updated_at=datetime.fromtimestamp(updated_at, tz=timezone.utc) if updated_at else None,
         )
