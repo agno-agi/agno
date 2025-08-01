@@ -90,6 +90,7 @@ def parse_agent_sessions(v1_content: List[Dict[str, Any]]) -> List[AgentSession]
             "user_id": item.get("user_id"),
             "session_data": item.get("session_data"),
             "metadata": item.get("extra_data"),
+            "runs": item.get("memory", {}).get("runs"),
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
         }
@@ -110,6 +111,7 @@ def parse_team_sessions(v1_content: List[Dict[str, Any]]) -> List[TeamSession]:
             "user_id": item.get("user_id"),
             "session_data": item.get("session_data"),
             "metadata": item.get("extra_data"),
+            "runs": item.get("memory", {}).get("runs"),
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
         }
