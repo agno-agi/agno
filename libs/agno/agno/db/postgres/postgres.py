@@ -1032,6 +1032,7 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess:
                 result = sess.execute(stmt).fetchall()
+
                 return [record._mapping for record in result]
 
         except Exception as e:
@@ -1064,6 +1065,7 @@ class PostgresDb(BaseDb):
 
         # 2. No metrics records. Return the date of the first recorded session.
         first_session, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
+
         first_session_date = first_session[0]["created_at"] if first_session else None  # type: ignore[index]
 
         # 3. No metrics records and no sessions records. Return None.
@@ -1085,6 +1087,7 @@ class PostgresDb(BaseDb):
             table = self._get_table(table_type="metrics")
 
             starting_date = self._get_metrics_calculation_starting_date(table)
+
             if starting_date is None:
                 log_info("No session data found. Won't calculate metrics.")
                 return None
@@ -1094,14 +1097,19 @@ class PostgresDb(BaseDb):
                 log_info("Metrics already calculated for all relevant dates.")
                 return None
 
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             sessions = self._get_all_sessions_for_metrics_calculation(
                 start_timestamp=start_timestamp, end_timestamp=end_timestamp
             )
+
             all_sessions_data = fetch_all_sessions_data(
                 sessions=sessions, dates_to_process=dates_to_process, start_timestamp=start_timestamp
             )
@@ -1121,6 +1129,7 @@ class PostgresDb(BaseDb):
                     continue
 
                 metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
+
                 metrics_records.append(metrics_record)
 
             if metrics_records:
