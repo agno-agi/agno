@@ -3181,7 +3181,6 @@ class Agent:
                     model_response_event.content is not None
                     or model_response_event.thinking is not None
                     or model_response_event.redacted_thinking is not None
-                    or getattr(model_response_event, "reasoning_content", None) is not None
                     or model_response_event.citations is not None
                 ):
                     yield self._handle_event(
@@ -3190,7 +3189,6 @@ class Agent:
                             content=model_response_event.content,
                             thinking=model_response_event.thinking,
                             redacted_thinking=model_response_event.redacted_thinking,
-                            reasoning_content=getattr(model_response_event, "reasoning_content", None),
                             citations=model_response_event.citations,
                         ),
                         run_response,
@@ -6943,8 +6941,6 @@ class Agent:
                                         log_warning(f"Failed to convert response to JSON: {e}")
                             if hasattr(resp, "thinking") and resp.thinking is not None:
                                 _response_thinking += resp.thinking
-                            if hasattr(resp, "reasoning_content") and resp.reasoning_content is not None:
-                                _response_thinking += resp.reasoning_content
                         if (
                             hasattr(resp, "extra_data")
                             and resp.extra_data is not None
@@ -7395,9 +7391,6 @@ class Agent:
                                     log_warning(f"Failed to convert response to JSON: {e}")
                             if resp.thinking is not None:
                                 _response_thinking += resp.thinking
-                            if hasattr(resp, "reasoning_content") and resp.reasoning_content is not None:
-                                _response_thinking += resp.reasoning_content
-
                         if (
                             hasattr(resp, "extra_data")
                             and resp.extra_data is not None

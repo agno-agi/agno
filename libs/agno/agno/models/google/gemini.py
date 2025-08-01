@@ -714,10 +714,10 @@ class Gemini(Model):
                         # Check if this is a thought summary
                         if hasattr(part, "thought") and part.thought:
                             # Add all parts as single message
-                            if model_response.reasoning_content is None:
-                                model_response.reasoning_content = text_content
+                            if model_response.thinking is None:
+                                model_response.thinking = text_content
                             else:
-                                model_response.reasoning_content += text_content
+                                model_response.thinking += text_content
                         else:
                             if model_response.content is None:
                                 model_response.content = text_content
@@ -727,10 +727,10 @@ class Gemini(Model):
                         content_str = str(text_content) if text_content is not None else ""
                         if hasattr(part, "thought") and part.thought:
                             # Add all parts as single message
-                            if model_response.reasoning_content is None:
-                                model_response.reasoning_content = content_str
+                            if model_response.thinking is None:
+                                model_response.thinking = content_str
                             else:
-                                model_response.reasoning_content += content_str
+                                model_response.thinking += content_str
                         else:
                             if model_response.content is None:
                                 model_response.content = content_str
@@ -817,10 +817,10 @@ class Gemini(Model):
                         text_content = str(part.text) if part.text is not None else ""
                         # Check if this is a thought summary
                         if hasattr(part, "thought") and part.thought:
-                            if model_response.reasoning_content is None:
-                                model_response.reasoning_content = text_content
+                            if model_response.thinking is None:
+                                model_response.thinking = text_content
                             else:
-                                model_response.reasoning_content += text_content
+                                model_response.thinking += text_content
                         else:
                             if model_response.content is None:
                                 model_response.content = text_content
