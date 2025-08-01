@@ -1,8 +1,8 @@
 from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
+from agno.models.openai import OpenAIChat
 
 agent = Agent(
-    model=OpenAIResponses(id="o4-mini", service_tier="flex"),
+    model=OpenAIChat(id="o4-mini", service_tier="flex"),
     markdown=True,
     debug_mode=True,
 )
