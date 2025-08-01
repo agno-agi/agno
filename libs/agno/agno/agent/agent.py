@@ -129,8 +129,6 @@ class Agent:
     dependencies: Optional[Dict[str, Any]] = None
     # If True, add the dependencies to the user prompt
     add_dependencies: bool = False
-    # If True, resolve the dependencies (i.e. call any functions in the dependencies) before running the agent
-    resolve_dependencies: bool = True
 
     # --- Agent Memory ---
     # Memory manager to use for this agent
@@ -344,7 +342,6 @@ class Agent:
         cache_session: bool = True,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies: bool = False,
-        resolve_dependencies: bool = True,
         db: Optional[BaseDb] = None,
         memory_manager: Optional[MemoryManager] = None,
         enable_agentic_memory: bool = False,
@@ -429,7 +426,6 @@ class Agent:
 
         self.dependencies = dependencies
         self.add_dependencies = add_dependencies
-        self.resolve_dependencies = resolve_dependencies
 
         self.db = db
 
@@ -989,9 +985,9 @@ class Agent:
         # Read existing session from database
         self.get_agent_session(session_id=session_id, user_id=user_id)
 
-        # Resolve context
+        # Resolve dependencies
         if self.dependencies is not None:
-            self.resolve_run_context()
+            self.resolve_run_dependencies()
 
         # Prepare arguments for the model
         self.set_default_model()
@@ -1384,9 +1380,9 @@ class Agent:
         # Read existing session from storage
         self.get_agent_session(session_id=session_id, user_id=user_id)
 
-        # Read existing session from storage
+        # Resolve dependencies
         if self.dependencies is not None:
-            self.resolve_run_context()
+            self.resolve_run_dependencies()
 
         # Prepare arguments for the model
         self.set_default_model()
@@ -1662,7 +1658,7 @@ class Agent:
 
         # Read existing session from storage
         if self.dependencies is not None:
-            self.resolve_run_context()
+            self.resolve_run_dependencies()
 
         # Prepare arguments for the model
         self.set_default_model()
@@ -2056,7 +2052,7 @@ class Agent:
 
         # Read existing session from storage
         if self.dependencies is not None:
-            self.resolve_run_context()
+            self.resolve_run_dependencies()
 
         # Prepare arguments for the model
         self.set_default_model()
@@ -3597,12 +3593,12 @@ class Agent:
                 log_debug("Model does not support structured or JSON schema outputs.")
                 return json_response_format
 
-    def resolve_run_context(self) -> None:
+    def resolve_run_dependencies(self) -> None:
         from inspect import signature
 
-        log_debug("Resolving context")
+        log_debug("Resolving dependencies")
         if not isinstance(self.dependencies, dict):
-            log_warning("Context is not a dict")
+            log_warning("Dependencies is not a dict")
             return
 
         for key, value in self.dependencies.items():
@@ -3613,11 +3609,11 @@ class Agent:
                     if result is not None:
                         self.dependencies[key] = result
                 except Exception as e:
-                    log_warning(f"Failed to resolve context for '{key}': {e}")
+                    log_warning(f"Failed to resolve dependencies for '{key}': {e}")
             else:
                 self.dependencies[key] = value
 
-    async def aresolve_run_context(self) -> None:
+    async def aresolve_run_dependencies(self) -> None:
         from inspect import iscoroutine, signature
 
         log_debug("Resolving context (async)")

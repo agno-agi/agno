@@ -957,7 +957,7 @@ class Team:
 
         # Read existing session from storage
         if self.dependencies is not None:
-            self._resolve_run_context()
+            self._resolve_run_dependencies()
 
         # Configure the model for runs
         self._set_default_model()
@@ -1341,7 +1341,7 @@ class Team:
 
         # Read existing session from storage
         if self.dependencies is not None:
-            self._resolve_run_context()
+            self._resolve_run_dependencies()
 
         # Configure the model for runs
         self._set_default_model()
@@ -4651,10 +4651,10 @@ class Team:
             rr.created_at = created_at
         return rr
 
-    def _resolve_run_context(self) -> None:
+    def _resolve_run_dependencies(self) -> None:
         from inspect import signature
 
-        log_debug("Resolving context")
+        log_debug("Resolving dependencies")
         if self.dependencies is not None:
             if isinstance(self.dependencies, dict):
                 for ctx_key, ctx_value in self.dependencies.items():
@@ -4668,11 +4668,11 @@ class Team:
                             if resolved_ctx_value is not None:
                                 self.dependencies[ctx_key] = resolved_ctx_value
                         except Exception as e:
-                            log_warning(f"Failed to resolve context for {ctx_key}: {e}")
+                            log_warning(f"Failed to resolve dependencies for {ctx_key}: {e}")
                     else:
                         self.dependencies[ctx_key] = ctx_value
             else:
-                log_warning("Context is not a dict")
+                log_warning("Dependencies is not a dict")
 
     def determine_tools_for_model(
         self,
