@@ -2856,7 +2856,7 @@ class Team:
                     if self.response_model is not None:
                         team_markdown = False
 
-                if isinstance(resp, tuple(get_args(TeamRunResponseEvent))):
+                if isinstance(resp, tuple(get_args(TeamRunResponseEvent))) and resp.team_id==self.team_id:
                     if resp.event == TeamRunEvent.run_response_content:
                         if isinstance(resp.content, str):
                             _response_content += resp.content
@@ -3722,7 +3722,7 @@ class Team:
                     if self.response_model is not None:
                         team_markdown = False
 
-                if isinstance(resp, tuple(get_args(TeamRunResponseEvent))):
+                if isinstance(resp, tuple(get_args(TeamRunResponseEvent))) and resp.team_id==self.team_id:
                     if resp.event == TeamRunEvent.run_response_content:
                         if isinstance(resp.content, str):
                             _response_content += resp.content
