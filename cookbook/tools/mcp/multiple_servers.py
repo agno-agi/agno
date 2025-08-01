@@ -2,49 +2,46 @@
 This example demonstrates how to use multiple MCP servers in a single agent.
 
 Prerequisites:
-- Google Maps:
-    - Set the environment variable `GOOGLE_MAPS_API_KEY` with your Google Maps API key.
-    You can obtain the API key from the Google Cloud Console:
-    https://console.cloud.google.com/projectselector2/google/maps-apis/credentials
-
-    - You also need to activate the Address Validation API for your .
-    https://console.developers.google.com/apis/api/addressvalidation.googleapis.com
+- Set the environment variable "ACCUWEATHER_API_KEY" for the weather MCP tools.
+- You can get the API key from the AccuWeather website: https://developer.accuweather.com/
 """
 
 import asyncio
+from os import getenv
 
 from agno.agent import Agent
 from agno.tools.mcp import MultiMCPTools
 
 
 async def run_agent(message: str) -> None:
-    """Run the GitHub agent with the given message.
-
-    Remember to set the environment variable `GOOGLE_MAPS_API_KEY` with your Google Maps API key.
-    """
-
-    # Initialize the MCP server
-    async with MultiMCPTools(
+    # Initialize the MCP tools
+    mcp_tools = MultiMCPTools(
         [
             "npx -y @openbnb/mcp-server-airbnb --ignore-robots-txt",
-            "npx -y @modelcontextprotocol/server-google-maps",
+            "npx -y @modelcontextprotocol/server-brave-search",
         ],
-    ) as mcp_tools:
-        agent = Agent(
-            tools=[mcp_tools],
-            markdown=True,
-            show_tool_calls=True,
-        )
+        env={
+            "BRAVE_API_KEY": getenv("BRAVE_API_KEY"),
+        },
+        timeout_seconds=30,
+    )
 
-        await agent.aprint_response(message, stream=True)
+    # Connect to the MCP servers
+    await mcp_tools.connect()
+
+    # Use the MCP tools with an Agent
+    agent = Agent(
+        tools=[mcp_tools],
+        markdown=True,
+        show_tool_calls=True,
+    )
+    await agent.aprint_response(message)
+
+    # Close the MCP connection
+    await mcp_tools.close()
 
 
 # Example usage
 if __name__ == "__main__":
-    asyncio.run(
-        run_agent(
-            "What listings are available in Cape Town for 2 people for 3 nights from 1 to 4 August 2025?"
-        )
-    )
-
-    asyncio.run(run_agent("What restaurants are open right now in Cape Town?"))
+    asyncio.run(run_agent("What listings are available in Barcelona tonight?"))
+    asyncio.run(run_agent("What's the fastest way to get to Barcelona from London?"))

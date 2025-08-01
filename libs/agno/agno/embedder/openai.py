@@ -26,11 +26,9 @@ class OpenAIEmbedder(Embedder):
     client_params: Optional[Dict[str, Any]] = None
     openai_client: Optional[OpenAIClient] = None
 
-    @property
-    def _dimensions(self) -> int:
-        if self.dimensions is not None:
-            return self.dimensions
-        return 3072 if self.id == "text-embedding-3-large" else 1536
+    def __post_init__(self):
+        if self.dimensions is None:
+            self.dimensions = 3072 if self.id == "text-embedding-3-large" else 1536
 
     @property
     def client(self) -> OpenAIClient:
@@ -57,7 +55,7 @@ class OpenAIEmbedder(Embedder):
         if self.user is not None:
             _request_params["user"] = self.user
         if self.id.startswith("text-embedding-3"):
-            _request_params["dimensions"] = self._dimensions
+            _request_params["dimensions"] = self.dimensions
         if self.request_params:
             _request_params.update(self.request_params)
         return self.client.embeddings.create(**_request_params)

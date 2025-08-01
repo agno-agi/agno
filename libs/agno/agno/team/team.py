@@ -688,15 +688,6 @@ class Team:
             if self.workflow_session_state is not None:
                 self.workflow_session_state["current_user_id"] = user_id
 
-    def _reset_session_state(self) -> None:
-        """Reset the session state for the agent."""
-        if self.team_session_state is not None:
-            self.team_session_state.pop("current_session_id", None)
-            self.team_session_state.pop("current_user_id", None)
-        if self.session_state is not None:
-            self.session_state.pop("current_session_id", None)
-            self.session_state.pop("current_user_id", None)
-
     def _initialize_session(
         self,
         session_id: Optional[str] = None,
@@ -974,8 +965,6 @@ class Team:
                         from_run_response=run_response,
                         session_id=session_id,
                     )
-            finally:
-                self._reset_session_state()
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -1363,8 +1352,6 @@ class Team:
                         from_run_response=run_response,
                         session_id=session_id,
                     )
-            finally:
-                self._reset_session_state()
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -7385,6 +7372,9 @@ class Team:
         """Return a list of references from the knowledge base"""
         from agno.document import Document
 
+        if num_documents is None and self.knowledge is not None:
+            num_documents = self.knowledge.num_documents
+
         # Validate the filters against known valid filter keys
         if self.knowledge is not None:
             valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
@@ -7419,9 +7409,6 @@ class Team:
             if self.knowledge is None or self.knowledge.vector_db is None:
                 return None
 
-            if num_documents is None:
-                num_documents = self.knowledge.num_documents
-
             log_debug(f"Searching knowledge base with filters: {filters}")
             relevant_docs: List[Document] = self.knowledge.search(
                 query=query, num_documents=num_documents, filters=filters
@@ -7441,6 +7428,9 @@ class Team:
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant documents from knowledge base asynchronously."""
         from agno.document import Document
+
+        if num_documents is None and self.knowledge is not None:
+            num_documents = self.knowledge.num_documents
 
         # Validate the filters against known valid filter keys
         if self.knowledge is not None:
@@ -7477,9 +7467,6 @@ class Team:
         try:
             if self.knowledge is None or self.knowledge.vector_db is None:
                 return None
-
-            if num_documents is None:
-                num_documents = self.knowledge.num_documents
 
             log_debug(f"Searching knowledge base with filters: {filters}")
             relevant_docs: List[Document] = await self.knowledge.async_search(

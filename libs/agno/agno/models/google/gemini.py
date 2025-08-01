@@ -713,15 +713,29 @@ class Gemini(Model):
                     if isinstance(text_content, str):
                         # Check if this is a thought summary
                         if hasattr(part, "thought") and part.thought:
-                            model_response.reasoning_content = text_content
+                            # Add all parts as single message
+                            if model_response.reasoning_content is None:
+                                model_response.reasoning_content = text_content
+                            else:
+                                model_response.reasoning_content += text_content
                         else:
-                            model_response.content = text_content
+                            if model_response.content is None:
+                                model_response.content = text_content
+                            else:
+                                model_response.content += text_content
                     else:
                         content_str = str(text_content) if text_content is not None else ""
                         if hasattr(part, "thought") and part.thought:
-                            model_response.reasoning_content = content_str
+                            # Add all parts as single message
+                            if model_response.reasoning_content is None:
+                                model_response.reasoning_content = content_str
+                            else:
+                                model_response.reasoning_content += content_str
                         else:
-                            model_response.content = content_str
+                            if model_response.content is None:
+                                model_response.content = content_str
+                            else:
+                                model_response.content += content_str
 
                 if hasattr(part, "inline_data") and part.inline_data is not None:
                     model_response.image = ImageArtifact(
@@ -803,9 +817,15 @@ class Gemini(Model):
                         text_content = str(part.text) if part.text is not None else ""
                         # Check if this is a thought summary
                         if hasattr(part, "thought") and part.thought:
-                            model_response.reasoning_content = text_content
+                            if model_response.reasoning_content is None:
+                                model_response.reasoning_content = text_content
+                            else:
+                                model_response.reasoning_content += text_content
                         else:
-                            model_response.content = text_content
+                            if model_response.content is None:
+                                model_response.content = text_content
+                            else:
+                                model_response.content += text_content
 
                     if hasattr(part, "inline_data") and part.inline_data is not None:
                         model_response.image = ImageArtifact(
