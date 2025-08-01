@@ -69,6 +69,7 @@ class RunResponseContentEvent(BaseAgentRunResponseEvent):
     content: Optional[Any] = None
     content_type: str = "str"
     thinking: Optional[str] = None
+    reasoning_content: Optional[str] = None
     citations: Optional[Citations] = None
     response_audio: Optional[AudioResponse] = None  # Model audio response
     image: Optional[ImageArtifact] = None  # Image attached to the response

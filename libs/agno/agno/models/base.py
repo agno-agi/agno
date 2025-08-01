@@ -40,6 +40,7 @@ class MessageData:
     response_content: Any = ""
     response_thinking: Any = ""
     response_redacted_thinking: Any = ""
+    response_reasoning_content: Any = ""
     response_citations: Optional[Citations] = None
     response_tool_calls: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -775,6 +776,8 @@ class Model(ABC):
                     assistant_message.thinking = stream_data.response_thinking
                 if stream_data.response_redacted_thinking:
                     assistant_message.redacted_thinking = stream_data.response_redacted_thinking
+                if stream_data.response_reasoning_content:
+                    assistant_message.reasoning_content = stream_data.response_reasoning_content
                 if stream_data.response_provider_data:
                     assistant_message.provider_data = stream_data.response_provider_data
                 if stream_data.response_citations:
@@ -924,6 +927,8 @@ class Model(ABC):
                     assistant_message.thinking = stream_data.response_thinking
                 if stream_data.response_redacted_thinking:
                     assistant_message.redacted_thinking = stream_data.response_redacted_thinking
+                if stream_data.response_reasoning_content:
+                    assistant_message.reasoning_content = stream_data.response_reasoning_content
                 if stream_data.response_provider_data:
                     assistant_message.provider_data = stream_data.response_provider_data
                 if stream_data.response_audio:
@@ -1027,6 +1032,10 @@ class Model(ABC):
 
         if model_response_delta.redacted_thinking is not None:
             stream_data.response_redacted_thinking += model_response_delta.redacted_thinking
+            should_yield = True
+
+        if model_response_delta.reasoning_content is not None:
+            stream_data.response_reasoning_content += model_response_delta.reasoning_content
             should_yield = True
 
         if model_response_delta.citations is not None:

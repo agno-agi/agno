@@ -99,8 +99,13 @@ python cookbook/models/google/gemini/video_agent_input_bytes_content.py
 
 ### 12. Run Agent that uses flash thinking mode from Gemini
 
+- streaming off
 ```shell
 python cookbook/models/google/gemini/flash_thinking_agent.py
+```
+- streaming on
+```shell
+python cookbook/models/google/gemini/thinking_stream.py
 ```
 
 ### 13. Run Agent with thinking budget configuration
@@ -108,4 +113,3 @@ python cookbook/models/google/gemini/flash_thinking_agent.py
 ```shell
 python cookbook/models/google/gemini/agent_with_thinking_budget.py
 ```
-
