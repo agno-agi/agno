@@ -1537,12 +1537,12 @@ class Team:
             else:
                 run_response.content += model_response.content
 
-        # Update the run_response thinking with the model response thinking
-        if model_response.thinking is not None:
-            if not run_response.thinking:
-                run_response.thinking = model_response.thinking
+        # Update the run_response reasoning content
+        if model_response.reasoning_content is not None:
+            if not run_response.reasoning_content:
+                run_response.reasoning_content = model_response.reasoning_content
             else:
-                run_response.thinking += model_response.thinking
+                run_response.reasoning_content += model_response.reasoning_content
 
         # Update citations
         if model_response.citations is not None:
@@ -1762,8 +1762,8 @@ class Team:
         run_response.created_at = full_model_response.created_at
         if full_model_response.content is not None:
             run_response.content = full_model_response.content
-        if full_model_response.thinking is not None:
-            run_response.thinking = full_model_response.thinking
+        if full_model_response.reasoning_content is not None:
+            run_response.reasoning_content = full_model_response.reasoning_content
         if full_model_response.audio is not None:
             run_response.response_audio = full_model_response.audio
         if full_model_response.citations is not None:
@@ -1849,8 +1849,8 @@ class Team:
         run_response.created_at = full_model_response.created_at
         if full_model_response.content is not None:
             run_response.content = full_model_response.content
-        if full_model_response.thinking is not None:
-            run_response.thinking = full_model_response.thinking
+        if full_model_response.reasoning_content is not None:
+            run_response.reasoning_content = full_model_response.reasoning_content
         if full_model_response.audio is not None:
             run_response.response_audio = full_model_response.audio
         if full_model_response.citations is not None:
@@ -1924,13 +1924,17 @@ class Team:
                         full_model_response.content = (full_model_response.content or "") + model_response_event.content
                     should_yield = True
 
-                # Process thinking
-                if model_response_event.thinking is not None:
-                    if not full_model_response.thinking:
-                        full_model_response.thinking = model_response_event.thinking
+                # Process reasoning content
+                if (
+                    hasattr(model_response_event, "reasoning_content")
+                    and model_response_event.reasoning_content is not None
+                ):
+                    if not full_model_response.reasoning_content:
+                        full_model_response.reasoning_content = model_response_event.reasoning_content
                     else:
-                        full_model_response.thinking += model_response_event.thinking
+                        full_model_response.reasoning_content += model_response_event.reasoning_content
                     should_yield = True
+                # Note: Legacy thinking field support removed, only use reasoning_content
 
                 if model_response_event.citations is not None:
                     # We get citations in one chunk
@@ -1972,7 +1976,7 @@ class Team:
                             create_team_run_response_content_event(
                                 from_run_response=run_response,
                                 content=model_response_event.content,
-                                thinking=model_response_event.thinking,
+                                reasoning_content=getattr(model_response_event, "reasoning_content", None),
                                 redacted_thinking=model_response_event.redacted_thinking,
                                 response_audio=full_model_response.audio,
                                 citations=model_response_event.citations,
@@ -2574,14 +2578,14 @@ class Team:
                     panels.append(reasoning_panel)
                 live_console.update(Group(*panels))
 
-            if isinstance(run_response, TeamRunResponse) and run_response.thinking is not None:
-                # Create panel for thinking
-                thinking_panel = create_panel(
-                    content=Text(run_response.thinking),
-                    title=f"Thinking ({response_timer.elapsed:.1f}s)",
+            if isinstance(run_response, TeamRunResponse) and run_response.reasoning_content is not None:
+                # Create panel for reasoning
+                reasoning_panel = create_panel(
+                    content=Text(run_response.reasoning_content),
+                    title=f"Reasoning ({response_timer.elapsed:.1f}s)",
                     border_style="green",
                 )
-                panels.append(thinking_panel)
+                panels.append(reasoning_panel)
                 live_console.update(Group(*panels))
 
             if isinstance(run_response, TeamRunResponse):
@@ -2791,7 +2795,7 @@ class Team:
         stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
 
         _response_content: str = ""
-        _response_thinking: str = ""
+        _response_reasoning: str = ""
         reasoning_steps: List[ReasoningStep] = []
 
         # Track tool calls by member and team
@@ -2865,8 +2869,9 @@ class Team:
                                 _response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
                             except Exception as e:
                                 log_warning(f"Failed to convert response to JSON: {e}")
-                        if resp.thinking is not None:
-                            _response_thinking += resp.thinking
+                        if hasattr(resp, "reasoning_content") and resp.reasoning_content is not None:
+                            _response_reasoning += resp.reasoning_content
+                        # Note: Legacy thinking field support removed, only use reasoning_content
                     if (
                         hasattr(resp, "extra_data")
                         and resp.extra_data is not None
@@ -2936,15 +2941,15 @@ class Team:
                         reasoning_panel = self._build_reasoning_step_panel(i, step, show_full_reasoning)
                         panels.append(reasoning_panel)
 
-                if len(_response_thinking) > 0:
+                if len(_response_reasoning) > 0:
                     render = True
-                    # Create panel for thinking
-                    thinking_panel = create_panel(
-                        content=Text(_response_thinking),
-                        title=f"Thinking ({response_timer.elapsed:.1f}s)",
+                    # Create panel for reasoning
+                    reasoning_panel = create_panel(
+                        content=Text(_response_reasoning),
+                        title=f"Reasoning ({response_timer.elapsed:.1f}s)",
                         border_style="green",
                     )
-                    panels.append(thinking_panel)
+                    panels.append(reasoning_panel)
                 elif _response_content == "":
                     # Keep showing status if no content yet
                     panels.append(status)
@@ -3119,13 +3124,13 @@ class Team:
                     final_panels.append(reasoning_panel)
 
             # Add thinking panel if available
-            if _response_thinking:
-                thinking_panel = create_panel(
-                    content=Text(_response_thinking),
-                    title=f"Thinking ({response_timer.elapsed:.1f}s)",
+            if _response_reasoning:
+                reasoning_panel = create_panel(
+                    content=Text(_response_reasoning),
+                    title=f"Reasoning ({response_timer.elapsed:.1f}s)",
                     border_style="green",
                 )
-                final_panels.append(thinking_panel)
+                final_panels.append(reasoning_panel)
 
             # Add member tool calls and responses in correct order
             for i, member_response in enumerate(self.run_response.member_responses if self.run_response else []):
@@ -3445,14 +3450,14 @@ class Team:
                     panels.append(reasoning_panel)
                 live_console.update(Group(*panels))
 
-            if isinstance(run_response, TeamRunResponse) and run_response.thinking is not None:
-                # Create panel for thinking
-                thinking_panel = create_panel(
-                    content=Text(run_response.thinking),
-                    title=f"Thinking ({response_timer.elapsed:.1f}s)",
+            if isinstance(run_response, TeamRunResponse) and run_response.reasoning_content is not None:
+                # Create panel for reasoning
+                reasoning_panel = create_panel(
+                    content=Text(run_response.reasoning_content),
+                    title=f"Reasoning ({response_timer.elapsed:.1f}s)",
                     border_style="green",
                 )
-                panels.append(thinking_panel)
+                panels.append(reasoning_panel)
                 live_console.update(Group(*panels))
 
             if isinstance(run_response, TeamRunResponse):
@@ -3659,7 +3664,7 @@ class Team:
         self.run_response = cast(TeamRunResponse, self.run_response)
 
         _response_content: str = ""
-        _response_thinking: str = ""
+        _response_reasoning: str = ""
         reasoning_steps: List[ReasoningStep] = []
 
         # Track tool calls by member and team
@@ -3731,8 +3736,9 @@ class Team:
                                 _response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
                             except Exception as e:
                                 log_warning(f"Failed to convert response to JSON: {e}")
-                        if resp.thinking is not None:
-                            _response_thinking += resp.thinking
+                        if hasattr(resp, "reasoning_content") and resp.reasoning_content is not None:
+                            _response_reasoning += resp.reasoning_content
+                        # Note: Legacy thinking field support removed, only use reasoning_content
                     if (
                         hasattr(resp, "extra_data")
                         and resp.extra_data is not None
@@ -3805,15 +3811,15 @@ class Team:
                 if render:
                     live_console.update(Group(*panels))
 
-                if len(_response_thinking) > 0:
+                if len(_response_reasoning) > 0:
                     render = True
-                    # Create panel for thinking
-                    thinking_panel = create_panel(
-                        content=Text(_response_thinking),
-                        title=f"Thinking ({response_timer.elapsed:.1f}s)",
+                    # Create panel for reasoning
+                    reasoning_panel = create_panel(
+                        content=Text(_response_reasoning),
+                        title=f"Reasoning ({response_timer.elapsed:.1f}s)",
                         border_style="green",
                     )
-                    panels.append(thinking_panel)
+                    panels.append(reasoning_panel)
                 if render:
                     live_console.update(Group(*panels))
 
@@ -3920,13 +3926,13 @@ class Team:
                     final_panels.append(reasoning_panel)
 
             # Add thinking panel if available
-            if _response_thinking:
-                thinking_panel = create_panel(
-                    content=Text(_response_thinking),
-                    title=f"Thinking ({response_timer.elapsed:.1f}s)",
+            if _response_reasoning:
+                reasoning_panel = create_panel(
+                    content=Text(_response_reasoning),
+                    title=f"Reasoning ({response_timer.elapsed:.1f}s)",
                     border_style="green",
                 )
-                final_panels.append(thinking_panel)
+                final_panels.append(reasoning_panel)
 
             # Add member tool calls and responses in correct order
             for i, member_response in enumerate(self.run_response.member_responses if self.run_response else []):

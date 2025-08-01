@@ -84,7 +84,7 @@ class RunResponseContentEvent(BaseTeamRunResponseEvent):
     event: str = TeamRunEvent.run_response_content.value
     content: Optional[Any] = None
     content_type: str = "str"
-    thinking: Optional[str] = None
+    reasoning_content: Optional[str] = None
     citations: Optional[Citations] = None
     response_audio: Optional[AudioResponse] = None  # Model audio response
     image: Optional[ImageArtifact] = None  # Image attached to the response
@@ -97,7 +97,6 @@ class RunResponseCompletedEvent(BaseTeamRunResponseEvent):
     content: Optional[Any] = None
     content_type: str = "str"
     reasoning_content: Optional[str] = None
-    thinking: Optional[str] = None
     citations: Optional[Citations] = None
     images: Optional[List[ImageArtifact]] = None  # Images attached to the response
     videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
@@ -228,7 +227,7 @@ class TeamRunResponse:
 
     content: Optional[Any] = None
     content_type: str = "str"
-    thinking: Optional[str] = None
+    reasoning_content: Optional[str] = None
     messages: Optional[List[Message]] = None
     metrics: Optional[Dict[str, Any]] = None
     model: Optional[str] = None
@@ -432,3 +431,13 @@ class TeamRunResponse:
             if self.audio is None:
                 self.audio = []
             self.audio.extend(run_response.audio)
+
+    @property
+    def thinking(self) -> Optional[str]:
+        """Backward compatibility alias for reasoning_content."""
+        return self.reasoning_content
+
+    @thinking.setter
+    def thinking(self, value: Optional[str]) -> None:
+        """Backward compatibility setter for reasoning_content."""
+        self.reasoning_content = value
