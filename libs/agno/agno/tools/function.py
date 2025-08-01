@@ -1,8 +1,10 @@
 from dataclasses import dataclass
 from functools import partial
+from importlib.metadata import version
 from typing import Any, Callable, Dict, List, Literal, Optional, Type, TypeVar, get_type_hints
 
 from docstring_parser import parse
+from packaging.version import Version
 from pydantic import BaseModel, Field, validate_call
 
 from agno.exceptions import AgentRunException
@@ -323,11 +325,19 @@ class Function(BaseModel):
     @staticmethod
     def _wrap_callable(func: Callable) -> Callable:
         """Wrap a callable with Pydantic's validate_call decorator, if relevant"""
-        from inspect import isasyncgenfunction
+        from inspect import isasyncgenfunction, iscoroutinefunction
 
-        # Don't wrap async generator with validate_call
+        pydantic_version = Version(version("pydantic"))
+
+        # Don't wrap async generators validate_call
         if isasyncgenfunction(func):
             return func
+
+        # Don't wrap coroutines with validate_call if pydantic version is less than 2.10.0
+        if iscoroutinefunction(func) and pydantic_version < Version("2.10.0"):
+            log_debug(f"Skipping validate_call for {func.__name__} because pydantic version is less than 2.10.0, please consider upgrading to pydantic 2.10.0 or higher")
+            return func
+
         # Don't wrap callables that are already wrapped with validate_call
         elif getattr(func, "_wrapped_for_validation", False):
             return func
@@ -599,7 +609,7 @@ class FunctionCall(BaseModel):
 
     def execute(self) -> FunctionExecutionResult:
         """Runs the function call."""
-        from inspect import isgenerator
+        from inspect import isgenerator, isgeneratorfunction
 
         if self.function.entrypoint is None:
             return FunctionExecutionResult(status="failure", error="Entrypoint is not set")
@@ -612,7 +622,7 @@ class FunctionCall(BaseModel):
         entrypoint_args = self._build_entrypoint_args()
 
         # Check cache if enabled and not a generator function
-        if self.function.cache_results and not isgenerator(self.function.entrypoint):
+        if self.function.cache_results and not isgeneratorfunction(self.function.entrypoint):
             cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
             cache_file = self.function._get_cache_file_path(cache_key)
             cached_result = self.function._get_cached_result(cache_file)
@@ -718,7 +728,7 @@ class FunctionCall(BaseModel):
         Similar to _build_nested_execution_chain but for async execution.
         """
         from functools import reduce
-        from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction
+        from inspect import isasyncgenfunction, iscoroutinefunction
 
         async def execute_entrypoint_async(name, func, args):
             """Execute the entrypoint function asynchronously."""
@@ -727,9 +737,7 @@ class FunctionCall(BaseModel):
                 arguments.update(self.arguments)
 
             result = self.function.entrypoint(**arguments)  # type: ignore
-            if iscoroutinefunction(self.function.entrypoint) and not (
-                isasyncgen(self.function.entrypoint) or isasyncgenfunction(self.function.entrypoint)
-            ):
+            if iscoroutinefunction(self.function.entrypoint) and not isasyncgenfunction(self.function.entrypoint):
                 result = await result
             return result
 
@@ -779,7 +787,7 @@ class FunctionCall(BaseModel):
 
     async def aexecute(self) -> FunctionExecutionResult:
         """Runs the function call asynchronously."""
-        from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgenerator
+        from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgenerator, isgeneratorfunction
 
         if self.function.entrypoint is None:
             return FunctionExecutionResult(status="failure", error="Entrypoint is not set")
@@ -796,7 +804,7 @@ class FunctionCall(BaseModel):
 
         # Check cache if enabled and not a generator function
         if self.function.cache_results and not (
-            isasyncgen(self.function.entrypoint) or isgenerator(self.function.entrypoint)
+            isasyncgenfunction(self.function.entrypoint) or isgeneratorfunction(self.function.entrypoint)
         ):
             cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
             cache_file = self.function._get_cache_file_path(cache_key)
@@ -818,7 +826,7 @@ class FunctionCall(BaseModel):
                 else:
                     result = self.function.entrypoint(**entrypoint_args, **self.arguments)
 
-                if isasyncgen(self.function.entrypoint) or isasyncgenfunction(self.function.entrypoint):
+                if isasyncgenfunction(self.function.entrypoint):
                     self.result = result  # Store async generator directly
                 else:
                     self.result = await result
