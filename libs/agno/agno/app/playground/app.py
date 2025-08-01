@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 from urllib.parse import quote
 from uuid import uuid4
 
@@ -83,7 +83,7 @@ class Playground:
 
         if self.workflows:
             for workflow in self.workflows:
-                if not workflow.app_id:
+                if hasattr(workflow, "app_id") and not workflow.app_id:
                     workflow.app_id = self.app_id
                 if not workflow.workflow_id:
                     workflow.workflow_id = generate_id(workflow.name)
@@ -110,13 +110,14 @@ class Playground:
     def get_async_router(self) -> APIRouter:
         return get_async_playground_router(self.agents, self.workflows, self.teams, self.app_id)
 
-    def get_app(self, use_async: bool = True, prefix: str = "/v1") -> FastAPI:
+    def get_app(self, use_async: bool = True, prefix: str = "/v1", lifespan: Optional[Callable] = None) -> FastAPI:
         if not self.api_app:
             self.api_app = FastAPI(
                 title=self.settings.title,
                 docs_url="/docs" if self.settings.docs_enabled else None,
                 redoc_url="/redoc" if self.settings.docs_enabled else None,
                 openapi_url="/openapi.json" if self.settings.docs_enabled else None,
+                lifespan=lifespan,
             )
 
         if not self.api_app:
@@ -197,16 +198,9 @@ class Playground:
         # Print the panel
         console.print(panel)
         self.set_app_id()
+
         self.register_app_on_platform()
-        if self.agents:
-            for agent in self.agents:
-                agent.register_agent()
-        if self.teams:
-            for team in self.teams:
-                team.register_team()
-        if self.workflows:
-            for workflow in self.workflows:
-                workflow.register_workflow()
+
         uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)
 
     def register_app_on_platform(self) -> None:
@@ -225,20 +219,6 @@ class Playground:
 
     def to_dict(self) -> Dict[str, Any]:
         payload = {
-            "agents": [
-                {**agent.get_agent_config_dict(), "agent_id": agent.agent_id, "team_id": agent.team_id}
-                for agent in self.agents
-            ]
-            if self.agents
-            else [],
-            "teams": [{**team.to_platform_dict(), "team_id": team.team_id} for team in self.teams]
-            if self.teams
-            else [],
-            "workflows": [
-                {**workflow.to_config_dict(), "workflow_id": workflow.workflow_id} for workflow in self.workflows
-            ]
-            if self.workflows
-            else [],
             "endpointData": self.endpoints_created.model_dump(exclude_none=True) if self.endpoints_created else {},
             "type": "playground",
             "description": self.description,

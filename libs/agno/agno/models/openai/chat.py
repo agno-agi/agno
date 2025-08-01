@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.media import AudioResponse
 from agno.models.base import Model
-from agno.models.message import Citations, Message, UrlCitation
+from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
@@ -62,6 +62,7 @@ class OpenAIChat(Model):
     temperature: Optional[float] = None
     user: Optional[str] = None
     top_p: Optional[float] = None
+    service_tier: Optional[str] = None  # "auto" | "default" | "flex" | "priority", defaults to "auto" when not set
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
     request_params: Optional[Dict[str, Any]] = None
@@ -175,6 +176,7 @@ class OpenAIChat(Model):
             "extra_headers": self.extra_headers,
             "extra_query": self.extra_query,
             "metadata": self.metadata,
+            "service_tier": self.service_tier,
         }
 
         # Handle response format - always use JSON schema approach
@@ -241,6 +243,7 @@ class OpenAIChat(Model):
                 "user": self.user,
                 "extra_headers": self.extra_headers,
                 "extra_query": self.extra_query,
+                "service_tier": self.service_tier,
             }
         )
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
@@ -663,17 +666,6 @@ class OpenAIChat(Model):
         if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:
             model_response.reasoning_content = response_message.reasoning_content
 
-        # Add citations if present
-        if hasattr(response, "citations") and response.citations:
-            citations = Citations()
-            url_citations = []
-            for citation_url in response.citations:
-                url_citations.append(UrlCitation(url=str(citation_url)))
-
-            citations.urls = url_citations
-            citations.raw = response.citations
-            model_response.citations = citations
-
         if response.usage is not None:
             model_response.response_usage = response.usage
 
@@ -725,16 +717,6 @@ class OpenAIChat(Model):
                             )
                     except Exception as e:
                         log_warning(f"Error processing audio: {e}")
-
-        if hasattr(response_delta, "citations") and response_delta.citations:
-            citations = Citations()
-            url_citations = []
-            for citation_url in response_delta.citations:
-                url_citations.append(UrlCitation(url=str(citation_url)))
-
-            citations.urls = url_citations
-            citations.raw = response_delta.citations
-            model_response.citations = citations
 
         # Add usage metrics if present
         if response_delta.usage is not None:
