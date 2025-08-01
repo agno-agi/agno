@@ -153,7 +153,7 @@ agno_support = Agent(
         auto_upgrade_schema=True,
     ),
     add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -175,7 +175,7 @@ agno_support_voice = Agent(
         auto_upgrade_schema=True,
     ),
     add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 

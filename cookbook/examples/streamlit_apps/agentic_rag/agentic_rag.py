@@ -124,7 +124,7 @@ def get_agentic_rag_agent(
         markdown=True,  # This setting tellss the model to format messages in markdown
         # add_chat_history_to_messages=True,
         add_history_to_messages=True,  # Adds chat history to messages
-        add_datetime_to_instructions=True,
+        add_datetime_to_context=True,
         debug_mode=debug_mode,
         read_tool_call_history=True,
         num_history_responses=3,

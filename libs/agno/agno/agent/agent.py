@@ -113,7 +113,7 @@ class Agent:
     session_name: Optional[str] = None
     # Session state (stored in the database to persist across runs)
     session_state: Optional[Dict[str, Any]] = None
-    search_previous_sessions_history: Optional[bool] = False
+    search_session_history: Optional[bool] = False
     num_history_sessions: Optional[int] = None
     # If True, the agent creates/updates session summaries at the end of runs
     enable_session_summaries: bool = False
@@ -212,14 +212,12 @@ class Agent:
     system_message: Optional[Union[str, Callable, Message]] = None
     # Role for the system message
     system_message_role: str = "system"
-    # If True, create a default system message using agent settings and use that
-    create_default_system_message: bool = True
+    # Set to False to skip context building
+    build_context: bool = True
 
     # --- Settings for building the default system message ---
     # A description of the Agent that is added to the start of the system message.
     description: Optional[str] = None
-    # The goal of this task
-    goal: Optional[str] = None
     # List of instructions for the agent.
     instructions: Optional[Union[str, List[str], Callable]] = None
     # Provide the expected output from the Agent.
@@ -229,13 +227,13 @@ class Agent:
     # If markdown=true, add instructions to format the output using markdown
     markdown: bool = False
     # If True, add the agent name to the instructions
-    add_name_to_instructions: bool = False
+    add_name_to_context: bool = False
     # If True, add the current datetime to the instructions to give the agent a sense of time
     # This allows for relative times like "tomorrow" to be used in the prompt
-    add_datetime_to_instructions: bool = False
+    add_datetime_to_context: bool = False
     # If True, add the current location to the instructions to give the agent a sense of place
     # This allows for location-aware responses and local context
-    add_location_to_instructions: bool = False
+    add_location_to_context: bool = False
     # Allows for custom timezone for datetime instructions following the TZ Database format (e.g. "Etc/UTC")
     timezone_identifier: Optional[str] = None
     # If True, add the session state variables in the user and system messages
@@ -245,16 +243,15 @@ class Agent:
     # A list of extra messages added after the system message and before the user message.
     # Use these for few-shot learning or to provide additional context to the Model.
     # Note: these are not retained in memory, they are added directly to the messages sent to the model.
-    add_messages: Optional[List[Union[Dict, Message]]] = None
-    success_criteria: Optional[str] = None
+    additional_messages: Optional[List[Union[Dict, Message]]] = None
     # --- User message settings ---
     # Provide the user message as a string, list, dict, or function
     # Note: this will ignore the message sent to the run function
     user_message: Optional[Union[List, Dict, str, Callable, Message]] = None
     # Role for the user message
     user_message_role: str = "user"
-    # If True, create a default user message using references and chat history
-    create_default_user_message: bool = True
+    # Set to False to skip building the user context
+    build_user_context: bool = True
 
     # --- Agent Response Settings ---
     # Number of retries to attempt
@@ -339,7 +336,7 @@ class Agent:
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
-        search_previous_sessions_history: Optional[bool] = False,
+        search_session_history: Optional[bool] = False,
         num_history_sessions: Optional[int] = None,
         cache_session: bool = True,
         context: Optional[Dict[str, Any]] = None,
@@ -377,23 +374,21 @@ class Agent:
         read_tool_call_history: bool = False,
         system_message: Optional[Union[str, Callable, Message]] = None,
         system_message_role: str = "system",
-        create_default_system_message: bool = True,
+        build_context: bool = True,
         description: Optional[str] = None,
-        goal: Optional[str] = None,
-        success_criteria: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
         expected_output: Optional[str] = None,
         additional_context: Optional[str] = None,
         markdown: bool = False,
-        add_name_to_instructions: bool = False,
-        add_datetime_to_instructions: bool = False,
-        add_location_to_instructions: bool = False,
+        add_name_to_context: bool = False,
+        add_datetime_to_context: bool = False,
+        add_location_to_context: bool = False,
         timezone_identifier: Optional[str] = None,
         add_state_in_messages: bool = False,
-        add_messages: Optional[List[Union[Dict, Message]]] = None,
+        additional_messages: Optional[List[Union[Dict, Message]]] = None,
         user_message: Optional[Union[List, Dict, str, Callable, Message]] = None,
         user_message_role: str = "user",
-        create_default_user_message: bool = True,
+        build_user_context: bool = True,
         retries: int = 0,
         delay_between_retries: int = 1,
         exponential_backoff: bool = False,
@@ -422,7 +417,7 @@ class Agent:
         self.session_id = session_id
         self.session_name = session_name
         self.session_state = session_state
-        self.search_previous_sessions_history = search_previous_sessions_history
+        self.search_session_history = search_session_history
         self.num_history_sessions = num_history_sessions
 
         self.cache_session = cache_session
@@ -472,25 +467,23 @@ class Agent:
 
         self.system_message = system_message
         self.system_message_role = system_message_role
-        self.create_default_system_message = create_default_system_message
+        self.build_context = build_context
 
         self.description = description
-        self.goal = goal
-        self.success_criteria = success_criteria
         self.instructions = instructions
         self.expected_output = expected_output
         self.additional_context = additional_context
         self.markdown = markdown
-        self.add_name_to_instructions = add_name_to_instructions
-        self.add_datetime_to_instructions = add_datetime_to_instructions
-        self.add_location_to_instructions = add_location_to_instructions
+        self.add_name_to_context = add_name_to_context
+        self.add_datetime_to_context = add_datetime_to_context
+        self.add_location_to_context = add_location_to_context
         self.timezone_identifier = timezone_identifier
         self.add_state_in_messages = add_state_in_messages
-        self.add_messages = add_messages
+        self.additional_messages = additional_messages
 
         self.user_message = user_message
         self.user_message_role = user_message_role
-        self.create_default_user_message = create_default_user_message
+        self.build_user_context = build_user_context
 
         self.retries = retries
         self.delay_between_retries = delay_between_retries
@@ -3425,7 +3418,7 @@ class Agent:
         if self.read_tool_call_history:
             agent_tools.append(self.get_tool_call_history_function(session_id=session_id))
             self._rebuild_tools = True
-        if self.search_previous_sessions_history:
+        if self.search_session_history:
             agent_tools.append(
                 self.get_previous_sessions_messages_function(num_history_sessions=self.num_history_sessions)
             )
@@ -3973,7 +3966,7 @@ class Agent:
         """Return the system message for the Agent.
 
         1. If the system_message is provided, use that.
-        2. If create_default_system_message is False, return None.
+        2. If build_context is False, return None.
         3. Build and return the default system message for the Agent.
         """
 
@@ -3994,23 +3987,11 @@ class Agent:
             if self.add_state_in_messages:
                 sys_message_content = self.format_message_with_state_variables(sys_message_content)
 
-            # Add the JSON output prompt if response_model is provided and the model does not support native structured outputs or JSON schema outputs
-            # or if use_json_mode is True
-            if (
-                self.model is not None
-                and self.parser_model is None
-                and self.response_model is not None
-                and not (
-                    (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
-                    and (not self.use_json_mode or self.structured_outputs is True)
-                )
-            ):
-                sys_message_content += f"\n{get_json_output_prompt(self.response_model)}"  # type: ignore
-
             # type: ignore
             return Message(role=self.system_message_role, content=sys_message_content)
-        # 2. If create_default_system_message is False, return None.
-        if not self.create_default_system_message:
+
+        # 2. If build_context is False, return None.
+        if not self.build_context:
             return None
 
         if self.model is None:
@@ -4046,7 +4027,7 @@ class Agent:
         if self.markdown and self.response_model is None:
             additional_information.append("Use markdown to format your answers.")
         # 3.2.2 Add the current datetime
-        if self.add_datetime_to_instructions:
+        if self.add_datetime_to_context:
             from datetime import datetime
 
             tz = None
@@ -4064,7 +4045,7 @@ class Agent:
             additional_information.append(f"The current time is {time}.")
 
         # 3.2.3 Add the current location
-        if self.add_location_to_instructions:
+        if self.add_location_to_context:
             from agno.utils.location import get_location
 
             location = get_location()
@@ -4076,7 +4057,7 @@ class Agent:
                     additional_information.append(f"Your approximate location is: {location_str}.")
 
         # 3.2.4 Add agent name if provided
-        if self.name is not None and self.add_name_to_instructions:
+        if self.name is not None and self.add_name_to_context:
             additional_information.append(f"Your name is: {self.name}.")
 
         # 3.2.5 Add information about agentic filters if enabled
@@ -4109,10 +4090,7 @@ class Agent:
         # 3.3.1 First add the Agent description if provided
         if self.description is not None:
             system_message_content += f"{self.description}\n"
-        # 3.3.2 Then add the Agent goal if provided
-        if self.goal is not None:
-            system_message_content += f"\n<your_goal>\n{self.goal}\n</your_goal>\n\n"
-        # 3.3.3 Then add the Agent role if provided
+        # 3.3.2 Then add the Agent role if provided
         if self.role is not None:
             system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
         # 3.3.4 Then add instructions for the Agent
@@ -4145,12 +4123,6 @@ class Agent:
         # 3.3.8 Then add additional context
         if self.additional_context is not None:
             system_message_content += f"{self.additional_context}\n"
-        if self.success_criteria:
-            system_message_content += "Your task is successful when the following criteria is met:\n"
-            system_message_content += "<success_criteria>\n"
-            system_message_content += f"{self.success_criteria}\n"
-            system_message_content += "</success_criteria>\n"
-            system_message_content += "Stop running when the success_criteria is met.\n\n"
         # 3.3.9 Then add memories to the system prompt
         if self.add_memory_references:
             _memory_manager_not_set = False
@@ -4249,7 +4221,7 @@ class Agent:
         """Return the user message for the Agent.
 
         1. If the user_message is provided, use that.
-        2. If create_default_user_message is False or if the message is a list, return the message as is.
+        2. If build_user_context is False or if the message is a list, return the message as is.
         3. Build the default user message for the Agent
         """
         # Get references from the knowledge base to use in the user message
@@ -4310,8 +4282,8 @@ class Agent:
                 **kwargs,
             )
 
-        # 2. If create_default_user_message is False or message is a list, return the message as is.
-        if not self.create_default_user_message:
+        # 2. If build_user_context is False or message is a list, return the message as is.
+        if not self.build_user_context or isinstance(message, list):
             return Message(
                 role=self.user_message_role,
                 content=message,
@@ -4445,12 +4417,12 @@ class Agent:
             run_messages.messages.append(system_message)
 
         # 2. Add extra messages to run_messages if provided
-        if self.add_messages is not None:
+        if self.additional_messages is not None:
             messages_to_add_to_run_response: List[Message] = []
             if run_messages.extra_messages is None:
                 run_messages.extra_messages = []
 
-            for _m in self.add_messages:
+            for _m in self.additional_messages:
                 if isinstance(_m, Message):
                     messages_to_add_to_run_response.append(_m)
                     run_messages.messages.append(_m)
@@ -4467,12 +4439,14 @@ class Agent:
             if len(messages_to_add_to_run_response) > 0:
                 log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
                 if self.run_response.extra_data is None:
-                    self.run_response.extra_data = RunResponseExtraData(add_messages=messages_to_add_to_run_response)
+                    self.run_response.extra_data = RunResponseExtraData(
+                        additional_messages=messages_to_add_to_run_response
+                    )
                 else:
-                    if self.run_response.extra_data.add_messages is None:
-                        self.run_response.extra_data.add_messages = messages_to_add_to_run_response
+                    if self.run_response.extra_data.additional_messages is None:
+                        self.run_response.extra_data.additional_messages = messages_to_add_to_run_response
                     else:
-                        self.run_response.extra_data.add_messages.extend(messages_to_add_to_run_response)
+                        self.run_response.extra_data.additional_messages.extend(messages_to_add_to_run_response)
 
         # 3. Add history to run_messages
         if self.add_history_to_messages and self.agent_session is not None:
@@ -5008,22 +4982,29 @@ class Agent:
         # -*- Save to storage
         self.save_session(user_id=self.user_id, session_id=session_id)  # type: ignore
 
-    def rename_session(self, session_name: str, session_id: Optional[str] = None) -> Optional[AgentSession]:
-        """Rename the current session and save to storage"""
-
+    def set_session_name(
+        self, session_id: Optional[str] = None, autogenerate: bool = False, session_name: Optional[str] = None
+    ) -> None:
+        """Set the session name and save to storage"""
         if self.session_id is None and session_id is None:
             raise Exception("Session ID is not set")
-
         session_id = session_id or self.session_id
 
+        if autogenerate:
+            # -*- Generate name for session
+            session_name = self._generate_session_name(session_id=session_id)
+            log_debug(f"Generated Session Name: {session_name}")
+        elif session_name is None:
+            raise Exception("Session Name is not set")
         # -*- Read from storage
         self.get_agent_session(session_id=session_id)  # type: ignore
         # -*- Rename session
         self.session_name = session_name
-        # -*- Save to storage
-        return self.save_session(user_id=self.user_id, session_id=session_id)  # type: ignore
 
-    def generate_session_name(self, session_id: str) -> str:
+        # -*- Save to storage
+        self.save_session(user_id=self.user_id, session_id=session_id)  # type: ignore
+
+    def _generate_session_name(self, session_id: str) -> str:
         """Generate a name for the session using the first 6 messages from the memory"""
 
         if self.model is None:
@@ -5052,27 +5033,11 @@ class Agent:
         content = generated_name.content
         if content is None:
             log_error("Generated name is None. Trying again.")
-            return self.generate_session_name(session_id=session_id)
+            return self._generate_session_name(session_id=session_id)
         if len(content.split()) > 15:
             log_error("Generated name is too long. Trying again.")
-            return self.generate_session_name(session_id=session_id)
+            return self._generate_session_name(session_id=session_id)
         return content.replace('"', "").strip()
-
-    def auto_rename_session(self) -> None:
-        """Automatically rename the session and save to storage"""
-
-        if self.session_id is None:
-            raise Exception("Session ID is not set")
-
-        # -*- Read from storage
-        self.get_agent_session(session_id=self.session_id)  # type: ignore
-        # -*- Generate name for session
-        generated_session_name = self.generate_session_name(session_id=self.session_id)
-        log_debug(f"Generated Session Name: {generated_session_name}")
-        # -*- Rename thread
-        self.session_name = generated_session_name
-        # -*- Save to storage
-        self.save_session(user_id=self.user_id, session_id=self.session_id)  # type: ignore
 
     def delete_session(self, session_id: str):
         """Delete the current session and save to storage"""

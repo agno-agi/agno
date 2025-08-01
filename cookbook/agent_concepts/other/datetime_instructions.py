@@ -3,7 +3,7 @@ from agno.models.openai import OpenAIChat
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     timezone_identifier="Etc/UTC",
 )
 agent.print_response(

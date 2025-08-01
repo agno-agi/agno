@@ -70,7 +70,7 @@ book_recommendation_agent = Agent(
         - Highlight diversity in authors and perspectives
         - Note trigger warnings when relevant"""),
     markdown=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 # Example usage with different types of book queries

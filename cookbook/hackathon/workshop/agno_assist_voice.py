@@ -35,7 +35,7 @@ agno_assist_voice = Agent(
         db_file=str(tmp_dir.joinpath("agents.db")),
     ),
     add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 

@@ -9,7 +9,7 @@ media_agent = Agent(
     instructions="Analyze images, audios and videos sent by the user",
     add_history_to_messages=True,
     num_history_responses=3,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 discord_agent = DiscordClient(media_agent)

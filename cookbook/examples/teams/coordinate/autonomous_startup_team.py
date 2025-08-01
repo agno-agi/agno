@@ -43,7 +43,7 @@ legal_compliance_agent = Agent(
         "7. Review marketing materials for legal compliance",
         "8. Advise on employment law and HR policies",
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -65,7 +65,7 @@ product_manager_agent = Agent(
         "8. Lead product launches and go-to-market strategies",
         "9. Balance user needs with business objectives",
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
     tools=[],
 )
@@ -88,7 +88,7 @@ market_research_agent = Agent(
         "7. Create detailed market research reports",
         "8. Provide data-driven insights for decision making",
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -115,7 +115,7 @@ sales_agent = Agent(
         "4. Maintain clear documentation of all discussions and agreements",
         "5. Ensure proper handoff to relevant team members when needed",
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -139,7 +139,7 @@ financial_analyst_agent = Agent(
         "8. Track key financial metrics and KPIs",
         "9. Provide financial insights for strategic decisions",
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -154,7 +154,7 @@ customer_support_agent = Agent(
         f"When a user reports an issue or issue or the question you cannot answer, always send it to the #{support_channel} Slack channel with all relevant details.",
         "Always maintain a professional and helpful demeanor while ensuring proper routing of issues to the right channels.",
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -206,7 +206,7 @@ autonomous_startup_team = Team(
         customer_support_agent,
         sales_agent,
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
     debug_mode=True,
     show_members_responses=True,

@@ -179,7 +179,7 @@ competitor_analysis_agent = Agent(
     {Summary of competitive position and strategic imperatives}
     """),
     markdown=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     storage=SqliteStorage(
         table_name="competitor_analysis",
         db_file="tmp/competitor_analysis.db",

@@ -13,7 +13,7 @@ agent = Agent(
     storage=SqliteStorage(table_name="agent_sessions_new", db_file="tmp/data.db"),
     add_history_to_messages=True,
     num_history_runs=3,
-    search_previous_sessions_history=True,  # allow searching previous sessions
+    search_session_history=True,  # allow searching previous sessions
     num_history_sessions=2,  # only include the last 2 sessions in the search to avoid context length issues
 )
 

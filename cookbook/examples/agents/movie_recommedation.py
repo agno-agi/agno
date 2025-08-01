@@ -66,7 +66,7 @@ movie_recommendation_agent = Agent(
         - Include a brief explanation for each recommendation
     """),
     markdown=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 # Example usage with different types of movie queries

@@ -30,7 +30,6 @@ agent_team = Team(
     model=Groq(
         id="llama-3.3-70b-versatile"
     ),  # You can use a different model for the team leader agent
-    success_criteria="The team has successfully completed the task",
     instructions=["Always include sources", "Use tables to display data"],
     markdown=True,
     enable_agentic_context=True,

@@ -24,7 +24,7 @@ agno_assist = Agent(
     knowledge=knowledge,
     storage=SqliteStorage(table_name="agno_assist_sessions", db_file="tmp/agents.db"),
     add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 

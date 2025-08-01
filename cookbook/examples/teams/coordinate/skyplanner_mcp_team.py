@@ -88,7 +88,7 @@ async def run_team():
             instructions=dedent("""\
                 You are an agent that can find Airbnb listings for a given location.
             """),
-            add_datetime_to_instructions=True,
+            add_datetime_to_context=True,
         )
 
         maps_agent = Agent(
@@ -101,7 +101,7 @@ async def run_team():
                 and provides directions in travel destinations. Help plan travel
                 routes and find interesting places to visit for a given location and date.
             """),
-            add_datetime_to_instructions=True,
+            add_datetime_to_context=True,
         )
 
         web_search_agent = Agent(
@@ -113,7 +113,7 @@ async def run_team():
                 You are an agent that can search the web for information.
                 Search for information about a given location.
             """),
-            add_datetime_to_instructions=True,
+            add_datetime_to_context=True,
         )
 
         weather_search_agent = Agent(
@@ -125,7 +125,7 @@ async def run_team():
                 You are an agent that can search the web for information.
                 Search for the weather forecast for a given location and date.
             """),
-            add_datetime_to_instructions=True,
+            add_datetime_to_context=True,
         )
 
         # Create and run the team
@@ -150,7 +150,7 @@ async def run_team():
             response_model=TravelPlan,
             markdown=True,
             show_members_responses=True,
-            add_datetime_to_instructions=True,
+            add_datetime_to_context=True,
         )
 
         # Execute the team's task

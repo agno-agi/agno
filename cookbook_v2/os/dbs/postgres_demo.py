@@ -30,7 +30,7 @@ agent = Agent(
     enable_session_summaries=True,
     add_history_to_messages=True,
     num_history_runs=3,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 team = Team(

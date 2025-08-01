@@ -36,7 +36,6 @@ team_leader = Team(
     markdown=True,
     show_members_responses=True,
     enable_agentic_context=True,
-    success_criteria="The team has successfully completed the task.",
 )
 
 team_leader.print_response(

@@ -144,8 +144,8 @@ def get_sage(
         # Append previous conversation responses into the new messages for context.
         add_history_to_messages=True,
         num_history_responses=num_history_responses,
-        add_datetime_to_instructions=True,
-        add_name_to_instructions=True,
+        add_datetime_to_context=True,
+        add_name_to_context=True,
         description=AGENT_DESCRIPTION,
         instructions=AGENT_INSTRUCTIONS,
         expected_output=EXPECTED_OUTPUT_TEMPLATE,

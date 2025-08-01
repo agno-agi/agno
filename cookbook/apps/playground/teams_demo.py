@@ -48,7 +48,7 @@ video_agent = Agent(
     memory=memory,
     enable_user_memories=True,
     add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -61,7 +61,7 @@ audio_agent = Agent(
     memory=memory,
     enable_user_memories=True,
     add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -132,7 +132,6 @@ research_team = Team(
     model=OpenAIChat(id="gpt-4o"),
     mode="coordinate",
     team_id="research_team",
-    success_criteria=dedent("""\
         A comprehensive research report with clear sections and data-driven insights.
     """),
     instructions=[
@@ -140,7 +139,7 @@ research_team = Team(
     ],
     memory=memory,
     enable_user_memories=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
     enable_agentic_context=True,
     storage=PostgresStorage(
@@ -158,7 +157,6 @@ multimodal_team = Team(
     model=OpenAIChat(id="gpt-4o"),
     mode="route",
     team_id="multimodal_team",
-    success_criteria=dedent("""\
         A comprehensive report with clear sections and data-driven insights.
     """),
     instructions=[
@@ -195,7 +193,7 @@ financial_news_team = Team(
         "Use USD as currency.",
         "If the user is just being conversational, you should respond directly WITHOUT forwarding a task to a member.",
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
     enable_agentic_context=True,
     show_members_responses=True,

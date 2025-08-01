@@ -61,7 +61,7 @@ youtube_agent = Agent(
         - Maintain consistent detail level
         - Focus on valuable content markers
     """),
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 

@@ -15,7 +15,7 @@ for i in range(1, 7):
             name=f"Player{i}",
             role="Werewolf Game Player",
             model=OpenAIChat(id="gpt-4o-mini"),
-            add_name_to_instructions=True,
+            add_name_to_context=True,
             instructions=dedent(f"""
             You are Player{i} in a simplified Werewolf game.
             The game moderator will tell you your role (villager or imposter).
@@ -42,7 +42,6 @@ werewolf_team = Team(
     mode="coordinate",
     model=Claude(id="claude-3-5-sonnet-20241022"),
     reasoning_model=DeepSeek(id="deepseek-reasoner"),
-    success_criteria="The game ends with either villagers or imposters winning. Don't stop the game until the end!",
     members=player_agents,
     instructions=[
         "You are the moderator of a simplified Werewolf game with 6 players.",

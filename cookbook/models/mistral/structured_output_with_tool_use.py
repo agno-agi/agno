@@ -25,7 +25,7 @@ researcher = Agent(
     ],
     tools=[DuckDuckGoTools()],
     response_model=Person,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 researcher.print_response("Find information about Elon Musk")

@@ -128,7 +128,7 @@ agno_assist = Agent(
         table_name="agno_assist_sessions",
     ),
     add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
     tools=[
         ElevenLabsTools(

@@ -150,9 +150,9 @@ class Team:
     markdown: bool = False
     # If True, add the current datetime to the instructions to give the team a sense of time
     # This allows for relative times like "tomorrow" to be used in the prompt
-    add_datetime_to_instructions: bool = False
+    add_datetime_to_context: bool = False
     # If True, add the current location to the instructions to give the team a sense of location
-    add_location_to_instructions: bool = False
+    add_location_to_context: bool = False
     # If True, add the tools available to team members to the system message
     add_member_tools_to_system_message: bool = True
 
@@ -167,10 +167,6 @@ class Team:
 
     # Memory manager to use for this agent
     memory_manager: Optional[MemoryManager] = None
-
-    # --- Success criteria ---
-    # Define the success criteria for the team
-    success_criteria: Optional[str] = None
 
     # --- User provided context ---
     # User provided context
@@ -320,10 +316,9 @@ class Team:
         instructions: Optional[Union[str, List[str], Callable]] = None,
         expected_output: Optional[str] = None,
         additional_context: Optional[str] = None,
-        success_criteria: Optional[str] = None,
         markdown: bool = False,
-        add_datetime_to_instructions: bool = False,
-        add_location_to_instructions: bool = False,
+        add_datetime_to_context: bool = False,
+        add_location_to_context: bool = False,
         add_member_tools_to_system_message: bool = True,
         system_message: Optional[Union[str, Callable, Message]] = None,
         system_message_role: str = "system",
@@ -398,12 +393,11 @@ class Team:
         self.expected_output = expected_output
         self.additional_context = additional_context
         self.markdown = markdown
-        self.add_datetime_to_instructions = add_datetime_to_instructions
-        self.add_location_to_instructions = add_location_to_instructions
+        self.add_datetime_to_context = add_datetime_to_context
+        self.add_location_to_context = add_location_to_context
         self.add_member_tools_to_system_message = add_member_tools_to_system_message
         self.system_message = system_message
         self.system_message_role = system_message_role
-        self.success_criteria = success_criteria
 
         self.context = context
         self.add_context = add_context
@@ -4956,13 +4950,13 @@ class Team:
         if self.markdown and self.response_model is None:
             additional_information.append("Use markdown to format your answers.")
         # 1.3.2 Add the current datetime
-        if self.add_datetime_to_instructions:
+        if self.add_datetime_to_context:
             from datetime import datetime
 
             additional_information.append(f"The current time is {datetime.now()}")
 
         # 1.3.3 Add the current location
-        if self.add_location_to_instructions:
+        if self.add_location_to_context:
             from agno.utils.location import get_location
 
             location = get_location()
@@ -5051,13 +5045,6 @@ class Team:
 
         if self.name is not None:
             system_message_content += f"Your name is: {self.name}\n\n"
-
-        if self.success_criteria:
-            system_message_content += "Your task is successful when the following criteria is met:\n"
-            system_message_content += "<success_criteria>\n"
-            system_message_content += f"{self.success_criteria}\n"
-            system_message_content += "</success_criteria>\n"
-            system_message_content += "Stop the team run when the success_criteria is met.\n\n"
 
         # Attached media
         if audio is not None or images is not None or videos is not None or files is not None:
@@ -6752,18 +6739,64 @@ class Team:
             self.db.upsert_session(session=session)
         return self.team_session
 
-    def rename_session(self, session_name: str, session_id: Optional[str] = None) -> Optional[TeamSession]:
-        """Rename the current session and save to storage"""
-        if self.session_id is None and session_id is None:
-            raise ValueError("Session ID is not initialized")
+    def _generate_team_session_name(self, session_id: str) -> str:
+        """Generate a name for the team session"""
 
+        if self.model is None:
+            raise Exception("Model not set")
+
+        gen_session_name_prompt = "Team Conversation\n"
+
+        # Get team session messages for generating the name
+        if self.team_session is not None:
+            messages_for_generating_session_name = self.get_messages_for_session()
+        else:
+            messages_for_generating_session_name = []
+
+        for message in messages_for_generating_session_name:
+            gen_session_name_prompt += f"{message.role.upper()}: {message.content}\n"
+
+        gen_session_name_prompt += "\n\nTeam Session Name: "
+
+        system_message = Message(
+            role=self.system_message_role,
+            content="Please provide a suitable name for this conversation in maximum 5 words. "
+            "Remember, do not exceed 5 words.",
+        )
+        user_message = Message(role="user", content=gen_session_name_prompt)
+        generate_name_messages = [system_message, user_message]
+        generated_name = self.model.response(messages=generate_name_messages)
+        content = generated_name.content
+        if content is None:
+            log_error("Generated name is None. Trying again.")
+            return self._generate_team_session_name(session_id=session_id)
+        if len(content.split()) > 15:
+            log_error("Generated name is too long. Trying again.")
+            return self._generate_team_session_name(session_id=session_id)
+        return content.replace('"', "").strip()
+
+    def set_session_name(
+        self, session_id: Optional[str] = None, autogenerate: bool = False, session_name: Optional[str] = None
+    ) -> Optional[TeamSession]:
+        """Set the session name and save to storage"""
+        if self.session_id is None and session_id is None:
+            raise Exception("Session ID is not set")
         session_id = session_id or self.session_id
 
-        # -*- Read from storage
+        if autogenerate:
+            # -*- Generate name for session
+            session_name = self._generate_team_session_name(session_id=session_id)
+            log_debug(f"Generated Team Session Name: {session_name}")
+        elif session_name is None:
+            raise Exception("Session name is not set")
+
+        # Read from storage
         self.get_team_session(session_id=session_id)  # type: ignore
+
         # -*- Rename session
         self.session_name = session_name
-        # -*- Save to storage
+
+        # Save to storage
         return self.save_session(session_id=session_id, user_id=self.user_id)  # type: ignore
 
     def delete_session(self, session_id: str) -> None:

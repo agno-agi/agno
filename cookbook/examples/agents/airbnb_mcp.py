@@ -39,7 +39,7 @@ async def run_agent(message: str) -> None:
             - Check if all required information is collected and is valid
             - Verify that the planned action completes the task\
             """),
-            add_datetime_to_instructions=True,
+            add_datetime_to_context=True,
             markdown=True,
         )
         await agent.aprint_response(message, stream=True)

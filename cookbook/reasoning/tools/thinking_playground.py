@@ -16,7 +16,7 @@ thinking_web_agent = Agent(
     # Store the agent sessions in a sqlite database
     storage=SqliteAgentStorage(table_name="web_agent", db_file=agent_storage),
     # Adds the current date and time to the instructions
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     # Adds the history of the conversation to the messages
     add_history_to_messages=True,
     # Number of history responses to add to the messages
@@ -39,7 +39,7 @@ thinking_finance_agent = Agent(
     ],
     instructions="Use tables to display data",
     storage=SqliteAgentStorage(table_name="finance_agent", db_file=agent_storage),
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     add_history_to_messages=True,
     num_history_responses=5,
     markdown=True,

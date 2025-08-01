@@ -68,7 +68,7 @@ You should help users to perform these actions in their Google calendar :
 """
     ],
     model=MistralChat(api_key=os.getenv("MISTRAL_API_KEY")),
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 agent.print_response("Give me the list of todays events", markdown=True)

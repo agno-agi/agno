@@ -31,7 +31,7 @@ image_agent = Agent(
     ],
     markdown=True,
     add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     storage=SqliteStorage(
         table_name="image_agent",
         db_file=image_agent_storage_file,
@@ -51,7 +51,7 @@ ml_gif_agent = Agent(
     ],
     markdown=True,
     add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     storage=SqliteStorage(
         table_name="ml_gif_agent",
         db_file=image_agent_storage_file,
@@ -78,7 +78,7 @@ ml_music_agent = Agent(
     ],
     markdown=True,
     add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     storage=SqliteStorage(
         table_name="ml_music_agent",
         db_file=image_agent_storage_file,
@@ -98,7 +98,7 @@ ml_video_agent = Agent(
     ],
     markdown=True,
     add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     storage=SqliteStorage(
         table_name="ml_video_agent",
         db_file=image_agent_storage_file,
@@ -118,7 +118,7 @@ fal_agent = Agent(
     ],
     markdown=True,
     add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     storage=SqliteStorage(
         table_name="fal_agent",
         db_file=image_agent_storage_file,
@@ -138,7 +138,7 @@ gif_agent = Agent(
     ],
     markdown=True,
     add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     storage=SqliteStorage(
         table_name="gif_agent",
         db_file=image_agent_storage_file,
@@ -167,7 +167,7 @@ audio_agent = Agent(
     ],
     markdown=True,
     add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     storage=SqliteStorage(
         table_name="audio_agent",
         db_file=image_agent_storage_file,

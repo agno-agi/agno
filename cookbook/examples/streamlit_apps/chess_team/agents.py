@@ -129,7 +129,6 @@ def get_chess_team(
             name="Chess Team",
             mode="route",
             model=master_model,
-            success_criteria="The game is completed with a win, loss, or draw",
             members=[white_piece_agent, black_piece_agent],
             instructions=[
                 "You are the chess game coordinator and master analyst.",

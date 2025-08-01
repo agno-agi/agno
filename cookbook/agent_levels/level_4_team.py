@@ -12,7 +12,7 @@ web_agent = Agent(
     model=OpenAIChat(id="gpt-4.1"),
     tools=[DuckDuckGoTools()],
     instructions="Always include sources",
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 finance_agent = Agent(
@@ -32,7 +32,7 @@ finance_agent = Agent(
         "Clearly state the company name and ticker symbol.",
         "Focus on delivering actionable financial insights.",
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 reasoning_finance_team = Team(
@@ -51,8 +51,8 @@ reasoning_finance_team = Team(
     markdown=True,
     show_members_responses=True,
     enable_agentic_context=True,
-    add_datetime_to_instructions=True,
-    success_criteria="The team has provided a complete financial analysis with data, visualizations, risk assessment, and actionable investment recommendations supported by quantitative analysis and market research.",
+    add_datetime_to_context=True,
+
 )
 
 if __name__ == "__main__":

@@ -161,14 +161,14 @@ class BaseRunResponseEvent:
 @dataclass
 class RunResponseExtraData:
     references: Optional[List[MessageReferences]] = None
-    add_messages: Optional[List[Message]] = None
+    additional_messages: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_messages: Optional[List[Message]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {}
-        if self.add_messages is not None:
-            _dict["add_messages"] = [m.to_dict() for m in self.add_messages]
+        if self.additional_messages is not None:
+            _dict["additional_messages"] = [m.to_dict() for m in self.additional_messages]
         if self.reasoning_messages is not None:
             _dict["reasoning_messages"] = [m.to_dict() for m in self.reasoning_messages]
         if self.reasoning_steps is not None:
@@ -179,9 +179,9 @@ class RunResponseExtraData:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunResponseExtraData":
-        add_messages = data.pop("add_messages", None)
-        if add_messages is not None:
-            add_messages = [Message.model_validate(message) for message in add_messages]
+        additional_messages = data.pop("additional_messages", None)
+        if additional_messages is not None:
+            additional_messages = [Message.model_validate(message) for message in additional_messages]
 
         reasoning_steps = data.pop("reasoning_steps", None)
         if reasoning_steps is not None:
@@ -196,7 +196,7 @@ class RunResponseExtraData:
             references = [MessageReferences.model_validate(reference) for reference in references]
 
         return cls(
-            add_messages=add_messages,
+            additional_messages=additional_messages,
             reasoning_steps=reasoning_steps,
             reasoning_messages=reasoning_messages,
             references=references,

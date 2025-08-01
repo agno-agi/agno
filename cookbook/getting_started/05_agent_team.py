@@ -77,9 +77,7 @@ agent_team = Team(
     members=[web_agent, finance_agent],
     model=OpenAIChat(id="gpt-4o"),
     mode="coordinate",
-    success_criteria=dedent("""\
-        A comprehensive financial news report with clear sections and data-driven insights.
-    """),
+
     instructions=dedent("""\
         You are the lead editor of a prestigious financial news desk! 📰
 
@@ -101,7 +99,7 @@ agent_team = Team(
         - End with 'Risk Factors' when appropriate
         - Sign off with 'Market Watch Team' and the current date\
     """),
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
     enable_agentic_context=True,
     show_members_responses=False,
