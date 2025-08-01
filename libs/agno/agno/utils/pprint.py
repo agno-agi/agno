@@ -163,6 +163,8 @@ async def apprint_run_response(
                         except Exception as e:
                             logger.warning(f"Failed to convert response to Markdown: {e}")
                     else:
+                        if isinstance(streaming_response_content, JSON):
+                            streaming_response_content = streaming_response_content.text + "\n"  # type: ignore
                         streaming_response_content += resp.content  # type: ignore
 
                 formatted_response = Markdown(streaming_response_content) if markdown else streaming_response_content  # type: ignore

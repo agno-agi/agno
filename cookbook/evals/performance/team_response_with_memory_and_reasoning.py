@@ -6,10 +6,11 @@ from agno.agent import Agent
 from agno.eval.performance import PerformanceEval
 from agno.memory.v2.db.postgres import PostgresMemoryDb
 from agno.memory.v2.memory import Memory
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.storage.postgres import PostgresStorage
 from agno.team.team import Team
 from agno.tools.reasoning import ReasoningTools
+from agno.utils.pprint import apprint_run_response
 
 users = [
     "abel@example.com",
@@ -44,9 +45,9 @@ agent_storage = PostgresStorage(
 team_storage = PostgresStorage(
     table_name="team_sessions", db_url=db_url, auto_upgrade_schema=True
 )
+agent_memory = Memory(db=PostgresMemoryDb(table_name="agent_memory", db_url=db_url))
 
 team_memory = Memory(db=PostgresMemoryDb(table_name="team_memory", db_url=db_url))
-agent_memory = Memory(db=PostgresMemoryDb(table_name="agent_memory", db_url=db_url))
 
 
 def get_weather(city: str) -> str:
@@ -65,11 +66,11 @@ def get_weather(city: str) -> str:
             "forecast": {
                 "today": "High 75°F, Low 58°F with afternoon thunderstorms",
                 "tomorrow": "High 78°F, Low 62°F, mostly sunny",
-                "weekend": "High 82°F, Low 65°F, clear skies"
+                "weekend": "High 82°F, Low 65°F, clear skies",
             },
             "air_quality": "Good (AQI: 45)",
             "pollen_count": "Moderate",
-            "marine_conditions": "Waves 2-3 feet, water temperature 68°F"
+            "marine_conditions": "Waves 2-3 feet, water temperature 68°F",
         },
         "Los Angeles": {
             "current": "Sunny and clear",
@@ -84,11 +85,11 @@ def get_weather(city: str) -> str:
             "forecast": {
                 "today": "High 88°F, Low 65°F, sunny throughout",
                 "tomorrow": "High 86°F, Low 63°F, morning fog then sunny",
-                "weekend": "High 90°F, Low 68°F, clear and warm"
+                "weekend": "High 90°F, Low 68°F, clear and warm",
             },
             "air_quality": "Moderate (AQI: 78)",
             "pollen_count": "High",
-            "marine_conditions": "Waves 3-4 feet, water temperature 72°F"
+            "marine_conditions": "Waves 3-4 feet, water temperature 72°F",
         },
         "Chicago": {
             "current": "Overcast with light drizzle",
@@ -103,11 +104,11 @@ def get_weather(city: str) -> str:
             "forecast": {
                 "today": "High 62°F, Low 48°F, rain likely",
                 "tomorrow": "High 65°F, Low 52°F, partly cloudy",
-                "weekend": "High 70°F, Low 55°F, sunny intervals"
+                "weekend": "High 70°F, Low 55°F, sunny intervals",
             },
             "air_quality": "Good (AQI: 52)",
             "pollen_count": "Low",
-            "marine_conditions": "Waves 4-6 feet, water temperature 55°F"
+            "marine_conditions": "Waves 4-6 feet, water temperature 55°F",
         },
         "Houston": {
             "current": "Hot and humid with scattered clouds",
@@ -122,11 +123,11 @@ def get_weather(city: str) -> str:
             "forecast": {
                 "today": "High 94°F, Low 76°F, chance of afternoon storms",
                 "tomorrow": "High 96°F, Low 78°F, hot and humid",
-                "weekend": "High 98°F, Low 80°F, isolated thunderstorms"
+                "weekend": "High 98°F, Low 80°F, isolated thunderstorms",
             },
             "air_quality": "Moderate (AQI: 85)",
             "pollen_count": "Very High",
-            "marine_conditions": "Waves 1-2 feet, water temperature 82°F"
+            "marine_conditions": "Waves 1-2 feet, water temperature 82°F",
         },
         "Miami": {
             "current": "Partly cloudy with high humidity",
@@ -141,11 +142,11 @@ def get_weather(city: str) -> str:
             "forecast": {
                 "today": "High 90°F, Low 78°F, afternoon showers likely",
                 "tomorrow": "High 89°F, Low 77°F, partly sunny",
-                "weekend": "High 92°F, Low 79°F, scattered thunderstorms"
+                "weekend": "High 92°F, Low 79°F, scattered thunderstorms",
             },
             "air_quality": "Good (AQI: 48)",
             "pollen_count": "Moderate",
-            "marine_conditions": "Waves 2-3 feet, water temperature 85°F"
+            "marine_conditions": "Waves 2-3 feet, water temperature 85°F",
         },
         "San Francisco": {
             "current": "Foggy and cool",
@@ -160,11 +161,11 @@ def get_weather(city: str) -> str:
             "forecast": {
                 "today": "High 65°F, Low 55°F, fog clearing by afternoon",
                 "tomorrow": "High 68°F, Low 58°F, partly cloudy",
-                "weekend": "High 72°F, Low 60°F, sunny and mild"
+                "weekend": "High 72°F, Low 60°F, sunny and mild",
             },
             "air_quality": "Good (AQI: 42)",
             "pollen_count": "Low",
-            "marine_conditions": "Waves 5-7 feet, water temperature 58°F"
+            "marine_conditions": "Waves 5-7 feet, water temperature 58°F",
         },
         "Seattle": {
             "current": "Light rain with overcast skies",
@@ -179,11 +180,11 @@ def get_weather(city: str) -> str:
             "forecast": {
                 "today": "High 58°F, Low 48°F, rain throughout the day",
                 "tomorrow": "High 62°F, Low 50°F, showers likely",
-                "weekend": "High 65°F, Low 52°F, partly cloudy"
+                "weekend": "High 65°F, Low 52°F, partly cloudy",
             },
             "air_quality": "Good (AQI: 38)",
             "pollen_count": "Low",
-            "marine_conditions": "Waves 3-5 feet, water temperature 52°F"
+            "marine_conditions": "Waves 3-5 feet, water temperature 52°F",
         },
         "Boston": {
             "current": "Clear and crisp",
@@ -198,11 +199,11 @@ def get_weather(city: str) -> str:
             "forecast": {
                 "today": "High 72°F, Low 58°F, sunny and pleasant",
                 "tomorrow": "High 75°F, Low 62°F, mostly sunny",
-                "weekend": "High 78°F, Low 65°F, clear skies"
+                "weekend": "High 78°F, Low 65°F, clear skies",
             },
             "air_quality": "Good (AQI: 55)",
             "pollen_count": "Moderate",
-            "marine_conditions": "Waves 2-4 feet, water temperature 62°F"
+            "marine_conditions": "Waves 2-4 feet, water temperature 62°F",
         },
         "Washington D.C.": {
             "current": "Partly sunny with mild temperatures",
@@ -217,11 +218,11 @@ def get_weather(city: str) -> str:
             "forecast": {
                 "today": "High 78°F, Low 62°F, partly cloudy",
                 "tomorrow": "High 80°F, Low 65°F, sunny intervals",
-                "weekend": "High 82°F, Low 68°F, clear and warm"
+                "weekend": "High 82°F, Low 68°F, clear and warm",
             },
             "air_quality": "Moderate (AQI: 72)",
             "pollen_count": "High",
-            "marine_conditions": "Waves 1-2 feet, water temperature 70°F"
+            "marine_conditions": "Waves 1-2 feet, water temperature 70°F",
         },
         "Atlanta": {
             "current": "Warm and humid with scattered clouds",
@@ -236,11 +237,11 @@ def get_weather(city: str) -> str:
             "forecast": {
                 "today": "High 85°F, Low 68°F, chance of afternoon storms",
                 "tomorrow": "High 87°F, Low 70°F, hot and humid",
-                "weekend": "High 90°F, Low 72°F, isolated thunderstorms"
+                "weekend": "High 90°F, Low 72°F, isolated thunderstorms",
             },
             "air_quality": "Moderate (AQI: 68)",
             "pollen_count": "Very High",
-            "marine_conditions": "Waves 1-2 feet, water temperature 75°F"
+            "marine_conditions": "Waves 1-2 feet, water temperature 75°F",
         },
         "Denver": {
             "current": "Sunny and dry",
@@ -255,11 +256,11 @@ def get_weather(city: str) -> str:
             "forecast": {
                 "today": "High 82°F, Low 55°F, sunny and clear",
                 "tomorrow": "High 85°F, Low 58°F, mostly sunny",
-                "weekend": "High 88°F, Low 62°F, clear skies"
+                "weekend": "High 88°F, Low 62°F, clear skies",
             },
             "air_quality": "Good (AQI: 45)",
             "pollen_count": "Moderate",
-            "marine_conditions": "N/A - Landlocked location"
+            "marine_conditions": "N/A - Landlocked location",
         },
         "Las Vegas": {
             "current": "Hot and dry with clear skies",
@@ -274,52 +275,52 @@ def get_weather(city: str) -> str:
             "forecast": {
                 "today": "High 98°F, Low 75°F, sunny and hot",
                 "tomorrow": "High 100°F, Low 78°F, clear and very hot",
-                "weekend": "High 102°F, Low 80°F, extreme heat"
+                "weekend": "High 102°F, Low 80°F, extreme heat",
             },
             "air_quality": "Moderate (AQI: 82)",
             "pollen_count": "Low",
-            "marine_conditions": "N/A - Desert location"
-        }
+            "marine_conditions": "N/A - Desert location",
+        },
     }
-    
+
     if city not in weather_conditions:
         return f"Weather data for {city} is not available in our database."
-    
+
     weather = weather_conditions[city]
-    
+
     return f"""
 # Comprehensive Weather Report for {city}
 
 ## Current Conditions
-- **Temperature**: {weather['temperature']}
-- **Conditions**: {weather['current']}
-- **Humidity**: {weather['humidity']}
-- **Wind**: {weather['wind']}
-- **Visibility**: {weather['visibility']}
-- **Pressure**: {weather['pressure']}
-- **UV Index**: {weather['uv_index']}
+- **Temperature**: {weather["temperature"]}
+- **Conditions**: {weather["current"]}
+- **Humidity**: {weather["humidity"]}
+- **Wind**: {weather["wind"]}
+- **Visibility**: {weather["visibility"]}
+- **Pressure**: {weather["pressure"]}
+- **UV Index**: {weather["uv_index"]}
 
 ## Daily Schedule
-- **Sunrise**: {weather['sunrise']}
-- **Sunset**: {weather['sunset']}
+- **Sunrise**: {weather["sunrise"]}
+- **Sunset**: {weather["sunset"]}
 
 ## Extended Forecast
-- **Today**: {weather['forecast']['today']}
-- **Tomorrow**: {weather['forecast']['tomorrow']}
-- **Weekend**: {weather['forecast']['weekend']}
+- **Today**: {weather["forecast"]["today"]}
+- **Tomorrow**: {weather["forecast"]["tomorrow"]}
+- **Weekend**: {weather["forecast"]["weekend"]}
 
 ## Environmental Conditions
-- **Air Quality**: {weather['air_quality']}
-- **Pollen Count**: {weather['pollen_count']}
-- **Marine Conditions**: {weather['marine_conditions']}
+- **Air Quality**: {weather["air_quality"]}
+- **Pollen Count**: {weather["pollen_count"]}
+- **Marine Conditions**: {weather["marine_conditions"]}
 
 ## Weather Advisory
-Based on current conditions, visitors to {city} should be prepared for {weather['current'].lower()}. The UV index of {weather['uv_index']} indicates {'sun protection is essential' if 'High' in weather['uv_index'] or 'Very High' in weather['uv_index'] or 'Extreme' in weather['uv_index'] else 'moderate sun protection recommended'}. {'High humidity may make temperatures feel warmer than actual readings.' if int(weather['humidity'].replace('%', '')) > 70 else 'Comfortable humidity levels are expected.'}
+Based on current conditions, visitors to {city} should be prepared for {weather["current"].lower()}. The UV index of {weather["uv_index"]} indicates {"sun protection is essential" if "High" in weather["uv_index"] or "Very High" in weather["uv_index"] or "Extreme" in weather["uv_index"] else "moderate sun protection recommended"}. {"High humidity may make temperatures feel warmer than actual readings." if int(weather["humidity"].replace("%", "")) > 70 else "Comfortable humidity levels are expected."}
 
 ## Travel Recommendations
-- **Best Time for Outdoor Activities**: {'Early morning or late afternoon to avoid peak heat' if int(weather['temperature'].split('°')[0]) > 85 else 'Any time during daylight hours'}
-- **Clothing Suggestions**: {'Light, breathable clothing recommended' if int(weather['temperature'].split('°')[0]) > 80 else 'Comfortable clothing suitable for current temperatures'}
-- **Hydration**: {'Stay well-hydrated due to high temperatures' if int(weather['temperature'].split('°')[0]) > 85 else 'Normal hydration levels recommended'}
+- **Best Time for Outdoor Activities**: {"Early morning or late afternoon to avoid peak heat" if int(weather["temperature"].split("°")[0]) > 85 else "Any time during daylight hours"}
+- **Clothing Suggestions**: {"Light, breathable clothing recommended" if int(weather["temperature"].split("°")[0]) > 80 else "Comfortable clothing suitable for current temperatures"}
+- **Hydration**: {"Stay well-hydrated due to high temperatures" if int(weather["temperature"].split("°")[0]) > 85 else "Normal hydration levels recommended"}
 
 This comprehensive weather report provides all the essential information needed for planning activities and ensuring comfort during your visit to {city}.
 """
@@ -337,7 +338,7 @@ def get_activities(city: str) -> str:
                 "Prospect Park nature trails",
                 "Governors Island weekend visits",
                 "Riverside Park cycling paths",
-                "Bryant Park seasonal activities"
+                "Bryant Park seasonal activities",
             ],
             "cultural": [
                 "Metropolitan Museum of Art comprehensive tours",
@@ -347,7 +348,7 @@ def get_activities(city: str) -> str:
                 "Lincoln Center performing arts",
                 "Guggenheim Museum architecture and art",
                 "Whitney Museum of American Art",
-                "Brooklyn Museum cultural exhibits"
+                "Brooklyn Museum cultural exhibits",
             ],
             "entertainment": [
                 "Times Square nightlife and entertainment",
@@ -357,7 +358,7 @@ def get_activities(city: str) -> str:
                 "Madison Square Garden events",
                 "Radio City Music Hall shows",
                 "Carnegie Hall classical concerts",
-                "Comedy Cellar stand-up comedy"
+                "Comedy Cellar stand-up comedy",
             ],
             "shopping": [
                 "Fifth Avenue luxury shopping district",
@@ -367,7 +368,7 @@ def get_activities(city: str) -> str:
                 "Union Square Greenmarket farmers market",
                 "Century 21 discount designer shopping",
                 "Bergdorf Goodman luxury department store",
-                "ABC Carpet & Home home decor"
+                "ABC Carpet & Home home decor",
             ],
             "dining": [
                 "Katz's Delicatessen pastrami sandwiches",
@@ -377,8 +378,8 @@ def get_activities(city: str) -> str:
                 "Gramercy Tavern farm-to-table dining",
                 "Le Bernardin seafood excellence",
                 "Momofuku Noodle Bar Asian fusion",
-                "Magnolia Bakery cupcakes and desserts"
-            ]
+                "Magnolia Bakery cupcakes and desserts",
+            ],
         },
         "Los Angeles": {
             "outdoor": [
@@ -389,7 +390,7 @@ def get_activities(city: str) -> str:
                 "Malibu beach surfing and swimming",
                 "Echo Park Lake paddle boating",
                 "Griffith Park horseback riding",
-                "Topanga State Park wilderness trails"
+                "Topanga State Park wilderness trails",
             ],
             "cultural": [
                 "Getty Center art museum and gardens",
@@ -399,7 +400,7 @@ def get_activities(city: str) -> str:
                 "Warner Bros. Studio Tour",
                 "Natural History Museum dinosaur exhibits",
                 "California Science Center space shuttle",
-                "The Broad contemporary art museum"
+                "The Broad contemporary art museum",
             ],
             "entertainment": [
                 "Disneyland Resort theme park adventure",
@@ -409,7 +410,7 @@ def get_activities(city: str) -> str:
                 "Comedy Store stand-up comedy",
                 "Roxy Theatre live music venue",
                 "Greek Theatre outdoor amphitheater",
-                "TCL Chinese Theatre movie premieres"
+                "TCL Chinese Theatre movie premieres",
             ],
             "shopping": [
                 "Rodeo Drive luxury shopping experience",
@@ -419,7 +420,7 @@ def get_activities(city: str) -> str:
                 "Abbot Kinney Boulevard unique shops",
                 "Third Street Promenade Santa Monica",
                 "Glendale Galleria shopping complex",
-                "Fashion District wholesale shopping"
+                "Fashion District wholesale shopping",
             ],
             "dining": [
                 "In-N-Out Burger classic California burgers",
@@ -429,8 +430,8 @@ def get_activities(city: str) -> str:
                 "Nobu Los Angeles celebrity sushi spot",
                 "Gjelina Venice Beach farm-to-table",
                 "Animal Restaurant innovative cuisine",
-                "Bottega Louie Italian pastries and dining"
-            ]
+                "Bottega Louie Italian pastries and dining",
+            ],
         },
         "Chicago": {
             "outdoor": [
@@ -441,7 +442,7 @@ def get_activities(city: str) -> str:
                 "Lake Michigan beach activities",
                 "Chicago Riverwalk scenic strolls",
                 "Maggie Daley Park family activities",
-                "606 elevated trail cycling"
+                "606 elevated trail cycling",
             ],
             "cultural": [
                 "Art Institute of Chicago world-class art",
@@ -451,7 +452,7 @@ def get_activities(city: str) -> str:
                 "Museum of Science and Industry hands-on exhibits",
                 "Chicago History Museum local heritage",
                 "National Museum of Mexican Art",
-                "DuSable Museum of African American History"
+                "DuSable Museum of African American History",
             ],
             "entertainment": [
                 "Willis Tower Skydeck observation deck",
@@ -461,7 +462,7 @@ def get_activities(city: str) -> str:
                 "Chicago Theatre historic venue",
                 "Arie Crown Theater performances",
                 "House of Blues live music",
-                "Blue Man Group theatrical experience"
+                "Blue Man Group theatrical experience",
             ],
             "shopping": [
                 "Magnificent Mile luxury shopping district",
@@ -471,7 +472,7 @@ def get_activities(city: str) -> str:
                 "Michigan Avenue shopping experience",
                 "Wicker Park trendy shops",
                 "Andersonville unique stores",
-                "Lincoln Square German heritage shopping"
+                "Lincoln Square German heritage shopping",
             ],
             "dining": [
                 "Giordano's deep dish pizza",
@@ -481,8 +482,8 @@ def get_activities(city: str) -> str:
                 "Billy Goat Tavern historic bar",
                 "Girl & the Goat innovative cuisine",
                 "Alinea molecular gastronomy",
-                "Au Cheval gourmet burgers"
-            ]
+                "Au Cheval gourmet burgers",
+            ],
         },
         "Houston": {
             "outdoor": [
@@ -493,7 +494,7 @@ def get_activities(city: str) -> str:
                 "Houston Arboretum nature education",
                 "Rice University campus walking tours",
                 "Sam Houston Park historic buildings",
-                "Eleanor Tinsley Park bayou views"
+                "Eleanor Tinsley Park bayou views",
             ],
             "cultural": [
                 "Museum of Fine Arts Houston",
@@ -503,7 +504,7 @@ def get_activities(city: str) -> str:
                 "Holocaust Museum Houston",
                 "Buffalo Soldiers National Museum",
                 "Asia Society Texas Center",
-                "Houston Center for Photography"
+                "Houston Center for Photography",
             ],
             "entertainment": [
                 "Space Center Houston NASA exhibits",
@@ -513,7 +514,7 @@ def get_activities(city: str) -> str:
                 "Minute Maid Park Astros baseball",
                 "NRG Stadium Texans football",
                 "House of Blues Houston live music",
-                "Jones Hall performing arts"
+                "Jones Hall performing arts",
             ],
             "shopping": [
                 "Galleria Mall luxury shopping complex",
@@ -523,7 +524,7 @@ def get_activities(city: str) -> str:
                 "Katy Mills outlet shopping",
                 "Houston Premium Outlets",
                 "Baybrook Mall suburban shopping",
-                "Willowbrook Mall northwest shopping"
+                "Willowbrook Mall northwest shopping",
             ],
             "dining": [
                 "Pappas Bros. Steakhouse premium steaks",
@@ -533,8 +534,8 @@ def get_activities(city: str) -> str:
                 "Hugo's upscale Mexican cuisine",
                 "Uchi Houston sushi excellence",
                 "Underbelly Houston Southern cuisine",
-                "Truth BBQ award-winning barbecue"
-            ]
+                "Truth BBQ award-winning barbecue",
+            ],
         },
         "Miami": {
             "outdoor": [
@@ -545,7 +546,7 @@ def get_activities(city: str) -> str:
                 "Fairchild Tropical Botanic Garden",
                 "Matheson Hammock Park natural areas",
                 "Bill Baggs Cape Florida State Park",
-                "Oleta River State Park kayaking"
+                "Oleta River State Park kayaking",
             ],
             "cultural": [
                 "Pérez Art Museum Miami contemporary art",
@@ -555,7 +556,7 @@ def get_activities(city: str) -> str:
                 "Jewish Museum of Florida",
                 "Coral Gables Museum architecture",
                 "Lowe Art Museum University of Miami",
-                "Bass Museum of Art contemporary"
+                "Bass Museum of Art contemporary",
             ],
             "entertainment": [
                 "Wynwood Walls street art district",
@@ -565,7 +566,7 @@ def get_activities(city: str) -> str:
                 "Hard Rock Stadium Dolphins football",
                 "Marlins Park baseball games",
                 "Fillmore Miami Beach live music",
-                "Adrienne Arsht Center performing arts"
+                "Adrienne Arsht Center performing arts",
             ],
             "shopping": [
                 "Lincoln Road Mall outdoor shopping",
@@ -575,7 +576,7 @@ def get_activities(city: str) -> str:
                 "Dolphin Mall outlet shopping",
                 "Sawgrass Mills outlet complex",
                 "Merrick Park Coral Gables shopping",
-                "CocoWalk Coconut Grove retail"
+                "CocoWalk Coconut Grove retail",
             ],
             "dining": [
                 "Joe's Stone Crab Miami Beach institution",
@@ -585,8 +586,8 @@ def get_activities(city: str) -> str:
                 "Zuma Miami Japanese izakaya",
                 "Nobu Miami Beach celebrity dining",
                 "Prime 112 steakhouse excellence",
-                "La Sandwicherie French sandwiches"
-            ]
+                "La Sandwicherie French sandwiches",
+            ],
         },
         "San Francisco": {
             "outdoor": [
@@ -597,7 +598,7 @@ def get_activities(city: str) -> str:
                 "Lands End coastal hiking trails",
                 "Twin Peaks panoramic city views",
                 "Crissy Field beach and recreation",
-                "Angel Island State Park hiking"
+                "Angel Island State Park hiking",
             ],
             "cultural": [
                 "de Young Museum fine arts",
@@ -607,7 +608,7 @@ def get_activities(city: str) -> str:
                 "Asian Art Museum comprehensive collection",
                 "Legion of Honor European art",
                 "Contemporary Jewish Museum",
-                "Walt Disney Family Museum"
+                "Walt Disney Family Museum",
             ],
             "entertainment": [
                 "Pier 39 sea lions and attractions",
@@ -617,7 +618,7 @@ def get_activities(city: str) -> str:
                 "Fillmore Auditorium live music",
                 "Warfield Theatre historic venue",
                 "Great American Music Hall",
-                "SFJAZZ Center jazz performances"
+                "SFJAZZ Center jazz performances",
             ],
             "shopping": [
                 "Union Square luxury shopping district",
@@ -627,7 +628,7 @@ def get_activities(city: str) -> str:
                 "Chestnut Street boutique shopping",
                 "Fillmore Street upscale retail",
                 "Valencia Street Mission District",
-                "Grant Avenue Chinatown shopping"
+                "Grant Avenue Chinatown shopping",
             ],
             "dining": [
                 "Tartine Bakery artisanal breads",
@@ -637,8 +638,8 @@ def get_activities(city: str) -> str:
                 "Gary Danko fine dining experience",
                 "State Bird Provisions innovative",
                 "Tadich Grill historic seafood",
-                "Boudin Bakery sourdough bread"
-            ]
+                "Boudin Bakery sourdough bread",
+            ],
         },
         "Seattle": {
             "outdoor": [
@@ -649,7 +650,7 @@ def get_activities(city: str) -> str:
                 "Green Lake Park walking and cycling",
                 "Kerry Park panoramic city views",
                 "Alki Beach West Seattle activities",
-                "Washington Park Arboretum gardens"
+                "Washington Park Arboretum gardens",
             ],
             "cultural": [
                 "Seattle Art Museum comprehensive collection",
@@ -659,7 +660,7 @@ def get_activities(city: str) -> str:
                 "Wing Luke Museum Asian American history",
                 "Museum of Flight aviation history",
                 "Frye Art Museum free admission",
-                "Nordic Heritage Museum Scandinavian"
+                "Nordic Heritage Museum Scandinavian",
             ],
             "entertainment": [
                 "CenturyLink Field Seahawks football",
@@ -669,7 +670,7 @@ def get_activities(city: str) -> str:
                 "Showbox at the Market live music",
                 "Neptune Theatre University District",
                 "Moore Theatre downtown venue",
-                "Crocodile Café intimate music venue"
+                "Crocodile Café intimate music venue",
             ],
             "shopping": [
                 "Pike Place Market local crafts and food",
@@ -679,7 +680,7 @@ def get_activities(city: str) -> str:
                 "Northgate Mall north Seattle",
                 "Southcenter Mall south Seattle",
                 "Alderwood Mall north suburbs",
-                "Redmond Town Center eastside retail"
+                "Redmond Town Center eastside retail",
             ],
             "dining": [
                 "Pike Place Chowder award-winning chowder",
@@ -689,8 +690,8 @@ def get_activities(city: str) -> str:
                 "The Walrus and the Carpenter oysters",
                 "Paseo Caribbean sandwiches",
                 "Molly Moon's Homemade Ice Cream",
-                "Top Pot Doughnuts hand-forged doughnuts"
-            ]
+                "Top Pot Doughnuts hand-forged doughnuts",
+            ],
         },
         "Boston": {
             "outdoor": [
@@ -701,7 +702,7 @@ def get_activities(city: str) -> str:
                 "Emerald Necklace park system",
                 "Castle Island South Boston waterfront",
                 "Arnold Arboretum Harvard University",
-                "Jamaica Pond walking and boating"
+                "Jamaica Pond walking and boating",
             ],
             "cultural": [
                 "Museum of Fine Arts Boston",
@@ -711,7 +712,7 @@ def get_activities(city: str) -> str:
                 "Museum of Science interactive exhibits",
                 "New England Aquarium marine life",
                 "Institute of Contemporary Art",
-                "Boston Children's Museum family"
+                "Boston Children's Museum family",
             ],
             "entertainment": [
                 "Fenway Park Red Sox baseball",
@@ -721,7 +722,7 @@ def get_activities(city: str) -> str:
                 "House of Blues Boston live music",
                 "Paradise Rock Club intimate venue",
                 "Orpheum Theatre historic venue",
-                "Wang Theatre performing arts"
+                "Wang Theatre performing arts",
             ],
             "shopping": [
                 "Faneuil Hall Marketplace historic shopping",
@@ -731,7 +732,7 @@ def get_activities(city: str) -> str:
                 "Assembly Row outlet shopping",
                 "Natick Mall suburban shopping",
                 "Burlington Mall north suburbs",
-                "South Shore Plaza south suburbs"
+                "South Shore Plaza south suburbs",
             ],
             "dining": [
                 "Legal Sea Foods fresh seafood",
@@ -741,8 +742,8 @@ def get_activities(city: str) -> str:
                 "Giacomo's Ristorante Italian cuisine",
                 "Flour Bakery + Café artisanal pastries",
                 "Santarpio's Pizza East Boston",
-                "Kelly's Roast Beef North Shore"
-            ]
+                "Kelly's Roast Beef North Shore",
+            ],
         },
         "Washington D.C.": {
             "outdoor": [
@@ -753,7 +754,7 @@ def get_activities(city: str) -> str:
                 "East Potomac Park golf and recreation",
                 "Kenilworth Aquatic Gardens",
                 "C&O Canal National Historical Park",
-                "Great Falls Park Virginia side"
+                "Great Falls Park Virginia side",
             ],
             "cultural": [
                 "Smithsonian Institution museums",
@@ -763,7 +764,7 @@ def get_activities(city: str) -> str:
                 "Library of Congress largest library",
                 "National Archives historical documents",
                 "International Spy Museum",
-                "Newseum journalism museum"
+                "Newseum journalism museum",
             ],
             "entertainment": [
                 "Capitol Building guided tours",
@@ -773,7 +774,7 @@ def get_activities(city: str) -> str:
                 "National Theatre historic venue",
                 "9:30 Club live music venue",
                 "The Anthem waterfront venue",
-                "Wolf Trap performing arts center"
+                "Wolf Trap performing arts center",
             ],
             "shopping": [
                 "Georgetown historic shopping district",
@@ -783,7 +784,7 @@ def get_activities(city: str) -> str:
                 "Potomac Mills outlet shopping",
                 "National Harbor waterfront retail",
                 "CityCenterDC luxury shopping",
-                "Eastern Market Capitol Hill"
+                "Eastern Market Capitol Hill",
             ],
             "dining": [
                 "Ben's Chili Bowl Washington institution",
@@ -793,8 +794,8 @@ def get_activities(city: str) -> str:
                 "Le Diplomate French bistro",
                 "Rose's Luxury innovative American",
                 "Komi Mediterranean fine dining",
-                "Toki Underground ramen noodles"
-            ]
+                "Toki Underground ramen noodles",
+            ],
         },
         "Atlanta": {
             "outdoor": [
@@ -805,7 +806,7 @@ def get_activities(city: str) -> str:
                 "Atlanta Botanical Garden",
                 "Grant Park Zoo Atlanta",
                 "Centennial Olympic Park",
-                "Chastain Park amphitheater and trails"
+                "Chastain Park amphitheater and trails",
             ],
             "cultural": [
                 "High Museum of Art",
@@ -815,7 +816,7 @@ def get_activities(city: str) -> str:
                 "Center for Civil and Human Rights",
                 "Atlanta Contemporary Art Center",
                 "Michael C. Carlos Museum Emory",
-                "Spelman College Museum of Fine Art"
+                "Spelman College Museum of Fine Art",
             ],
             "entertainment": [
                 "World of Coca-Cola museum",
@@ -825,7 +826,7 @@ def get_activities(city: str) -> str:
                 "State Farm Arena Hawks basketball",
                 "Fox Theatre historic venue",
                 "Tabernacle live music venue",
-                "Variety Playhouse intimate concerts"
+                "Variety Playhouse intimate concerts",
             ],
             "shopping": [
                 "Lenox Square luxury shopping",
@@ -835,7 +836,7 @@ def get_activities(city: str) -> str:
                 "Krog Street Market food and retail",
                 "Buckhead Village boutique shopping",
                 "Virginia-Highland unique stores",
-                "Little Five Points alternative shopping"
+                "Little Five Points alternative shopping",
             ],
             "dining": [
                 "The Varsity classic drive-in",
@@ -845,8 +846,8 @@ def get_activities(city: str) -> str:
                 "Miller Union farm-to-table",
                 "Staplehouse innovative American",
                 "Gunshow creative Southern cuisine",
-                "Atlanta Fish Market fresh seafood"
-            ]
+                "Atlanta Fish Market fresh seafood",
+            ],
         },
         "Denver": {
             "outdoor": [
@@ -857,7 +858,7 @@ def get_activities(city: str) -> str:
                 "Washington Park recreation",
                 "Cherry Creek State Park",
                 "Mount Evans Scenic Byway",
-                "Garden of the Gods Colorado Springs"
+                "Garden of the Gods Colorado Springs",
             ],
             "cultural": [
                 "Denver Art Museum",
@@ -867,7 +868,7 @@ def get_activities(city: str) -> str:
                 "History Colorado Center",
                 "Black American West Museum",
                 "Mizel Museum Jewish culture",
-                "Kirkland Museum of Fine & Decorative Art"
+                "Kirkland Museum of Fine & Decorative Art",
             ],
             "entertainment": [
                 "Coors Field Rockies baseball",
@@ -877,7 +878,7 @@ def get_activities(city: str) -> str:
                 "Ogden Theatre live music",
                 "Bluebird Theatre intimate venue",
                 "Fillmore Auditorium historic venue",
-                "Paramount Theatre performing arts"
+                "Paramount Theatre performing arts",
             ],
             "shopping": [
                 "Cherry Creek Shopping Center",
@@ -887,7 +888,7 @@ def get_activities(city: str) -> str:
                 "Flatiron Crossing Broomfield",
                 "Aspen Grove Littleton",
                 "Belmar Lakewood shopping",
-                "Southlands Aurora retail"
+                "Southlands Aurora retail",
             ],
             "dining": [
                 "Casa Bonita Mexican restaurant",
@@ -897,8 +898,8 @@ def get_activities(city: str) -> str:
                 "Root Down farm-to-table",
                 "Fruition Restaurant fine dining",
                 "Acorn at The Source market hall",
-                "Work & Class contemporary American"
-            ]
+                "Work & Class contemporary American",
+            ],
         },
         "Las Vegas": {
             "outdoor": [
@@ -909,7 +910,7 @@ def get_activities(city: str) -> str:
                 "Springs Preserve desert gardens",
                 "Floyd Lamb Park at Tule Springs",
                 "Clark County Wetlands Park",
-                "Sloan Canyon National Conservation Area"
+                "Sloan Canyon National Conservation Area",
             ],
             "cultural": [
                 "The Mob Museum organized crime history",
@@ -919,7 +920,7 @@ def get_activities(city: str) -> str:
                 "Nevada State Museum",
                 "Old Las Vegas Mormon Fort",
                 "Atomic Testing Museum",
-                "Las Vegas Art Museum"
+                "Las Vegas Art Museum",
             ],
             "entertainment": [
                 "The Strip casino and resort hopping",
@@ -929,7 +930,7 @@ def get_activities(city: str) -> str:
                 "High Roller observation wheel",
                 "Stratosphere Tower thrill rides",
                 "Downtown Container Park",
-                "Area 15 immersive experiences"
+                "Area 15 immersive experiences",
             ],
             "shopping": [
                 "Fashion Show Mall",
@@ -939,7 +940,7 @@ def get_activities(city: str) -> str:
                 "Town Square Las Vegas",
                 "Las Vegas Premium Outlets North",
                 "Las Vegas Premium Outlets South",
-                "Meadows Mall local shopping"
+                "Meadows Mall local shopping",
             ],
             "dining": [
                 "In-N-Out Burger California burgers",
@@ -949,33 +950,33 @@ def get_activities(city: str) -> str:
                 "Gordon Ramsay Hell's Kitchen",
                 "Joël Robuchon fine dining",
                 "Raku Japanese izakaya",
-                "Echo & Rig Butcher and Steakhouse"
-            ]
-        }
+                "Echo & Rig Butcher and Steakhouse",
+            ],
+        },
     }
-    
+
     if city not in city_activities:
         return f"Activity information for {city} is not available in our database."
-    
+
     activities = city_activities[city]
-    
+
     return f"""
 # Comprehensive Activity Guide for {city}
 
 ## Outdoor Adventures & Recreation
-{chr(10).join([f"- {activity}" for activity in activities['outdoor']])}
+{chr(10).join([f"- {activity}" for activity in activities["outdoor"]])}
 
 ## Cultural Experiences & Museums
-{chr(10).join([f"- {activity}" for activity in activities['cultural']])}
+{chr(10).join([f"- {activity}" for activity in activities["cultural"]])}
 
 ## Entertainment & Nightlife
-{chr(10).join([f"- {activity}" for activity in activities['entertainment']])}
+{chr(10).join([f"- {activity}" for activity in activities["entertainment"]])}
 
 ## Shopping Destinations
-{chr(10).join([f"- {activity}" for activity in activities['shopping']])}
+{chr(10).join([f"- {activity}" for activity in activities["shopping"]])}
 
 ## Dining & Culinary Experiences
-{chr(10).join([f"- {activity}" for activity in activities['dining']])}
+{chr(10).join([f"- {activity}" for activity in activities["dining"]])}
 
 ## Activity Recommendations by Interest
 
@@ -1003,7 +1004,7 @@ This comprehensive guide provides a starting point for discovering all that {cit
 
 weather_agent = Agent(
     agent_id="weather_agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-4o"),
     description="You are a helpful assistant that can answer questions about the weather.",
     instructions="Be concise, reply with one sentence.",
     tools=[ReasoningTools(add_instructions=True), get_weather],
@@ -1018,7 +1019,7 @@ weather_agent = Agent(
 
 activities_agent = Agent(
     agent_id="activities_agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-4o"),
     description="You are a helpful assistant that can answer questions about activities in a city.",
     instructions="Be concise, reply with one sentence.",
     tools=[ReasoningTools(add_instructions=True), get_activities],
@@ -1032,7 +1033,7 @@ activities_agent = Agent(
 )
 
 team = Team(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-4o"),
     members=[weather_agent, activities_agent],
     tools=[ReasoningTools(add_instructions=True)],
     instructions="Be concise, reply with one sentence.",
@@ -1047,54 +1048,69 @@ team = Team(
     num_history_runs=1,
     stream=True,
     stream_intermediate_steps=True,
+    cache_session=False,
 )
 
 
+async def run_team_for_user(user: str, print_responses: bool = False):
+    # Make four requests to the team, to build up history
+    random_city = random.choice(cities)
+    session_id = f"session_{user}_{uuid.uuid4()}"
+    response_iterator = await team.arun(
+        message=f"I love {random_city}!",
+        user_id=user,
+        session_id=session_id,
+    )
+    if print_responses:
+        await apprint_run_response(response_iterator)
+    else:
+        async for _ in response_iterator:
+            pass
+
+    response_iterator = await team.arun(
+        message=f"Create a report on the activities and weather in {random_city}.",
+        user_id=user,
+        session_id=session_id,
+    )
+    if print_responses:
+        await apprint_run_response(response_iterator)
+    else:
+        async for _ in response_iterator:
+            pass
+
+    response_iterator = await team.arun(
+        message=f"What else can you tell me about {random_city}?",
+        user_id=user,
+        session_id=session_id,
+    )
+    if print_responses:
+        await apprint_run_response(response_iterator)
+    else:
+        async for _ in response_iterator:
+            pass
+
+    response_iterator = await team.arun(
+        message=f"What other cities are similar to {random_city}?",
+        user_id=user,
+        session_id=session_id,
+    )
+    if print_responses:
+        await apprint_run_response(response_iterator)
+    else:
+        async for _ in response_iterator:
+            pass
+
+
 async def run_team():
-    async def run_team_for_user(user: str):
-        random_city = random.choice(cities)
-        response_iterator = await team.arun(
-            message=f"I love {random_city}!",
-            user_id=user,
-            session_id=f"session_{user}",
-        )
-        async for response in response_iterator:
-            pass
-        
-        response_iterator = await team.arun(
-            message=f"Create a report on the activities and weather in {random_city}.",
-            user_id=user,
-            session_id=f"session_{user}",
-        )
-        async for response in response_iterator:
-            pass
-        
-        response_iterator = await team.arun(
-            message=f"What else can you tell me about {random_city}?",
-            user_id=user,
-            session_id=f"session_{user}",
-        )
-        async for response in response_iterator:
-            pass
-        
-        response_iterator = await team.arun(
-            message=f"What other cities are similar to {random_city}?",
-            user_id=user,
-            session_id=f"session_{user}",
-        )
-        async for response in response_iterator:
-            pass
-        
     tasks = []
 
     # Run all 5 users concurrently
-    # for user in users:
-    #     tasks.append(run_team_for_user(user))
+    for user in users:
+        tasks.append(run_team_for_user(user))
 
-    # await asyncio.gather(*tasks)
-    await run_team_for_user("user_1")
+    await asyncio.gather(*tasks)
 
-    print("Team memory runs:", len(team.memory.runs))
+    print("Team memory runs:", sum(len(runs) for runs in team.memory.runs.values()))
     print("Team memory memories:", len(team.memory.memories))
 
     return "Successfully ran team"
@@ -1103,7 +1119,7 @@ async def run_team():
 team_response_with_memory_impact = PerformanceEval(
     name="Team Memory Impact",
     func=run_team,
-    num_iterations=1,
+    num_iterations=5,
     warmup_runs=0,
     measure_runtime=False,
     debug_mode=True,

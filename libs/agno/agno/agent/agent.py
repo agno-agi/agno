@@ -119,6 +119,8 @@ class Agent:
     session_state: Optional[Dict[str, Any]] = None
     search_previous_sessions_history: Optional[bool] = False
     num_history_sessions: Optional[int] = None
+    # If True, cache the session in memory
+    cache_session: bool = True
 
     # --- Agent Context ---
     # Context available for tools and prompt functions
@@ -351,6 +353,7 @@ class Agent:
         session_state: Optional[Dict[str, Any]] = None,
         search_previous_sessions_history: Optional[bool] = False,
         num_history_sessions: Optional[int] = None,
+        cache_session: bool = True,
         context: Optional[Dict[str, Any]] = None,
         add_context: bool = False,
         resolve_context: bool = True,
@@ -440,6 +443,8 @@ class Agent:
         self.session_state = session_state
         self.search_previous_sessions_history = search_previous_sessions_history
         self.num_history_sessions = num_history_sessions
+
+        self.cache_session = cache_session
 
         self.context = context
         self.add_context = add_context
@@ -708,15 +713,6 @@ class Agent:
             if self.workflow_session_state is not None:
                 self.workflow_session_state["current_user_id"] = user_id
 
-    def _reset_session_state(self) -> None:
-        """Reset the session state for the agent."""
-        if self.team_session_state is not None:
-            self.team_session_state.pop("current_session_id", None)
-            self.team_session_state.pop("current_user_id", None)
-        if self.session_state is not None:
-            self.session_state.pop("current_session_id", None)
-            self.session_state.pop("current_user_id", None)
-
     def _initialize_session(
         self,
         session_id: Optional[str] = None,
@@ -753,9 +749,6 @@ class Agent:
             self.session_state = session_state
 
         self._initialize_session_state(user_id=user_id, session_id=session_id)
-
-        # Read existing session from storage
-        self.read_from_storage(session_id=session_id)
 
         return session_id, user_id
 
@@ -996,15 +989,17 @@ class Agent:
         **kwargs: Any,
     ) -> Union[RunResponse, Iterator[RunResponseEvent]]:
         """Run the Agent and return the response."""
-
         session_id, user_id = self._initialize_session(
             session_id=session_id, user_id=user_id, session_state=session_state
         )
 
-        log_debug(f"Session ID: {session_id}", center=True)
-
         # Initialize the Agent
         self.initialize_agent()
+
+        # Read existing session from storage
+        self.read_from_storage(session_id=session_id)
+
+        log_debug(f"Session ID: {session_id}", center=True)
 
         # Initialize Knowledge Filters
         effective_filters = knowledge_filters
@@ -1158,8 +1153,6 @@ class Agent:
                     )
                 else:
                     return self.run_response
-            finally:
-                self._reset_session_state()
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -1382,6 +1375,9 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent()
 
+        # Read existing session from storage
+        self.read_from_storage(session_id=session_id)
+
         effective_filters = knowledge_filters
         # When filters are passed manually
         if self.knowledge_filters or knowledge_filters:
@@ -1533,8 +1529,6 @@ class Agent:
                     )
                 else:
                     return self.run_response
-            finally:
-                self._reset_session_state()
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -1606,6 +1600,9 @@ class Agent:
             retries: The number of retries to continue the run for.
             knowledge_filters: The knowledge filters to use for the run.
         """
+        # Initialize the Agent
+        self.initialize_agent()
+
         if session_id is not None:
             self.reset_run_state()
             # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
@@ -1613,9 +1610,6 @@ class Agent:
             # Only reset session state if the session_id is different from the current session_id
             if self.session_id is not None and session_id != self.session_id:
                 self.session_state = None
-
-        # Initialize the Agent
-        self.initialize_agent()
 
         # Initialize Session
         # Use the default user_id and session_id when necessary
@@ -1790,8 +1784,6 @@ class Agent:
                     return self.create_run_response(
                         run_state=RunStatus.cancelled, content="Operation cancelled by user", run_response=run_response
                     )
-            finally:
-                self._reset_session_state()
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -1996,6 +1988,9 @@ class Agent:
             retries: The number of retries to continue the run for.
             knowledge_filters: The knowledge filters to use for the run.
         """
+        # Initialize the Agent
+        self.initialize_agent()
+
         if session_id is not None:
             self.reset_run_state()
             # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
@@ -2003,9 +1998,6 @@ class Agent:
             # Only reset session state if the session_id is different from the current session_id
             if self.session_id is not None and session_id != self.session_id:
                 self.session_state = None
-
-        # Initialize the Agent
-        self.initialize_agent()
 
         # Initialize Session
         # Use the default user_id and session_id when necessary
@@ -2189,8 +2181,6 @@ class Agent:
                     return self.create_run_response(
                         run_state=RunStatus.cancelled, content="Operation cancelled by user", run_response=run_response
                     )
-            finally:
-                self._reset_session_state()
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -4056,6 +4046,7 @@ class Agent:
                 # Convert dict to Memory
             elif isinstance(self.memory, dict):
                 memory_dict = self.memory
+
                 memory_dict.pop("runs")
                 self.memory = Memory(**memory_dict)
             else:
@@ -4111,6 +4102,7 @@ class Agent:
                         self.memory.runs[session.session_id] = []
                         for run in session.memory["runs"]:
                             run_session_id = run["session_id"]
+
                             if "team_id" in run:
                                 self.memory.runs[run_session_id].append(TeamRunResponse.from_dict(run))
                             else:
@@ -4224,6 +4216,11 @@ class Agent:
                 AgentSession,
                 self.storage.upsert(session=self.get_agent_session(session_id=session_id, user_id=user_id)),
             )
+
+        if not self.cache_session:
+            if self.memory is not None and self.memory.runs is not None and session_id in self.memory.runs:
+                self.memory.runs.pop(session_id)  # type: ignore
+
         return self.agent_session
 
     def add_introduction(self, introduction: str) -> None:
@@ -4355,7 +4352,6 @@ class Agent:
             # Format the system message with the session state variables
             if self.add_state_in_messages:
                 sys_message_content = self.format_message_with_state_variables(sys_message_content)
-                print("HELLO", sys_message_content)
 
             # Add the JSON output prompt if response_model is provided and the model does not support native structured outputs or JSON schema outputs
             # or if use_json_mode is True
@@ -5286,6 +5282,8 @@ class Agent:
         """
         from agno.document import Document
 
+        if num_documents is None and self.knowledge is not None:
+            num_documents = self.knowledge.num_documents
         # Validate the filters against known valid filter keys
         if self.knowledge is not None:
             valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
@@ -5325,9 +5323,6 @@ class Agent:
             ):
                 return None
 
-            if num_documents is None:
-                num_documents = self.knowledge.num_documents
-
             log_debug(f"Searching knowledge base with filters: {filters}")
             relevant_docs: List[Document] = self.knowledge.search(
                 query=query, num_documents=num_documents, filters=filters
@@ -5347,6 +5342,9 @@ class Agent:
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant documents from knowledge base asynchronously."""
         from agno.document import Document
+
+        if num_documents is None and self.knowledge is not None:
+            num_documents = self.knowledge.num_documents
 
         # Validate the filters against known valid filter keys
         if self.knowledge is not None:
@@ -5390,9 +5388,6 @@ class Agent:
                 and getattr(self.knowledge, "retriever", None) is None
             ):
                 return None
-
-            if num_documents is None:
-                num_documents = self.knowledge.num_documents
 
             log_debug(f"Searching knowledge base with filters: {filters}")
             relevant_docs: List[Document] = await self.knowledge.async_search(
