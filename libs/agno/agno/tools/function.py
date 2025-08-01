@@ -1,8 +1,10 @@
 from dataclasses import dataclass
 from functools import partial
+from importlib.metadata import version
 from typing import Any, Callable, Dict, List, Literal, Optional, Type, TypeVar, get_type_hints
 
 from docstring_parser import parse
+from packaging.version import Version
 from pydantic import BaseModel, Field, validate_call
 
 from agno.exceptions import AgentRunException
@@ -325,9 +327,17 @@ class Function(BaseModel):
         """Wrap a callable with Pydantic's validate_call decorator, if relevant"""
         from inspect import isasyncgenfunction, iscoroutinefunction
 
-        # Don't wrap async generators and coroutines with validate_call
-        if isasyncgenfunction(func) or iscoroutinefunction(func):
+        pydantic_version = Version(version("pydantic"))
+
+        # Don't wrap async generators validate_call
+        if isasyncgenfunction(func):
             return func
+
+        # Don't wrap coroutines with validate_call if pydantic version is less than 2.10.0
+        if iscoroutinefunction(func) and pydantic_version < Version("2.10.0"):
+            log_debug(f"Skipping validate_call for {func.__name__} because pydantic version is less than 2.10.0, please consider upgrading to pydantic 2.10.0 or higher")
+            return func
+
         # Don't wrap callables that are already wrapped with validate_call
         elif getattr(func, "_wrapped_for_validation", False):
             return func
