@@ -1577,7 +1577,7 @@ class PostgresDb(BaseDb):
     def migrate_table_from_v1_to_v2(self, old_db_schema: str, old_table_name: str, old_table_type: str):
         """Migrate all content in the given table to the right v2 table"""
 
-        from agno.db.migrations.utils import (
+        from agno.db.migrations.v1_to_v2 import (
             get_all_table_content,
             parse_agent_sessions,
             parse_team_sessions,
