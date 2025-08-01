@@ -68,7 +68,7 @@ class RunResponseContentEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.run_response_content.value
     content: Optional[Any] = None
     content_type: str = "str"
-    thinking: Optional[str] = None
+    reasoning_content: Optional[str] = None
     citations: Optional[Citations] = None
     response_audio: Optional[AudioResponse] = None  # Model audio response
     image: Optional[ImageArtifact] = None  # Image attached to the response
@@ -81,7 +81,6 @@ class RunResponseCompletedEvent(BaseAgentRunResponseEvent):
     content: Optional[Any] = None
     content_type: str = "str"
     reasoning_content: Optional[str] = None
-    thinking: Optional[str] = None
     citations: Optional[Citations] = None
     images: Optional[List[ImageArtifact]] = None  # Images attached to the response
     videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
@@ -232,7 +231,6 @@ class RunResponse:
 
     content: Optional[Any] = None
     content_type: str = "str"
-    thinking: Optional[str] = None
     reasoning_content: Optional[str] = None
     messages: Optional[List[Message]] = None
     metrics: Optional[Dict[str, Any]] = None

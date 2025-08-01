@@ -187,8 +187,8 @@ class Message(BaseModel):
     audio_output: Optional[AudioResponse] = None
     image_output: Optional[ImageArtifact] = None
 
-    # The thinking content from the model
-    thinking: Optional[str] = None
+    # The reasoning content from the model
+    reasoning_content: Optional[str] = None
     redacted_thinking: Optional[str] = None
 
     # Data from the provider we might need on subsequent messages
@@ -196,10 +196,6 @@ class Message(BaseModel):
 
     # Citations received from the model
     citations: Optional[Citations] = None
-
-    # --- Data not sent to the Model API ---
-    # The reasoning content from the model
-    reasoning_content: Optional[str] = None
     # The name of the tool called
     tool_name: Optional[str] = None
     # Arguments passed to the tool

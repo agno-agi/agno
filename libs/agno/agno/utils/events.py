@@ -74,7 +74,6 @@ def create_team_run_response_completed_event(from_run_response: TeamRunResponse)
         content=from_run_response.content,  # type: ignore
         content_type=from_run_response.content_type,  # type: ignore
         reasoning_content=from_run_response.reasoning_content,  # type: ignore
-        thinking=from_run_response.thinking,  # type: ignore
         citations=from_run_response.citations,  # type: ignore
         images=from_run_response.images,  # type: ignore
         videos=from_run_response.videos,  # type: ignore
@@ -95,7 +94,6 @@ def create_run_response_completed_event(from_run_response: RunResponse) -> RunRe
         content=from_run_response.content,  # type: ignore
         content_type=from_run_response.content_type,  # type: ignore
         reasoning_content=from_run_response.reasoning_content,  # type: ignore
-        thinking=from_run_response.thinking,  # type: ignore
         citations=from_run_response.citations,  # type: ignore
         images=from_run_response.images,  # type: ignore
         videos=from_run_response.videos,  # type: ignore
@@ -355,13 +353,20 @@ def create_run_response_content_event(
     from_run_response: RunResponse,
     content: Optional[Any] = None,
     content_type: Optional[str] = None,
-    thinking: Optional[str] = None,
+    reasoning_content: Optional[str] = None,
     redacted_thinking: Optional[str] = None,
     citations: Optional[Citations] = None,
     response_audio: Optional[AudioResponse] = None,
     image: Optional[ImageArtifact] = None,
 ) -> RunResponseContentEvent:
-    thinking_combined = (thinking or "") + (redacted_thinking or "")
+    # Combine reasoning content with redacted thinking if present
+    reasoning_combined = reasoning_content or ""
+
+    if redacted_thinking:
+        if reasoning_combined:
+            reasoning_combined += redacted_thinking
+        else:
+            reasoning_combined = redacted_thinking
 
     return RunResponseContentEvent(
         session_id=from_run_response.session_id,
@@ -371,7 +376,7 @@ def create_run_response_content_event(
         run_id=from_run_response.run_id,
         content=content,
         content_type=content_type or "str",
-        thinking=thinking_combined,
+        reasoning_content=reasoning_combined if reasoning_combined else None,
         citations=citations,
         response_audio=response_audio,
         image=image,
@@ -383,13 +388,21 @@ def create_team_run_response_content_event(
     from_run_response: TeamRunResponse,
     content: Optional[Any] = None,
     content_type: Optional[str] = None,
-    thinking: Optional[str] = None,
+    reasoning_content: Optional[str] = None,
     redacted_thinking: Optional[str] = None,
     citations: Optional[Citations] = None,
     response_audio: Optional[AudioResponse] = None,
     image: Optional[ImageArtifact] = None,
 ) -> TeamRunResponseContentEvent:
-    thinking_combined = (thinking or "") + (redacted_thinking or "")
+    # Combine reasoning content with redacted thinking if present
+    reasoning_combined = reasoning_content or ""
+
+    if redacted_thinking:
+        if reasoning_combined:
+            reasoning_combined += redacted_thinking
+        else:
+            reasoning_combined = redacted_thinking
+
     return TeamRunResponseContentEvent(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
@@ -398,7 +411,7 @@ def create_team_run_response_content_event(
         run_id=from_run_response.run_id,
         content=content,
         content_type=content_type or "str",
-        thinking=thinking_combined,
+        reasoning_content=reasoning_combined if reasoning_combined else None,
         citations=citations,
         response_audio=response_audio,
         image=image,

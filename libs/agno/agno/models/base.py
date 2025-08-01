@@ -574,8 +574,8 @@ class Model(ABC):
                 model_response.content = assistant_message.get_content_string()
             else:
                 model_response.content += assistant_message.get_content_string()
-        if assistant_message.thinking is not None:
-            model_response.thinking = assistant_message.thinking
+        if assistant_message.reasoning_content is not None:
+            model_response.reasoning_content = assistant_message.reasoning_content
         if assistant_message.redacted_thinking is not None:
             model_response.redacted_thinking = assistant_message.redacted_thinking
         if assistant_message.citations is not None:
@@ -630,8 +630,8 @@ class Model(ABC):
                 model_response.content = assistant_message.get_content_string()
             else:
                 model_response.content += assistant_message.get_content_string()
-        if assistant_message.thinking is not None:
-            model_response.thinking = assistant_message.thinking
+        if assistant_message.reasoning_content is not None:
+            model_response.reasoning_content = assistant_message.reasoning_content
         if assistant_message.redacted_thinking is not None:
             model_response.redacted_thinking = assistant_message.redacted_thinking
         if assistant_message.citations is not None:
@@ -680,17 +680,14 @@ class Model(ABC):
         if provider_response.image is not None:
             assistant_message.image_output = provider_response.image
 
-        # Add thinking content to assistant message
-        if provider_response.thinking is not None:
-            assistant_message.thinking = provider_response.thinking
+        # Add reasoning content to assistant message (thinking is now an alias)
+        if provider_response.reasoning_content is not None:
+            assistant_message.reasoning_content = provider_response.reasoning_content
+            # Note: Legacy thinking field support removed, only use reasoning_content
 
         # Add redacted thinking content to assistant message
         if provider_response.redacted_thinking is not None:
             assistant_message.redacted_thinking = provider_response.redacted_thinking
-
-        # Add reasoning content to assistant message
-        if provider_response.reasoning_content is not None:
-            assistant_message.reasoning_content = provider_response.reasoning_content
 
         # Add provider data to assistant message
         if provider_response.provider_data is not None:
@@ -772,7 +769,7 @@ class Model(ABC):
                 if stream_data.response_content:
                     assistant_message.content = stream_data.response_content
                 if stream_data.response_thinking:
-                    assistant_message.thinking = stream_data.response_thinking
+                    assistant_message.reasoning_content = stream_data.response_thinking
                 if stream_data.response_redacted_thinking:
                     assistant_message.redacted_thinking = stream_data.response_redacted_thinking
                 if stream_data.response_provider_data:
@@ -921,7 +918,7 @@ class Model(ABC):
                 if stream_data.response_content:
                     assistant_message.content = stream_data.response_content
                 if stream_data.response_thinking:
-                    assistant_message.thinking = stream_data.response_thinking
+                    assistant_message.reasoning_content = stream_data.response_thinking
                 if stream_data.response_redacted_thinking:
                     assistant_message.redacted_thinking = stream_data.response_redacted_thinking
                 if stream_data.response_provider_data:
@@ -1021,8 +1018,8 @@ class Model(ABC):
             stream_data.response_content += model_response_delta.content
             should_yield = True
 
-        if model_response_delta.thinking is not None:
-            stream_data.response_thinking += model_response_delta.thinking
+        if model_response_delta.reasoning_content is not None:
+            stream_data.response_thinking += model_response_delta.reasoning_content
             should_yield = True
 
         if model_response_delta.redacted_thinking is not None:
