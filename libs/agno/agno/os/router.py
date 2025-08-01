@@ -685,11 +685,6 @@ def get_base_router(
             logger.debug("Creating new session")
             session_id = str(uuid4())
 
-        if monitor:
-            team.monitoring = True
-        else:
-            team.monitoring = False
-
         base64_images: List[Image] = []
         base64_audios: List[Audio] = []
         base64_videos: List[Video] = []

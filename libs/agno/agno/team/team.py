@@ -287,15 +287,16 @@ class Team:
 
     # Optional app ID. Indicates this team is part of an app.
     os_id: Optional[str] = None
-    # --- Debug & Monitoring ---
+
+    # --- Debug ---
     # Enable debug logs
     debug_mode: bool = False
     # Debug level: 1 = basic, 2 = detailed
     debug_level: Literal[1, 2] = 1
     # Enable member logs - Sets the debug_mode for team and members
     show_members_responses: bool = False
-    # monitoring=True logs Team information to agno.com for monitoring
-    monitoring: bool = False
+
+    # --- Telemetry ---
     # telemetry=True logs minimal telemetry for analytics
     # This helps us improve the Teams implementation and provide better support
     telemetry: bool = True
@@ -371,7 +372,6 @@ class Team:
         debug_mode: bool = False,
         debug_level: Literal[1, 2] = 1,
         show_members_responses: bool = False,
-        monitoring: bool = False,
         telemetry: bool = True,
     ):
         self.members = members
@@ -470,7 +470,6 @@ class Team:
         self.debug_level = debug_level
         self.show_members_responses = show_members_responses
 
-        self.monitoring = monitoring
         self.telemetry = telemetry
 
         # --- Params not to be set by user ---
@@ -518,18 +517,6 @@ class Team:
             set_log_level_to_debug(source_type="team", level=self.debug_level)
         else:
             set_log_level_to_info(source_type="team")
-
-    def _set_monitoring(self) -> None:
-        """Override monitoring and telemetry settings based on environment variables."""
-
-        # Only override if the environment variable is set
-        monitor_env = getenv("AGNO_MONITOR")
-        if monitor_env is not None:
-            self.monitoring = monitor_env.lower() == "true"
-
-        telemetry_env = getenv("AGNO_TELEMETRY")
-        if telemetry_env is not None:
-            self.telemetry = telemetry_env.lower() == "true"
 
     def set_telemetry(self) -> None:
         """Override telemetry settings based on environment variables."""
@@ -643,9 +630,6 @@ class Team:
 
         # Set debug mode
         self._set_debug()
-
-        # Set monitoring and telemetry
-        self._set_monitoring()
 
         # Set the team ID if not set
         self._set_team_id()
@@ -1278,7 +1262,7 @@ class Team:
     ) -> TeamRunResponse: ...
 
     @overload
-    async def arun(
+    def arun(
         self,
         message: Union[str, List, Dict, Message, BaseModel],
         *,
@@ -1296,7 +1280,7 @@ class Team:
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunResponseEvent, TeamRunResponseEvent]]: ...
 
-    async def arun(
+    def arun(
         self,
         message: Union[str, List, Dict, Message, BaseModel],
         *,
@@ -1456,7 +1440,7 @@ class Team:
                     )
                     return response_iterator
                 else:
-                    return await self._arun(
+                    return self._arun(
                         run_response=self.run_response,
                         run_messages=run_messages,
                         session_id=session_id,
@@ -1468,7 +1452,9 @@ class Team:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 last_exception = e
                 if attempt < num_attempts - 1:
-                    await asyncio.sleep(2**attempt)
+                    import time
+
+                    time.sleep(2**attempt)
             except (KeyboardInterrupt, RunCancelledException):
                 if stream:
                     return async_generator_wrapper(
@@ -7568,15 +7554,6 @@ class Team:
             "functions": functions,
             "metrics": self.run_response.metrics,  # type: ignore
         }
-
-        if self.monitoring:
-            run_data.update(
-                {
-                    "run_input": self.run_input,
-                    "run_response": self.run_response.to_dict(),  # type: ignore
-                    "run_response_format": run_response_format,
-                }
-            )
 
         return run_data
 

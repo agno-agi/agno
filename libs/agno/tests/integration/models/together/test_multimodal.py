@@ -4,7 +4,7 @@ from agno.models.together import Together
 
 
 def test_image_input():
-    agent = Agent(model=Together(id="meta-llama/Llama-Vision-Free"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=Together(id="meta-llama/Llama-Vision-Free"), markdown=True, telemetry=False)
 
     response = agent.run(
         "Tell me about this image and give me the latest news about it.",

@@ -343,13 +343,6 @@ def get_async_router(
             except json.JSONDecodeError:
                 pass
 
-        if agent:
-            agent.monitoring = bool(monitor)
-        elif team:
-            team.monitoring = bool(monitor)
-        elif workflow:
-            workflow.monitoring = bool(monitor)
-
         base64_images: List[Image] = []
         base64_audios: List[Audio] = []
         base64_videos: List[Video] = []

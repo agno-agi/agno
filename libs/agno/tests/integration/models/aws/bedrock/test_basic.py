@@ -18,9 +18,7 @@ def _assert_metrics(response: RunResponse):
 
 
 def test_basic():
-    agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False, monitoring=False
-    )
+    agent = Agent(model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False)
 
     # Print the response in the terminal
     response: RunResponse = agent.run("Share a 2 sentence horror story")
@@ -33,9 +31,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False, monitoring=False
-    )
+    agent = Agent(model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -55,7 +51,6 @@ def test_with_memory():
         model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
         add_history_to_messages=True,
         telemetry=False,
-        monitoring=False,
         markdown=True,
     )
 
@@ -87,7 +82,6 @@ def test_response_model():
         response_model=MovieScript,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -110,7 +104,6 @@ def test_json_response_mode():
         response_model=MovieScript,
         use_json_mode=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -128,7 +121,6 @@ def test_history():
         storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
         add_history_to_messages=True,
         telemetry=False,
-        monitoring=False,
     )
     agent.run("Hello")
     assert len(agent.run_response.messages) == 2
@@ -144,7 +136,7 @@ def test_history():
 async def test_async_basic():
     """Test basic async agent functionality."""
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False, monitoring=False
+        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False
     )
 
     response: RunResponse = await agent.arun("Share a 2 sentence horror story")
@@ -160,7 +152,7 @@ async def test_async_basic():
 async def test_async_basic_stream():
     """Test basic async streaming functionality."""
     agent = Agent(
-        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False, monitoring=False
+        model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False
     )
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
@@ -183,7 +175,6 @@ async def test_async_with_memory():
         model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
         add_history_to_messages=True,
         telemetry=False,
-        monitoring=False,
         markdown=True,
     )
 
@@ -214,7 +205,6 @@ async def test_async_response_model():
         response_model=MovieScript,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = await agent.arun("Create a movie about time travel")
@@ -239,7 +229,6 @@ async def test_async_json_response_mode():
         response_model=MovieScript,
         use_json_mode=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = await agent.arun("Create a movie about time travel")
@@ -258,7 +247,6 @@ async def test_async_history():
         storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
         add_history_to_messages=True,
         telemetry=False,
-        monitoring=False,
     )
 
     await agent.arun("Hello")

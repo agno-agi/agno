@@ -22,7 +22,6 @@ def test_basic():
         model=Together(id="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response: RunResponse = agent.run("Share a 2 sentence horror story")
@@ -39,7 +38,6 @@ def test_basic_stream():
         model=Together(id="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
@@ -61,7 +59,6 @@ async def test_async_basic():
         model=Together(id="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = await agent.arun("Share a 2 sentence horror story")
@@ -78,7 +75,6 @@ async def test_async_basic_stream():
         model=Together(id="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
@@ -96,7 +92,6 @@ def test_with_memory():
         num_history_responses=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # First interaction
@@ -126,7 +121,6 @@ def test_response_model():
         model=Together(id="meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"),
         markdown=True,
         telemetry=False,
-        monitoring=False,
         response_model=MovieScript,
     )
 
@@ -149,7 +143,6 @@ def test_json_response_mode():
         model=Together(id="meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"),
         use_json_mode=True,
         telemetry=False,
-        monitoring=False,
         response_model=MovieScript,
     )
 
@@ -168,7 +161,6 @@ def test_history():
         storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
         add_history_to_messages=True,
         telemetry=False,
-        monitoring=False,
     )
     agent.run("Hello")
     assert len(agent.run_response.messages) == 2

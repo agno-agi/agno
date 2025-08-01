@@ -342,13 +342,6 @@ def get_sync_router(
             except json.JSONDecodeError:
                 pass
 
-        if agent:
-            agent.monitoring = bool(monitor)
-        elif team:
-            team.monitoring = bool(monitor)
-        elif workflow:
-            workflow.monitoring = bool(monitor)
-
         if files:
             if agent:
                 base64_images, base64_audios, base64_videos = agent_process_file(files, agent)
