@@ -172,11 +172,11 @@ class Team:
     # Define the success criteria for the team
     success_criteria: Optional[str] = None
 
-    # --- User provided context ---
-    # User provided context
-    context: Optional[Dict[str, Any]] = None
-    # If True, add the context to the user prompt
-    add_context: bool = False
+    # --- User provided dependencies ---
+    # User provided dependencies
+    dependencies: Optional[Dict[str, Any]] = None
+    # If True, add the dependencies to the user prompt
+    add_dependencies: bool = False
 
     # --- Agent Knowledge ---
     knowledge: Optional[Knowledge] = None
@@ -327,8 +327,8 @@ class Team:
         add_member_tools_to_system_message: bool = True,
         system_message: Optional[Union[str, Callable, Message]] = None,
         system_message_role: str = "system",
-        context: Optional[Dict[str, Any]] = None,
-        add_context: bool = False,
+        dependencies: Optional[Dict[str, Any]] = None,
+        add_dependencies: bool = False,
         knowledge: Optional[Knowledge] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_references: bool = False,
@@ -405,8 +405,8 @@ class Team:
         self.system_message_role = system_message_role
         self.success_criteria = success_criteria
 
-        self.context = context
-        self.add_context = add_context
+        self.dependencies = dependencies
+        self.add_dependencies = add_dependencies
 
         self.knowledge = knowledge
         self.knowledge_filters = knowledge_filters
@@ -956,7 +956,7 @@ class Team:
             raise ValueError("Team session is not a TeamSession")
 
         # Read existing session from storage
-        if self.context is not None:
+        if self.dependencies is not None:
             self._resolve_run_context()
 
         # Configure the model for runs
@@ -1340,7 +1340,7 @@ class Team:
         self.get_team_session(session_id=session_id, user_id=user_id)
 
         # Read existing session from storage
-        if self.context is not None:
+        if self.dependencies is not None:
             self._resolve_run_context()
 
         # Configure the model for runs
@@ -4655,9 +4655,9 @@ class Team:
         from inspect import signature
 
         log_debug("Resolving context")
-        if self.context is not None:
-            if isinstance(self.context, dict):
-                for ctx_key, ctx_value in self.context.items():
+        if self.dependencies is not None:
+            if isinstance(self.dependencies, dict):
+                for ctx_key, ctx_value in self.dependencies.items():
                     if callable(ctx_value):
                         try:
                             sig = signature(ctx_value)
@@ -4666,11 +4666,11 @@ class Team:
                             else:
                                 resolved_ctx_value = ctx_value()
                             if resolved_ctx_value is not None:
-                                self.context[ctx_key] = resolved_ctx_value
+                                self.dependencies[ctx_key] = resolved_ctx_value
                         except Exception as e:
                             log_warning(f"Failed to resolve context for {ctx_key}: {e}")
                     else:
-                        self.context[ctx_key] = ctx_value
+                        self.dependencies[ctx_key] = ctx_value
             else:
                 log_warning("Context is not a dict")
 
@@ -5328,9 +5328,9 @@ class Team:
                 user_message_content += self._convert_documents_to_string(references.references) + "\n"
                 user_message_content += "</references>"
             # Add context to user message
-            if self.add_context and self.context is not None:
+            if self.add_dependencies and self.dependencies is not None:
                 user_message_content += "\n\n<context>\n"
-                user_message_content += self._convert_context_to_string(self.context) + "\n"
+                user_message_content += self._convert_context_to_string(self.dependencies) + "\n"
                 user_message_content += "</context>"
 
             return Message(
@@ -5422,7 +5422,7 @@ class Team:
             self.session_state or {},
             self.team_session_state or {},
             self.workflow_session_state or {},
-            self.context or {},
+            self.dependencies or {},
             self.extra_data or {},
             {"user_id": user_id} if user_id is not None else {},
         )

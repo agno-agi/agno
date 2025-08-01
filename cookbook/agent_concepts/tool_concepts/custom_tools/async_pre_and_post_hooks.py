@@ -17,7 +17,7 @@ async def post_hook(fc: FunctionCall):
 
 @tool(show_result=True, pre_hook=pre_hook, post_hook=post_hook)
 async def get_top_hackernews_stories(agent: Agent) -> AsyncIterator[str]:
-    num_stories = agent.context.get("num_stories", 5) if agent.context else 5
+    num_stories = agent.dependencies.get("num_stories", 5) if agent.dependencies else 5
 
     async with httpx.AsyncClient() as client:
         # Fetch top story IDs
@@ -38,7 +38,7 @@ async def get_top_hackernews_stories(agent: Agent) -> AsyncIterator[str]:
 
 
 agent = Agent(
-    context={
+    dependencies={
         "num_stories": 2,
     },
     tools=[get_top_hackernews_stories],

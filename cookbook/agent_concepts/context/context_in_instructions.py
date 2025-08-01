@@ -16,8 +16,8 @@ def get_upcoming_spacex_launches(num_launches: int = 5) -> str:
 # Create an Agent that has access to real-time SpaceX data
 agent = Agent(
     model=OpenAIChat(id="gpt-4.1"),
-    # Each function in the context is evaluated at runtime
-    context={"upcoming_spacex_launches": get_upcoming_spacex_launches},
+    # Each function in the dependencies is evaluated at runtime
+    dependencies={"upcoming_spacex_launches": get_upcoming_spacex_launches},
     description=dedent("""\
         You are a cosmic analyst and spaceflight enthusiast. 🚀
 
