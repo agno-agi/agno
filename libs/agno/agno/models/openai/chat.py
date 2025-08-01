@@ -62,6 +62,7 @@ class OpenAIChat(Model):
     temperature: Optional[float] = None
     user: Optional[str] = None
     top_p: Optional[float] = None
+    service_tier: Optional[str] = None  # "auto" | "default" | "flex" | "priority", defaults to "auto" when not set
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
     request_params: Optional[Dict[str, Any]] = None
@@ -175,6 +176,7 @@ class OpenAIChat(Model):
             "extra_headers": self.extra_headers,
             "extra_query": self.extra_query,
             "metadata": self.metadata,
+            "service_tier": self.service_tier,
         }
 
         # Handle response format - always use JSON schema approach
@@ -241,6 +243,7 @@ class OpenAIChat(Model):
                 "user": self.user,
                 "extra_headers": self.extra_headers,
                 "extra_query": self.extra_query,
+                "service_tier": self.service_tier,
             }
         )
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
