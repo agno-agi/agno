@@ -21,7 +21,7 @@ import typer
 from agno.agent import Agent
 from agno.db.agent.sqlite import SqliteAgentStorage
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.url import UrlKnowledge
+from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.vectordb.lancedb import LanceDb, SearchType
 from rich import print
@@ -31,8 +31,7 @@ def initialize_knowledge_base():
     """Initialize the knowledge base with your preferred documentation or knowledge source
     Here we use Agno docs as an example, but you can replace with any relevant URLs
     """
-    agent_knowledge = UrlKnowledge(
-        urls=["https://docs.agno.com/llms-full.txt"],
+    agent_knowledge = Knowledge(
         vector_db=LanceDb(
             uri="tmp/lancedb",
             table_name="deep_knowledge_knowledge",
@@ -40,8 +39,9 @@ def initialize_knowledge_base():
             embedder=OpenAIEmbedder(id="text-embedding-3-small"),
         ),
     )
-    # Load the knowledge base (comment out after first run)
-    agent_knowledge.load()
+    agent_knowledge.add_content(
+        url="https://docs.agno.com/llms-full.txt",
+    )
     return agent_knowledge
 
 

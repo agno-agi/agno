@@ -15,7 +15,6 @@ def test_thinking():
         ),
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # Print the response in the terminal
@@ -37,7 +36,6 @@ def test_thinking_stream():
         ),
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # Print the response in the terminal
@@ -62,7 +60,6 @@ async def test_async_thinking():
         ),
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # Print the response in the terminal
@@ -85,7 +82,6 @@ async def test_async_thinking_stream():
         ),
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # Print the response in the terminal
@@ -109,7 +105,6 @@ def test_redacted_thinking():
         ),
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
     # Testing string from anthropic
     response = agent.run(

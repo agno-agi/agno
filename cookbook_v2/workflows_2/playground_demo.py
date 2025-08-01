@@ -1,20 +1,12 @@
-"""
-1. Install dependencies using: `pip install openai duckduckgo-search sqlalchemy 'fastapi[standard]' newspaper4k lxml_html_clean yfinance agno`
-2. Run the script using: `python cookbook/workflows/workflows_playground.py`
-"""
-
 from agno.agent.agent import Agent
 
 # Import the workflows
 from agno.db.sqlite import SqliteDb
 from agno.models.openai.chat import OpenAIChat
-from agno.playground import Playground
+from agno.os import AgentOS
 from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.workflow import Workflow
-from blog_post_generator import blog_generator_workflow
-from investment_report_generator import investment_workflow
-from startup_idea_validator import startup_validation_workflow
 
 # Define agents
 hackernews_agent = Agent(
@@ -45,7 +37,7 @@ content_planning_step = Step(
 )
 
 content_creation_workflow = Workflow(
-    name="Content Creation Workflow",
+    name="content-creation-workflow",
     description="Automated content creation from blog posts to social media",
     db=SqliteDb(
         session_table="workflow_session",
@@ -56,23 +48,12 @@ content_creation_workflow = Workflow(
 
 
 # Initialize the Playground with the workflows
-playground = Playground(
-    workflows=[
-        blog_generator_workflow,
-        investment_workflow,
-        startup_validation_workflow,
-        content_creation_workflow,
-    ],
-    app_id="workflows-playground-app",
-    name="Workflows Playground",
+agent_os = AgentOS(
+    description="Example app for basic agent with playground capabilities",
+    os_id="basic-app",
+    workflows=[content_creation_workflow],
 )
-app = playground.get_app()
+app = agent_os.get_app()
 
 if __name__ == "__main__":
-    # Start the playground server
-    playground.serve(
-        app="playground_demo:app",
-        host="localhost",
-        port=7777,
-        reload=True,
-    )
+    agent_os.serve(app="test:app", reload=True)

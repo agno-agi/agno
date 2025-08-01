@@ -26,7 +26,6 @@ def test_basic():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # Print the response in the terminal
@@ -40,9 +39,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(
-        model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, markdown=True, telemetry=False, monitoring=False
-    )
+    agent = Agent(model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, markdown=True, telemetry=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -65,7 +62,6 @@ async def test_async_basic():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = await agent.arun("Share a 2 sentence horror story")
@@ -84,7 +80,6 @@ async def test_async_basic_stream():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
@@ -102,7 +97,6 @@ def test_exception_handling():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # Print the response in the terminal
@@ -123,7 +117,6 @@ def test_with_memory():
         num_history_responses=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # First interaction
@@ -155,7 +148,6 @@ def test_structured_output():
         delay_between_retries=5,
         response_model=MovieScript,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -180,7 +172,6 @@ def test_json_response_mode():
         response_model=MovieScript,
         use_json_mode=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -200,7 +191,6 @@ def test_history():
         storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
         add_history_to_messages=True,
         telemetry=False,
-        monitoring=False,
     )
     agent.run("Hello")
     assert len(agent.run_response.messages) == 2
@@ -252,6 +242,5 @@ def test_custom_client_params():
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
-        monitoring=False,
     )
     agent.print_response("what is the best ice cream?", stream=True)

@@ -158,8 +158,7 @@ async def main() -> None:
                     response = ""
                     try:
                         # Run the agent and stream the response
-                        run_response = await mcp_agent.arun(question, stream=True)
-                        async for _resp_chunk in run_response:
+                        async for _resp_chunk in mcp_agent.arun(question, stream=True):
                             # Display tool calls if available
                             if hasattr(_resp_chunk, "tool") and _resp_chunk.tool:
                                 display_tool_calls(

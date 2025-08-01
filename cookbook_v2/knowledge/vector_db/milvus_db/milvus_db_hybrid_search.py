@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.milvus import Milvus, SearchType
 
 # Initialize Milvus
@@ -11,14 +11,15 @@ from agno.vectordb.milvus import Milvus, SearchType
 vector_db = Milvus(
     collection="recipes", uri="tmp/milvus.db", search_type=SearchType.hybrid
 )
-# Create knowledge base
-knowledge_base = PDFUrlKnowledgeBase(
-    urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
+
+knowledge = Knowledge(
     vector_db=vector_db,
 )
 
-knowledge_base.load(recreate=True)  # Comment out after first run
+knowledge.add_content(
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+)
 
 # Create and use the agent
-agent = Agent(knowledge=knowledge_base)
+agent = Agent(knowledge=knowledge, show_tool_calls=True)
 agent.print_response("How to make Tom Kha Gai", markdown=True)

@@ -15,7 +15,6 @@ def test_tool_use():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA?")
@@ -32,7 +31,6 @@ def test_tool_use_stream():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
@@ -60,7 +58,6 @@ async def test_async_tool_use():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = await agent.arun("What is the current price of TSLA?")
@@ -78,7 +75,6 @@ async def test_async_tool_use_stream():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response_stream = await agent.arun(
@@ -108,7 +104,6 @@ def test_tool_use_tool_call_limit():
         tool_call_limit=1,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Find me the current price of TSLA, then after that find me the latest news about Tesla.")
@@ -127,7 +122,6 @@ def test_tool_use_with_content():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA? What does the ticker stand for?")
@@ -145,7 +139,6 @@ def test_parallel_tool_calls():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA and AAPL?")
@@ -166,7 +159,6 @@ def test_multiple_tool_calls():
         tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA and what is the latest news about it?")
@@ -193,7 +185,6 @@ def test_tool_call_custom_tool_no_parameters():
         tools=[get_the_weather_in_tokyo],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the weather in Tokyo?")
@@ -222,7 +213,6 @@ def test_tool_call_custom_tool_optional_parameters():
         tools=[get_the_weather],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the weather in Paris?")
@@ -240,7 +230,6 @@ def test_tool_call_list_parameters():
         instructions="Use a single tool call if possible",
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run(

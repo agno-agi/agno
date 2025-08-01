@@ -105,7 +105,6 @@ def test_prompt_caching_with_agent():
         model=Claude(id="claude-3-5-sonnet-20241022", cache_system_prompt=True),
         system_message=large_system_prompt,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Explain the key principles of microservices architecture")
@@ -151,7 +150,6 @@ async def test_async_prompt_caching():
         model=Claude(id="claude-3-5-haiku-20241022", cache_system_prompt=True),
         system_message=large_system_prompt,
         telemetry=False,
-        monitoring=False,
     )
 
     response = await agent.arun("Explain REST API design patterns")

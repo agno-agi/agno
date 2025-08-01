@@ -14,7 +14,6 @@ def test_image_input():
         add_history_to_messages=True,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run(
@@ -30,7 +29,7 @@ def test_image_input():
 
 
 def test_image_input_bytes():
-    agent = Agent(model=Cohere(id="c4ai-aya-vision-8b"), telemetry=False, monitoring=False)
+    agent = Agent(model=Cohere(id="c4ai-aya-vision-8b"), telemetry=False)
 
     image_path = Path(__file__).parent.parent.joinpath("sample_image.jpg")
 
@@ -47,7 +46,7 @@ def test_image_input_bytes():
 
 
 def test_image_input_local_file():
-    agent = Agent(model=Cohere(id="c4ai-aya-vision-8b"), telemetry=False, monitoring=False)
+    agent = Agent(model=Cohere(id="c4ai-aya-vision-8b"), telemetry=False)
 
     image_path = Path(__file__).parent.parent.joinpath("sample_image.jpg")
 
@@ -67,7 +66,6 @@ def test_image_input_with_tool_call():
         tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run(
