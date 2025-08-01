@@ -174,8 +174,7 @@ class Agent:
     # A list of tools provided to the Model.
     # Tools are functions the model may generate JSON inputs for.
     tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None
-    # Show tool calls in Agent response.
-    show_tool_calls: bool = True
+
     # Maximum number of tool calls allowed.
     tool_call_limit: Optional[int] = None
     # Controls which (if any) tool is called by the model.
@@ -304,15 +303,8 @@ class Agent:
     # Optional app ID. Indicates this agent is part of an app.
     app_id: Optional[str] = None
 
-    # Optional workflow ID. Indicates this agent is part of a workflow.
-    workflow_id: Optional[str] = None
-    # Set when this agent is part of a workflow.
-    workflow_session_id: Optional[str] = None
-
     # Optional team session state. Set by the team leader agent.
     team_session_state: Optional[Dict[str, Any]] = None
-    # Optional workflow session state. Set by the workflow.
-    workflow_session_state: Optional[Dict[str, Any]] = None
 
     # --- If this Agent is part of an OS ---
     # Optional OS ID. Indicates this agent is part of an OS.
@@ -371,7 +363,6 @@ class Agent:
         references_format: Literal["json", "yaml"] = "json",
         extra_data: Optional[Dict[str, Any]] = None,
         tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
-        show_tool_calls: bool = True,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
@@ -464,7 +455,6 @@ class Agent:
         self.extra_data = extra_data
 
         self.tools = tools
-        self.show_tool_calls = show_tool_calls
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
@@ -3124,23 +3114,6 @@ class Agent:
             rr.model = model
         return rr
 
-    def _initialize_session_state(self, user_id: Optional[str] = None, session_id: Optional[str] = None) -> None:
-        self.session_state = self.session_state or {}
-        if user_id is not None:
-            self.session_state["current_user_id"] = user_id
-            if self.team_session_state is not None:
-                self.team_session_state["current_user_id"] = user_id
-
-            if self.workflow_session_state is not None:
-                self.workflow_session_state["current_user_id"] = user_id
-        if session_id is not None:
-            self.session_state["current_session_id"] = session_id
-            if self.team_session_state is not None:
-                self.team_session_state["current_session_id"] = session_id
-
-            if self.workflow_session_state is not None:
-                self.workflow_session_state["current_session_id"] = session_id
-
     def _make_memories_and_summaries(
         self,
         run_messages: RunMessages,
@@ -3188,7 +3161,7 @@ class Agent:
                         log_warning(f"Unsupported message type: {type(_im)}")
                         continue
 
-                if len(parsed_messages) > 0:
+                if len(parsed_messages) > 0 and self.memory_manager is not None:
                     futures.append(
                         executor.submit(
                             self.memory_manager.create_user_memories,
@@ -3378,9 +3351,7 @@ class Agent:
             self._rebuild_tools = True
         if self.search_previous_sessions_history:
             agent_tools.append(
-                self.get_previous_sessions_messages_function(
-                    num_history_sessions=self.num_history_sessions, user_id=user_id
-                )
+                self.get_previous_sessions_messages_function(num_history_sessions=self.num_history_sessions)
             )
             self._rebuild_tools = True
 
@@ -3823,6 +3794,11 @@ class Agent:
         # If the agent is a member of a team, do not save the session to the database
         if self.db is not None and self.team_id is None:
             session = self.get_agent_session(session_id=session_id, user_id=user_id)
+
+            if session is None:
+                log_error(f"Failed to save AgentSession. Cannot get it from the database: {session_id}")
+                return None
+
             # Update the session_data with the latest data
             session.session_data = self.get_agent_session_data()
 
@@ -4141,7 +4117,11 @@ class Agent:
                 )
 
         # 3.3.11 Then add a summary of the interaction to the system prompt
-        if self.add_session_summary_references and self.agent_session.summary is not None:
+        if (
+            self.add_session_summary_references
+            and self.agent_session is not None
+            and self.agent_session.summary is not None
+        ):
             system_message_content += "Here is a brief summary of your previous interactions:\n\n"
             system_message_content += "<summary_of_previous_interactions>\n"
             system_message_content += self.agent_session.summary.summary
@@ -4419,7 +4399,7 @@ class Agent:
                         self.run_response.extra_data.add_messages.extend(messages_to_add_to_run_response)
 
         # 3. Add history to run_messages
-        if self.add_history_to_messages:
+        if self.add_history_to_messages and self.agent_session is not None:
             from copy import deepcopy
 
             history: List[Message] = self.agent_session.get_messages_from_last_n_runs(
@@ -4575,7 +4555,8 @@ class Agent:
 
         self.get_agent_session(session_id=session_id)
 
-        return self.agent_session.get_session_summary()
+        if self.agent_session is not None:
+            return self.agent_session.get_session_summary()
 
     def get_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
         """Get the user memories for the given user ID."""
@@ -4973,7 +4954,11 @@ class Agent:
             raise Exception("Model not set")
 
         gen_session_name_prompt = "Conversation\n"
-        messages_for_generating_session_name = self.agent_session.get_messages_for_session(session_id=session_id)
+
+        if self.agent_session is not None:
+            messages_for_generating_session_name = self.agent_session.get_messages_for_session()
+        else:
+            messages_for_generating_session_name = []
 
         for message in messages_for_generating_session_name:
             gen_session_name_prompt += f"{message.role.upper()}: {message.content}\n"
@@ -5267,8 +5252,6 @@ class Agent:
             ):
                 log_warning("Reasoning agent response model should be `ReasoningSteps`, continuing regular session...")
                 return
-            # Ensure the reasoning model and agent do not show tool calls
-            reasoning_agent.show_tool_calls = False
 
             step_count = 1
             next_action = NextAction.CONTINUE
@@ -5488,9 +5471,6 @@ class Agent:
             ):
                 log_warning("Reasoning agent response model should be `ReasoningSteps`, continuing regular session...")
                 return
-
-            # Ensure the reasoning model and agent do not show tool calls
-            reasoning_agent.show_tool_calls = False
 
             step_count = 1
             next_action = NextAction.CONTINUE
@@ -5793,7 +5773,7 @@ class Agent:
 
             history: List[Dict[str, Any]] = []
             if self.agent_session:
-                all_chats = self.agent_session.get_messages_for_session(session_id=session_id)
+                all_chats = self.agent_session.get_messages_for_session()
 
                 if len(all_chats) == 0:
                     return ""
@@ -6234,11 +6214,7 @@ class Agent:
                         live_log.update(Group(*panels))
 
                     # Add tool calls panel if available
-                    if (
-                        self.show_tool_calls
-                        and self.run_response is not None
-                        and self.run_response.formatted_tool_calls
-                    ):
+                    if self.run_response is not None and self.run_response.formatted_tool_calls:
                         render = True
                         # Create bullet points for each tool call
                         tool_calls_content = Text()
@@ -6413,7 +6389,7 @@ class Agent:
                     live_log.update(Group(*panels))
 
                 # Add tool calls panel if available
-                if self.show_tool_calls and isinstance(run_response, RunResponse) and run_response.formatted_tool_calls:
+                if isinstance(run_response, RunResponse) and run_response.formatted_tool_calls:
                     # Create bullet points for each tool call
                     tool_calls_content = Text()
                     for formatted_tool_call in run_response.formatted_tool_calls:
@@ -6684,11 +6660,7 @@ class Agent:
                         live_log.update(Group(*panels))
 
                     # Add tool calls panel if available
-                    if (
-                        self.show_tool_calls
-                        and self.run_response is not None
-                        and self.run_response.formatted_tool_calls
-                    ):
+                    if self.run_response is not None and self.run_response.formatted_tool_calls:
                         render = True
                         # Create bullet points for each tool call
                         tool_calls_content = Text()
@@ -6861,7 +6833,7 @@ class Agent:
                     panels.append(thinking_panel)
                     live_log.update(Group(*panels))
 
-                if self.show_tool_calls and isinstance(run_response, RunResponse) and run_response.formatted_tool_calls:
+                if isinstance(run_response, RunResponse) and run_response.formatted_tool_calls:
                     tool_calls_content = Text()
                     for formatted_tool_call in run_response.formatted_tool_calls:
                         tool_calls_content.append(f"• {formatted_tool_call}\n")
@@ -7256,8 +7228,6 @@ class Agent:
         if not self.telemetry:
             return
 
-        from agno.api.agent import AgentRunCreate, create_agent_run
-
         try:
             agent_session: Optional[AgentSession] = self.agent_session or self.get_agent_session(
                 session_id=session_id, user_id=user_id
@@ -7277,8 +7247,6 @@ class Agent:
 
         if not self.telemetry:
             return
-
-        from agno.api.agent import AgentRunCreate, acreate_agent_run
 
         try:
             agent_session: Optional[AgentSession] = self.agent_session or self.get_agent_session(

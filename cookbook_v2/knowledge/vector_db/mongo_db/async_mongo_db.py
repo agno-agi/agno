@@ -50,9 +50,7 @@ knowledge = Knowledge(
     ),
 )
 
-
-# Create and use the agent
-agent = Agent(knowledge=knowledge, show_tool_calls=True)
+agent = Agent(knowledge=knowledge)
 
 if __name__ == "__main__":
     # Comment out after the first run

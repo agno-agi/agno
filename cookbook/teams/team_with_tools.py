@@ -51,7 +51,6 @@ company_info_team = Team(
         wikipedia_agent,
         website_agent,
     ],
-    show_tool_calls=True,
     markdown=True,
     instructions=[
         "You are a team that finds information about a company.",

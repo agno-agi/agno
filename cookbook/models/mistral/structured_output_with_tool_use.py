@@ -23,7 +23,6 @@ researcher = Agent(
         "- Find out if they have public contact details"
         "- Return the information in a structured format"
     ],
-    show_tool_calls=True,
     tools=[DuckDuckGoTools()],
     response_model=Person,
     add_datetime_to_instructions=True,

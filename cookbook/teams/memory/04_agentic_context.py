@@ -54,7 +54,6 @@ team = Team(
     ],
     memory=memory,
     enable_agentic_context=True,
-    show_tool_calls=True,
     markdown=True,
     show_members_responses=True,
     debug_mode=True,

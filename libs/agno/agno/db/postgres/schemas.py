@@ -50,7 +50,7 @@ EVAL_TABLE_SCHEMA = {
     "name": {"type": String, "nullable": True},
     "agent_id": {"type": String, "nullable": True},
     "team_id": {"type": String, "nullable": True},
-    "workflow_id": {"type": String, "nullable": True},  # Do we need a workflow_id here?
+    "workflow_id": {"type": String, "nullable": True},
     "model_id": {"type": String, "nullable": True},
     "model_provider": {"type": String, "nullable": True},
     "evaluated_component_name": {"type": String, "nullable": True},

@@ -178,7 +178,7 @@ def get_async_router(
             else:
                 # Check for knowledge base before processing documents
                 if agent.knowledge is None:
-                    raise HTTPException(status_code=404, detail="KnowledgeBase not found")
+                    raise HTTPException(status_code=404, detail="Knowledge not found")
 
                 if file.content_type == "application/pdf":
                     from agno.knowledge.reader.pdf_reader import PDFReader

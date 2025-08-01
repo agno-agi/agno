@@ -18,7 +18,7 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.url import UrlKnowledge
+from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic import Claude
 from agno.models.openai.chat import OpenAIChat
 from agno.team.team import Team
@@ -122,8 +122,7 @@ calculator_agent = Agent(
     ],
 )
 
-agno_assist_knowledge = UrlKnowledge(
-    urls=["https://docs.agno.com/llms-full.txt"],
+agno_assist_knowledge = Knowledge(
     vector_db=LanceDb(
         uri="tmp/lancedb",
         table_name="agno_assist_knowledge",
@@ -131,6 +130,8 @@ agno_assist_knowledge = UrlKnowledge(
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
 )
+# Add content to the knowledge
+agno_assist_knowledge.add_content(url="https://docs.agno.com/llms-full.txt")
 agno_assist = Agent(
     name="Agno Assist",
     role="You help answer questions about the Agno framework.",
@@ -205,7 +206,6 @@ agent_team = Team(
         "If the user is only being conversational, don't use any tools, just answer directly.",
     ],
     markdown=True,
-    show_tool_calls=True,
     show_members_responses=True,
     enable_agentic_context=True,
     share_member_interactions=True,

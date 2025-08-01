@@ -1,5 +1,6 @@
 from agno.agent import Agent
-from agno.knowledge.website import WebsiteKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.reader.website_reader import WebsiteReader
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -7,17 +8,22 @@ from agno.tools.exa import ExaTools
 from agno.tools.slack import SlackTools
 from agno.vectordb.pgvector.pgvector import PgVector
 
-knowledge_base = WebsiteKnowledgeBase(
-    urls=["https://docs.agno.com/introduction"],
-    # Number of links to follow from the seed URLs
-    max_links=10,
-    # Table name: ai.website_documents
+knowledge = Knowledge(
     vector_db=PgVector(
         table_name="website_documents",
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
     ),
 )
-knowledge_base.load(recreate=False)
+
+knowledge.add_content(
+    url="https://docs.agno.com/introduction",
+    reader=WebsiteReader(
+        # Number of links to follow from the seed URLs
+        max_links=10,
+    ),
+)
+
+
 support_channel = "testing"
 feedback_channel = "testing"
 
@@ -26,7 +32,7 @@ doc_researcher_agent = Agent(
     role="Search the knowledge base for information",
     model=OpenAIChat(id="gpt-4o"),
     tools=[DuckDuckGoTools(), ExaTools()],
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     search_knowledge=True,
     instructions=[
         "You are a documentation expert for given product. Search the knowledge base thoroughly to answer user questions.",
@@ -78,10 +84,8 @@ feedback_collector_agent = Agent(
 customer_support_team = Team(
     name="Customer Support Team",
     mode="route",
-    model=OpenAIChat("gpt-4.5-preview"),
-    enable_team_history=True,
+    model=OpenAIChat("gpt-4o"),
     members=[doc_researcher_agent, escalation_manager_agent, feedback_collector_agent],
-    show_tool_calls=True,
     markdown=True,
     debug_mode=True,
     show_members_responses=True,

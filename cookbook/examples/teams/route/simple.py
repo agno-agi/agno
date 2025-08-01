@@ -25,7 +25,6 @@ multi_language_team = Team(
     mode="route",
     model=OpenAIChat("gpt-4o"),
     members=[english_agent, chinese_agent, french_agent],
-    show_tool_calls=True,
     markdown=True,
     description="You are a language router that directs questions to the appropriate language agent.",
     instructions=[

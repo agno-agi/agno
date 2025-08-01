@@ -25,7 +25,6 @@ web_agent = Agent(
         db_file=local_agent_storage_file,
         auto_upgrade_schema=True,
     ),
-    show_tool_calls=True,
     add_history_to_messages=True,
     num_history_responses=2,
     add_name_to_instructions=True,
@@ -77,7 +76,6 @@ youtube_agent = Agent(
     + common_instructions,
     add_history_to_messages=True,
     num_history_responses=5,
-    show_tool_calls=True,
     add_name_to_instructions=True,
     add_datetime_to_instructions=True,
     storage=SqliteStorage(

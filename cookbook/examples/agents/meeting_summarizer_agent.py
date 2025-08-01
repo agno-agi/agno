@@ -40,7 +40,6 @@ meeting_agent: Agent = Agent(
         5. Convert the meeting minutes into an audio summary using the `generate_speech` tool.
     """),
     markdown=True,
-    show_tool_calls=True,
 )
 
 response = meeting_agent.run(

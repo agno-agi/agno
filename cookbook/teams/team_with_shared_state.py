@@ -72,7 +72,6 @@ shopping_team = Team(
     members=[
         shopping_list_agent,
     ],
-    show_tool_calls=True,
     markdown=True,
     instructions=[
         "You are a team that manages a shopping list.",

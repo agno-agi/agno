@@ -45,7 +45,6 @@ team = Team(
     memory=memory,
     # Enable the team to manage the memory
     enable_agentic_memory=True,
-    show_tool_calls=True,
     markdown=True,
     show_members_responses=True,
 )

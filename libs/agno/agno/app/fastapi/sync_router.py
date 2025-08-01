@@ -175,9 +175,9 @@ def get_sync_router(
                     logger.error(f"Error processing video {file.filename}: {e}")
                     continue
             else:
-                # Check for knowledge base before processing documents
+                # Check for knowledge before processing documents
                 if agent.knowledge is None:
-                    raise HTTPException(status_code=404, detail="KnowledgeBase not found")
+                    raise HTTPException(status_code=404, detail="Knowledge not found")
 
                 if file.content_type == "application/pdf":
                     from agno.knowledge.reader.pdf_reader import PDFReader

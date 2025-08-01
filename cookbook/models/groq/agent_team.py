@@ -32,7 +32,6 @@ agent_team = Team(
     ),  # You can use a different model for the team leader agent
     success_criteria="The team has successfully completed the task",
     instructions=["Always include sources", "Use tables to display data"],
-    show_tool_calls=True,  # Comment to hide transfer of tasks between agents
     markdown=True,
     enable_agentic_context=True,
     debug_mode=True,

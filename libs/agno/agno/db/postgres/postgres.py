@@ -663,7 +663,7 @@ class PostgresDb(BaseDb):
                     return WorkflowSession.from_dict(session_dict)
 
             else:
-                raise ValueError(f"Invalid session type: {session_type}")
+                raise ValueError(f"Invalid session type: {session.session_type}")
 
         except Exception as e:
             log_error(f"Exception upserting into sessions table: {e}")
@@ -823,8 +823,6 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.agent_id == agent_id)
                 if team_id is not None:
                     stmt = stmt.where(table.c.team_id == team_id)
-                if workflow_id is not None:
-                    stmt = stmt.where(table.c.workflow_id == workflow_id)
                 if topics is not None:
                     topic_conditions = [text(f"topics::text LIKE '%\"{topic}\"%'") for topic in topics]
                     stmt = stmt.where(and_(*topic_conditions))
@@ -970,7 +968,6 @@ class PostgresDb(BaseDb):
                     agent_id=memory.agent_id,
                     team_id=memory.team_id,
                     topics=memory.topics,
-                    workflow_id=memory.workflow_id,
                     last_updated=int(time.time()),
                 )
                 stmt = stmt.on_conflict_do_update(
@@ -981,7 +978,6 @@ class PostgresDb(BaseDb):
                         input=memory.input,
                         agent_id=memory.agent_id,
                         team_id=memory.team_id,
-                        workflow_id=memory.workflow_id,
                         last_updated=int(time.time()),
                     ),
                 ).returning(table)

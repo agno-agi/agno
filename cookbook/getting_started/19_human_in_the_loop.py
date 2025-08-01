@@ -71,7 +71,6 @@ agent = Agent(
         - End with a friendly tech-themed sign-off\
     """),
     tools=[get_top_hackernews_stories],
-    show_tool_calls=True,
     markdown=True,
 )
 

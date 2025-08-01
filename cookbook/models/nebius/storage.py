@@ -12,7 +12,6 @@ agent = Agent(
     storage=PostgresStorage(table_name="agent_sessions", db_url=db_url),
     tools=[DuckDuckGoTools()],
     debug_mode=True,
-    show_tool_calls=True,
     add_history_to_messages=True,
 )
 agent.print_response("How many people live in Canada?")

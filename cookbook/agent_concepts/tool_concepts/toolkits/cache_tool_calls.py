@@ -8,7 +8,6 @@ from agno.tools.yfinance import YFinanceTools
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[DuckDuckGoTools(cache_results=True), YFinanceTools(cache_results=True)],
-    show_tool_calls=True,
     debug_mode=True,
 )
 
