@@ -426,6 +426,8 @@ class Knowledge:
         skip_if_exists: bool,
     ):
         log_info(f"Adding content from URL {content.name}")
+        content.file_type = "url"
+
         self._add_to_contents_db(content)
 
         content.content_hash = self._build_content_hash(content)
@@ -436,7 +438,6 @@ class Knowledge:
 
             return
 
-        content.file_type = "url"
 
         # Validate URL
         try:
