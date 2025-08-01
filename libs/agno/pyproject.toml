@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.7.6"
+version = "1.7.7"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -46,7 +46,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn", "arxiv"]
+dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn"]
 
 # Models integration test dependencies
 integration-tests = [
@@ -85,6 +85,7 @@ portkey = ["portkey-ai"]
 # Dependencies for Tools
 agentql = ["agentql"]
 apify = ["apify-client"]
+arxiv = ["arxiv"]
 brave = ["brave-search"]
 browserbase = ["browserbase", "playwright"]
 cartesia = ["cartesia"]
@@ -106,7 +107,7 @@ mcp = ["mcp"]
 mem0 = ["mem0ai"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 opencv = ["opencv-python"]
-psycopg2 = ["psycopg2-binary"]
+psycopg = ["psycopg-binary", "psycopg"]
 todoist = ["todoist-api-python"]
 valyu = ["valyu"]
 webex = ["webexpythonsdk"]
@@ -118,7 +119,7 @@ oxylabs = ["oxylabs"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
-postgres = ["psycopg-binary", "psycopg"]
+postgres = ["psycopg-binary"]
 sqlite = ["sqlalchemy"]
 gcs = ["google-cloud-storage"]
 firestore = ["google-cloud-firestore"]
@@ -189,6 +190,7 @@ models = [
 # All tools
 tools = [
   "agno[apify]",
+  "agno[arxiv]",
   "agno[brave]",
   "agno[exa]",
   "agno[cartesia]",
@@ -218,7 +220,7 @@ tools = [
   "agno[zep]",
   "agno[mem0]",
   "agno[google_bigquery]",
-  "agno[psycopg2]",
+  "agno[psycopg]",
 ]
 
 # All storage
@@ -403,7 +405,6 @@ module = [
   "portkey_ai.*",
   "playwright.sync_api.*",
   "psycopg.*",
-  "psycopg2.*",
   "pyarrow.*",
   "pycountry.*",
   "pymongo.*",
