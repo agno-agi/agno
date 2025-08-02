@@ -418,7 +418,6 @@ if __name__ == "__main__":
             auto_upgrade_schema=True,
             db_file="tmp/agno_workflows.db",
         ),
-        debug_mode=True,
     )
 
     # Execute the workflow with caching enabled

@@ -27,6 +27,20 @@ def is_valid_uuid(uuid_str: str) -> bool:
         return False
 
 
+def safe_content_hash(content: str) -> str:
+    """
+    Return an MD5 hash of the input string, replacing null bytes and invalid surrogates for safe hashing.
+    """
+    cleaned_content = content.replace("\x00", "\ufffd")
+    try:
+        content_hash = hashlib.md5(cleaned_content.encode("utf-8")).hexdigest()
+    except UnicodeEncodeError:
+        cleaned_content = "".join("\ufffd" if "\ud800" <= c <= "\udfff" else c for c in cleaned_content)
+        content_hash = hashlib.md5(cleaned_content.encode("utf-8")).hexdigest()
+
+    return content_hash
+
+
 def url_safe_string(input_string):
     # Replace spaces with dashes
     safe_string = input_string.replace(" ", "-")

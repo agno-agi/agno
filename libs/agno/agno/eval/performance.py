@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from agno.api.schemas.evals import EvalType
 from agno.eval.utils import async_log_eval_run, log_eval_run, store_result_in_file
-from agno.utils.log import logger
+from agno.utils.log import log_debug, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.timer import Timer
 
 if TYPE_CHECKING:
@@ -96,7 +96,9 @@ class PerformanceResult:
             self.median_memory_usage = 0
             self.p95_memory_usage = 0
 
-    def print_summary(self, console: Optional["Console"] = None):
+    def print_summary(
+        self, console: Optional["Console"] = None, measure_memory: bool = True, measure_runtime: bool = True
+    ):
         """
         Prints a summary table of the computed stats.
         """
@@ -109,20 +111,39 @@ class PerformanceResult:
         # Create performance table
         perf_table = Table(title="Performance Summary", show_header=True, header_style="bold magenta")
         perf_table.add_column("Metric", style="cyan")
-        perf_table.add_column("Time (seconds)", style="green")
-        perf_table.add_column("Memory (MiB)", style="yellow")
+        if measure_runtime:
+            perf_table.add_column("Time (seconds)", style="green")
+        if measure_memory:
+            perf_table.add_column("Memory (MiB)", style="yellow")
 
         # Add rows
-        perf_table.add_row("Average", f"{self.avg_run_time:.6f}", f"{self.avg_memory_usage:.6f}")
-        perf_table.add_row("Minimum", f"{self.min_run_time:.6f}", f"{self.min_memory_usage:.6f}")
-        perf_table.add_row("Maximum", f"{self.max_run_time:.6f}", f"{self.max_memory_usage:.6f}")
-        perf_table.add_row("Std Dev", f"{self.std_dev_run_time:.6f}", f"{self.std_dev_memory_usage:.6f}")
-        perf_table.add_row("Median", f"{self.median_run_time:.6f}", f"{self.median_memory_usage:.6f}")
-        perf_table.add_row("95th %ile", f"{self.p95_run_time:.6f}", f"{self.p95_memory_usage:.6f}")
+        if measure_runtime and measure_memory:
+            perf_table.add_row("Average", f"{self.avg_run_time:.6f}", f"{self.avg_memory_usage:.6f}")
+            perf_table.add_row("Minimum", f"{self.min_run_time:.6f}", f"{self.min_memory_usage:.6f}")
+            perf_table.add_row("Maximum", f"{self.max_run_time:.6f}", f"{self.max_memory_usage:.6f}")
+            perf_table.add_row("Std Dev", f"{self.std_dev_run_time:.6f}", f"{self.std_dev_memory_usage:.6f}")
+            perf_table.add_row("Median", f"{self.median_run_time:.6f}", f"{self.median_memory_usage:.6f}")
+            perf_table.add_row("95th %ile", f"{self.p95_run_time:.6f}", f"{self.p95_memory_usage:.6f}")
+        elif measure_runtime:
+            perf_table.add_row("Average", f"{self.avg_run_time:.6f}")
+            perf_table.add_row("Minimum", f"{self.min_run_time:.6f}")
+            perf_table.add_row("Maximum", f"{self.max_run_time:.6f}")
+            perf_table.add_row("Std Dev", f"{self.std_dev_run_time:.6f}")
+            perf_table.add_row("Median", f"{self.median_run_time:.6f}")
+            perf_table.add_row("95th %ile", f"{self.p95_run_time:.6f}")
+        elif measure_memory:
+            perf_table.add_row("Average", f"{self.avg_memory_usage:.6f}")
+            perf_table.add_row("Minimum", f"{self.min_memory_usage:.6f}")
+            perf_table.add_row("Maximum", f"{self.max_memory_usage:.6f}")
+            perf_table.add_row("Std Dev", f"{self.std_dev_memory_usage:.6f}")
+            perf_table.add_row("Median", f"{self.median_memory_usage:.6f}")
+            perf_table.add_row("95th %ile", f"{self.p95_memory_usage:.6f}")
 
         console.print(perf_table)
 
-    def print_results(self, console: Optional["Console"] = None):
+    def print_results(
+        self, console: Optional["Console"] = None, measure_memory: bool = True, measure_runtime: bool = True
+    ):
         """
         Prints individual run results in tabular form.
         """
@@ -135,12 +156,21 @@ class PerformanceResult:
         # Create runs table
         results_table = Table(title="Individual Runs", show_header=True, header_style="bold magenta")
         results_table.add_column("Run #", style="cyan")
-        results_table.add_column("Time (seconds)", style="green")
-        results_table.add_column("Memory (MiB)", style="yellow")
+        if measure_runtime:
+            results_table.add_column("Time (seconds)", style="green")
+        if measure_memory:
+            results_table.add_column("Memory (MiB)", style="yellow")
 
         # Add rows
-        for i in range(len(self.run_times)):
-            results_table.add_row(str(i + 1), f"{self.run_times[i]:.6f}", f"{self.memory_usages[i]:.6f}")
+        for i in range(len(self.run_times) or len(self.memory_usages)):
+            if measure_runtime and measure_memory:
+                results_table.add_row(str(i + 1), f"{self.run_times[i]:.6f}", f"{self.memory_usages[i]:.6f}")
+            elif measure_runtime:
+                results_table.add_row(str(i + 1), f"{self.run_times[i]:.6f}")
+            elif measure_memory:
+                results_table.add_row(str(i + 1), f"{self.memory_usages[i]:.6f}")
+            else:
+                results_table.add_row(str(i + 1))
 
         console.print(results_table)
 
@@ -175,6 +205,11 @@ class PerformanceEval:
     print_summary: bool = False
     # Print detailed results
     print_results: bool = False
+    # Print detailed memory growth analysis
+    memory_growth_tracking: bool = False
+    # Number of memory allocations to track
+    top_n_memory_allocations: int = 5
+
     # If set, results will be saved in the given file path
     file_path_to_save_results: Optional[str] = None
     # Enable debug logs
@@ -189,6 +224,7 @@ class PerformanceEval:
         timer.start()
         self.func()
         timer.stop()
+        self._set_log_level()  # Set log level incase function changed it
 
         return timer.elapsed
 
@@ -199,6 +235,7 @@ class PerformanceEval:
         timer.start()
         await self.func()
         timer.stop()
+        self._set_log_level()  # Set log level incase function changed it
 
         return timer.elapsed
 
@@ -217,15 +254,19 @@ class PerformanceEval:
 
         # Get peak memory usage
         current, peak = tracemalloc.get_traced_memory()
+
         # Stop tracing memory
         tracemalloc.stop()
+
+        self._set_log_level()  # Set log level incase function changed it
 
         # Convert to MiB and subtract baseline
         peak_mib = peak / 1024 / 1024
         adjusted_usage = max(0, peak_mib - baseline)
 
         if self.debug_mode:
-            logger.debug(f"[DEBUG] Raw peak usage: {peak_mib:.6f} MiB, Adjusted: {adjusted_usage:.6f} MiB")
+            log_debug(f"[DEBUG] Raw peak usage: {peak_mib:.6f} MiB, Adjusted: {adjusted_usage:.6f} MiB")
+
         return adjusted_usage
 
     def _parse_eval_run_data(self) -> dict:
@@ -269,15 +310,18 @@ class PerformanceEval:
 
         # Get peak memory usage
         current, peak = tracemalloc.get_traced_memory()
+
         # Stop tracing memory
         tracemalloc.stop()
+        self._set_log_level()  # Set log level incase function changed it
 
         # Convert to MiB and subtract baseline
         peak_mib = peak / 1024 / 1024
         adjusted_usage = max(0, peak_mib - baseline)
 
         if self.debug_mode:
-            logger.debug(f"[DEBUG] Raw peak usage: {peak_mib:.6f} MiB, Adjusted: {adjusted_usage:.6f} MiB")
+            log_debug(f"[DEBUG] Raw peak usage: {peak_mib:.6f} MiB, Adjusted: {adjusted_usage:.6f} MiB")
+
         return adjusted_usage
 
     def _compute_tracemalloc_baseline(self, samples: int = 3) -> float:
@@ -300,7 +344,131 @@ class PerformanceEval:
 
         return sum(results) / len(results) if results else 0
 
-    def run(self, *, print_summary: bool = False, print_results: bool = False) -> PerformanceResult:
+    def _set_log_level(self):
+        if self.debug_mode:
+            set_log_level_to_debug()
+        else:
+            set_log_level_to_info()
+
+    def _compare_memory_snapshots(self, snapshot1, snapshot2, top_n: int):
+        """
+        Compare two memory snapshots to identify what's causing memory growth.
+        """
+        if self.debug_mode:
+            log_debug("[DEBUG] Memory growth analysis:")
+
+            # Compare snapshots to find new allocations
+            stats = snapshot2.compare_to(snapshot1, "lineno")
+
+            log_debug(f"[DEBUG] Top {top_n} memory growth sources:")
+            growth_found = False
+            for stat in stats[:top_n]:
+                if stat.size_diff > 0:  # Only show growth
+                    growth_found = True
+                    log_debug(f"  +{stat.size_diff / 1024 / 1024:.1f} MiB: {stat.count_diff} new blocks")
+                    log_debug(f"    {stat.traceback.format()}")
+
+            if not growth_found:
+                log_debug("  No significant memory growth detected between snapshots")
+
+            # Show total growth
+            total_growth = sum(stat.size_diff for stat in stats if stat.size_diff > 0)
+            total_shrinkage = sum(abs(stat.size_diff) for stat in stats if stat.size_diff < 0)
+            log_debug(f"[DEBUG] Total memory growth: {total_growth / 1024 / 1024:.1f} MiB")
+            log_debug(f"[DEBUG] Total memory freed: {total_shrinkage / 1024 / 1024:.1f} MiB")
+            log_debug(f"[DEBUG] Net memory change: {(total_growth - total_shrinkage) / 1024 / 1024:.1f} MiB")
+
+    def _measure_memory_with_growth_tracking(
+        self, baseline: float, previous_snapshot=None
+    ) -> tuple[float, tracemalloc.Snapshot]:
+        """
+        Enhanced memory measurement that tracks growth between runs.
+        Returns (adjusted_usage, current_snapshot)
+        """
+        # Clear memory before measurement
+        gc.collect()
+        # Start tracing memory
+        tracemalloc.start()
+
+        self.func()
+
+        # Get peak memory usage
+        current, peak = tracemalloc.get_traced_memory()
+        # Take snapshot before stopping
+        current_snapshot = tracemalloc.take_snapshot()
+        # Stop tracing memory
+        tracemalloc.stop()
+
+        self._set_log_level()  # Set log level incase function changed it
+
+        # Convert to MiB and subtract baseline
+        peak_mib = peak / 1024 / 1024
+        adjusted_usage = max(0, peak_mib - baseline)
+
+        if self.debug_mode and current_snapshot:
+            log_debug(f"[DEBUG] Raw peak usage: {peak_mib:.6f} MiB, Adjusted: {adjusted_usage:.6f} MiB")
+
+            # Compare with previous snapshot if available
+            if previous_snapshot is not None:
+                self._compare_memory_snapshots(previous_snapshot, current_snapshot, self.top_n_memory_allocations)
+            else:
+                # Get detailed memory allocation statistics
+                top_stats = current_snapshot.statistics("lineno")
+
+                log_debug(f"[DEBUG] Top {self.top_n_memory_allocations} memory allocations:")
+                for stat in top_stats[: self.top_n_memory_allocations]:
+                    log_debug(f"  {stat.count} blocks: {stat.size / 1024 / 1024:.1f} MiB")
+                    log_debug(f"    {stat.traceback.format()}")
+
+        return adjusted_usage, current_snapshot
+
+    async def _async_measure_memory_with_growth_tracking(
+        self, baseline: float, previous_snapshot=None
+    ) -> tuple[float, tracemalloc.Snapshot]:
+        """
+        Enhanced async memory measurement that tracks growth between runs.
+        Returns (adjusted_usage, current_snapshot)
+        """
+        # Clear memory before measurement
+        gc.collect()
+        # Start tracing memory
+        tracemalloc.start()
+
+        await self.func()
+
+        # Get peak memory usage
+        current, peak = tracemalloc.get_traced_memory()
+        # Take snapshot before stopping
+        current_snapshot = tracemalloc.take_snapshot()
+        # Stop tracing memory
+        tracemalloc.stop()
+
+        self._set_log_level()  # Set log level incase function changed it
+
+        # Convert to MiB and subtract baseline
+        peak_mib = peak / 1024 / 1024
+        adjusted_usage = max(0, peak_mib - baseline)
+
+        if self.debug_mode and current_snapshot:
+            log_debug(f"[DEBUG] Raw peak usage: {peak_mib:.6f} MiB, Adjusted: {adjusted_usage:.6f} MiB")
+
+            # Compare with previous snapshot if available
+            if previous_snapshot is not None:
+                self._compare_memory_snapshots(previous_snapshot, current_snapshot, self.top_n_memory_allocations)
+            else:
+                # Get detailed memory allocation statistics
+                top_stats = current_snapshot.statistics("lineno")
+
+                log_debug(f"[DEBUG] Top {self.top_n_memory_allocations} memory allocations:")
+                for stat in top_stats[: self.top_n_memory_allocations]:
+                    log_debug(f"  {stat.count} blocks: {stat.size / 1024 / 1024:.1f} MiB")
+                    log_debug(f"    {stat.traceback.format()}")
+
+        return adjusted_usage, current_snapshot
+
+    def run(
+        self, *, print_summary: bool = False, print_results: bool = False, memory_growth_tracking: bool = False
+    ) -> PerformanceResult:
         """
         Main method to run the performance evaluation.
         1. Do optional warm-up runs.
@@ -317,8 +485,11 @@ class PerformanceEval:
 
         run_times = []
         memory_usages = []
+        previous_snapshot = None
 
-        logger.debug(f"************ Evaluation Start: {self.eval_id} ************")
+        self._set_log_level()
+
+        log_debug(f"************ Evaluation Start: {self.eval_id} ************")
 
         # Add a spinner while running the evaluations
         console = Console()
@@ -328,6 +499,7 @@ class PerformanceEval:
                 status = Status(f"Warm-up run {i + 1}/{self.warmup_runs}...", spinner="dots", speed=1.0)
                 live_log.update(status)
                 self.func()  # Simply run the function without measuring
+                self._set_log_level()  # Set log level incase function changed it
                 status.stop()
 
             # 2. Measure runtime
@@ -344,7 +516,7 @@ class PerformanceEval:
                     elapsed_time = self._measure_time()
                     run_times.append(elapsed_time)
 
-                    logger.debug(f"Run {i + 1} - Time taken: {elapsed_time:.6f} seconds")
+                    log_debug(f"Run {i + 1} - Time taken: {elapsed_time:.6f} seconds")
                     status.stop()
 
             # 3. Measure memory
@@ -352,7 +524,7 @@ class PerformanceEval:
                 # 3.1 Compute memory baseline
                 memory_baseline = 0.0
                 memory_baseline = self._compute_tracemalloc_baseline()
-                logger.debug(f"Computed memory baseline: {memory_baseline:.6f} MiB")
+                log_debug(f"Computed memory baseline: {memory_baseline:.6f} MiB")
 
                 for i in range(self.num_iterations):
                     status = Status(
@@ -364,9 +536,18 @@ class PerformanceEval:
                     live_log.update(status)
 
                     # Measure memory
-                    usage = self._measure_memory(memory_baseline)
+                    if self.memory_growth_tracking or memory_growth_tracking:
+                        usage, current_snapshot = self._measure_memory_with_growth_tracking(
+                            memory_baseline, previous_snapshot
+                        )
+
+                        # Update previous snapshot for next iteration
+                        previous_snapshot = current_snapshot
+
+                    else:
+                        usage = self._measure_memory(memory_baseline)
                     memory_usages.append(usage)
-                    logger.debug(f"Run {i + 1} - Memory usage: {usage:.6f} MiB (adjusted)")
+                    log_debug(f"Run {i + 1} - Memory usage: {usage:.6f} MiB (adjusted)")
 
                     status.stop()
 
@@ -384,9 +565,9 @@ class PerformanceEval:
 
         # 6. Print results if requested
         if self.print_results or print_results:
-            self.result.print_results(console)
+            self.result.print_results(console, measure_memory=self.measure_memory, measure_runtime=self.measure_runtime)
         if self.print_summary or print_summary:
-            self.result.print_summary(console)
+            self.result.print_summary(console, measure_memory=self.measure_memory, measure_runtime=self.measure_runtime)
 
         # 7. Log results to the Agno platform if requested
         if self.monitoring:
@@ -398,10 +579,12 @@ class PerformanceEval:
                 evaluated_entity_name=self.func.__name__,
             )
 
-        logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
+        log_debug(f"*********** Evaluation End: {self.eval_id} ***********")
         return self.result
 
-    async def arun(self, *, print_summary: bool = False, print_results: bool = False) -> PerformanceResult:
+    async def arun(
+        self, *, print_summary: bool = False, print_results: bool = False, memory_growth_tracking: bool = False
+    ) -> PerformanceResult:
         """
         Async method to run the performance evaluation of async functions.
         1. Do optional warm-up runs.
@@ -424,8 +607,11 @@ class PerformanceEval:
 
         run_times = []
         memory_usages = []
+        previous_snapshot = None
 
-        logger.debug(f"************ Evaluation Start: {self.eval_id} ************")
+        self._set_log_level()
+
+        log_debug(f"************ Evaluation Start: {self.eval_id} ************")
 
         # Add a spinner while running the evaluations
         console = Console()
@@ -435,6 +621,7 @@ class PerformanceEval:
                 status = Status(f"Warm-up run {i + 1}/{self.warmup_runs}...", spinner="dots", speed=1.0)
                 live_log.update(status)
                 await self.func()  # Simply run the function without measuring
+                self._set_log_level()  # Set log level incase function changed it
                 status.stop()
 
             # 2. Measure runtime
@@ -451,7 +638,7 @@ class PerformanceEval:
                     elapsed_time = await self._async_measure_time()
                     run_times.append(elapsed_time)
 
-                    logger.debug(f"Run {i + 1} - Time taken: {elapsed_time:.6f} seconds")
+                    log_debug(f"Run {i + 1} - Time taken: {elapsed_time:.6f} seconds")
                     status.stop()
 
             # 3. Measure memory
@@ -459,7 +646,7 @@ class PerformanceEval:
                 # 3.1 Compute memory baseline
                 memory_baseline = 0.0
                 memory_baseline = self._compute_tracemalloc_baseline()
-                logger.debug(f"Computed memory baseline: {memory_baseline:.6f} MiB")
+                log_debug(f"Computed memory baseline: {memory_baseline:.6f} MiB")
 
                 for i in range(self.num_iterations):
                     status = Status(
@@ -471,9 +658,18 @@ class PerformanceEval:
                     live_log.update(status)
 
                     # Measure memory
-                    usage = await self._async_measure_memory(memory_baseline)
+                    if self.memory_growth_tracking or memory_growth_tracking:
+                        usage, current_snapshot = await self._async_measure_memory_with_growth_tracking(
+                            memory_baseline, previous_snapshot
+                        )
+
+                        # Update previous snapshot for next iteration
+                        previous_snapshot = current_snapshot
+
+                    else:
+                        usage = await self._async_measure_memory(memory_baseline)
                     memory_usages.append(usage)
-                    logger.debug(f"Run {i + 1} - Memory usage: {usage:.6f} MiB (adjusted)")
+                    log_debug(f"Run {i + 1} - Memory usage: {usage:.6f} MiB (adjusted)")
 
                     status.stop()
 
@@ -491,9 +687,9 @@ class PerformanceEval:
 
         # 6. Print results if requested
         if self.print_results or print_results:
-            self.result.print_results(console)
+            self.result.print_results(console, measure_memory=self.measure_memory, measure_runtime=self.measure_runtime)
         if self.print_summary or print_summary:
-            self.result.print_summary(console)
+            self.result.print_summary(console, measure_memory=self.measure_memory, measure_runtime=self.measure_runtime)
 
         # 7. Log results to the Agno platform if requested
         if self.monitoring:
@@ -505,5 +701,5 @@ class PerformanceEval:
                 evaluated_entity_name=self.func.__name__,
             )
 
-        logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
+        log_debug(f"*********** Evaluation End: {self.eval_id} ***********")
         return self.result

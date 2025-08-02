@@ -252,6 +252,7 @@ jobs:
 
   # Run tests for Mistral
   test-mistral:
+    if: false # Disable mistral tests until we get a production account
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -629,6 +630,7 @@ jobs:
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -649,6 +651,34 @@ jobs:
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/teams
 
+  test-workflows:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/dev_setup.sh
+      - name: Run workflows integration tests
+        working-directory: .
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/workflows  ./libs/agno/tests/integration/workflows_2
+
   test-embedder:
     runs-on: ubuntu-latest
     strategy:
@@ -657,6 +687,7 @@ jobs:
       fail-fast: true # Stop all matrix jobs if one fails
     env:
       HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
+      JINA_API_KEY: ${{ secrets.JINA_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -677,7 +708,7 @@ jobs:
           source .venv/bin/activate
           python -m pytest ./libs/agno/tests/integration/embedder
 
-  test-knowledge:
+  test-knowledge-1:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -704,7 +735,48 @@ jobs:
         working-directory: .
         run: |
           source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/knowledge
+          python -m pytest ./libs/agno/tests/integration/knowledge/test_csv_knowledge_base.py \
+          ./libs/agno/tests/integration/knowledge/test_csv_url_knowledge_base.py \
+          ./libs/agno/tests/integration/knowledge/test_docx_knowledge_base.py \
+          ./libs/agno/tests/integration/knowledge/test_json_knowledge_base.py \
+          ./libs/agno/tests/integration/knowledge/test_md_knowledge_base.py \
+          ./libs/agno/tests/integration/knowledge/test_pdf_knowledge_base.py \
+          ./libs/agno/tests/integration/knowledge/test_pdf_url_knowledge_base.py \
+          ./libs/agno/tests/integration/knowledge/test_pdf_bytes_knowledge_base.py \
+          ./libs/agno/tests/integration/knowledge/test_text_knowledge_base.py 
+
+  test-knowledge-2:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/dev_setup.sh
+      - name: Run knowledge integration tests
+        working-directory: .
+        run: |
+          source .venv/bin/activate
+          python -m pytest ./libs/agno/tests/integration/knowledge/test_arxiv_knowledge_base.py \
+          ./libs/agno/tests/integration/knowledge/test_firecrawl_knowledge_base.py \
+          ./libs/agno/tests/integration/knowledge/test_url_knowledge_base.py \
+          ./libs/agno/tests/integration/knowledge/test_website_knowledge_base.py \
+          ./libs/agno/tests/integration/knowledge/test_youtube_knowledge_base.py
 
   # Run remaining integration tests
   test-remaining:
@@ -734,4 +806,4 @@ jobs:
         working-directory: .
         run: |
           source .venv/bin/activate
-          python -m pytest --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder ./libs/agno/tests/integration
+          python -m pytest --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/workflows_2 ./libs/agno/tests/integration

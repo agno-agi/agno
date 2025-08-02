@@ -14,11 +14,21 @@ from agno.models.anthropic.claude import Claude
 from agno.tools.yfinance import YFinanceTools
 
 # Basic debug information
-agent = Agent(model=Claude(id="claude-3-5-sonnet-20240620"), tools=[YFinanceTools()], debug_mode=True, debug_level=1)
+agent = Agent(
+    model=Claude(id="claude-3-5-sonnet-20240620"),
+    tools=[YFinanceTools()],
+    debug_mode=True,
+    debug_level=1,
+)
 
 agent.print_response("What is the current price of Tesla?")
 
 # Verbose debug information
-agent = Agent(model=Claude(id="claude-3-5-sonnet-20240620"), tools=[YFinanceTools()], debug_mode=True, debug_level=2)
+agent = Agent(
+    model=Claude(id="claude-3-5-sonnet-20240620"),
+    tools=[YFinanceTools()],
+    debug_mode=True,
+    debug_level=2,
+)
 
 agent.print_response("What is the current price of Apple?")

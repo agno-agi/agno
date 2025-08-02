@@ -77,7 +77,7 @@ class FastAPIApp(BaseAPIApp):
 
         if self.workflows:
             for workflow in self.workflows:
-                if not workflow.app_id:
+                if hasattr(workflow, "app_id") and not workflow.app_id:
                     workflow.app_id = self.app_id
                 if not workflow.workflow_id:
                     workflow.workflow_id = generate_id(workflow.name)
@@ -100,17 +100,6 @@ class FastAPIApp(BaseAPIApp):
         self.set_app_id()
         self.register_app_on_platform()
 
-        if self.agents:
-            for agent in self.agents:
-                agent.register_agent()
-
-        if self.teams:
-            for team in self.teams:
-                team.register_team()
-
-        if self.workflows:
-            for workflow in self.workflows:
-                workflow.register_workflow()
         log_info(f"Starting API on {host}:{port}")
 
         uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)

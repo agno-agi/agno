@@ -73,7 +73,7 @@ class MessageMetrics:
 
     timer: Optional[Timer] = None
 
-    def _to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         metrics_dict = asdict(self)
         metrics_dict.pop("timer")
         metrics_dict = {
@@ -248,6 +248,7 @@ class Message(BaseModel):
             "tool_calls": self.tool_calls,
             "thinking": self.thinking,
             "redacted_thinking": self.redacted_thinking,
+            "provider_data": self.provider_data,
         }
         # Filter out None and empty collections
         message_dict = {
@@ -267,7 +268,7 @@ class Message(BaseModel):
         if self.references:
             message_dict["references"] = self.references.model_dump()
         if self.metrics:
-            message_dict["metrics"] = self.metrics._to_dict()
+            message_dict["metrics"] = self.metrics.to_dict()
             if not message_dict["metrics"]:
                 message_dict.pop("metrics")
 

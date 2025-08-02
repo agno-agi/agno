@@ -83,20 +83,22 @@ class Weaviate(VectorDb):
         Returns:
             weaviate.WeaviateClient: An initialized Weaviate client instance.
         """
-        if self.client is not None:
-            return self.client
+        if self.client is None:
+            if self.wcd_url and self.wcd_api_key and not self.local:
+                log_info("Initializing Weaviate Cloud client")
+                self.client = weaviate.connect_to_weaviate_cloud(
+                    cluster_url=self.wcd_url, auth_credentials=Auth.api_key(self.wcd_api_key)
+                )
+            else:
+                log_info("Initializing local Weaviate client")
+                self.client = weaviate.connect_to_local()
 
-        if self.wcd_url and self.wcd_api_key and not self.local:
-            log_info("Initializing Weaviate Cloud client")
-            self.client = weaviate.connect_to_weaviate_cloud(
-                cluster_url=self.wcd_url, auth_credentials=Auth.api_key(self.wcd_api_key)
-            )
-        else:
-            log_info("Initializing local Weaviate client")
-            self.client = weaviate.connect_to_local()
+        if not self.client.is_connected():  # type: ignore
+            self.client.connect()  # type: ignore
 
-        # Verify connection
-        self.client.is_ready()
+        if not self.client.is_ready():  # type: ignore
+            raise Exception("Weaviate client is not ready")
+
         return self.client
 
     async def get_async_client(self) -> WeaviateAsyncClient:
@@ -453,12 +455,14 @@ class Weaviate(VectorDb):
 
             log_info(f"Found {len(search_results)} documents")
 
-            self.get_client().close()
             return search_results
 
         except Exception as e:
             logger.error(f"Error searching for documents: {e}")
             return []
+
+        finally:
+            self.get_client().close()
 
     async def async_vector_search(
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
@@ -527,12 +531,14 @@ class Weaviate(VectorDb):
 
             log_info(f"Found {len(search_results)} documents")
 
-            self.get_client().close()
             return search_results
 
         except Exception as e:
             logger.error(f"Error searching for documents: {e}")
             return []
+
+        finally:
+            self.get_client().close()
 
     async def async_keyword_search(
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
@@ -604,12 +610,14 @@ class Weaviate(VectorDb):
 
             log_info(f"Found {len(search_results)} documents")
 
-            self.get_client().close()
             return search_results
 
         except Exception as e:
             logger.error(f"Error searching for documents: {e}")
             return []
+
+        finally:
+            self.get_client().close()
 
     async def async_hybrid_search(
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None

@@ -398,3 +398,63 @@ def test_intermediate_steps_with_structured_output(agent_storage):
     assert events[RunEvent.run_completed][0].content_type == "Person"
     assert events[RunEvent.run_completed][0].content.name == "Elon Musk"
     assert len(events[RunEvent.run_completed][0].content.description) > 1
+
+    assert agent.run_response.content is not None
+    assert agent.run_response.content_type == "Person"
+    assert agent.run_response.content.name == "Elon Musk"
+
+
+def test_intermediate_steps_with_parser_model(agent_storage):
+    """Test that the agent streams events."""
+
+    class Person(BaseModel):
+        name: str
+        description: str
+        age: int
+
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        storage=agent_storage,
+        response_model=Person,
+        parser_model=OpenAIChat(id="gpt-4o-mini"),
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response_generator = agent.run("Describe Elon Musk", stream=True, stream_intermediate_steps=True)
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        RunEvent.run_started,
+        RunEvent.parser_model_response_started,
+        RunEvent.parser_model_response_completed,
+        RunEvent.run_response_content,
+        RunEvent.run_completed,
+    }
+
+    assert len(events[RunEvent.run_started]) == 1
+    assert len(events[RunEvent.parser_model_response_started]) == 1
+    assert len(events[RunEvent.parser_model_response_completed]) == 1
+    assert (
+        len(events[RunEvent.run_response_content]) >= 2
+    )  # The first model streams, then the parser model has a single content event
+    assert len(events[RunEvent.run_completed]) == 1
+
+    assert events[RunEvent.run_response_content][-1].content is not None
+    assert events[RunEvent.run_response_content][-1].content_type == "Person"
+    assert events[RunEvent.run_response_content][-1].content.name == "Elon Musk"
+    assert len(events[RunEvent.run_response_content][-1].content.description) > 1
+
+    assert events[RunEvent.run_completed][0].content is not None
+    assert events[RunEvent.run_completed][0].content_type == "Person"
+    assert events[RunEvent.run_completed][0].content.name == "Elon Musk"
+    assert len(events[RunEvent.run_completed][0].content.description) > 1
+
+    assert agent.run_response.content is not None
+    assert agent.run_response.content_type == "Person"
+    assert agent.run_response.content.name == "Elon Musk"

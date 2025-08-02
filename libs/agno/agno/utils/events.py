@@ -7,6 +7,8 @@ from agno.reasoning.step import ReasoningStep
 from agno.run.response import (
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
+    ParserModelResponseCompletedEvent,
+    ParserModelResponseStartedEvent,
     ReasoningCompletedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
@@ -23,6 +25,8 @@ from agno.run.response import (
 )
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
+from agno.run.team import ParserModelResponseCompletedEvent as TeamParserModelResponseCompletedEvent
+from agno.run.team import ParserModelResponseStartedEvent as TeamParserModelResponseStartedEvent
 from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
 from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
 from agno.run.team import ReasoningStepEvent as TeamReasoningStepEvent
@@ -399,4 +403,52 @@ def create_team_run_response_content_event(
         response_audio=response_audio,
         image=image,
         extra_data=from_run_response.extra_data,
+    )
+
+
+def create_parser_model_response_started_event(
+    from_run_response: RunResponse,
+) -> ParserModelResponseStartedEvent:
+    return ParserModelResponseStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        team_session_id=from_run_response.team_session_id,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_parser_model_response_completed_event(
+    from_run_response: RunResponse,
+) -> ParserModelResponseCompletedEvent:
+    return ParserModelResponseCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        team_session_id=from_run_response.team_session_id,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_team_parser_model_response_started_event(
+    from_run_response: TeamRunResponse,
+) -> TeamParserModelResponseStartedEvent:
+    return TeamParserModelResponseStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        team_session_id=from_run_response.team_session_id,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_team_parser_model_response_completed_event(
+    from_run_response: TeamRunResponse,
+) -> TeamParserModelResponseCompletedEvent:
+    return TeamParserModelResponseCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        team_session_id=from_run_response.team_session_id,  # type: ignore
+        run_id=from_run_response.run_id,
     )

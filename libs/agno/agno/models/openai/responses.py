@@ -1,9 +1,10 @@
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 import httpx
 from pydantic import BaseModel
+from typing_extensions import Literal
 
 from agno.exceptions import ModelProviderError
 from agno.media import File
@@ -37,15 +38,16 @@ class OpenAIResponses(Model):
     # Request parameters
     include: Optional[List[str]] = None
     max_output_tokens: Optional[int] = None
+    max_tool_calls: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
     parallel_tool_calls: Optional[bool] = None
     reasoning: Optional[Dict[str, Any]] = None
     store: Optional[bool] = None
     temperature: Optional[float] = None
     top_p: Optional[float] = None
-    truncation: Optional[str] = None
+    truncation: Optional[Literal["auto", "disabled"]] = None
     user: Optional[str] = None
-
+    service_tier: Optional[Literal["auto", "default", "flex", "priority"]] = None
     request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
@@ -67,12 +69,14 @@ class OpenAIResponses(Model):
     async_client: Optional[AsyncOpenAI] = None
 
     # The role to map the message role to.
-    role_map = {
-        "system": "developer",
-        "user": "user",
-        "assistant": "assistant",
-        "tool": "tool",
-    }
+    role_map: Dict[str, str] = field(
+        default_factory=lambda: {
+            "system": "developer",
+            "user": "user",
+            "assistant": "assistant",
+            "tool": "tool",
+        }
+    )
 
     def _get_client_params(self) -> Dict[str, Any]:
         """
@@ -83,7 +87,7 @@ class OpenAIResponses(Model):
         """
         from os import getenv
 
-        # Fetch API key from excnv if not already set
+        # Fetch API key from env if not already set
         if not self.api_key:
             self.api_key = getenv("OPENAI_API_KEY")
             if not self.api_key:
@@ -150,7 +154,7 @@ class OpenAIResponses(Model):
 
     def get_request_params(
         self,
-        messages: List[Message],
+        messages: Optional[List[Message]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -165,6 +169,7 @@ class OpenAIResponses(Model):
         base_params: Dict[str, Any] = {
             "include": self.include,
             "max_output_tokens": self.max_output_tokens,
+            "max_tool_calls": self.max_tool_calls,
             "metadata": self.metadata,
             "parallel_tool_calls": self.parallel_tool_calls,
             "reasoning": self.reasoning,
@@ -173,8 +178,8 @@ class OpenAIResponses(Model):
             "top_p": self.top_p,
             "truncation": self.truncation,
             "user": self.user,
+            "service_tier": self.service_tier,
         }
-
         # Set the response format
         if response_format is not None:
             if isinstance(response_format, type) and issubclass(response_format, BaseModel):
@@ -193,14 +198,30 @@ class OpenAIResponses(Model):
 
         # Filter out None values
         request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v is not None}
+
+        # Deep research models require web_search_preview tool or MCP tool
+        if "deep-research" in self.id:
+            if tools is None:
+                tools = []
+
+            # Check if web_search_preview tool is already present
+            has_web_search = any(tool.get("type") == "web_search_preview" for tool in tools)
+
+            # Add web_search_preview if not present - this enables the model to search
+            # the web for current information and provide citations
+            if not has_web_search:
+                web_search_tool = {"type": "web_search_preview"}
+                tools.insert(0, web_search_tool)
+                log_debug(f"Added web_search_preview tool for deep research model: {self.id}")
+
         if tools:
-            request_params["tools"] = self._format_tool_params(messages=messages, tools=tools)
+            request_params["tools"] = self._format_tool_params(messages=messages, tools=tools)  # type: ignore
 
         if tool_choice is not None:
             request_params["tool_choice"] = tool_choice
 
         # Handle reasoning tools for o3 and o4-mini models
-        if self.id.startswith("o3") or self.id.startswith("o4-mini"):
+        if (self.id.startswith("o3") or self.id.startswith("o4-mini")) and messages is not None:
             request_params["store"] = True
 
             # Check if the last assistant message has a previous_response_id to continue from
@@ -357,32 +378,28 @@ class OpenAIResponses(Model):
 
                 formatted_messages.append(message_dict)
 
-            if self.id.startswith(("o3", "o4-mini")):
-                if message.role == "tool":
-                    if message.tool_call_id and message.content is not None:
-                        formatted_messages.append(
-                            {"type": "function_call_output", "call_id": message.tool_call_id, "output": message.content}
-                        )
-
-            else:
-                # OpenAI expects the tool_calls to be None if empty, not an empty list
-                if message.tool_calls is not None and len(message.tool_calls) > 0:
-                    for tool_call in message.tool_calls:
-                        formatted_messages.append(
-                            {
-                                "type": "function_call",
-                                "id": tool_call["id"],
-                                "call_id": tool_call["call_id"],
-                                "name": tool_call["function"]["name"],
-                                "arguments": tool_call["function"]["arguments"],
-                                "status": "completed",
-                            }
-                        )
-
-                if message.role == "tool":
+            elif message.role == "tool":
+                if message.tool_call_id and message.content is not None:
                     formatted_messages.append(
                         {"type": "function_call_output", "call_id": message.tool_call_id, "output": message.content}
                     )
+            elif message.tool_calls is not None and len(message.tool_calls) > 0:
+                for tool_call in message.tool_calls:
+                    formatted_messages.append(
+                        {
+                            "type": "function_call",
+                            "id": tool_call["id"],
+                            "call_id": tool_call["call_id"],
+                            "name": tool_call["function"]["name"],
+                            "arguments": tool_call["function"]["arguments"],
+                            "status": "completed",
+                        }
+                    )
+            elif message.role == "assistant":
+                # Handle null content by converting to empty string
+                content = message.content if message.content is not None else ""
+                formatted_messages.append({"role": self.role_map[message.role], "content": content})
+
         return formatted_messages
 
     def invoke(
@@ -740,11 +757,11 @@ class OpenAIResponses(Model):
                         UrlCitation(url=stream_event.annotation.get("url"), title=stream_event.annotation.get("title"))
                     )
             else:
-                if stream_event.annotation.type == "url_citation":
+                if stream_event.annotation.type == "url_citation":  # type: ignore
                     if stream_data.response_citations.urls is None:
                         stream_data.response_citations.urls = []
                     stream_data.response_citations.urls.append(
-                        UrlCitation(url=stream_event.annotation.url, title=stream_event.annotation.title)
+                        UrlCitation(url=stream_event.annotation.url, title=stream_event.annotation.title)  # type: ignore
                     )
 
             model_response.citations = stream_data.response_citations

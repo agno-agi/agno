@@ -184,7 +184,7 @@ class AgentKnowledge(BaseModel):
                 # Filter out documents which already exist in the vector db
                 if skip_existing:
                     log_debug("Filtering out existing documents before insertion.")
-                    documents_to_load = self.filter_existing_documents(document_list)
+                    documents_to_load = await self.async_filter_existing_documents(document_list)
 
                 if documents_to_load:
                     for doc in documents_to_load:
@@ -439,6 +439,43 @@ class AgentKnowledge(BaseModel):
 
         return filtered_documents
 
+    async def async_filter_existing_documents(self, documents: List[Document]) -> List[Document]:
+        """Filter out documents that already exist in the vector database.
+
+        This helper method is used across various knowledge base implementations
+        to avoid inserting duplicate documents.
+
+        Args:
+            documents (List[Document]): List of documents to filter
+
+        Returns:
+            List[Document]: Filtered list of documents that don't exist in the database
+        """
+        from agno.utils.log import log_debug, log_info
+
+        if not self.vector_db:
+            log_debug("No vector database configured, skipping document filtering")
+            return documents
+
+        # Use set for O(1) lookups
+        seen_content = set()
+        original_count = len(documents)
+        filtered_documents = []
+
+        for doc in documents:
+            # Check hash and existence in DB
+            content_hash = doc.content  # Assuming doc.content is reliable hash key
+            if content_hash not in seen_content and not await self.vector_db.async_doc_exists(doc):
+                seen_content.add(content_hash)
+                filtered_documents.append(doc)
+            else:
+                log_debug(f"Skipping existing document: {doc.name} (or duplicate content)")
+
+        if len(filtered_documents) < original_count:
+            log_info(f"Skipped {original_count - len(filtered_documents)} existing/duplicate documents.")
+
+        return filtered_documents
+
     def _track_metadata_structure(self, metadata: Optional[Dict[str, Any]]) -> None:
         """Track metadata structure to enable filter extraction from queries
 
@@ -655,7 +692,7 @@ class AgentKnowledge(BaseModel):
             documents_to_insert = documents
             if skip_existing:
                 log_debug("Filtering out existing documents before insertion.")
-                documents_to_insert = self.filter_existing_documents(documents)
+                documents_to_insert = await self.async_filter_existing_documents(documents)
 
             if documents_to_insert:  # type: ignore
                 log_debug(f"Inserting {len(documents_to_insert)} new documents.")

@@ -273,7 +273,7 @@ class AgentMemory(BaseModel):
 
         self.classifier.existing_memories = self.memories
         classifier_response = self.classifier.run(input)
-        if classifier_response == "yes":
+        if classifier_response and classifier_response.lower() == "yes":
             return True
         return False
 
@@ -286,7 +286,7 @@ class AgentMemory(BaseModel):
 
         self.classifier.existing_memories = self.memories
         classifier_response = await self.classifier.arun(input)
-        if classifier_response == "yes":
+        if classifier_response and classifier_response.lower() == "yes":
             return True
         return False
 
@@ -404,24 +404,20 @@ class AgentMemory(BaseModel):
         self.summary = None
         self.memories = None
 
-    def deep_copy(self) -> "AgentMemory":
+    def __deepcopy__(self, memo):
         from copy import deepcopy
 
-        # Create a shallow copy of the object
-        copied_obj = self.__class__(**self.to_dict())
+        # Create a new instance without calling __init__
+        cls = self.__class__
+        copied_obj = cls.__new__(cls)
+        memo[id(self)] = copied_obj
 
-        # Manually deepcopy fields that are known to be safe
-        for field_name, field_value in self.__dict__.items():
-            if field_name not in ["db", "classifier", "manager", "summarizer"]:
-                try:
-                    setattr(copied_obj, field_name, deepcopy(field_value))
-                except Exception as e:
-                    logger.warning(f"Failed to deepcopy field: {field_name} - {e}")
-                    setattr(copied_obj, field_name, field_value)
-
-        copied_obj.db = self.db
-        copied_obj.classifier = self.classifier
-        copied_obj.manager = self.manager
-        copied_obj.summarizer = self.summarizer
+        # Deep copy attributes
+        for k, v in self.__dict__.items():
+            # Reuse db
+            if k in {"db", "classifier", "manager", "summarizer"}:
+                setattr(copied_obj, k, v)
+            else:
+                setattr(copied_obj, k, deepcopy(v, memo))
 
         return copied_obj

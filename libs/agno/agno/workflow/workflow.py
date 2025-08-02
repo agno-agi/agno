@@ -5,7 +5,7 @@ import inspect
 from dataclasses import dataclass, field, fields
 from os import getenv
 from types import GeneratorType
-from typing import Any, AsyncGenerator, AsyncIterator, Callable, Dict, List, Optional, Union, cast, get_args
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Union, cast, get_args
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -19,7 +19,6 @@ from agno.run.team import TeamRunResponseEvent
 from agno.run.workflow import WorkflowRunResponseEvent
 from agno.storage.base import Storage
 from agno.storage.session.workflow import WorkflowSession
-from agno.team.team import Team
 from agno.utils.common import nested_model_dump
 from agno.utils.log import log_debug, log_warning, logger, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.merge_dict import merge_dictionaries
@@ -126,6 +125,8 @@ class Workflow:
         # Private attributes to store the run method and its parameters
         # The run function provided by the subclass
         self._subclass_run: Optional[Callable] = None
+        self._subclass_arun: Optional[Callable] = None
+
         # Parameters of the run function
         self._run_parameters: Optional[Dict[str, Any]] = None
         # Return type of the run function
@@ -154,19 +155,6 @@ class Workflow:
         self.set_workflow_id()  # Ensure workflow_id is set
         self.set_session_id()
         self.initialize_memory()
-
-        # Update workflow_id for all agents before registration
-        for field_name, value in self.__class__.__dict__.items():
-            if isinstance(value, Agent):
-                value.initialize_agent()
-                value.workflow_id = self.workflow_id
-
-            if isinstance(value, Team):
-                value.initialize_team()
-                value.workflow_id = self.workflow_id
-
-        # Register the workflow, which will also register agents and teams
-        self.register_workflow()
 
         # Create a run_id
         self.run_id = str(uuid4())
@@ -207,6 +195,7 @@ class Workflow:
                         isinstance(item, tuple(get_args(RunResponseEvent)))
                         or isinstance(item, tuple(get_args(TeamRunResponseEvent)))
                         or isinstance(item, tuple(get_args(WorkflowRunResponseEvent)))
+                        or isinstance(item, RunResponse)
                     ):
                         # Update the run_id, session_id and workflow_id of the RunResponseEvent
                         item.run_id = self.run_id
@@ -255,7 +244,6 @@ class Workflow:
             return None
 
     # Add to workflow.py after the run_workflow method
-
     async def arun_workflow(self, **kwargs: Any):
         """Run the Workflow asynchronously"""
 
@@ -266,19 +254,6 @@ class Workflow:
         self.set_workflow_id()  # Ensure workflow_id is set
         self.set_session_id()
         self.initialize_memory()
-
-        # Update workflow_id for all agents before registration
-        for field_name, value in self.__class__.__dict__.items():
-            if isinstance(value, Agent):
-                value.initialize_agent()
-                value.workflow_id = self.workflow_id
-
-            if isinstance(value, Team):
-                value.initialize_team()
-                value.workflow_id = self.workflow_id
-
-        # Register the workflow, which will also register agents and teams
-        await self.aregister_workflow()
 
         # Create a run_id
         self.run_id = str(uuid4())
@@ -295,54 +270,14 @@ class Workflow:
 
         log_debug(f"Workflow Run Start: {self.run_id}", center=True)
         try:
-            self._subclass_run = cast(Callable, self._subclass_run)
-            result = await self._subclass_run(**kwargs)
+            self._subclass_arun = cast(Callable, self._subclass_arun)
+            result = await self._subclass_arun(**kwargs)
         except Exception as e:
             logger.error(f"Workflow.arun() failed: {e}")
             raise e
 
-        # Handle async iterator results
-        if isinstance(result, (AsyncIterator, AsyncGenerator)):
-            # Initialize the run_response content
-            self.run_response.content = ""
-
-            async def result_generator():
-                self.run_response = cast(RunResponse, self.run_response)
-                if isinstance(self.memory, WorkflowMemory):
-                    self.memory = cast(WorkflowMemory, self.memory)
-                elif isinstance(self.memory, Memory):
-                    self.memory = cast(Memory, self.memory)
-
-                async for item in result:
-                    if (
-                        isinstance(item, tuple(get_args(RunResponseEvent)))
-                        or isinstance(item, tuple(get_args(TeamRunResponseEvent)))
-                        or isinstance(item, tuple(get_args(WorkflowRunResponseEvent)))
-                    ):
-                        # Update the run_id, session_id and workflow_id of the RunResponseEvent
-                        item.run_id = self.run_id
-                        item.session_id = self.session_id
-                        item.workflow_id = self.workflow_id
-
-                        # Update the run_response with the content from the result
-                        if hasattr(item, "content") and item.content is not None and isinstance(item.content, str):
-                            self.run_response.content += item.content
-                    else:
-                        logger.warning(f"Workflow.arun() should only yield RunResponseEvent objects, got: {type(item)}")
-                    yield item
-
-                # Add the run to the memory
-                if isinstance(self.memory, WorkflowMemory):
-                    self.memory.add_run(WorkflowRun(input=self.run_input, response=self.run_response))
-                elif isinstance(self.memory, Memory):
-                    self.memory.add_run(session_id=self.session_id, run=self.run_response)  # type: ignore
-                # Write this run to the database
-                self.write_to_storage()
-                log_debug(f"Workflow Run End: {self.run_id}", center=True)
-
-            return result_generator()
         # Handle single RunResponse result
-        elif isinstance(result, RunResponse):
+        if isinstance(result, RunResponse):
             # Update the result with the run_id, session_id and workflow_id of the workflow run
             result.run_id = self.run_id
             result.session_id = self.session_id
@@ -364,6 +299,66 @@ class Workflow:
         else:
             logger.warning(f"Workflow.arun() should only return RunResponse objects, got: {type(result)}")
             return None
+
+    async def arun_workflow_generator(self, **kwargs: Any) -> AsyncIterator[RunResponse]:
+        """Run the Workflow asynchronously for async generators"""
+
+        # Set mode, debug, workflow_id, session_id, initialize memory
+        self.set_storage_mode()
+        self.set_debug()
+        self.set_monitoring()
+        self.set_workflow_id()  # Ensure workflow_id is set
+        self.set_session_id()
+        self.initialize_memory()
+
+        # Create a run_id
+        self.run_id = str(uuid4())
+
+        # Set run_input, run_response
+        self.run_input = kwargs
+        self.run_response = RunResponse(run_id=self.run_id, session_id=self.session_id, workflow_id=self.workflow_id)
+
+        # Read existing session from storage
+        self.read_from_storage()
+
+        # Update the session_id for all Agent instances
+        self.update_agent_session_ids()
+
+        log_debug(f"Workflow Run Start: {self.run_id}", center=True)
+        # Initialize the run_response content
+        self.run_response.content = ""
+        try:
+            self._subclass_arun = cast(Callable, self._subclass_arun)
+            async for item in self._subclass_arun(**kwargs):
+                if (
+                    isinstance(item, tuple(get_args(RunResponseEvent)))
+                    or isinstance(item, tuple(get_args(TeamRunResponseEvent)))
+                    or isinstance(item, tuple(get_args(WorkflowRunResponseEvent)))
+                    or isinstance(item, RunResponse)
+                ):
+                    # Update the run_id, session_id and workflow_id of the RunResponseEvent
+                    item.run_id = self.run_id
+                    item.session_id = self.session_id
+                    item.workflow_id = self.workflow_id
+
+                    # Update the run_response with the content from the result
+                    if hasattr(item, "content") and item.content is not None and isinstance(item.content, str):
+                        self.run_response.content += item.content
+                else:
+                    logger.warning(f"Workflow.run() should only yield RunResponseEvent objects, got: {type(item)}")
+                yield item
+
+            # Add the run to the memory
+            if isinstance(self.memory, WorkflowMemory):
+                self.memory.add_run(WorkflowRun(input=self.run_input, response=self.run_response))
+            elif isinstance(self.memory, Memory):
+                self.memory.add_run(session_id=self.session_id, run=self.run_response)  # type: ignore
+            # Write this run to the database
+            self.write_to_storage()
+            log_debug(f"Workflow Run End: {self.run_id}", center=True)
+        except Exception as e:
+            logger.error(f"Workflow.arun() failed: {e}")
+            raise e
 
     async def arun(self, **kwargs: Any):
         """Async version of run() that calls arun_workflow()"""
@@ -412,21 +407,32 @@ class Workflow:
             self.memory = Memory()
 
     def update_run_method(self):
+        run_type = None
         # Update the run() method to call run_workflow() instead of the subclass's run()
         # First, check if the subclass has a run method
         #   If the run() method has been overridden by the subclass,
         #   then self.__class__.run is not Workflow.run will be True
-        if self.__class__.run is not Workflow.run or self.__class__.arun is not Workflow.arun:
+        if self.__class__.run is not Workflow.run:
             # Store the original run methods bound to the instance
-            if self.__class__.run is not Workflow.run:
-                self._subclass_run = self.__class__.run.__get__(self)
-                # Get the parameters of the sync run method
-                sig = inspect.signature(self.__class__.run)
-            if self.__class__.arun is not Workflow.arun:
-                self._subclass_run = self.__class__.arun.__get__(self)
-                # Get the parameters of the async run method
-                sig = inspect.signature(self.__class__.arun)
+            self._subclass_run = self.__class__.run.__get__(self)
+            run_type = "sync"
+            # Get the parameters of the sync run method
+            sig = inspect.signature(self.__class__.run)
 
+        if self.__class__.arun is not Workflow.arun:
+            self._subclass_arun = self.__class__.arun.__get__(self)
+            run_type = "coroutine"
+
+            # Get the parameters of the async run method
+            sig = inspect.signature(self.__class__.arun)
+
+            # Check if the async method is a coroutine or async generator
+            from inspect import isasyncgenfunction
+
+            if isasyncgenfunction(self.__class__.arun):
+                run_type = "async_generator"
+
+        if run_type is not None:
             # Convert parameters to a serializable format
             self._run_parameters = {
                 param_name: {
@@ -461,11 +467,18 @@ class Workflow:
             )
             # Important: Replace the instance's run method with run_workflow
             # This is so we call run_workflow() instead of the subclass's run()
-            object.__setattr__(self, "run", self.run_workflow.__get__(self))
+            if run_type == "sync":
+                object.__setattr__(self, "run", self.run_workflow.__get__(self))
+            elif run_type == "coroutine":
+                object.__setattr__(self, "arun", self.arun_workflow.__get__(self))
+            elif run_type == "async_generator":
+                object.__setattr__(self, "arun", self.arun_workflow_generator.__get__(self))
         else:
             # If the subclass does not override the run method,
             # the Workflow.run() method will be called and will log an error
             self._subclass_run = self.run
+            self._subclass_arun = self.arun
+
             self._run_parameters = {}
             self._run_return_type = None
 
@@ -789,121 +802,3 @@ class Workflow:
 
         # For other types, return as is
         return field_value
-
-    async def aregister_workflow(self, force: bool = False) -> None:
-        """Async version of register_workflow"""
-        self.set_monitoring()
-        if not self.monitoring:
-            return
-
-        if not self.workflow_id:
-            self.set_workflow_id()
-
-        try:
-            from agno.api.schemas.workflows import WorkflowCreate
-            from agno.api.workflows import acreate_workflow
-
-            workflow_config = self.to_config_dict()
-            # Register the workflow as an app
-            await acreate_workflow(
-                workflow=WorkflowCreate(
-                    name=self.name, workflow_id=self.workflow_id, app_id=self.app_id, config=workflow_config
-                )
-            )
-
-            log_debug(f"Registered workflow: {self.name} (ID: {self.workflow_id})")
-        except Exception as e:
-            log_warning(f"Failed to register workflow: {e}")
-
-    def register_workflow(self, force: bool = False) -> None:
-        """Register this workflow with Agno's platform.
-
-        Args:
-            force: If True, register the workflow even if monitoring is disabled
-        """
-        self.set_monitoring()
-        if not self.monitoring:
-            return
-
-        if not self.workflow_id:
-            self.set_workflow_id()
-
-        try:
-            from agno.api.schemas.workflows import WorkflowCreate
-            from agno.api.workflows import create_workflow
-
-            workflow_config = self.to_config_dict()
-            # Register the workflow as an app
-            create_workflow(
-                workflow=WorkflowCreate(
-                    name=self.name, workflow_id=self.workflow_id, app_id=self.app_id, config=workflow_config
-                )
-            )
-
-            log_debug(f"Registered workflow: {self.name} (ID: {self.workflow_id})")
-        except Exception as e:
-            log_warning(f"Failed to register workflow: {e}")
-
-    def to_config_dict(self) -> Dict[str, Any]:
-        """Convert the workflow to a config dictionary including all agents and teams.
-
-        Returns:
-            Dict[str, Any]: Dictionary representation of the workflow config.
-        """
-        # Basic workflow information
-        config: Dict[str, Any] = {
-            "name": self.name,
-            "description": self.description,
-            "type": "workflow",
-            "app_id": self.app_id,
-            "storage": {
-                "name": self.storage.__class__.__name__ if self.storage is not None else None,
-            },
-        }
-
-        agents: List[Dict[str, Any]] = []
-        teams: List[Dict[str, Any]] = []
-
-        for attr_name in dir(self.__class__):
-            # Skip private/special attributes and methods
-            if attr_name.startswith("_") or callable(getattr(self.__class__, attr_name)):
-                continue
-
-            # Get the class attribute
-            attr_value = getattr(self.__class__, attr_name)
-
-            if isinstance(attr_value, Agent):
-                # Skip agents already in the list
-                if any(a.get("name") == (attr_value.name or attr_name) for a in agents):
-                    continue
-
-                agent_config = attr_value.get_agent_config_dict()
-                agent_config.update(
-                    {
-                        "agent_id": attr_value.agent_id if hasattr(attr_value, "agent_id") else None,
-                        "name": attr_value.name or attr_name,
-                        "workflow_id": self.workflow_id,
-                    }
-                )
-                agents.append(agent_config)
-
-            elif isinstance(attr_value, Team):
-                if any(t.get("name") == (attr_value.name or attr_name) for t in teams):
-                    continue
-
-                team_config = attr_value.to_platform_dict()
-                team_config.update(
-                    {
-                        "team_id": attr_value.team_id if hasattr(attr_value, "team_id") else None,
-                        "name": attr_value.name or attr_name,
-                        "workflow_id": self.workflow_id,
-                    }
-                )
-                teams.append(team_config)
-
-        if agents:
-            config["agents"] = agents
-        if teams:
-            config["teams"] = teams
-
-        return config

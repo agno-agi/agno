@@ -427,16 +427,13 @@ class Claude(Model):
             log_error(f"Unexpected error calling Claude API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def format_function_call_results(
-        self, messages: List[Message], function_call_results: List[Message], tool_ids: List[str]
-    ) -> None:
+    def format_function_call_results(self, messages: List[Message], function_call_results: List[Message]) -> None:
         """
         Handle the results of function calls.
 
         Args:
             messages (List[Message]): The list of conversation messages.
             function_call_results (List[Message]): The results of the function calls.
-            tool_ids (List[str]): The tool ids.
         """
         if len(function_call_results) > 0:
             fc_responses: List = []
@@ -518,7 +515,6 @@ class Claude(Model):
                         function_def["arguments"] = json.dumps(tool_input)
 
                     model_response.extra = model_response.extra or {}
-                    model_response.extra.setdefault("tool_ids", []).append(block.id)
                     model_response.tool_calls.append(
                         {
                             "id": block.id,
@@ -574,8 +570,16 @@ class Claude(Model):
                 }
 
         elif isinstance(response, ContentBlockStopEvent):
+            # Handle completed thinking content
+            if response.content_block.type == "thinking":  # type: ignore
+                model_response.thinking = response.content_block.thinking  # type: ignore
+                # Store signature if available
+                if hasattr(response.content_block, "signature"):  # type: ignore
+                    model_response.provider_data = {
+                        "signature": response.content_block.signature,  # type: ignore
+                    }
             # Handle tool calls
-            if response.content_block.type == "tool_use":  # type: ignore
+            elif response.content_block.type == "tool_use":  # type: ignore
                 tool_use = response.content_block  # type: ignore
                 tool_name = tool_use.name
                 tool_input = tool_use.input
@@ -585,7 +589,6 @@ class Claude(Model):
                     function_def["arguments"] = json.dumps(tool_input)
 
                 model_response.extra = model_response.extra or {}
-                model_response.extra.setdefault("tool_ids", []).append(tool_use.id)
 
                 model_response.tool_calls = [
                     {

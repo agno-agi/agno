@@ -20,10 +20,8 @@ class LangDBEmbedder(Embedder):
     user: Optional[str] = None
     api_key: Optional[str] = getenv("LANGDB_API_KEY")
     project_id: Optional[str] = getenv("LANGDB_PROJECT_ID")
-    if not project_id:
-        logger.error("LANGDB_PROJECT_ID not set in the environment")
     organization: Optional[str] = None
-    base_url: Optional[str] = f"https://api.us-east-1.langdb.ai/{project_id}/v1"
+    base_url: Optional[str] = None
     request_params: Optional[Dict[str, Any]] = None
     client_params: Optional[Dict[str, Any]] = None
     openai_client: Optional[OpenAIClient] = None
@@ -33,13 +31,19 @@ class LangDBEmbedder(Embedder):
         if self.openai_client:
             return self.openai_client
 
+        if not self.project_id:
+            raise ValueError("LANGDB_PROJECT_ID not set in the environment")
+
         _client_params: Dict[str, Any] = {}
         if self.api_key:
             _client_params["api_key"] = self.api_key
         if self.organization:
             _client_params["organization"] = self.organization
-        if self.base_url:
-            _client_params["base_url"] = self.base_url
+
+        if not self.base_url:
+            self.base_url = f"https://api.us-east-1.langdb.ai/{self.project_id}/v1"
+        _client_params["base_url"] = self.base_url
+
         if self.client_params:
             _client_params.update(self.client_params)
         return OpenAIClient(**_client_params)
