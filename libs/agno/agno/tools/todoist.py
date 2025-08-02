@@ -16,7 +16,7 @@ class TodoistTools(Toolkit):
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
+        api_token: Optional[str] = None,
         create_task: bool = True,
         get_task: bool = True,
         update_task: bool = True,
@@ -29,7 +29,7 @@ class TodoistTools(Toolkit):
         """Initialize the Todoist toolkit.
 
         Args:
-            api_key: Optional Todoist API key. If not provided, will look for TODOIST_API_KEY env var
+            api_token: Optional Todoist API token. If not provided, will look for TODOIST_API_TOKEN env var
             create_task: Whether to register the create_task function
             get_task: Whether to register the get_task function
             update_task: Whether to register the update_task function
@@ -38,11 +38,11 @@ class TodoistTools(Toolkit):
             get_active_tasks: Whether to register the get_active_tasks function
             get_projects: Whether to register the get_projects function
         """
-        self.api_key = api_key or os.getenv("TODOIST_API_KEY")
-        if not self.api_key:
-            raise ValueError("TODOIST_API_KEY not set. Please set the TODOIST_API_KEY environment variable.")
+        self.api_token = api_token or os.getenv("TODOIST_API_TOKEN")
+        if not self.api_token:
+            raise ValueError("TODOIST_API_TOKEN not set. Please set the TODOIST_API_TOKEN environment variable.")
 
-        self.api = TodoistAPI(self.api_key)
+        self.api = TodoistAPI(self.api_token)
 
         tools: List[Any] = []
         if create_task:

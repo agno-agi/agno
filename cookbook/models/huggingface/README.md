@@ -9,10 +9,10 @@ python3 -m venv ~/.venvs/aienv
 source ~/.venvs/aienv/bin/activate
 ```
 
-### 2. Export `HUGGINGFACE_API_KEY`
+### 2. Export `HF_TOKEN`
 
 ```shell
-export HUGGINGFACE_API_KEY=***
+export HF_TOKEN=***
 ```
 
 ### 3. Install libraries
