@@ -28,7 +28,7 @@ db = GCSJsonDb(
 agent1 = Agent(
     db=db,
     tools=[DuckDuckGoTools()],
-    add_history_to_messages=True,
+    add_history_to_context=True,
     debug_mode=DEBUG_MODE,
 )
 
@@ -41,7 +41,7 @@ agent2 = Agent(
     db=db,
     session_id=agent1.session_id,
     tools=[DuckDuckGoTools()],
-    add_history_to_messages=True,
+    add_history_to_context=True,
     debug_mode=DEBUG_MODE,
 )
 

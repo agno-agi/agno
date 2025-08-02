@@ -231,7 +231,7 @@ def test_intermediate_steps_with_user_confirmation(agent_storage):
         tools=[get_the_weather],
         storage=agent_storage,
         store_events=True,
-        add_history_to_messages=True,
+        add_history_to_context=True,
         num_history_responses=2,
         telemetry=False,
     )

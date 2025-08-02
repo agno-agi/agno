@@ -147,8 +147,8 @@ class Agent:
     db: Optional[BaseDb] = None
 
     # --- Agent History ---
-    # add_history_to_messages=true adds messages from the chat history to the messages list sent to the Model.
-    add_history_to_messages: bool = False
+    # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
+    add_history_to_context: bool = False
     # Number of historical runs to include in the messages
     num_history_runs: int = 3
 
@@ -350,7 +350,7 @@ class Agent:
         enable_session_summaries: bool = False,
         add_session_summary_references: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
-        add_history_to_messages: bool = False,
+        add_history_to_context: bool = False,
         num_history_runs: int = 3,
         knowledge: Optional[Knowledge] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
@@ -438,7 +438,7 @@ class Agent:
         self.enable_session_summaries = enable_session_summaries
         self.add_session_summary_references = add_session_summary_references
 
-        self.add_history_to_messages = add_history_to_messages
+        self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
 
         self.knowledge = knowledge
@@ -4471,7 +4471,7 @@ class Agent:
                         self.run_response.extra_data.add_messages.extend(messages_to_add_to_run_response)
 
         # 3. Add history to run_messages
-        if self.add_history_to_messages and self.agent_session is not None:
+        if self.add_history_to_context and self.agent_session is not None:
             from copy import deepcopy
 
             history: List[Message] = self.agent_session.get_messages_from_last_n_runs(

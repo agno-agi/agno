@@ -36,7 +36,7 @@ agent = Agent(
     # This setting adds a tool to get chat history
     read_chat_history=True,
     # Add the previous chat history to the messages sent to the Model.
-    add_history_to_messages=True,
+    add_history_to_context=True,
     # This setting adds 6 previous messages from chat history to the messages sent to the LLM
     num_history_responses=6,
     markdown=True,

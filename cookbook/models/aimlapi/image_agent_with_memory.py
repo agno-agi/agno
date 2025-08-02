@@ -5,7 +5,7 @@ from agno.models.aimlapi import AIMLApi
 agent = Agent(
     model=AIMLApi(id="meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo"),
     markdown=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_responses=3,
 )
 

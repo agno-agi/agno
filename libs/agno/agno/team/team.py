@@ -256,8 +256,8 @@ class Team:
     add_session_summary_references: Optional[bool] = None
 
     # --- Team History ---
-    # add_history_to_messages=true adds messages from the chat history to the messages list sent to the Model.
-    add_history_to_messages: bool = False
+    # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
+    add_history_to_context: bool = False
     # Number of historical runs to include in the messages
     num_history_runs: int = 3
 
@@ -356,7 +356,7 @@ class Team:
         enable_session_summaries: bool = False,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_session_summary_references: Optional[bool] = None,
-        add_history_to_messages: bool = False,
+        add_history_to_context: bool = False,
         num_history_runs: int = 3,
         extra_data: Optional[Dict[str, Any]] = None,
         reasoning: bool = False,
@@ -440,7 +440,7 @@ class Team:
         self.enable_session_summaries = enable_session_summaries
         self.session_summary_manager = session_summary_manager
         self.add_session_summary_references = add_session_summary_references
-        self.add_history_to_messages = add_history_to_messages
+        self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
 
         self.extra_data = extra_data
@@ -5211,7 +5211,7 @@ class Team:
             run_messages.messages.append(system_message)
 
         # 2. Add history to run_messages
-        if self.add_history_to_messages:
+        if self.add_history_to_context:
             from copy import deepcopy
 
             history = self.team_session.get_messages_from_last_n_runs(
@@ -5767,7 +5767,7 @@ class Team:
 
                 # Add history for the member if enabled
                 history = None
-                if member_agent.add_history_to_messages:
+                if member_agent.add_history_to_context:
                     history = self._get_history_for_member_agent(member_agent, session_id)
                     if history:
                         history.append(Message(role="user", content=member_agent_task))
@@ -5890,7 +5890,7 @@ class Team:
 
                 # Add history for the member if enabled
                 history = None
-                if member_agent.add_history_to_messages:
+                if member_agent.add_history_to_context:
                     history = self._get_history_for_member_agent(member_agent, session_id)
                     if history:
                         history.append(Message(role="user", content=member_agent_task))
@@ -6054,7 +6054,7 @@ class Team:
             )
 
             # 4. Add history for the member if enabled
-            if member_agent.add_history_to_messages:
+            if member_agent.add_history_to_context:
                 history = self._get_history_for_member_agent(member_agent, session_id)
                 if history:
                     history.append(Message(role="user", content=member_agent_task))
@@ -6200,7 +6200,7 @@ class Team:
             )
 
             # 4. Add history for the member if enabled
-            if member_agent.add_history_to_messages:
+            if member_agent.add_history_to_context:
                 history = self._get_history_for_member_agent(member_agent, session_id)
                 if history:
                     history.append(Message(role="user", content=member_agent_task))
@@ -6440,7 +6440,7 @@ class Team:
             member_agent_task = message.get_content_string()
 
             # Add history for the member if enabled
-            if member_agent.add_history_to_messages:
+            if member_agent.add_history_to_context:
                 history = self._get_history_for_member_agent(member_agent, session_id)
                 if history:
                     history.append(Message(role="user", content=member_agent_task))
@@ -6580,7 +6580,7 @@ class Team:
             member_agent_task = message.get_content_string()
 
             # Add history for the member if enabled
-            if member_agent.add_history_to_messages:
+            if member_agent.add_history_to_context:
                 history = self._get_history_for_member_agent(member_agent, session_id)
                 if history:
                     history.append(Message(role="user", content=member_agent_task))

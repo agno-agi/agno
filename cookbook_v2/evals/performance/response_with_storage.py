@@ -9,7 +9,7 @@ def run_agent():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         system_message="Be concise, reply with one sentence.",
-        add_history_to_messages=True,
+        add_history_to_context=True,
     )
     response_1 = agent.run("What is the capital of France?")
     print(response_1.content)

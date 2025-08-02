@@ -13,7 +13,7 @@ team = Team(
     members=[agent],
     db=db,
     session_id="team_session_storage",
-    add_history_to_messages=True,
+    add_history_to_context=True,
 )
 
 team.print_response("Tell me a new interesting fact about space")

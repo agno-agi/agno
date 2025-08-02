@@ -22,7 +22,7 @@ db = RedisDb(db_url="redis://localhost:6379")
 agent = Agent(
     db=db,
     tools=[DuckDuckGoTools()],
-    add_history_to_messages=True,
+    add_history_to_context=True,
 )
 
 agent.print_response("How many people live in Canada?")

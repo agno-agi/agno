@@ -5,7 +5,7 @@ from agno.models.together import Together
 agent = Agent(
     model=Together(id="meta-llama/Llama-Vision-Free"),
     markdown=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_responses=3,
 )
 

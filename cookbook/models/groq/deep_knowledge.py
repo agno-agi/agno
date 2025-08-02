@@ -103,7 +103,7 @@ def create_agent(session_id: Optional[str] = None) -> Agent:
         """),
         knowledge=agent_knowledge,
         storage=agent_storage,
-        add_history_to_messages=True,
+        add_history_to_context=True,
         num_history_responses=3,
         read_chat_history=True,
         markdown=True,

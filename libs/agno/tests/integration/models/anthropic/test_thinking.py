@@ -140,7 +140,7 @@ def test_redacted_thinking_with_tool_calls():
             thinking={"type": "enabled", "budget_tokens": 1024},
         ),
         tools=[YFinanceTools(cache_results=True)],
-        add_history_to_messages=True,
+        add_history_to_context=True,
         markdown=True,
     )
 

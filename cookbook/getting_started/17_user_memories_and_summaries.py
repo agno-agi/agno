@@ -65,7 +65,7 @@ def create_agent(user: str = "user"):
         enable_user_memories=True,
         enable_session_summaries=True,
         storage=agent_storage,
-        add_history_to_messages=True,
+        add_history_to_context=True,
         num_history_responses=3,
         # Enhanced system prompt for better personality and memory usage
         description=dedent("""\

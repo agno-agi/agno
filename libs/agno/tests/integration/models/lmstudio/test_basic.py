@@ -73,7 +73,7 @@ async def test_async_basic_stream():
 def test_with_memory():
     agent = Agent(
         model=LMStudio(id="qwen2.5-7b-instruct-1m"),
-        add_history_to_messages=True,
+        add_history_to_context=True,
         num_history_responses=5,
         markdown=True,
         telemetry=False,
@@ -144,7 +144,7 @@ def test_history():
     agent = Agent(
         model=LMStudio(id="qwen2.5-7b-instruct-1m"),
         storage=SqliteAgentStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
-        add_history_to_messages=True,
+        add_history_to_context=True,
         telemetry=False,
     )
     agent.run("Hello")

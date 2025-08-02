@@ -93,7 +93,7 @@ def route_team_with_members(team_storage, agent_storage, memory):
         model=Gemini(id="gemini-2.0-flash-001"),
         storage=agent_storage,
         memory=memory,
-        add_history_to_messages=True,
+        add_history_to_context=True,
         role="Search the web for travel information. Don't call multiple tools at once. First get weather, then restaurants.",
         tools=[get_weather, get_open_restaurants],
     )
