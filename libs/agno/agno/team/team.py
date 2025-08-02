@@ -3663,6 +3663,7 @@ class Team:
 
         _response_content: str = ""
         _response_thinking: str = ""
+        _response_reasoning_content: str = ""
         reasoning_steps: List[ReasoningStep] = []
 
         # Track tool calls by member and team
