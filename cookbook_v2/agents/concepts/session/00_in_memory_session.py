@@ -4,7 +4,7 @@ from rich.pretty import pprint
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    # Set add_history_to_context=true to add the previous chat history to the messages sent to the Model.
+    # Set add_history_to_context=true to add the previous chat history to the context sent to the Model.
     add_history_to_context=True,
     # Number of historical responses to add to the messages.
     num_history_runs=3,

@@ -5330,7 +5330,7 @@ class Team:
             # Add context to user message
             if self.add_dependencies and self.dependencies is not None:
                 user_message_content += "\n\n<context>\n"
-                user_message_content += self._convert_context_to_string(self.dependencies) + "\n"
+                user_message_content += self._convert_dependencies_to_string(self.dependencies) + "\n"
                 user_message_content += "</context>"
 
             return Message(
@@ -5442,7 +5442,7 @@ class Team:
             log_warning(f"Template substitution failed: {e}")
             return message
 
-    def _convert_context_to_string(self, context: Dict[str, Any]) -> str:
+    def _convert_dependencies_to_string(self, context: Dict[str, Any]) -> str:
         """Convert the context dictionary to a string representation.
 
         Args:
