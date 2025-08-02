@@ -2792,6 +2792,7 @@ class Team:
 
         _response_content: str = ""
         _response_thinking: str = ""
+        _response_reasoning_content: str = ""
         reasoning_steps: List[ReasoningStep] = []
 
         # Track tool calls by member and team
@@ -2867,6 +2868,8 @@ class Team:
                                 log_warning(f"Failed to convert response to JSON: {e}")
                         if resp.thinking is not None:
                             _response_thinking += resp.thinking
+                        if hasattr(resp, "reasoning_content") and resp.reasoning_content is not None:
+                            _response_reasoning_content += resp.reasoning_content
                     if (
                         hasattr(resp, "extra_data")
                         and resp.extra_data is not None
@@ -3733,6 +3736,8 @@ class Team:
                                 log_warning(f"Failed to convert response to JSON: {e}")
                         if resp.thinking is not None:
                             _response_thinking += resp.thinking
+                        if hasattr(resp, "reasoning_content") and resp.reasoning_content is not None:
+                            _response_reasoning_content += resp.reasoning_content
                     if (
                         hasattr(resp, "extra_data")
                         and resp.extra_data is not None
@@ -3814,6 +3819,18 @@ class Team:
                         border_style="green",
                     )
                     panels.append(thinking_panel)
+                if render:
+                    live_console.update(Group(*panels))
+
+                if len(_response_reasoning_content) > 0:
+                    render = True
+                    # Create panel for reasoning content
+                    reasoning_panel = create_panel(
+                        content=Text(_response_reasoning_content),
+                        title=f"Reasoning ({response_timer.elapsed:.1f}s)",
+                        border_style="green",
+                    )
+                    panels.append(reasoning_panel)
                 if render:
                     live_console.update(Group(*panels))
 
