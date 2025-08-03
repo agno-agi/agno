@@ -561,3 +561,7 @@ class WorkflowRunResponse:
             return self.content.model_dump_json(exclude_none=True, **kwargs)
         else:
             return json.dumps(self.content, **kwargs)
+
+    def has_completed(self) -> bool:
+        """Check if the workflow run is completed (either successfully or with error)"""
+        return self.status in [RunStatus.completed, RunStatus.error]

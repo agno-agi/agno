@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.7.5"
+version = "1.7.7"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -46,7 +46,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn", "arxiv"]
+dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn"]
 
 # Models integration test dependencies
 integration-tests = [
@@ -65,6 +65,7 @@ arize = ["arize-phoenix", "agno[opentelemetry]", "opentelemetry-exporter-otlp-pr
 langfuse = ["langfuse"]
 
 # Dependencies for Models
+aws-bedrock = ["boto3", "aioboto3"]
 anthropic = ["anthropic"]
 azure = ["azure-ai-inference", "aiohttp"]
 cerebras = ["cerebras-cloud-sdk"]
@@ -84,6 +85,7 @@ portkey = ["portkey-ai"]
 # Dependencies for Tools
 agentql = ["agentql"]
 apify = ["apify-client"]
+arxiv = ["arxiv"]
 brave = ["brave-search"]
 browserbase = ["browserbase", "playwright"]
 cartesia = ["cartesia"]
@@ -91,6 +93,7 @@ confluence = ["atlassian-python-api"]
 ddg = ["duckduckgo-search"]
 duckdb = ["duckdb"]
 elevenlabs = ["elevenlabs"]
+evm = ["web3"]
 exa = ["exa_py"]
 fal = ["fal_client"]
 firecrawl = ["firecrawl-py"]
@@ -104,6 +107,7 @@ mcp = ["mcp"]
 mem0 = ["mem0ai"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 opencv = ["opencv-python"]
+psycopg = ["psycopg-binary", "psycopg"]
 todoist = ["todoist-api-python"]
 valyu = ["valyu"]
 webex = ["webexpythonsdk"]
@@ -115,7 +119,7 @@ oxylabs = ["oxylabs"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
-postgres = ["psycopg-binary", "psycopg"]
+postgres = ["psycopg-binary"]
 sqlite = ["sqlalchemy"]
 gcs = ["google-cloud-storage"]
 firestore = ["google-cloud-firestore"]
@@ -165,6 +169,7 @@ aws = ["agno-aws", "agno-docker"]
 
 # All models
 models = [
+  "agno[aws-bedrock]",
   "agno[anthropic]",
   "agno[azure]",
   "agno[cerebras]",
@@ -185,6 +190,7 @@ models = [
 # All tools
 tools = [
   "agno[apify]",
+  "agno[arxiv]",
   "agno[brave]",
   "agno[exa]",
   "agno[cartesia]",
@@ -200,6 +206,7 @@ tools = [
   "agno[todoist]",
   "agno[matplotlib]",
   "agno[elevenlabs]",
+  "agno[evm]",
   "agno[fal]",
   "agno[webex]",
   "agno[mcp]",
@@ -213,6 +220,7 @@ tools = [
   "agno[zep]",
   "agno[mem0]",
   "agno[google_bigquery]",
+  "agno[psycopg]",
 ]
 
 # All storage
@@ -348,6 +356,7 @@ module = [
   "duckduckgo_search.*",
   "email_validator.*",
   "e2b_code_interpreter.*",
+  "eth_account.*",
   "exa_py.*",
   "fastapi.*",
   "fastembed.*",
@@ -361,6 +370,7 @@ module = [
   "googleapiclient.*",
   "googlesearch.*",
   "groq.*",
+  "hexbytes.*",
   "huggingface_hub.*",
   "ibm_watsonx_ai.*",
   "imghdr.*",
@@ -372,6 +382,7 @@ module = [
   "langchain.*",
   "llama_index.*",
   "llama_api_client.*",
+  "linkup.*",
   "litellm.*",
   "matplotlib.*",
   "mem0.*",
@@ -394,7 +405,6 @@ module = [
   "portkey_ai.*",
   "playwright.sync_api.*",
   "psycopg.*",
-  "psycopg2.*",
   "pyarrow.*",
   "pycountry.*",
   "pymongo.*",
@@ -432,6 +442,7 @@ module = [
   "vertexai.*",
   "voyageai.*",
   "weaviate.*",
+  "web3.*",
   "webexpythonsdk.*",
   "wikipedia.*",
   "yaml.*",

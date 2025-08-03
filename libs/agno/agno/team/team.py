@@ -688,15 +688,6 @@ class Team:
             if self.workflow_session_state is not None:
                 self.workflow_session_state["current_user_id"] = user_id
 
-    def _reset_session_state(self) -> None:
-        """Reset the session state for the agent."""
-        if self.team_session_state is not None:
-            self.team_session_state.pop("current_session_id", None)
-            self.team_session_state.pop("current_user_id", None)
-        if self.session_state is not None:
-            self.session_state.pop("current_session_id", None)
-            self.session_state.pop("current_user_id", None)
-
     def _initialize_session(
         self,
         session_id: Optional[str] = None,
@@ -974,8 +965,6 @@ class Team:
                         from_run_response=run_response,
                         session_id=session_id,
                     )
-            finally:
-                self._reset_session_state()
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -1363,8 +1352,6 @@ class Team:
                         from_run_response=run_response,
                         session_id=session_id,
                     )
-            finally:
-                self._reset_session_state()
 
         # If we get here, all retries failed
         if last_exception is not None:
@@ -5892,7 +5879,7 @@ class Team:
 
             Args:
                 task_description (str): The task description to send to the member agents.
-                expected_output (str): The expected output from the member agents.
+                expected_output (str, optional): The expected output from the member agents.
 
             Returns:
                 str: The responses from the member agents.
@@ -5906,13 +5893,17 @@ class Team:
                 session_id, images, videos, audio
             )
 
-            # 3. Create the member agent task
-            member_agent_task = self._format_member_agent_task(
-                task_description, expected_output, team_context_str, team_member_interactions_str
-            )
-
+            # 3. Run members
             for member_agent_index, member_agent in enumerate(self.members):
                 self._initialize_member(member_agent, session_id=session_id)
+
+                # Don't override the expected output of a member agent
+                if member_agent.expected_output is not None:
+                    expected_output = None
+
+                member_agent_task = self._format_member_agent_task(
+                    task_description, expected_output, team_context_str, team_member_interactions_str
+                )
 
                 if stream:
                     member_agent_run_response_stream = member_agent.run(
@@ -6021,11 +6012,6 @@ class Team:
                 session_id, images, videos, audio
             )
 
-            # 3. Create the member agent task
-            member_agent_task = self._format_member_agent_task(
-                task_description, expected_output, team_context_str, team_member_interactions_str
-            )
-
             # Create tasks for all member agents
             tasks = []
             for member_agent_index, member_agent in enumerate(self.members):
@@ -6033,6 +6019,14 @@ class Team:
                 current_agent = member_agent  # Create a reference to the current agent
                 current_index = member_agent_index  # Create a reference to the current index
                 self._initialize_member(current_agent, session_id=session_id)
+
+                # Don't override the expected output of a member agent
+                if current_agent.expected_output is not None:
+                    expected_output = None
+
+                member_agent_task = self._format_member_agent_task(
+                    task_description, expected_output, team_context_str, team_member_interactions_str
+                )
 
                 async def run_member_agent(agent=current_agent, idx=current_index) -> str:
                     response = await agent.arun(
@@ -6185,7 +6179,7 @@ class Team:
             Args:
                 member_id (str): The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
                 task_description (str): A clear and concise description of the task the member should achieve.
-                expected_output (str): The expected output from the member (optional).
+                expected_output (str, optional): The expected output from the member (optional).
             Returns:
                 str: The result of the delegated task.
             """
@@ -6204,6 +6198,9 @@ class Team:
             )
 
             # 3. Create the member agent task
+            # Don't override the expected output of a member agent
+            if member_agent.expected_output is not None:
+                expected_output = None
             member_agent_task = self._format_member_agent_task(
                 task_description, expected_output, team_context_str, team_member_interactions_str
             )
@@ -6324,7 +6321,7 @@ class Team:
             Args:
                 member_id (str): The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
                 task_description (str): A clear and concise description of the task the member should achieve.
-                expected_output (str): The expected output from the member (optional).
+                expected_output (str, optional): The expected output from the member (optional).
             Returns:
                 str: The result of the delegated task.
             """
@@ -6344,6 +6341,9 @@ class Team:
             )
 
             # 3. Create the member agent task
+            # Don't override the expected output of a member agent
+            if member_agent.expected_output is not None:
+                expected_output = None
             member_agent_task = self._format_member_agent_task(
                 task_description, expected_output, team_context_str, team_member_interactions_str
             )
@@ -6555,7 +6555,7 @@ class Team:
             """Use this function to forward the request to the selected team member.
             Args:
                 member_id (str): The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
-                expected_output (str): The expected output from the member (optional).
+                expected_output (str, optional): The expected output from the member (optional).
             Returns:
                 str: The result of the delegated task.
             """
@@ -6584,7 +6584,8 @@ class Team:
             # If found in subteam, include the path in the task description
             member_agent_task = message.get_content_string()
 
-            if expected_output:
+            # Don't override the expected output of a member agent
+            if member_agent.expected_output is None and expected_output:
                 member_agent_task += f"\n\n<expected_output>\n{expected_output}\n</expected_output>"
 
             # Handle enable_agentic_knowledge_filters
@@ -6694,7 +6695,7 @@ class Team:
 
             Args:
                 member_id (str): The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
-                expected_output (str): The expected output from the member (optional).
+                expected_output (str, optional): The expected output from the member (optional).
             Returns:
                 str: The result of the delegated task.
             """
@@ -6719,7 +6720,8 @@ class Team:
             # If found in subteam, include the path in the task description
             member_agent_task = message.get_content_string()
 
-            if expected_output:
+            # Don't override the expected output of a member agent
+            if member_agent.expected_output is None and expected_output:
                 member_agent_task += f"\n\n<expected_output>\n{expected_output}\n</expected_output>"
 
             # Handle enable_agentic_knowledge_filters
@@ -7370,6 +7372,9 @@ class Team:
         """Return a list of references from the knowledge base"""
         from agno.document import Document
 
+        if num_documents is None and self.knowledge is not None:
+            num_documents = self.knowledge.num_documents
+
         # Validate the filters against known valid filter keys
         if self.knowledge is not None:
             valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
@@ -7404,9 +7409,6 @@ class Team:
             if self.knowledge is None or self.knowledge.vector_db is None:
                 return None
 
-            if num_documents is None:
-                num_documents = self.knowledge.num_documents
-
             log_debug(f"Searching knowledge base with filters: {filters}")
             relevant_docs: List[Document] = self.knowledge.search(
                 query=query, num_documents=num_documents, filters=filters
@@ -7426,6 +7428,9 @@ class Team:
     ) -> Optional[List[Union[Dict[str, Any], str]]]:
         """Get relevant documents from knowledge base asynchronously."""
         from agno.document import Document
+
+        if num_documents is None and self.knowledge is not None:
+            num_documents = self.knowledge.num_documents
 
         # Validate the filters against known valid filter keys
         if self.knowledge is not None:
@@ -7462,9 +7467,6 @@ class Team:
         try:
             if self.knowledge is None or self.knowledge.vector_db is None:
                 return None
-
-            if num_documents is None:
-                num_documents = self.knowledge.num_documents
 
             log_debug(f"Searching knowledge base with filters: {filters}")
             relevant_docs: List[Document] = await self.knowledge.async_search(
