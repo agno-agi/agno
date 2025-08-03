@@ -84,32 +84,6 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
     """Run the contextual Team, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format."""
     run_id = input.run_id or str(uuid.uuid4())
     try:
-        # Handle continuation from a paused state
-        if (
-            hasattr(input, "state")
-            and input.state
-            and input.state.get("status") == "paused_for_confirmation"
-        ):
-            from agno.models.response import ToolExecution
-
-            updated_tools = [ToolExecution.from_dict(t) for t in input.state.get("tools_to_confirm", [])]
-
-            response_stream = await team.acontinue_run(
-                run_id=run_id,
-                updated_tools=updated_tools,
-                session_id=input.thread_id,
-                stream=True,
-                stream_intermediate_steps=True,
-            )
-
-            async for event in async_stream_agno_response_as_agui_events(
-                response_stream=response_stream,
-                thread_id=input.thread_id,
-                run_id=run_id,
-            ):
-                yield event
-            return
-
         # Extract the last user message for team execution
         messages = convert_agui_messages_to_agno_messages(input.messages or [])
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=run_id)
@@ -124,9 +98,7 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
 
         # Stream the response content in AG-UI format
         async for event in async_stream_agno_response_as_agui_events(
-            response_stream=response_stream,
-            thread_id=input.thread_id,
-            run_id=run_id,
+            response_stream=response_stream, thread_id=input.thread_id, run_id=run_id
         ):
             yield event
 
