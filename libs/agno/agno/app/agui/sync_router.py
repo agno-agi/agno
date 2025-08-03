@@ -84,11 +84,7 @@ def run_team(team: Team, input: RunAgentInput) -> Iterator[BaseEvent]:
     run_id = input.run_id or str(uuid.uuid4())
     try:
         # Handle continuation from a paused state
-        if (
-            hasattr(input, "state")
-            and input.state
-            and input.state.get("status") == "paused_for_confirmation"
-        ):
+        if hasattr(input, "state") and input.state and input.state.get("status") == "paused_for_confirmation":
             from agno.models.response import ToolExecution
 
             updated_tools = [ToolExecution.from_dict(t) for t in input.state.get("tools_to_confirm", [])]

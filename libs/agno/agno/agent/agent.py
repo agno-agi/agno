@@ -1431,7 +1431,7 @@ class Agent:
         )
 
         # Create a run_id for this specific run
-        run_id = run_id or str(uuid4()) 
+        run_id = run_id or str(uuid4())
 
         # Create a new run_response for this attempt
         run_response = RunResponse(
