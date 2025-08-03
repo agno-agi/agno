@@ -18,23 +18,26 @@ from fastapi.responses import StreamingResponse
 from agno.agent.agent import Agent
 from agno.app.agui.utils import async_stream_agno_response_as_agui_events, convert_agui_messages_to_agno_messages
 from agno.team.team import Team
+from agno.models.response import ToolExecution
 
 logger = logging.getLogger(__name__)
 
 
 async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
-    """Run the contextual Agent, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format."""
+    """
+    Run the contextual Agent, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format.
+
+    This function handles both starting a new run and continuing a paused run.
+    """
     run_id = run_input.run_id or str(uuid.uuid4())
 
     try:
-        # Handle continuation from a paused state
+        # Handle continuation from a paused state, otherwise start a new run
         if (
             hasattr(run_input, "state")
             and run_input.state
             and run_input.state.get("status") == "paused_for_confirmation"
         ):
-            from agno.models.response import ToolExecution
-
             updated_tools = [ToolExecution.from_dict(t) for t in run_input.state.get("tools_to_confirm", [])]
 
             response_stream = await agent.acontinue_run(
@@ -44,27 +47,19 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
                 stream=True,
                 stream_intermediate_steps=True,
             )
+        else:
+            # Preparing the input for the Agent and emitting the run started event
+            messages = convert_agui_messages_to_agno_messages(run_input.messages or [])
+            yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
-            async for event in async_stream_agno_response_as_agui_events(
-                response_stream=response_stream,
-                thread_id=run_input.thread_id,
+            # Request streaming response from agent
+            response_stream = await agent.arun(
                 run_id=run_id,
-            ):
-                yield event
-            return
-
-        # Preparing the input for the Agent and emitting the run started event
-        messages = convert_agui_messages_to_agno_messages(run_input.messages or [])
-        yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
-
-        # Request streaming response from agent
-        response_stream = await agent.arun(
-            run_id=run_id,
-            messages=messages,
-            session_id=run_input.thread_id,
-            stream=True,
-            stream_intermediate_steps=True,
-        )
+                messages=messages,
+                session_id=run_input.thread_id,
+                stream=True,
+                stream_intermediate_steps=True,
+            )
 
         # Stream the response content in AG-UI format
         async for event in async_stream_agno_response_as_agui_events(
