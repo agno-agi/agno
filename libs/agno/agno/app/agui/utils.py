@@ -167,15 +167,14 @@ def _create_events_from_chunk(
             tool_call = chunk.tool  # type: ignore
             start_event = ToolCallStartEvent(
                 type=EventType.TOOL_CALL_START,
-                tool_call_id=tool_call.tool_call_id,  # type: ignore
-                tool_call_name=tool_call.tool_name,  # type: ignore
+                tool_call_id = tool_call.tool_call_id or '',                tool_call_name=tool_call.tool_name,  # type: ignore
                 parent_message_id=message_id,
             )
             events_to_emit.append(start_event)
 
             args_event = ToolCallArgsEvent(
                 type=EventType.TOOL_CALL_ARGS,
-                tool_call_id=tool_call.tool_call_id,  # type: ignore
+                tool_call_id=tool_call.tool_call_id or '',  
                 delta=json.dumps(tool_call.tool_args),
             )
             events_to_emit.append(args_event)
@@ -187,14 +186,14 @@ def _create_events_from_chunk(
             if tool_call.tool_call_id not in event_buffer.ended_tool_call_ids:
                 end_event = ToolCallEndEvent(
                     type=EventType.TOOL_CALL_END,
-                    tool_call_id=tool_call.tool_call_id,  # type: ignore
+                    tool_call_id=tool_call.tool_call_id or '',  
                 )
                 events_to_emit.append(end_event)
 
                 if tool_call.result is not None:
                     result_event = ToolCallResultEvent(
                         type=EventType.TOOL_CALL_RESULT,
-                        tool_call_id=tool_call.tool_call_id,  # type: ignore
+                        tool_call_id=tool_call.tool_call_id or '',  
                         content=str(tool_call.result),
                         role="tool",
                         message_id=str(uuid.uuid4()),
