@@ -4305,7 +4305,7 @@ class Team:
             from agno.reasoning.openai import is_openai_reasoning_model
 
             reasoning_agent = self.reasoning_agent or get_reasoning_agent(
-                reasoning_model=reasoning_model, 
+                reasoning_model=reasoning_model,
                 monitoring=self.monitoring,
                 session_state=self.session_state,
                 context=self.context,
@@ -4535,7 +4535,7 @@ class Team:
             from agno.reasoning.openai import is_openai_reasoning_model
 
             reasoning_agent = self.reasoning_agent or get_reasoning_agent(
-                reasoning_model=reasoning_model, 
+                reasoning_model=reasoning_model,
                 monitoring=self.monitoring,
                 session_state=self.session_state,
                 context=self.context,
