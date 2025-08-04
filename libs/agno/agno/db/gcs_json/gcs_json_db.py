@@ -10,7 +10,6 @@ from agno.db.gcs_json.utils import (
     calculate_date_metrics,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
-    hydrate_session,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -30,12 +29,11 @@ class GcsJsonDb(BaseDb):
         bucket_name: str,
         prefix: Optional[str] = None,
         session_table: Optional[str] = None,
-        user_memory_table: Optional[str] = None,
+        memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         project: Optional[str] = None,
-        location: Optional[str] = None,
         credentials: Optional[Any] = None,
     ):
         """
@@ -43,9 +41,9 @@ class GcsJsonDb(BaseDb):
 
         Args:
             bucket_name (str): Name of the GCS bucket where JSON files will be stored.
-            prefix (Optional[str]): Path prefix for organizing files in the bucket.
+            prefix (Optional[str]): Path prefix for organizing files in the bucket. Defaults to "agno/".
             session_table (Optional[str]): Name of the JSON file to store sessions (without .json extension).
-            user_memory_table (Optional[str]): Name of the JSON file to store user memories.
+            memory_table (Optional[str]): Name of the JSON file to store user memories.
             metrics_table (Optional[str]): Name of the JSON file to store metrics.
             eval_table (Optional[str]): Name of the JSON file to store evaluation runs.
             knowledge_table (Optional[str]): Name of the JSON file to store knowledge content.
@@ -55,14 +53,14 @@ class GcsJsonDb(BaseDb):
         """
         super().__init__(
             session_table=session_table,
-            user_memory_table=user_memory_table,
+            memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
         )
 
         self.bucket_name = bucket_name
-        self.prefix = prefix or ""
+        self.prefix = prefix or "agno/"
         if self.prefix and not self.prefix.endswith("/"):
             self.prefix += "/"
 
@@ -208,17 +206,15 @@ class GcsJsonDb(BaseDb):
                     if session_data.get("session_type") != session_type_value:
                         continue
 
-                    session = hydrate_session(session_data)
-
                     if not deserialize:
-                        return session
+                        return session_data
 
                     if session_type == SessionType.AGENT:
-                        return AgentSession.from_dict(session)
+                        return AgentSession.from_dict(session_data)
                     elif session_type == SessionType.TEAM:
-                        return TeamSession.from_dict(session)
+                        return TeamSession.from_dict(session_data)
                     elif session_type == SessionType.WORKFLOW:
-                        return WorkflowSession.from_dict(session)
+                        return WorkflowSession.from_dict(session_data)
 
         except Exception as e:
             log_warning(f"Exception reading from session file: {e}")
@@ -302,16 +298,15 @@ class GcsJsonDb(BaseDb):
                     start_idx = (page - 1) * limit
                 filtered_sessions = filtered_sessions[start_idx : start_idx + limit]
 
-            hydrated_sessions = [hydrate_session(session_data) for session_data in filtered_sessions]
             if not deserialize:
-                return hydrated_sessions, total_count
+                return filtered_sessions, total_count
 
             if session_type == SessionType.AGENT:
-                return [AgentSession.from_dict(session) for session in hydrated_sessions]
+                return [AgentSession.from_dict(session) for session in filtered_sessions]
             elif session_type == SessionType.TEAM:
-                return [TeamSession.from_dict(session) for session in hydrated_sessions]
+                return [TeamSession.from_dict(session) for session in filtered_sessions]
             elif session_type == SessionType.WORKFLOW:
-                return [WorkflowSession.from_dict(session) for session in hydrated_sessions]
+                return [WorkflowSession.from_dict(session) for session in filtered_sessions]
             else:
                 raise ValueError(f"Invalid session type: {session_type}")
 
@@ -339,23 +334,24 @@ class GcsJsonDb(BaseDb):
                     sessions[i] = session_data
                     self._write_json_file(self.session_table_name, sessions)
 
-                    session = hydrate_session(session_data)
                     if not deserialize:
-                        return session
+                        return session_data
 
                     if session_type == SessionType.AGENT:
-                        return AgentSession.from_dict(session)
+                        return AgentSession.from_dict(session_data)
                     elif session_type == SessionType.TEAM:
-                        return TeamSession.from_dict(session)
+                        return TeamSession.from_dict(session_data)
                     elif session_type == SessionType.WORKFLOW:
-                        return WorkflowSession.from_dict(session)
+                        return WorkflowSession.from_dict(session_data)
 
             return None
         except Exception as e:
             log_warning(f"Exception renaming session: {e}")
             return None
 
-    def upsert_session(self, session: Session, deserialize: Optional[bool] = True) -> Optional[Session]:
+    def upsert_session(
+        self, session: Session, deserialize: Optional[bool] = True
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Insert or update a session in the GCS JSON file."""
         try:
             sessions = self._read_json_file(self.session_table_name)
@@ -391,6 +387,7 @@ class GcsJsonDb(BaseDb):
 
             if not deserialize:
                 return session_dict
+
             return session
 
         except Exception as e:
@@ -411,12 +408,12 @@ class GcsJsonDb(BaseDb):
     def delete_user_memory(self, memory_id: str) -> bool:
         """Delete a user memory from the GCS JSON file."""
         try:
-            memories = self._read_json_file(self.user_memory_table_name)
+            memories = self._read_json_file(self.memory_table_name)
             original_count = len(memories)
             memories = [m for m in memories if m.get("memory_id") != memory_id]
 
             if len(memories) < original_count:
-                self._write_json_file(self.user_memory_table_name, memories)
+                self._write_json_file(self.memory_table_name, memories)
                 log_debug(f"Successfully deleted user memory id: {memory_id}")
                 return True
             else:
@@ -429,9 +426,9 @@ class GcsJsonDb(BaseDb):
     def delete_user_memories(self, memory_ids: List[str]) -> None:
         """Delete multiple user memories from the GCS JSON file."""
         try:
-            memories = self._read_json_file(self.user_memory_table_name)
+            memories = self._read_json_file(self.memory_table_name)
             memories = [m for m in memories if m.get("memory_id") not in memory_ids]
-            self._write_json_file(self.user_memory_table_name, memories)
+            self._write_json_file(self.memory_table_name, memories)
             log_debug(f"Successfully deleted user memories with ids: {memory_ids}")
         except Exception as e:
             log_warning(f"Error deleting user memories: {e}")
@@ -439,7 +436,7 @@ class GcsJsonDb(BaseDb):
     def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from the GCS JSON file."""
         try:
-            memories = self._read_json_file(self.user_memory_table_name)
+            memories = self._read_json_file(self.memory_table_name)
             topics = set()
             for memory in memories:
                 memory_topics = memory.get("topics", [])
@@ -450,15 +447,18 @@ class GcsJsonDb(BaseDb):
             log_warning(f"Exception reading from memory file: {e}")
             return []
 
-    def get_user_memory(self, memory_id: str, deserialize: Optional[bool] = True) -> Optional[UserMemory]:
+    def get_user_memory(
+        self, memory_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """Get a memory from the GCS JSON file."""
         try:
-            memories = self._read_json_file(self.user_memory_table_name)
+            memories = self._read_json_file(self.memory_table_name)
 
             for memory_data in memories:
                 if memory_data.get("memory_id") == memory_id:
                     if not deserialize:
                         return memory_data
+
                     return UserMemory.from_dict(memory_data)
 
             return None
@@ -482,7 +482,7 @@ class GcsJsonDb(BaseDb):
     ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
         """Get all memories from the GCS JSON file with filtering and pagination."""
         try:
-            memories = self._read_json_file(self.user_memory_table_name)
+            memories = self._read_json_file(self.memory_table_name)
 
             # Apply filters
             filtered_memories = []
@@ -532,7 +532,7 @@ class GcsJsonDb(BaseDb):
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memory statistics."""
         try:
-            memories = self._read_json_file(self.user_memory_table_name)
+            memories = self._read_json_file(self.memory_table_name)
             user_stats = {}
 
             for memory in memories:
@@ -541,9 +541,9 @@ class GcsJsonDb(BaseDb):
                     if user_id not in user_stats:
                         user_stats[user_id] = {"user_id": user_id, "total_memories": 0, "last_memory_updated_at": 0}
                     user_stats[user_id]["total_memories"] += 1
-                    last_updated = memory.get("last_updated", 0)
-                    if last_updated > user_stats[user_id]["last_memory_updated_at"]:
-                        user_stats[user_id]["last_memory_updated_at"] = last_updated
+                    updated_at = memory.get("updated_at", 0)
+                    if updated_at > user_stats[user_id]["last_memory_updated_at"]:
+                        user_stats[user_id]["last_memory_updated_at"] = updated_at
 
             stats_list = list(user_stats.values())
             stats_list.sort(key=lambda x: x["last_memory_updated_at"], reverse=True)
@@ -568,13 +568,13 @@ class GcsJsonDb(BaseDb):
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """Upsert a user memory in the GCS JSON file."""
         try:
-            memories = self._read_json_file(self.user_memory_table_name)
+            memories = self._read_json_file(self.memory_table_name)
 
             if memory.memory_id is None:
                 memory.memory_id = str(uuid4())
 
             memory_dict = memory.to_dict() if hasattr(memory, "to_dict") else memory.__dict__
-            memory_dict["last_updated"] = int(time.time())
+            memory_dict["updated_at"] = int(time.time())
 
             # Find existing memory to update
             memory_updated = False
@@ -587,7 +587,7 @@ class GcsJsonDb(BaseDb):
             if not memory_updated:
                 memories.append(memory_dict)
 
-            self._write_json_file(self.user_memory_table_name, memories)
+            self._write_json_file(self.memory_table_name, memories)
 
             if not deserialize:
                 return memory_dict
@@ -596,6 +596,19 @@ class GcsJsonDb(BaseDb):
         except Exception as e:
             log_error(f"Exception upserting user memory: {e}")
             return None
+
+    def clear_memories(self) -> None:
+        """Delete all memories from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            # Simply write an empty list to the memory JSON file
+            self._write_json_file(self.memory_table_name, [])
+
+        except Exception as e:
+            log_warning(f"Exception deleting all memories: {e}")
 
     # -- Metrics methods --
     def calculate_metrics(self) -> Optional[list[dict]]:

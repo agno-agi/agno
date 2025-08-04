@@ -32,7 +32,9 @@ def hydrate_session(session: dict) -> dict:
     return session
 
 
-def apply_sorting(data: List[Dict[str, Any]], sort_by: Optional[str] = None, sort_order: Optional[str] = None) -> List[Dict[str, Any]]:
+def apply_sorting(
+    data: List[Dict[str, Any]], sort_by: Optional[str] = None, sort_order: Optional[str] = None
+) -> List[Dict[str, Any]]:
     """Apply sorting to the given data list.
 
     Args:
