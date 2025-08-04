@@ -4,7 +4,7 @@ This example demonstrates how to use the MCP protocol to coordinate a team of ag
 Prerequisites:
 - Google Maps:
     - Set the environment variable `GOOGLE_MAPS_API_KEY` with your Google Maps API key.
-    You can obtain the API key from the Google Cloud Console:
+    You can obtain the API token from the Google Cloud Console:
     https://console.cloud.google.com/projectselector2/google/maps-apis/credentials
 
     - You also need to activate the Address Validation API for your .
@@ -12,7 +12,7 @@ Prerequisites:
 
 - Apify:
     - Set the environment variable `APIFY_TOKEN` with your Apify API token.
-    You can obtain the API key from the Apify Console:
+    You can obtain the API token from the Apify Console:
     https://console.apify.com/settings/integrations
 
 """

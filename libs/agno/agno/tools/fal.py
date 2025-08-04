@@ -25,9 +25,9 @@ class FalTools(Toolkit):
         model: str = "fal-ai/hunyuan-video",
         **kwargs,
     ):
-        self.api_key = api_key or getenv("FAL_KEY")
+        self.api_key = api_key or getenv("FAL_API_KEY")
         if not self.api_key:
-            logger.error("FAL_KEY not set. Please set the FAL_KEY environment variable.")
+            logger.error("FAL_API_KEY not set. Please set the FAL_API_KEY environment variable.")
         self.model = model
         self.seen_logs: set[str] = set()
 
