@@ -6213,7 +6213,7 @@ class Team:
                 member_agent.enable_agentic_knowledge_filters = self.enable_agentic_knowledge_filters
 
             if stream:
-                member_agent_run_response_stream = await member_agent.arun(
+                member_agent_run_response_stream = member_agent.arun(
                     message=member_agent_task if history is None else None,
                     user_id=user_id,
                     # All members have the same session_id
@@ -6595,7 +6595,7 @@ class Team:
 
             # 2. Get the response from the member agent
             if stream:
-                member_agent_run_response_stream = await member_agent.arun(
+                member_agent_run_response_stream = member_agent.arun(
                     message=member_agent_task if history is None else None,
                     user_id=user_id,
                     # All members have the same session_id
