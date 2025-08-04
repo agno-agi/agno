@@ -146,11 +146,11 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
             else:
                 raise HTTPException(status_code=400, detail=f"Invalid reader_id: {update_data.reader_id}")
 
-        content = knowledge.patch_content(content)
-        if not content:
+        updated_content_dict = knowledge.patch_content(content)
+        if not updated_content_dict:
             raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
 
-        return ContentResponseSchema.from_dict(content)
+        return ContentResponseSchema.from_dict(updated_content_dict)
 
     @router.get("/content", response_model=PaginatedResponse[ContentResponseSchema], status_code=200)
     def get_content(
