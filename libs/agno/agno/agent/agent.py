@@ -264,7 +264,7 @@ class Agent:
 
     # --- Agent Response Model Settings ---
     # Provide a response model to get the response as a Pydantic model
-    response_model: Optional[Type[BaseModel]] = None
+    response_model: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
     # Provide a secondary model to parse the response from the primary model
     parser_model: Optional[Model] = None
     # Provide a prompt for the parser model
@@ -407,7 +407,7 @@ class Agent:
         exponential_backoff: bool = False,
         parser_model: Optional[Model] = None,
         parser_model_prompt: Optional[str] = None,
-        response_model: Optional[Type[BaseModel]] = None,
+        response_model: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         parse_response: bool = True,
         structured_outputs: Optional[bool] = None,
         use_json_mode: bool = False,
@@ -2424,9 +2424,8 @@ class Agent:
         # Handle JSON schema as a dictionary
         if isinstance(self.response_model, dict):
             if isinstance(run_response.content, str):
+                import json
                 try:
-                    import json
-
                     structured_output = json.loads(run_response.content)
                     run_response.content = structured_output
                     if hasattr(run_response, "content_type"):
