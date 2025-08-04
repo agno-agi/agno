@@ -32,8 +32,8 @@ class KnowledgeRow(BaseModel):
         return self
 
     def to_dict(self) -> Dict[str, Any]:
-        _dict = self.model_dump(exclude={"last_updated"})
+        _dict = self.model_dump(exclude={"updated_at"})
 
-        _dict["last_updated"] = datetime.fromtimestamp(self.updated_at).isoformat() if self.updated_at else None
+        _dict["updated_at"] = datetime.fromtimestamp(self.updated_at).isoformat() if self.updated_at else None
 
         return _dict

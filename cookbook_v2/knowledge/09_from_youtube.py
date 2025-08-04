@@ -1,5 +1,6 @@
-"""This cookbook shows how to add content from a URL to the knowledge base.
-1. Run: `python cookbook/agent_concepts/knowledge/02_from_url.py` to run the cookbook
+"""This cookbook shows how to add content from a Youtube video to Knowledge.
+
+1. Run: `python cookbook/agent_concepts/knowledge/09_from_youtube.py` to run the cookbook
 """
 
 from agno.agent import Agent
@@ -15,7 +16,7 @@ knowledge = Knowledge(
     ),
 )
 
-# Add from Youtube link to knowledge
+# Add from Youtube link to knowledge. Youtube links are automatically detected and the reader is assigned automatically.
 knowledge.add_content(
     name="Agents from Scratch",
     url="https://www.youtube.com/watch?v=nLkBNnnA8Ac",

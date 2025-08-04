@@ -55,7 +55,6 @@ team = Team(
     ],
     # Set enable_team_history=true to add the previous chat history to the messages sent to the Model.
     enable_team_history=True,
-    show_tool_calls=True,
     markdown=True,
     show_members_responses=True,
     memory=memory,

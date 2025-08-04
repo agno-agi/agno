@@ -1,5 +1,6 @@
 from agno.agent import Agent
-from agno.knowledge.pdf import PDFKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.reader.pdf_reader import PDFReader
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.utils.media import (
@@ -20,8 +21,12 @@ vector_db = LanceDb(
     uri="tmp/lancedb",  # You can change this path to store data elsewhere
 )
 
-knowledge_base = PDFKnowledgeBase(
-    path=[
+knowledge_base = Knowledge(
+    vector_db=vector_db,
+)
+
+knowledge_base.add_contents(
+    [
         {
             "path": downloaded_cv_paths[0],
             "metadata": {
@@ -63,7 +68,7 @@ knowledge_base = PDFKnowledgeBase(
             },
         },
     ],
-    vector_db=vector_db,
+    reader=PDFReader(chunk=True),
 )
 
 web_agent = Agent(
@@ -84,8 +89,6 @@ team_with_knowledge = Team(
     markdown=True,
     knowledge_filters={"user_id": "jordan_mitchell"},
 )
-
-knowledge_base.load(recreate=True)
 
 team_with_knowledge.print_response(
     "Tell me about Jordan Mitchell's work and experience"

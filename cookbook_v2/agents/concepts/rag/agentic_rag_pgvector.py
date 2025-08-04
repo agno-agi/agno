@@ -31,7 +31,6 @@ agent = Agent(
     # Add a tool to search the knowledge base which enables agentic RAG.
     # This is enabled by default when `knowledge` is provided to the Agent.
     search_knowledge=True,
-    show_tool_calls=True,
     markdown=True,
 )
 agent.print_response(

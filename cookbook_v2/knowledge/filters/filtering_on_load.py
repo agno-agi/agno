@@ -23,7 +23,7 @@ vector_db = LanceDb(
 # ------------------------------------------------------------------------------
 # When loading the knowledge base, we can attach metadata that will be used for filtering
 
-# Initialize the PDFKnowledgeBase
+# Initialize Knowledge
 knowledge = Knowledge(
     vector_db=vector_db,
     max_results=5,

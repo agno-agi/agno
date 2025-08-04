@@ -138,7 +138,6 @@ web_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[DuckDuckGoTools()],
     instructions="Always include sources",
-    show_tool_calls=True,
     markdown=True,
 )
 
@@ -148,7 +147,7 @@ finance_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)],
     instructions="Use tables to display data",
-    show_tool_calls=True,
+
     markdown=True,
 )
 
@@ -158,7 +157,7 @@ agent_team = Team(
     model=OpenAIChat(id="gpt-4o"),
     success_criteria="A comprehensive financial news report with clear sections and data-driven insights.",
     instructions=["Always include sources", "Use tables to display data"],
-    show_tool_calls=True,
+
     markdown=True,
 )
 

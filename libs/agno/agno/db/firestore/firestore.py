@@ -755,9 +755,9 @@ class FirestoreDb(BaseDb):
                             "last_memory_updated_at": 0,
                         }
                     user_stats[user_id]["total_memories"] += 1
-                    last_updated = data.get("last_updated", 0)
-                    if last_updated > user_stats[user_id]["last_memory_updated_at"]:
-                        user_stats[user_id]["last_memory_updated_at"] = last_updated
+                    updated_at = data.get("updated_at", 0)
+                    if updated_at > user_stats[user_id]["last_memory_updated_at"]:
+                        user_stats[user_id]["last_memory_updated_at"] = updated_at
 
             # Convert to list and sort
             formatted_results = list(user_stats.values())
@@ -802,7 +802,7 @@ class FirestoreDb(BaseDb):
                 memory.memory_id = str(uuid4())
 
             update_doc = memory.to_dict()
-            update_doc["last_updated"] = int(time.time())
+            update_doc["updated_at"] = int(time.time())
 
             # Find existing document or create new one
             docs = collection_ref.where("memory_id", "==", memory.memory_id).stream()

@@ -1,12 +1,14 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union
 
+from fastapi import WebSocket
 from pydantic import BaseModel
 
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.models.metrics import Metrics
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
+from agno.utils.log import log_warning
 
 
 @dataclass
@@ -346,3 +348,54 @@ class WorkflowMetrics:
             total_steps=data["total_steps"],
             steps=steps,
         )
+
+
+@dataclass
+class WebSocketHandler:
+    """Generic WebSocket handler for real-time workflow events"""
+
+    websocket: Optional[WebSocket] = None
+
+    async def handle_event(self, event: Any) -> None:
+        """Handle an event object - serializes and sends via WebSocket"""
+        if not self.websocket:
+            return
+
+        try:
+            if hasattr(event, "to_dict"):
+                data = event.to_dict()
+            elif hasattr(event, "__dict__"):
+                data = event.__dict__
+            elif isinstance(event, dict):
+                data = event
+            else:
+                data = {"type": "message", "content": str(event)}
+
+            import json
+
+            await self.websocket.send_text(json.dumps(data))
+
+        except Exception as e:
+            log_warning(f"Failed to handle WebSocket event: {e}")
+
+    async def handle_text(self, message: str) -> None:
+        """Handle a plain text message"""
+        if not self.websocket:
+            return
+
+        try:
+            await self.websocket.send_text(message)
+        except Exception as e:
+            log_warning(f"Failed to send WebSocket text: {e}")
+
+    async def handle_dict(self, data: Dict[str, Any]) -> None:
+        """Handle a dictionary directly"""
+        if not self.websocket:
+            return
+
+        try:
+            import json
+
+            await self.websocket.send_text(json.dumps(data))
+        except Exception as e:
+            log_warning(f"Failed to send WebSocket dict: {e}")

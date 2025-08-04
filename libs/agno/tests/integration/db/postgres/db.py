@@ -90,9 +90,9 @@ def test_create_table_with_indexes(postgres_db_real):
         )
         indexes = [row[0] for row in result]
 
-        # Should have indexes on user_id and last_updated
+        # Should have indexes on user_id and updated_at
         assert any("user_id" in idx for idx in indexes)
-        assert any("last_updated" in idx for idx in indexes)
+        assert any("updated_at" in idx for idx in indexes)
 
 
 def test_get_or_create_existing_table(postgres_db_real):

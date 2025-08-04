@@ -647,7 +647,7 @@ def test_upsert_session_handles_all_team_session_fields(postgres_db_real: Postgr
     team_summary = SessionSummary(
         summary="Comprehensive team session summary",
         topics=["tests", "fake"],
-        last_updated=datetime.now(),
+        updated_at=datetime.now(),
     )
 
     comprehensive_team_session = TeamSession(

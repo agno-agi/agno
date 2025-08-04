@@ -743,7 +743,7 @@ class MongoDb(BaseDb):
                     "$group": {
                         "_id": "$user_id",
                         "total_memories": {"$sum": 1},
-                        "last_memory_updated_at": {"$max": "$last_updated"},
+                        "last_memory_updated_at": {"$max": "$updated_at"},
                     }
                 },
                 {"$sort": {"last_memory_updated_at": -1}},
@@ -804,11 +804,10 @@ class MongoDb(BaseDb):
                 "user_id": memory.user_id,
                 "agent_id": memory.agent_id,
                 "team_id": memory.team_id,
-                "workflow_id": None,
                 "memory_id": memory.memory_id,
                 "memory": memory.memory,
                 "topics": memory.topics,
-                "last_updated": int(time.time()),
+                "updated_at": int(time.time()),
             }
 
             result = collection.replace_one({"memory_id": memory.memory_id}, update_doc, upsert=True)
@@ -913,9 +912,13 @@ class MongoDb(BaseDb):
                 log_info("Metrics already calculated for all relevant dates.")
                 return None
 
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             sessions = self._get_all_sessions_for_metrics_calculation(
@@ -1322,25 +1325,3 @@ class MongoDb(BaseDb):
         except Exception as e:
             log_error(f"Error updating eval run name {eval_run_id}: {e}")
             raise
-
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
-        """Get knowledge content by ID."""
-        raise NotImplementedError
-
-    def get_knowledge_contents(
-        self,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-    ) -> Tuple[List[KnowledgeRow], int]:
-        """Get all knowledge content from the database."""
-        raise NotImplementedError
-
-    def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
-        """Upsert knowledge content in the database."""
-        raise NotImplementedError
-
-    def delete_knowledge_content(self, id: str):
-        """Delete knowledge content by ID."""
-        raise NotImplementedError

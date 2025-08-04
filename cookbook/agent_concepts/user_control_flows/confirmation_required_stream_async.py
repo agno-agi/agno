@@ -62,7 +62,7 @@ agent = Agent(
 
 
 async def main():
-    async for run_response in await agent.arun(
+    async for run_response in agent.arun(
         "Fetch the top 2 hackernews stories", stream=True
     ):
         if run_response.is_paused:
@@ -84,10 +84,9 @@ async def main():
                 else:
                     # We update the tools in place
                     tool.confirmed = True
-            run_response = await agent.acontinue_run(
+            async for resp in agent.acontinue_run(
                 run_response=run_response, stream=True
-            )
-            async for resp in run_response:
+            ):
                 print(resp.content, end="")
 
     # Or for simple debug flow

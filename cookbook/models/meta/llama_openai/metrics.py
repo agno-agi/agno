@@ -10,7 +10,6 @@ agent = Agent(
     model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
     tools=[YFinanceTools(stock_price=True)],
     markdown=True,
-    show_tool_calls=True,
 )
 
 run_stream: Iterator[RunResponse] = agent.run(

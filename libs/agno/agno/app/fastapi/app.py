@@ -33,7 +33,6 @@ class FastAPIApp(BaseAPIApp):
         name: Optional[str] = None,
         description: Optional[str] = None,
         version: Optional[str] = None,
-        monitoring: bool = True,
     ):
         if not agents and not teams and not workflows:
             raise ValueError("Either agents, teams or workflows must be provided.")
@@ -48,7 +47,6 @@ class FastAPIApp(BaseAPIApp):
 
         self.app_id: Optional[str] = app_id
         self.name: Optional[str] = name
-        self.monitoring = monitoring
         self.description = description
         self.version = version
 

@@ -12,7 +12,7 @@ class UserMemory:
     topics: Optional[List[str]] = None
     user_id: Optional[str] = None
     input: Optional[str] = None
-    last_updated: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     feedback: Optional[str] = None
 
     agent_id: Optional[str] = None
@@ -24,7 +24,7 @@ class UserMemory:
             "memory_id": self.memory_id,
             "memory": self.memory,
             "topics": self.topics,
-            "last_updated": self.last_updated.isoformat() if self.last_updated else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "input": self.input,
             "user_id": self.user_id,
             "agent_id": self.agent_id,

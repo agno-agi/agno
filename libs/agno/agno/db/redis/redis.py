@@ -785,9 +785,9 @@ class RedisDb(BaseDb):
                     }
 
                 user_stats[user_id]["total_memories"] += 1
-                last_updated = memory.get("last_updated", 0)
-                if last_updated > user_stats[user_id]["last_memory_updated_at"]:
-                    user_stats[user_id]["last_memory_updated_at"] = last_updated
+                updated_at = memory.get("updated_at", 0)
+                if updated_at > user_stats[user_id]["last_memory_updated_at"]:
+                    user_stats[user_id]["last_memory_updated_at"] = updated_at
 
             stats_list = list(user_stats.values())
 
@@ -823,11 +823,10 @@ class RedisDb(BaseDb):
                 "user_id": memory.user_id,
                 "agent_id": memory.agent_id,
                 "team_id": memory.team_id,
-                "workflow_id": None,
                 "memory_id": memory.memory_id,
                 "memory": memory.memory,
                 "topics": memory.topics,
-                "last_updated": int(time.time()),
+                "updated_at": int(time.time()),
             }
 
             success = self._store_record(
@@ -1367,25 +1366,3 @@ class RedisDb(BaseDb):
         except Exception as e:
             log_error(f"Error updating eval run name {eval_run_id}: {e}")
             raise
-
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
-        """Get knowledge content by ID."""
-        raise NotImplementedError
-
-    def get_knowledge_contents(
-        self,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-    ) -> Tuple[List[KnowledgeRow], int]:
-        """Get all knowledge content from the database."""
-        raise NotImplementedError
-
-    def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
-        """Upsert knowledge content in the database."""
-        raise NotImplementedError
-
-    def delete_knowledge_content(self, id: str):
-        """Delete knowledge content by ID."""
-        raise NotImplementedError

@@ -5,7 +5,6 @@ from agno.tools.yfinance import YFinanceTools
 agent = Agent(
     model=OpenAIResponses(id="o3-mini", reasoning_effort="high"),
     tools=[YFinanceTools(enable_all=True)],
-    show_tool_calls=True,
     markdown=True,
 )
 

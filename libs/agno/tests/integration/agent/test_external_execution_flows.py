@@ -15,7 +15,6 @@ def test_tool_call_requires_external_execution():
         tools=[send_email],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Send an email to john@doe.com with the subject 'Test' and the body 'Hello, how are you?'")
@@ -42,7 +41,6 @@ def test_tool_call_requires_external_execution_stream():
         tools=[send_email],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     found_external_execution = False
@@ -81,7 +79,6 @@ async def test_tool_call_requires_external_execution_async():
         tools=[send_email],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = await agent.arun(
@@ -110,7 +107,6 @@ def test_tool_call_requires_external_execution_error():
         tools=[send_email],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Send an email to john@doe.com with the subject 'Test' and the body 'Hello, how are you?'")
@@ -131,11 +127,10 @@ async def test_tool_call_requires_external_execution_stream_async():
         tools=[send_email],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     found_external_execution = False
-    async for response in await agent.arun(
+    async for response in agent.arun(
         "Send an email to john@doe.com with the subject 'Test' and the body 'Hello, how are you?'", stream=True
     ):
         if response.is_paused:
@@ -153,7 +148,7 @@ async def test_tool_call_requires_external_execution_stream_async():
     assert found_external_execution, "No tools were found to require external execution"
 
     found_external_execution = False
-    async for response in await agent.acontinue_run(run_id=response.run_id, updated_tools=response.tools, stream=True):
+    async for response in agent.acontinue_run(run_id=response.run_id, updated_tools=response.tools, stream=True):
         if response.is_paused:
             found_external_execution = True
     assert found_external_execution is False, "Some tools still require external execution"
@@ -172,7 +167,6 @@ def test_tool_call_multiple_requires_external_execution():
         tools=[get_the_weather, get_activities],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the weather in Tokyo and what are the activities?")

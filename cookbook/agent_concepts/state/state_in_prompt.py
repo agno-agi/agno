@@ -9,7 +9,6 @@ agent = Agent(
     session_state={"user_name": "John"},
     # You can use variables from the session state in the instructions
     instructions="Users name is {user_name}",
-    show_tool_calls=True,
     add_state_in_messages=True,
     markdown=True,
 )

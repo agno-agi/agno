@@ -47,7 +47,6 @@ knowledge = Knowledge(
 agent = Agent(
     knowledge=knowledge,
     search_knowledge=True,
-    show_tool_calls=True,
 )
 
 if __name__ == "__main__":

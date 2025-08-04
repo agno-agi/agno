@@ -699,7 +699,7 @@ class DynamoDb(BaseDb):
                 items = execute_query_with_pagination(
                     self.client,
                     table_name,
-                    "user_id-last_updated-index",
+                    "user_id-updated_at-index",
                     key_condition_expression,
                     expression_attribute_names,
                     expression_attribute_values,
@@ -732,7 +732,7 @@ class DynamoDb(BaseDb):
 
             items = [deserialize_from_dynamodb_item(item) for item in items]
 
-            if sort_by and sort_by != "last_updated":
+            if sort_by and sort_by != "updated_at":
                 items = apply_sorting(items, sort_by, sort_order)
 
             if page:
@@ -800,16 +800,16 @@ class DynamoDb(BaseDb):
 
                     user_stats[user_id]["total_memories"] += 1
 
-                    last_updated = memory_data.get("last_updated")
-                    if last_updated:
-                        last_updated_dt = datetime.fromisoformat(last_updated.replace("Z", "+00:00"))
-                        last_updated_timestamp = int(last_updated_dt.timestamp())
+                    updated_at = memory_data.get("updated_at")
+                    if updated_at:
+                        updated_at_dt = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+                        updated_at_timestamp = int(updated_at_dt.timestamp())
 
-                        if last_updated_timestamp and (
+                        if updated_at_timestamp and (
                             user_stats[user_id]["last_memory_updated_at"] is None
-                            or last_updated_timestamp > user_stats[user_id]["last_memory_updated_at"]
+                            or updated_at_timestamp > user_stats[user_id]["last_memory_updated_at"]
                         ):
-                            user_stats[user_id]["last_memory_updated_at"] = last_updated_timestamp
+                            user_stats[user_id]["last_memory_updated_at"] = updated_at_timestamp
 
             # Convert to list and apply sorting
             stats_list = list(user_stats.values())
@@ -848,7 +848,7 @@ class DynamoDb(BaseDb):
         try:
             table_name = self._get_table("memories")
             memory_dict = memory.to_dict()
-            memory_dict["last_updated"] = datetime.now(timezone.utc).isoformat()
+            memory_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
             item = serialize_to_dynamo_item(memory_dict)
 
             self.client.put_item(TableName=table_name, Item=item)

@@ -729,7 +729,8 @@ class SqliteDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 stmt = select(func.json_array_elements_text(table.c.topics))
                 result = sess.execute(stmt).fetchall()
-                return [record[0] for record in result]
+
+                return list(set([record[0] for record in result]))
 
         except Exception as e:
             log_debug(f"Exception reading from memory table: {e}")
@@ -890,11 +891,11 @@ class SqliteDb(BaseDb):
                     select(
                         table.c.user_id,
                         func.count(table.c.memory_id).label("total_memories"),
-                        func.max(table.c.last_updated).label("last_memory_updated_at"),
+                        func.max(table.c.updated_at).label("last_memory_updated_at"),
                     )
                     .where(table.c.user_id.is_not(None))
                     .group_by(table.c.user_id)
-                    .order_by(func.max(table.c.last_updated).desc())
+                    .order_by(func.max(table.c.updated_at).desc())
                 )
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
@@ -954,7 +955,7 @@ class SqliteDb(BaseDb):
                     memory=memory.memory,
                     topics=memory.topics,
                     input=memory.input,
-                    last_updated=int(time.time()),
+                    updated_at=int(time.time()),
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["memory_id"],
@@ -962,7 +963,7 @@ class SqliteDb(BaseDb):
                         memory=memory.memory,
                         topics=memory.topics,
                         input=memory.input,
-                        last_updated=int(time.time()),
+                        updated_at=int(time.time()),
                     ),
                 ).returning(table)
 
@@ -1098,9 +1099,13 @@ class SqliteDb(BaseDb):
                 log_info("Metrics already calculated for all relevant dates.")
                 return None
 
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             sessions = self._get_all_sessions_for_metrics_calculation(
@@ -1559,25 +1564,3 @@ class SqliteDb(BaseDb):
         except Exception as e:
             log_error(f"Error renaming eval run {eval_run_id}: {e}")
             raise
-
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
-        """Get knowledge content by ID."""
-        raise NotImplementedError
-
-    def get_knowledge_contents(
-        self,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-    ) -> Tuple[List[KnowledgeRow], int]:
-        """Get all knowledge content from the database."""
-        raise NotImplementedError
-
-    def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
-        """Upsert knowledge content in the database."""
-        raise NotImplementedError
-
-    def delete_knowledge_content(self, id: str):
-        """Delete knowledge content by ID."""
-        raise NotImplementedError

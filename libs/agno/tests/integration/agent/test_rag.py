@@ -6,7 +6,7 @@ import pytest_asyncio
 
 from agno.agent.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.models.openai.chat import OpenAIChat
 from agno.vectordb.lancedb.lance_db import LanceDb
 from agno.vectordb.search import SearchType
@@ -23,8 +23,7 @@ def event_loop():
 
 @pytest_asyncio.fixture(scope="session")
 async def loaded_knowledge_base():
-    knowledge_base = PDFUrlKnowledgeBase(
-        urls=["https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf"],
+    knowledge = Knowledge(
         vector_db=LanceDb(
             table_name="recipes",
             uri="tmp/lancedb",
@@ -32,15 +31,17 @@ async def loaded_knowledge_base():
             embedder=OpenAIEmbedder(),
         ),
     )
-    await knowledge_base.aload()
-    return knowledge_base
+    await knowledge.async_add_content(
+        url="https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
+    )
+    return knowledge
 
 
 @pytest.mark.asyncio
-async def test_add_references(loaded_knowledge_base):
+async def test_add_references(loaded_knowledge):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        knowledge=loaded_knowledge_base,
+        knowledge=loaded_knowledge,
         # Enable RAG by adding references from AgentKnowledge to the user prompt.
         add_references=True,
         # Set as False because Agents default to `search_knowledge=True`

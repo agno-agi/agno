@@ -381,10 +381,6 @@ def utilities_widget(agent: Agent) -> None:
             mime="text/markdown",
         ):
             st.sidebar.success("Chat history exported!")
-    if agent is not None and agent.knowledge is not None:
-        if st.sidebar.button("📚 Load Knowledge"):
-            agent.knowledge.load()
-            st.sidebar.success("Knowledge loaded!")
 
 
 def about_widget() -> None:

@@ -1,5 +1,6 @@
 from agno.agent import Agent
-from agno.knowledge.pdf import PDFKnowledgeBase, PDFReader
+from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.reader.pdf_reader import PDFReader
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -8,16 +9,17 @@ from agno.tools.slack import SlackTools
 from agno.tools.yfinance import YFinanceTools
 from agno.vectordb.pgvector.pgvector import PgVector
 
-knowledge_base = PDFKnowledgeBase(
-    path="cookbook/teams/coordinate/data",
+knowledge = Knowledge(
     vector_db=PgVector(
         table_name="autonomous_startup_team",
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
     ),
-    reader=PDFReader(chunk=True),
 )
 
-knowledge_base.load(recreate=False)
+knowledge.add_content(
+    path="cookbook/teams/coordinate/data",
+    reader=PDFReader(chunk=True),
+)
 
 support_channel = "testing"
 sales_channel = "sales"
@@ -28,7 +30,7 @@ legal_compliance_agent = Agent(
     role="Legal Compliance",
     model=OpenAIChat("gpt-4o"),
     tools=[ExaTools()],
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     instructions=[
         "You are the Legal Compliance Agent of a startup, responsible for ensuring legal and regulatory compliance.",
         "Key Responsibilities:",
@@ -49,7 +51,7 @@ product_manager_agent = Agent(
     name="Product Manager Agent",
     role="Product Manager",
     model=OpenAIChat("gpt-4o"),
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     instructions=[
         "You are the Product Manager of a startup, responsible for product strategy and execution.",
         "Key Responsibilities:",
@@ -73,7 +75,7 @@ market_research_agent = Agent(
     role="Market Research",
     model=OpenAIChat("gpt-4o"),
     tools=[DuckDuckGoTools(), ExaTools()],
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     instructions=[
         "You are the Market Research Agent of a startup, responsible for market intelligence and analysis.",
         "Key Responsibilities:",
@@ -95,7 +97,7 @@ sales_agent = Agent(
     role="Sales",
     model=OpenAIChat("gpt-4o"),
     tools=[SlackTools()],
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     instructions=[
         "You are the Sales & Partnerships Agent of a startup, responsible for driving revenue growth and strategic partnerships.",
         "Key Responsibilities:",
@@ -122,7 +124,7 @@ financial_analyst_agent = Agent(
     name="Financial Analyst Agent",
     role="Financial Analyst",
     model=OpenAIChat("gpt-4o"),
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     tools=[YFinanceTools()],
     instructions=[
         "You are the Financial Analyst of a startup, responsible for financial planning and analysis.",
@@ -145,7 +147,7 @@ customer_support_agent = Agent(
     name="Customer Support Agent",
     role="Customer Support",
     model=OpenAIChat("gpt-4o"),
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     tools=[SlackTools()],
     instructions=[
         "You are the Customer Support Agent of a startup, responsible for handling customer inquiries and maintaining customer satisfaction.",

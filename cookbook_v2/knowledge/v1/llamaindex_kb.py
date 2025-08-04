@@ -52,7 +52,6 @@ agent = Agent(
     knowledge=knowledge_base,
     search_knowledge=True,
     debug_mode=True,
-    show_tool_calls=True,
 )
 
 # Use the agent to ask a question and print a response.

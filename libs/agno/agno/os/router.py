@@ -1,8 +1,19 @@
 import json
-from typing import TYPE_CHECKING, AsyncGenerator, List, Optional, cast
+from typing import TYPE_CHECKING, AsyncGenerator, Dict, List, Optional, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent
@@ -27,7 +38,6 @@ from agno.os.schema import (
     TeamSessionDetailSchema,
     TeamSummaryResponse,
     WorkflowResponse,
-    WorkflowRunRequest,
     WorkflowSummaryResponse,
 )
 from agno.os.settings import AgnoAPISettings
@@ -49,6 +59,71 @@ from agno.workflow.v2.workflow import Workflow
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
+
+
+class WebSocketManager:
+    """Manages WebSocket connections for workflow runs"""
+
+    active_connections: Dict[str, WebSocket]
+    workflow_connections: Dict[str, str]
+
+    def __init__(
+        self,
+        active_connections: Optional[Dict[str, WebSocket]] = None,
+        workflow_connections: Optional[Dict[str, str]] = None,
+    ):
+        # Store active connections: {connection_id: websocket}
+        self.active_connections: Dict[str, WebSocket] = active_connections or {}
+        # Store workflow-to-connection mapping: {run_id: connection_id}
+        self.workflow_connections: Dict[str, str] = workflow_connections or {}
+
+    async def connect(self, websocket: WebSocket) -> str:
+        """Accept WebSocket connection and return connection ID"""
+        await websocket.accept()
+        connection_id = str(uuid4())
+        self.active_connections[connection_id] = websocket
+        logger.debug(f"WebSocket connected: {connection_id}")
+
+        # Send connection confirmation
+        await websocket.send_text(
+            json.dumps(
+                {"event": "connected", "connection_id": connection_id, "message": "Connected to workflow events"}
+            )
+        )
+
+        return connection_id
+
+    async def disconnect(self, connection_id: str):
+        """Remove WebSocket connection"""
+        if connection_id in self.active_connections:
+            del self.active_connections[connection_id]
+            logger.debug(f"WebSocket disconnected: {connection_id}")
+
+        # Clean up workflow mappings
+        workflows_to_remove = [
+            run_id for run_id, conn_id in self.workflow_connections.items() if conn_id == connection_id
+        ]
+        for run_id in workflows_to_remove:
+            del self.workflow_connections[run_id]
+
+    async def register_workflow_run(self, run_id: str, connection_id: str):
+        """Register a workflow run with a WebSocket connection"""
+        self.workflow_connections[run_id] = connection_id
+        logger.debug(f"Registered workflow {run_id} with connection {connection_id}")
+
+    async def get_websocket_for_run(self, run_id: str) -> Optional[WebSocket]:
+        """Get WebSocket connection for a workflow run"""
+        connection_id = self.workflow_connections.get(run_id)
+        if connection_id and connection_id in self.active_connections:
+            return self.active_connections[connection_id]
+        return None
+
+
+# Global manager instance
+websocket_manager = WebSocketManager(
+    active_connections={},
+    workflow_connections={},
+)
 
 
 async def agent_response_streamer(
@@ -230,7 +305,7 @@ def get_base_router(
         apps_response.metrics = apps_response.metrics or None
 
         return ConfigResponse(
-            os_id=os.os_id,
+            os_id=os.os_id or "Unnamed OS",
             description=os.description,
             interfaces=[
                 InterfaceResponse(type=interface.type, version=interface.version, route=interface.router_prefix)
@@ -610,11 +685,6 @@ def get_base_router(
             logger.debug("Creating new session")
             session_id = str(uuid4())
 
-        if monitor:
-            team.monitoring = True
-        else:
-            team.monitoring = False
-
         base64_images: List[Image] = []
         base64_audios: List[Audio] = []
         base64_videos: List[Video] = []
@@ -844,6 +914,25 @@ def get_base_router(
 
     # -- Workflow routes ---
 
+    @router.websocket("/workflows/ws")
+    async def workflow_websocket_endpoint(websocket: WebSocket):
+        """WebSocket endpoint for receiving real-time workflow events"""
+        connection_id = await websocket_manager.connect(websocket)
+
+        try:
+            while True:
+                data = await websocket.receive_text()
+                message = json.loads(data)
+
+                if message.get("action") == "ping":
+                    await websocket.send_text(json.dumps({"event": "pong"}))
+
+        except WebSocketDisconnect:
+            websocket_manager.disconnect(connection_id)
+        except Exception as e:
+            logger.error(f"WebSocket error: {e}")
+            websocket_manager.disconnect(connection_id)
+
     @router.get(
         "/workflows",
         response_model=List[WorkflowResponse],
@@ -884,6 +973,8 @@ def get_base_router(
         stream: bool = Form(True),
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
+        background: Optional[bool] = Form(True),
+        connection_id: Optional[str] = Form(None),
     ):
         # Retrieve the workflow by ID
         workflow = get_workflow_by_id(workflow_id, os.workflows)
@@ -898,7 +989,7 @@ def get_base_router(
 
         # Return based on stream parameter
         try:
-            if stream:
+            if stream and not background:
                 return StreamingResponse(
                     workflow_response_streamer(
                         workflow,
@@ -908,6 +999,43 @@ def get_base_router(
                     ),
                     media_type="text/event-stream",
                 )
+            elif stream and background:
+                websocket_instance = None
+                if connection_id:
+                    websocket_instance = websocket_manager.active_connections.get(connection_id)
+                    if not websocket_instance:
+                        raise HTTPException(status_code=400, detail="Invalid WebSocket connection ID")
+
+                # Create workflow instance with WebSocket
+                workflow_with_ws = Workflow(
+                    workflow_id=workflow.workflow_id,
+                    name=workflow.name,
+                    description=workflow.description,
+                    db=workflow.db,
+                    steps=workflow.steps,
+                    websocket=websocket_instance,  # Pass WebSocket to workflow
+                )
+
+                run_response = await workflow_with_ws.arun(
+                    message=message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    stream=True,
+                    stream_intermediate_steps=True,
+                    background=True,
+                )
+
+                # Register the workflow run with the WebSocket connection
+                if connection_id:
+                    await websocket_manager.register_workflow_run(run_response.run_id, connection_id)
+
+                return {
+                    "status": "started",
+                    "run_id": run_response.run_id,
+                    "session_id": run_response.session_id,
+                    "connection_id": connection_id,
+                    "message": "Background streaming workflow started - events will be broadcast via WebSocket",
+                }
             else:
                 run_response = await workflow.arun(
                     message=message,

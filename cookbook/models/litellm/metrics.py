@@ -9,7 +9,6 @@ agent = Agent(
     ),
     tools=[YFinanceTools(stock_price=True)],
     markdown=True,
-    show_tool_calls=True,
 )
 
 agent.print_response("What is the stock price of NVDA", stream=True)

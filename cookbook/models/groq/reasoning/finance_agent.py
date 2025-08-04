@@ -19,7 +19,6 @@ finance_agent = Agent(
         "Always call the tool before you answer.",
     ],
     add_datetime_to_instructions=True,
-    show_tool_calls=True,  # Uncomment to see tool calls in the response
     markdown=True,
 )
 

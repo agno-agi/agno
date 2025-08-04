@@ -31,7 +31,6 @@ agent = Agent(
     add_references=True,
     # Set as False because Agents default to `search_knowledge=True`
     search_knowledge=False,
-    show_tool_calls=True,
     markdown=True,
 )
 agent.print_response(

@@ -42,7 +42,6 @@ class AgentOS:
         apps: Optional[List[BaseApp]] = None,
         settings: Optional[AgnoAPISettings] = None,
         fastapi_app: Optional[FastAPI] = None,
-        monitoring: bool = True,
     ):
         if not agents and not workflows and not teams:
             raise ValueError("Either agents, teams or workflows must be provided.")
@@ -58,7 +57,6 @@ class AgentOS:
         self.apps = apps or []
 
         self.os_id: Optional[str] = os_id
-        self.monitoring = monitoring
         self.description = description
 
         self.interfaces_loaded: List[Tuple[str, str]] = []
@@ -181,14 +179,6 @@ class AgentOS:
             self.os_id = str(uuid4())
 
         return self.os_id
-
-    def _set_monitoring(self) -> None:
-        """Override monitoring and telemetry settings based on environment variables."""
-
-        # Only override if the environment variable is set
-        monitor_env = getenv("AGNO_MONITOR")
-        if monitor_env is not None:
-            self.monitoring = monitor_env.lower() == "true"
 
     def get_app(self) -> FastAPI:
         if not self.fastapi_app:

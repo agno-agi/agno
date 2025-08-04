@@ -1,5 +1,8 @@
-"""This cookbook shows how to add content from a local file to the knowledge base.
-1. Run: `python cookbook/agent_concepts/knowledge/01_from_path.py` to run the cookbook
+"""This cookbook shows how to remove vectors from Knowledge.
+
+You can remove vectors by metadata or by name.
+
+1. Run: `python cookbook/agent_concepts/knowledge/06_remove_vectors.py` to run the cookbook
 """
 
 from agno.agent import Agent
@@ -17,7 +20,7 @@ knowledge = Knowledge(
 
 knowledge.add_content(
     name="CV",
-    path="cookbook/agent_concepts/knowledge/testing_resources/",
+    path="cookbook_v2/knowledge/data/filters/cv_1.pdf",
     metadata={"user_tag": "Engineering Candidates"},
 )
 
@@ -27,7 +30,7 @@ knowledge.remove_vectors_by_metadata({"user_tag": "Engineering Candidates"})
 # Add from local file to the knowledge base
 knowledge.add_content(
     name="CV",
-    path="cookbook/agent_concepts/knowledge/testing_resources/",
+    path="cookbook_v2/knowledge/data/filters/cv_1.pdf",
     metadata={"user_tag": "Engineering Candidates"},
 )
 

@@ -10,7 +10,6 @@ agent = Agent(
     tools=[
         DuckDuckGoTools()
     ],  # pixtral-12b-2409 is not so great at tool calls, but it might work.
-    show_tool_calls=True,
     markdown=True,
 )
 

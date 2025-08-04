@@ -14,8 +14,6 @@ agent = Agent(
             password="ai",
         ),
     ),
-    # Show tool calls in the response
-    show_tool_calls=True,
     # Enable the agent to search the knowledge base
     search_knowledge=True,
     # Enable the agent to read the chat history
