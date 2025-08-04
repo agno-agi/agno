@@ -106,17 +106,6 @@ class WebSocketManager:
         """Get WebSocket connection for a workflow run"""
         return self.active_connections.get(run_id)
 
-    def cleanup_disconnected_websockets(self):
-        """Clean up websockets that are no longer connected"""
-        disconnected_runs = []
-        for run_id, websocket in self.active_connections.items():
-            if websocket.client_state.value != 1:  # Not connected
-                disconnected_runs.append(run_id)
-
-        for run_id in disconnected_runs:
-            del self.active_connections[run_id]
-            logger.debug(f"Cleaned up disconnected WebSocket for run_id: {run_id}")
-
 
 # Global manager instance
 websocket_manager = WebSocketManager(
