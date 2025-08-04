@@ -24,7 +24,7 @@ from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router
 from agno.os.settings import AgnoAPISettings
 from agno.team.team import Team
-from agno.utils.log import log_debug, log_info, log_warning
+from agno.utils.log import log_debug, log_warning
 from agno.workflow.v2.workflow import Workflow
 
 
@@ -262,52 +262,27 @@ class AgentOS:
     ):
         import uvicorn
 
-        full_host = host
-
-        log_info(f"Starting AgentOS on {full_host}:{port}")
-
-        # Create a panel with the Home and interface URLs
-        panels = []
-        public_endpoint = "https://os.agno.com/"
         if getenv("AGNO_API_RUNTIME", "").lower() == "stg":
             public_endpoint = "https://os-stg.agno.com/"
+        else:
+            public_endpoint = "https://os.agno.com/"
 
-        os_endpoint = f"http://{full_host}:{port}"
+        # Create a terminal panel to announce OS initialization and provide useful info
+        from rich.align import Align
+        from rich.console import Group
 
-        urls = [f"[bold dark_orange]OS URL:[/bold dark_orange] {os_endpoint}"]
+        public_endpoint = Align.center(f"[bold cyan]{public_endpoint}[/bold cyan]")
+        connection_endpoint = f"\n\n[bold dark_orange]Running on:[/bold dark_orange] http://{host}:{port}"
 
-        for interface_type, interface_prefix in self.interfaces_loaded:
-            if interface_type == "whatsapp":
-                final_endpoint = f"{os_endpoint}/{interface_prefix}"
-                urls.append(f"[bold cyan]Whatsapp URL:[/bold cyan] {final_endpoint}")
-            elif interface_type == "slack":
-                final_endpoint = f"{os_endpoint}/{interface_prefix}"
-                urls.append(f"[bold purple]Slack URL:[/bold purple] {final_endpoint}")
-
-        panels.append(
+        console.print(
             Panel(
-                "\n".join(urls),
-                title="Configuration",
+                Group(public_endpoint, connection_endpoint),
+                title="AgentOS",
                 expand=False,
                 border_style="dark_orange",
                 box=box.DOUBLE_EDGE,
                 padding=(2, 2),
             )
         )
-
-        panels.append(
-            Panel(
-                f"{public_endpoint}",
-                title="Home Page",
-                expand=False,
-                border_style="green",
-                box=box.DOUBLE_EDGE,
-                padding=(2, 2),
-            )
-        )
-
-        # Print the panel
-        for panel in panels:
-            console.print(panel)
 
         uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)
