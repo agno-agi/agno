@@ -7,7 +7,7 @@ The ID is the URL of the spreadsheet and the range is the sheet name and the ran
 
 Note: Add the complete auth URL as an Authorised redirect URIs for the Client ID in the Google Cloud Console.
 
-e.g for Localhost: http://localhost:{port}/flowName=GeneralOAuthFlow and pass the port to the toolkit
+e.g for Localhost and port 8080: http://localhost:8080/flowName=GeneralOAuthFlow and pass the oauth_port to the toolkit
 
 """
 
@@ -20,7 +20,7 @@ SAMPLE_RANGE_NAME = "Class Data!A2:E"
 google_sheets_tools = GoogleSheetsTools(
     spreadsheet_id=SAMPLE_SPREADSHEET_ID,
     spreadsheet_range=SAMPLE_RANGE_NAME,
-    port=8080, #or any other port
+    oauth_port=8080,  # or any other port
 )
 
 agent = Agent(
