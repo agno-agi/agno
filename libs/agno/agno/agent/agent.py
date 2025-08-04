@@ -4374,9 +4374,9 @@ class Agent:
             user_msg_content_str += "</references>"
         # 4.2 Add context to user message
         if self.add_dependencies_to_context and self.dependencies is not None:
-            user_msg_content_str += "\n\n<context>\n"
+            user_msg_content_str += "\n\n<additional context>\n"
             user_msg_content_str += self.convert_context_to_string(self.dependencies) + "\n"
-            user_msg_content_str += "</context>"
+            user_msg_content_str += "</additional context>"
 
         # Use the string version for the final content
         user_msg_content = user_msg_content_str
