@@ -40,7 +40,7 @@ if __name__ == "__main__":
         num_iterations=1,
     )
 
-    evaluation.run(print_results=False)
+    # evaluation.run(print_results=False)
     
     # Setup knowledge
     # agno_assist.knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt", skip_if_exists=True)
