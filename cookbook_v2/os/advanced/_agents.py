@@ -1,15 +1,16 @@
-from textwrap import dedent
-from agno.agent import Agent
-from agno.db.postgres import PostgresDb
-from agno.models.anthropic.claude import Claude
-from agno.models.openai.chat import OpenAIChat
-from agno.tools.exa import ExaTools
-from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.file import FileTools
 from datetime import datetime
 from pathlib import Path
+from textwrap import dedent
+
+from agno.agent import Agent
+from agno.db.postgres import PostgresDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
+from agno.models.anthropic.claude import Claude
+from agno.models.openai.chat import OpenAIChat
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.exa import ExaTools
+from agno.tools.file import FileTools
 from agno.vectordb.pgvector.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"

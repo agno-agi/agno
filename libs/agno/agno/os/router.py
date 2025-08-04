@@ -67,65 +67,64 @@ from agno.os.utils import get_component_memory_app
 class WebSocketManager:
     """Manages WebSocket connections for workflow runs"""
 
-    active_connections: Dict[str, WebSocket]
-    workflow_connections: Dict[str, str]
+    active_connections: Dict[str, WebSocket]  # {run_id: websocket}
 
     def __init__(
         self,
         active_connections: Optional[Dict[str, WebSocket]] = None,
-        workflow_connections: Optional[Dict[str, str]] = None,
     ):
-        # Store active connections: {connection_id: websocket}
+        # Store active connections: {run_id: websocket}
         self.active_connections: Dict[str, WebSocket] = active_connections or {}
-        # Store workflow-to-connection mapping: {run_id: connection_id}
-        self.workflow_connections: Dict[str, str] = workflow_connections or {}
 
     async def connect(self, websocket: WebSocket) -> str:
-        """Accept WebSocket connection and return connection ID"""
+        """Accept WebSocket connection and return temporary connection ID"""
         await websocket.accept()
-        connection_id = str(uuid4())
-        self.active_connections[connection_id] = websocket
-        logger.debug(f"WebSocket connected: {connection_id}")
+        temp_connection_id = str(uuid4())
+        logger.debug(f"WebSocket connected: {temp_connection_id}")
 
         # Send connection confirmation
         await websocket.send_text(
             json.dumps(
-                {"event": "connected", "connection_id": connection_id, "message": "Connected to workflow events"}
+                {
+                    "event": "connected",
+                    "temp_connection_id": temp_connection_id,
+                    "message": "Connected to workflow events",
+                }
             )
         )
 
-        return connection_id
+        return temp_connection_id
 
-    async def disconnect(self, connection_id: str):
-        """Remove WebSocket connection"""
-        if connection_id in self.active_connections:
-            del self.active_connections[connection_id]
-            logger.debug(f"WebSocket disconnected: {connection_id}")
+    async def register_workflow_websocket(self, run_id: str, websocket: WebSocket):
+        """Register a workflow run with its WebSocket connection"""
+        self.active_connections[run_id] = websocket
+        logger.debug(f"Registered WebSocket for run_id: {run_id}")
 
-        # Clean up workflow mappings
-        workflows_to_remove = [
-            run_id for run_id, conn_id in self.workflow_connections.items() if conn_id == connection_id
-        ]
-        for run_id in workflows_to_remove:
-            del self.workflow_connections[run_id]
-
-    async def register_workflow_run(self, run_id: str, connection_id: str):
-        """Register a workflow run with a WebSocket connection"""
-        self.workflow_connections[run_id] = connection_id
-        logger.debug(f"Registered workflow {run_id} with connection {connection_id}")
+    async def disconnect_by_run_id(self, run_id: str):
+        """Remove WebSocket connection by run_id"""
+        if run_id in self.active_connections:
+            del self.active_connections[run_id]
+            logger.debug(f"WebSocket disconnected for run_id: {run_id}")
 
     async def get_websocket_for_run(self, run_id: str) -> Optional[WebSocket]:
         """Get WebSocket connection for a workflow run"""
-        connection_id = self.workflow_connections.get(run_id)
-        if connection_id and connection_id in self.active_connections:
-            return self.active_connections[connection_id]
-        return None
+        return self.active_connections.get(run_id)
+
+    def cleanup_disconnected_websockets(self):
+        """Clean up websockets that are no longer connected"""
+        disconnected_runs = []
+        for run_id, websocket in self.active_connections.items():
+            if websocket.client_state.value != 1:  # Not connected
+                disconnected_runs.append(run_id)
+
+        for run_id in disconnected_runs:
+            del self.active_connections[run_id]
+            logger.debug(f"Cleaned up disconnected WebSocket for run_id: {run_id}")
 
 
 # Global manager instance
 websocket_manager = WebSocketManager(
     active_connections={},
-    workflow_connections={},
 )
 
 
@@ -226,6 +225,69 @@ async def team_response_streamer(
         )
         yield error_response.to_json()
         return
+
+
+async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os: "AgentOS"):
+    """Handle workflow execution directly via WebSocket"""
+    try:
+        workflow_id = message.get("workflow_id")
+        session_id = message.get("session_id")
+        user_message = message.get("message", "")
+        user_id = message.get("user_id")
+
+        if not workflow_id:
+            await websocket.send_text(json.dumps({"event": "error", "error": "workflow_id is required"}))
+            return
+
+        # Get workflow from OS
+        workflow = get_workflow_by_id(workflow_id, os.workflows)
+        if not workflow:
+            await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
+            return
+
+        # Generate session_id if not provided
+        if not session_id:
+            session_id = str(uuid4())
+
+        # Create workflow instance with WebSocket
+        workflow_with_ws = Workflow(
+            workflow_id=workflow.workflow_id,
+            name=workflow.name,
+            description=workflow.description,
+            db=workflow.db,
+            steps=workflow.steps,
+            websocket=websocket,  # Pass WebSocket directly
+        )
+
+        # Execute workflow in background with streaming
+        run_response = await workflow_with_ws.arun(
+            message=user_message,
+            session_id=session_id,
+            user_id=user_id,
+            stream=True,
+            stream_intermediate_steps=True,
+            background=True,
+        )
+
+        # Register the WebSocket with the actual run_id
+        await websocket_manager.register_workflow_websocket(run_response.run_id, websocket)
+
+        # Send workflow started confirmation with run_id
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "event": "workflow_started",
+                    "run_id": run_response.run_id,
+                    "workflow_id": workflow_id,
+                    "session_id": run_response.session_id,
+                    "message": "Workflow execution started",
+                }
+            )
+        )
+
+    except Exception as e:
+        logger.error(f"Error executing workflow via WebSocket: {e}")
+        await websocket.send_text(json.dumps({"event": "error", "error": str(e)}))
 
 
 async def workflow_response_streamer(
@@ -957,21 +1019,32 @@ def get_base_router(
     @router.websocket("/workflows/ws")
     async def workflow_websocket_endpoint(websocket: WebSocket):
         """WebSocket endpoint for receiving real-time workflow events"""
-        connection_id = await websocket_manager.connect(websocket)
+        await websocket_manager.connect(websocket)
 
         try:
             while True:
                 data = await websocket.receive_text()
                 message = json.loads(data)
+                action = message.get("action")
 
-                if message.get("action") == "ping":
+                if action == "ping":
                     await websocket.send_text(json.dumps({"event": "pong"}))
 
+                elif action == "start-workflow":
+                    # Handle workflow execution directly via WebSocket
+                    await handle_workflow_via_websocket(websocket, message, os)
+
         except WebSocketDisconnect:
-            websocket_manager.disconnect(connection_id)
+            # Clean up any run_ids associated with this websocket
+            runs_to_remove = [run_id for run_id, ws in websocket_manager.active_connections.items() if ws == websocket]
+            for run_id in runs_to_remove:
+                await websocket_manager.disconnect_by_run_id(run_id)
         except Exception as e:
             logger.error(f"WebSocket error: {e}")
-            websocket_manager.disconnect(connection_id)
+            # Clean up any run_ids associated with this websocket
+            runs_to_remove = [run_id for run_id, ws in websocket_manager.active_connections.items() if ws == websocket]
+            for run_id in runs_to_remove:
+                await websocket_manager.disconnect_by_run_id(run_id)
 
     @router.get(
         "/workflows",

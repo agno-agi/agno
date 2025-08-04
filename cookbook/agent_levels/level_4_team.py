@@ -52,7 +52,6 @@ reasoning_finance_team = Team(
     show_members_responses=True,
     enable_agentic_context=True,
     add_datetime_to_context=True,
-
 )
 
 if __name__ == "__main__":

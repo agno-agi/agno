@@ -62,7 +62,7 @@ class ContentResponseSchema(BaseModel):
                 # If it's a string, try to parse it as ISO format first
                 if isinstance(timestamp_value, str):
                     try:
-                        return datetime.fromisoformat(timestamp_value.replace('Z', '+00:00'))
+                        return datetime.fromisoformat(timestamp_value.replace("Z", "+00:00"))
                     except ValueError:
                         # Try to parse as float/int timestamp
                         timestamp_value = float(timestamp_value)

@@ -18,7 +18,7 @@ team = Team(
 )
 
 team.print_response("Tell me a new interesting fact about space")
-team.set_session_name(session_name="Interesting Space Facts") 
+team.set_session_name(session_name="Interesting Space Facts")
 print(team.session_name)
 
 # Autogenerate session name

@@ -15,7 +15,7 @@ agent = Agent(
 )
 
 agent.print_response("Tell me a new interesting fact about space")
-agent.set_session_name(session_name="Interesting Space Facts") 
+agent.set_session_name(session_name="Interesting Space Facts")
 
 session = agent.get_agent_session(session_id=agent.session_id)
 print(session.session_data.get("session_name"))
