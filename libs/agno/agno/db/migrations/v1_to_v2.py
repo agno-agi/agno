@@ -1,22 +1,23 @@
 """Migration utility to migrate your Agno tables from v1 to v2"""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from sqlalchemy import text
 
+from agno.db.mysql.mysql import MySQLDb
 from agno.db.postgres.postgres import PostgresDb
 from agno.db.schemas.memory import UserMemory
+from agno.db.sqlite.sqlite import SqliteDb
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.utils.log import log_error
 
 
 def migrate(
-    db: PostgresDb,
+    db: Union[PostgresDb, MySQLDb, SqliteDb],
     v1_db_schema: str,
     agent_sessions_table_name: Optional[str] = None,
     team_sessions_table_name: Optional[str] = None,
     workflow_sessions_table_name: Optional[str] = None,
-    workflow_v2_sessions_table_name: Optional[str] = None,
     memories_table_name: Optional[str] = None,
 ):
     """Given a PostgresDb and table names, parse and migrate the tables' content to the corresponding v2 tables.
@@ -49,13 +50,6 @@ def migrate(
             v1_db_schema=v1_db_schema,
             v1_table_name=workflow_sessions_table_name,
             v1_table_type="workflow_sessions",
-        )
-
-    if workflow_v2_sessions_table_name:
-        db.migrate_table_from_v1_to_v2(
-            v1_db_schema=v1_db_schema,
-            v1_table_name=workflow_v2_sessions_table_name,
-            v1_table_type="workflow_v2_sessions",
         )
 
     if memories_table_name:
@@ -122,26 +116,6 @@ def parse_team_sessions(v1_content: List[Dict[str, Any]]) -> List[TeamSession]:
 
 def parse_workflow_sessions(v1_content: List[Dict[str, Any]]) -> List[WorkflowSession]:
     """Parse v1 Workflow sessions into v2 Workflow sessions"""
-    sessions_v2 = []
-
-    for item in v1_content:
-        session = {
-            "workflow_id": item.get("workflow_id"),
-            "workflow_data": item.get("workflow_data"),
-            "session_id": item.get("session_id"),
-            "user_id": item.get("user_id"),
-            "session_data": item.get("session_data"),
-            "metadata": item.get("extra_data"),
-            "created_at": item.get("created_at"),
-            "updated_at": item.get("updated_at"),
-        }
-        sessions_v2.append(WorkflowSession.from_dict(session))
-
-    return sessions_v2
-
-
-def parse_workflow_v2_sessions(v1_content: List[Dict[str, Any]]) -> List[WorkflowSession]:
-    """Parse v1 Workflow v2 sessions into v2 Workflow sessions"""
     sessions_v2 = []
 
     for item in v1_content:

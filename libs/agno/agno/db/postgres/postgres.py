@@ -1592,7 +1592,6 @@ class PostgresDb(BaseDb):
             parse_memories,
             parse_team_sessions,
             parse_workflow_sessions,
-            parse_workflow_v2_sessions,
         )
 
         # Get all content from the old table
@@ -1613,8 +1612,6 @@ class PostgresDb(BaseDb):
             sessions = parse_team_sessions(old_content)
         elif v1_table_type == "workflow_sessions":
             sessions = parse_workflow_sessions(old_content)
-        elif v1_table_type == "workflow_v2_sessions":
-            sessions = parse_workflow_v2_sessions(old_content)
         elif v1_table_type == "memories":
             memories = parse_memories(old_content)
         else:
@@ -1635,11 +1632,6 @@ class PostgresDb(BaseDb):
             for session in sessions:
                 self.upsert_session(session)
             log_info(f"Migrated {len(sessions)} Workflow sessions to table: {self.session_table}")
-
-        elif v1_table_type == "workflow_v2_sessions":
-            for session in sessions:
-                self.upsert_session(session)
-            log_info(f"Migrated {len(sessions)} Workflow v2 sessions to table: {self.session_table}")
 
         elif v1_table_type == "memories":
             for memory in memories:
