@@ -61,6 +61,9 @@ if TYPE_CHECKING:
     from agno.os.app import AgentOS
 
 
+from agno.os.utils import get_component_memory_app
+
+
 class WebSocketManager:
     """Manages WebSocket connections for workflow runs"""
 
@@ -272,27 +275,52 @@ def get_base_router(
     async def config() -> ConfigResponse:
         apps_response = AppsResponse(
             session=[
-                ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
+                ManagerResponse(
+                    type=app.type,
+                    name=app.display_name or "Sessions app",
+                    version=app.version,
+                    route=app.router_prefix,
+                )
                 for app in os.apps
                 if app.type == "session"
             ],
             knowledge=[
-                ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
+                ManagerResponse(
+                    type=app.type,
+                    name=app.display_name or "Knowledge app",
+                    version=app.version,
+                    route=app.router_prefix,
+                )
                 for app in os.apps
                 if app.type == "knowledge"
             ],
             memory=[
-                ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
+                ManagerResponse(
+                    type=app.type,
+                    name=app.display_name or "Memory app",
+                    version=app.version,
+                    route=app.router_prefix,
+                )
                 for app in os.apps
                 if app.type == "memory"
             ],
             eval=[
-                ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
+                ManagerResponse(
+                    type=app.type,
+                    name=app.display_name or "Evals app",
+                    version=app.version,
+                    route=app.router_prefix,
+                )
                 for app in os.apps
                 if app.type == "eval"
             ],
             metrics=[
-                ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
+                ManagerResponse(
+                    type=app.type,
+                    name=app.display_name or "Metrics app",
+                    version=app.version,
+                    route=app.router_prefix,
+                )
                 for app in os.apps
                 if app.type == "metrics"
             ],
@@ -541,10 +569,16 @@ def get_base_router(
         response_model_exclude_none=True,
     )
     async def get_agents():
+        """Return the list of all Agents present in the contextual OS"""
         if os.agents is None:
             return []
 
-        return [AgentResponse.from_agent(agent) for agent in os.agents]
+        agents = []
+        for agent in os.agents:
+            agent_memory_app = get_component_memory_app(component=agent, os_apps=os.apps)
+            agents.append(AgentResponse.from_agent(agent=agent, memory_app=agent_memory_app))
+
+        return agents
 
     @router.get(
         "/agents/{agent_id}/sessions",
@@ -784,10 +818,16 @@ def get_base_router(
         response_model_exclude_none=True,
     )
     async def get_teams():
+        """Return the list of all Teams present in the contextual OS"""
         if os.teams is None:
             return []
 
-        return [TeamResponse.from_team(team) for team in os.teams]
+        teams = []
+        for team in os.teams:
+            team_memory_app = get_component_memory_app(component=team, os_apps=os.apps)
+            teams.append(TeamResponse.from_team(team=team, memory_app=team_memory_app))
+
+        return teams
 
     @router.get(
         "/teams/{team_id}/sessions",

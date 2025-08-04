@@ -18,13 +18,13 @@ class MemoryApp(BaseApp):
 
     router: APIRouter
 
-    def __init__(self, db: BaseDb, name: Optional[str] = None):
-        self.name = name or "Memory App"
+    def __init__(self, db: BaseDb, display_name: Optional[str] = None):
+        self.display_name = display_name
         self.db = db
 
     def get_router(self, index: int, settings: AgnoAPISettings = AgnoAPISettings(), **kwargs) -> APIRouter:
-        if not self.name:
-            self.name = f"Memory App {index}"
+        if not self.display_name:
+            self.display_name = f"Memory App {index}"
 
         self.router_prefix = f"/memory/{index}"
 

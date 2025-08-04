@@ -122,22 +122,22 @@ class AgentOS:
             if entity.db:
                 # Memory app
                 if _add_unique_component("memory", f"{entity.db.memory_table_name}"):
-                    discovered_apps.append(MemoryApp(db=entity.db))
+                    discovered_apps.append(MemoryApp(db=entity.db, display_name=entity.db.memory_table_name))
 
                 # Session app
                 if entity.db.session_table_name:
                     if _add_unique_component("session", f"{entity.db.session_table_name}"):
-                        discovered_apps.append(SessionApp(db=entity.db))
+                        discovered_apps.append(SessionApp(db=entity.db, display_name=entity.db.session_table_name))
 
                 # Metrics app
                 if entity.db.metrics_table_name:
                     if _add_unique_component("metrics", f"{entity.db.metrics_table_name}"):
-                        discovered_apps.append(MetricsApp(db=entity.db))
+                        discovered_apps.append(MetricsApp(db=entity.db, display_name=entity.db.metrics_table_name))
 
                 # Eval app
                 if entity.db.eval_table_name:
                     if _add_unique_component("eval", f"{entity.db.eval_table_name}"):
-                        discovered_apps.append(EvalApp(db=entity.db))
+                        discovered_apps.append(EvalApp(db=entity.db, display_name=entity.db.eval_table_name))
 
             # Knowledge app
             if entity.knowledge:
@@ -147,7 +147,9 @@ class AgentOS:
 
                 db = entity.knowledge.contents_db
                 if _add_unique_component("knowledge", f"{db.knowledge_table_name}") and entity.knowledge:
-                    discovered_apps.append(KnowledgeApp(knowledge=entity.knowledge))
+                    discovered_apps.append(
+                        KnowledgeApp(knowledge=entity.knowledge, display_name=db.knowledge_table_name)
+                    )
 
             return discovered_apps
 
@@ -168,8 +170,7 @@ class AgentOS:
 
         # Log discovered apps
         if discovered_apps:
-            for app in discovered_apps:
-                log_debug(f"{app.type.title()} App added to AgentOS")
+            log_debug(f"Apps added to AgentOS: {[app.display_name for app in discovered_apps]}")
 
         return discovered_apps
 
@@ -270,12 +271,10 @@ class AgentOS:
         public_endpoint = "https://os.agno.com/"
         if getenv("AGNO_API_RUNTIME", "").lower() == "stg":
             public_endpoint = "https://os-stg.agno.com/"
-            
+
         os_endpoint = f"http://{full_host}:{port}"
-        
-        urls = [
-            f"[bold dark_orange]OS URL:[/bold dark_orange] {os_endpoint}"
-        ]
+
+        urls = [f"[bold dark_orange]OS URL:[/bold dark_orange] {os_endpoint}"]
 
         for interface_type, interface_prefix in self.interfaces_loaded:
             if interface_type == "whatsapp":
@@ -284,8 +283,7 @@ class AgentOS:
             elif interface_type == "slack":
                 final_endpoint = f"{os_endpoint}/{interface_prefix}"
                 urls.append(f"[bold purple]Slack URL:[/bold purple] {final_endpoint}")
-                
-        
+
         panels.append(
             Panel(
                 "\n".join(urls),
@@ -296,7 +294,7 @@ class AgentOS:
                 padding=(2, 2),
             )
         )
-        
+
         panels.append(
             Panel(
                 f"{public_endpoint}",

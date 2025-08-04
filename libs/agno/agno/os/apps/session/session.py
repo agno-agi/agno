@@ -18,13 +18,13 @@ class SessionApp(BaseApp):
 
     router: APIRouter
 
-    def __init__(self, db: BaseDb, name: Optional[str] = None):
-        self.name = name or "Session App"
+    def __init__(self, db: BaseDb, display_name: Optional[str] = None):
+        self.display_name = display_name or "Session App"
         self.db = db
 
     def get_router(self, index: int, settings: AgnoAPISettings = AgnoAPISettings(), **kwargs) -> APIRouter:
-        if not self.name:
-            self.name = f"Session App {index}"
+        if not self.display_name:
+            self.display_name = f"Session App {index}"
 
         self.router_prefix = f"/session/{index}"
 
