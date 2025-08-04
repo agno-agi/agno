@@ -195,6 +195,8 @@ async def test_member_run_history_persistence(route_team_with_members, agent_sto
 
     agent_runs = stored_memory_data["runs"]
 
+    assert len(agent_runs) == 1
+
     assert len(agent_runs[-1]["messages"]) == 7, (
         "Only system message, user message, two tool calls (and results), and response"
     )
@@ -214,6 +216,8 @@ async def test_member_run_history_persistence(route_team_with_members, agent_sto
 
     agent_runs = stored_memory_data["runs"]
 
+    assert len(agent_runs) == 2
+
     assert len(agent_runs[-1]["messages"]) == 13, "Full history of messages"
 
     # Third request (to the member directly)
@@ -229,6 +233,8 @@ async def test_member_run_history_persistence(route_team_with_members, agent_sto
     assert stored_memory_data is not None, "Memory data not found in stored session."
 
     agent_runs = stored_memory_data["runs"]
+
+    assert len(agent_runs) == 3
 
     assert len(agent_runs[-1]["messages"]) == 15, "Full history of messages"
 
@@ -321,7 +327,9 @@ async def test_correct_sessions_in_db(route_team, team_storage, agent_storage):
 
     # Should create a new team session and agent session
     await route_team.arun(
-        "Ask a big and a small question to your member agents", user_id=user_id, session_id=session_id
+        "Ask both a big and a small question to your member agents. Make sure to call both agents.",
+        user_id=user_id,
+        session_id=session_id,
     )
 
     team_sessions = team_storage.get_all_sessions(entity_id=route_team.team_id)
@@ -331,11 +339,71 @@ async def test_correct_sessions_in_db(route_team, team_storage, agent_storage):
     assert len(team_sessions[0].memory["runs"][0]["member_responses"]) == 2
 
     agent_sessions = agent_storage.get_all_sessions()
+
     # Single shared session for both agents
     assert len(agent_sessions) == 1
+    print(agent_sessions[0].memory)
     assert agent_sessions[0].session_id == session_id
     assert agent_sessions[0].user_id == user_id
     assert len(agent_sessions[0].memory["runs"]) == 2
     assert agent_sessions[0].memory["runs"][0]["session_id"] == session_id
     assert agent_sessions[0].memory["runs"][1]["session_id"] == session_id
     assert agent_sessions[0].memory["runs"][0]["run_id"] != agent_sessions[0].memory["runs"][1]["run_id"]
+
+
+@pytest.mark.asyncio
+async def test_cache_session_behavior(team_storage, memory):
+    """Test that cache_session=False removes sessions from memory after storage."""
+    user_id = "test_user@example.com"
+    session_id = "test_session_123"
+
+    # Create a team with cache_session=False
+    team = Team(
+        name="Cache Test Team",
+        mode="coordinate",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[],
+        storage=team_storage,
+        memory=memory,
+        cache_session=False,  # This is the key setting we're testing
+    )
+
+    # Clear memory for this specific test case
+    memory.clear()
+
+    # Verify memory is empty initially
+    assert memory.runs == {}, "Memory should be empty initially"
+
+    # Run a message
+    response = await team.arun("Hello, how are you?", user_id=user_id, session_id=session_id)
+
+    # Verify the response was successful
+    assert response is not None
+    assert response.content is not None
+
+    # Verify the session was stored in storage
+    team_session = team_storage.read(session_id=session_id)
+    assert team_session is not None, "Session should be stored in database"
+    assert team_session.session_id == session_id
+    assert team_session.user_id == user_id
+
+    # Verify that the session was removed from memory (cache_session=False)
+    assert session_id not in memory.runs, f"Session {session_id} should not be in memory when cache_session=False"
+    assert session_id not in team.memory.runs, f"Session {session_id} should not be in memory when cache_session=False"
+    assert len(memory.runs) == 0, "Memory should be empty after run when cache_session=False"
+
+    # Run another message to verify the pattern continues
+    response2 = await team.arun("What's the weather like?", user_id=user_id, session_id=session_id)
+
+    # Verify the response was successful
+    assert response2 is not None
+    assert response2.content is not None
+
+    # Verify memory is still empty
+    assert session_id not in memory.runs, f"Session {session_id} should still not be in memory"
+    assert len(memory.runs) == 0, "Memory should still be empty after second run"
+
+    # Verify storage still has the session data
+    team_session_updated = team_storage.read(session_id=session_id)
+    assert team_session_updated is not None, "Session should still be in storage"
+    assert len(team_session_updated.memory["runs"]) == 2, "Storage should have both runs"

@@ -66,16 +66,6 @@ class Cassandra(VectorDb):
             content_id=metadata.get("content_id"),
         )
 
-    def doc_exists(self, document: Document) -> bool:
-        """Check if a document exists by ID."""
-        query = f"SELECT COUNT(*) FROM {self.keyspace}.{self.table_name} WHERE row_id = %s"
-        result = self.session.execute(query, (document.id,))
-        return result.one()[0] > 0
-
-    async def async_doc_exists(self, document: Document) -> bool:
-        """Check if a document exists asynchronously."""
-        return await asyncio.to_thread(self.doc_exists, document)
-
     def name_exists(self, name: str) -> bool:
         """Check if a document exists by name."""
         query = f"SELECT COUNT(*) FROM {self.keyspace}.{self.table_name} WHERE document_name = %s ALLOW FILTERING"
@@ -92,14 +82,21 @@ class Cassandra(VectorDb):
         result = self.session.execute(query, (id,))
         return result.one()[0] > 0
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        log_debug(f"Cassandra VectorDB : Inserting Documents to the table {self.table_name}")
+    def content_hash_exists(self, content_hash: str) -> bool:
+        """Check if a document exists by content hash."""
+        query = f"SELECT COUNT(*) FROM {self.keyspace}.{self.table_name} WHERE metadata_s['content_hash'] = %s ALLOW FILTERING"
+        result = self.session.execute(query, (content_hash,))
+        return result.one()[0] > 0
+
+    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        log_info(f"Cassandra VectorDB : Inserting Documents to the table {self.table_name}")
         futures = []
         for doc in documents:
             doc.embed(embedder=self.embedder)
             metadata = {key: str(value) for key, value in doc.meta_data.items()}
             metadata.update(filters or {})
             metadata["content_id"] = doc.content_id
+            metadata["content_hash"] = content_hash
             futures.append(
                 self.table.put_async(
                     row_id=doc.id,
@@ -113,17 +110,23 @@ class Cassandra(VectorDb):
         for f in futures:
             f.result()
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Insert documents asynchronously by running in a thread."""
-        await asyncio.to_thread(self.insert, documents, filters)
+        await asyncio.to_thread(self.insert, content_hash, documents, filters)
 
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert or update documents based on primary key."""
-        self.insert(documents, filters)
+        if self.content_hash_exists(content_hash):
+            self.delete_by_content_hash(content_hash)
+        self.insert(content_hash, documents, filters)
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Upsert documents asynchronously by running in a thread."""
-        await asyncio.to_thread(self.upsert, documents, filters)
+        await asyncio.to_thread(self.upsert, content_hash, documents, filters)
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Keyword-based search on document metadata."""
@@ -305,6 +308,37 @@ class Cassandra(VectorDb):
             return deleted_count > 0
         except Exception as e:
             log_info(f"Error deleting documents with content_id {content_id}: {e}")
+            return False
+
+    def delete_by_content_hash(self, content_hash: str) -> bool:
+        """
+        Delete documents by content hash.
+
+        Args:
+            content_hash (str): The content hash to delete
+
+        Returns:
+            bool: True if documents were deleted, False otherwise
+        """
+        try:
+            log_debug(f"Cassandra VectorDB : Deleting documents with content_hash {content_hash}")
+            # Query to find documents with matching content_hash in metadata
+            query = f"SELECT row_id, metadata_s FROM {self.keyspace}.{self.table_name} ALLOW FILTERING"
+            result = self.session.execute(query)
+            deleted_count = 0
+            for row in result:
+                # Check if the row's metadata contains the content_hash
+                # Use attribute access for Row objects
+                row_metadata = getattr(row, "metadata_s", {})
+                if row_metadata.get("content_hash") == content_hash:
+                    # Delete this specific document
+                    delete_query = f"DELETE FROM {self.keyspace}.{self.table_name} WHERE row_id = %s"
+                    self.session.execute(delete_query, (getattr(row, "row_id"),))
+                    deleted_count += 1
+
+            return deleted_count > 0
+        except Exception as e:
+            log_info(f"Error deleting documents with content_hash {content_hash}: {e}")
             return False
 
     def _metadata_matches(self, row_metadata: Dict[str, Any], target_metadata: Dict[str, Any]) -> bool:

@@ -441,28 +441,6 @@ def test_delete_by_content_id(vector_db, mock_session, sample_documents):
 
 def test_delete_by_name_multiple_documents(vector_db, mock_session):
     """Test deleting multiple documents with the same name."""
-    # Create multiple documents with the same name
-    docs = [
-        Document(
-            content="First version of Tom Kha Gai",
-            meta_data={"version": "1"},
-            name="tom_kha",
-            content_id="recipe_1_v1",
-        ),
-        Document(
-            content="Second version of Tom Kha Gai",
-            meta_data={"version": "2"},
-            name="tom_kha",
-            content_id="recipe_1_v2",
-        ),
-        Document(
-            content="Pad Thai recipe",
-            meta_data={"version": "1"},
-            name="pad_thai",
-            content_id="recipe_2_v1",
-        ),
-    ]
-
     # Mock name_exists to return True (documents exist)
     with patch.object(vector_db, "name_exists") as mock_name_exists:
         mock_name_exists.return_value = True

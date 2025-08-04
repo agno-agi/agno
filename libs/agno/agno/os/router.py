@@ -1,15 +1,27 @@
 import json
-from typing import AsyncGenerator, List, Optional, cast
+from typing import TYPE_CHECKING, AsyncGenerator, Dict, List, Optional, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.apps.utils import PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     AgentResponse,
     AgentSessionDetailSchema,
@@ -22,12 +34,13 @@ from agno.os.schema import (
     RunSchema,
     SessionSchema,
     TeamResponse,
+    TeamRunSchema,
     TeamSessionDetailSchema,
     TeamSummaryResponse,
     WorkflowResponse,
-    WorkflowRunRequest,
     WorkflowSummaryResponse,
 )
+from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     get_agent_by_id,
     get_team_by_id,
@@ -39,8 +52,78 @@ from agno.os.utils import (
 )
 from agno.run.response import RunResponse, RunResponseErrorEvent
 from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
+from agno.run.v2.workflow import WorkflowErrorEvent
 from agno.team.team import Team
 from agno.utils.log import log_debug, log_error, log_warning, logger
+from agno.workflow.v2.workflow import Workflow
+
+if TYPE_CHECKING:
+    from agno.os.app import AgentOS
+
+
+class WebSocketManager:
+    """Manages WebSocket connections for workflow runs"""
+
+    active_connections: Dict[str, WebSocket]
+    workflow_connections: Dict[str, str]
+
+    def __init__(
+        self,
+        active_connections: Optional[Dict[str, WebSocket]] = None,
+        workflow_connections: Optional[Dict[str, str]] = None,
+    ):
+        # Store active connections: {connection_id: websocket}
+        self.active_connections: Dict[str, WebSocket] = active_connections or {}
+        # Store workflow-to-connection mapping: {run_id: connection_id}
+        self.workflow_connections: Dict[str, str] = workflow_connections or {}
+
+    async def connect(self, websocket: WebSocket) -> str:
+        """Accept WebSocket connection and return connection ID"""
+        await websocket.accept()
+        connection_id = str(uuid4())
+        self.active_connections[connection_id] = websocket
+        logger.debug(f"WebSocket connected: {connection_id}")
+
+        # Send connection confirmation
+        await websocket.send_text(
+            json.dumps(
+                {"event": "connected", "connection_id": connection_id, "message": "Connected to workflow events"}
+            )
+        )
+
+        return connection_id
+
+    async def disconnect(self, connection_id: str):
+        """Remove WebSocket connection"""
+        if connection_id in self.active_connections:
+            del self.active_connections[connection_id]
+            logger.debug(f"WebSocket disconnected: {connection_id}")
+
+        # Clean up workflow mappings
+        workflows_to_remove = [
+            run_id for run_id, conn_id in self.workflow_connections.items() if conn_id == connection_id
+        ]
+        for run_id in workflows_to_remove:
+            del self.workflow_connections[run_id]
+
+    async def register_workflow_run(self, run_id: str, connection_id: str):
+        """Register a workflow run with a WebSocket connection"""
+        self.workflow_connections[run_id] = connection_id
+        logger.debug(f"Registered workflow {run_id} with connection {connection_id}")
+
+    async def get_websocket_for_run(self, run_id: str) -> Optional[WebSocket]:
+        """Get WebSocket connection for a workflow run"""
+        connection_id = self.workflow_connections.get(run_id)
+        if connection_id and connection_id in self.active_connections:
+            return self.active_connections[connection_id]
+        return None
+
+
+# Global manager instance
+websocket_manager = WebSocketManager(
+    active_connections={},
+    workflow_connections={},
+)
 
 
 async def agent_response_streamer(
@@ -54,7 +137,7 @@ async def agent_response_streamer(
     files: Optional[List[FileMedia]] = None,
 ) -> AsyncGenerator:
     try:
-        run_response = await agent.arun(
+        run_response = agent.arun(
             message,
             session_id=session_id,
             user_id=user_id,
@@ -85,7 +168,7 @@ async def agent_continue_response_streamer(
     user_id: Optional[str] = None,
 ) -> AsyncGenerator:
     try:
-        continue_response = await agent.acontinue_run(
+        continue_response = agent.acontinue_run(
             run_id=run_id,
             updated_tools=updated_tools,
             session_id=session_id,
@@ -118,7 +201,7 @@ async def team_response_streamer(
 ) -> AsyncGenerator:
     """Run the given team asynchronously and yield its response"""
     try:
-        run_response = await team.arun(
+        run_response = team.arun(
             message,
             session_id=session_id,
             user_id=user_id,
@@ -142,18 +225,50 @@ async def team_response_streamer(
         return
 
 
+async def workflow_response_streamer(
+    workflow: Workflow,
+    message: Optional[str] = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> AsyncGenerator:
+    try:
+        run_response = await workflow.arun(
+            message,
+            session_id=session_id,
+            user_id=user_id,
+            stream=True,
+            stream_intermediate_steps=True,
+        )
+
+        async for run_response_chunk in run_response:
+            yield run_response_chunk.to_json()
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
+        error_response = WorkflowErrorEvent(
+            error=str(e),
+        )
+        yield error_response.to_json()
+        return
+
+
 def get_base_router(
     os: "AgentOS",
+    settings: AgnoAPISettings = AgnoAPISettings(),
 ) -> APIRouter:
-    router = APIRouter(tags=["Built-In"])
+    router = APIRouter(tags=["Core"], dependencies=[Depends(get_authentication_dependency(settings))])
 
-    # -- Util routes ---
+    # -- Main Routes ---
+    @router.get("/health")
+    async def health_check():
+        return JSONResponse(content={"status": "ok"})
 
-    @router.get("/status")
-    async def status():
-        return {"status": "available"}
-
-    @router.get("/config", response_model=ConfigResponse, response_model_exclude_none=True)
+    @router.get(
+        "/config",
+        response_model=ConfigResponse,
+        response_model_exclude_none=True,
+    )
     async def config() -> ConfigResponse:
         apps_response = AppsResponse(
             session=[
@@ -190,7 +305,7 @@ def get_base_router(
         apps_response.metrics = apps_response.metrics or None
 
         return ConfigResponse(
-            os_id=os.os_id,
+            os_id=os.os_id or "Unnamed OS",
             description=os.description,
             interfaces=[
                 InterfaceResponse(type=interface.type, version=interface.version, route=interface.router_prefix)
@@ -219,7 +334,11 @@ def get_base_router(
             else [],
         )
 
-    @router.get("/models", response_model=List[Model], response_model_exclude_none=True)
+    @router.get(
+        "/models",
+        response_model=List[Model],
+        response_model_exclude_none=True,
+    )
     async def get_models():
         """Return the list of all models used by agents and teams in the contextual OS"""
         all_components = []
@@ -343,7 +462,9 @@ def get_base_router(
             )
             return run_response.to_dict()
 
-    @router.post("/agents/{agent_id}/runs/{run_id}/continue")
+    @router.post(
+        "/agents/{agent_id}/runs/{run_id}/continue",
+    )
     async def continue_agent_run(
         agent_id: str,
         run_id: str,
@@ -401,17 +522,24 @@ def get_base_router(
             )
             return run_response_obj.to_dict()
 
-    @router.delete("/agents/{agent_id}/sessions/{session_id}", status_code=204)
+    @router.delete(
+        "/agents/{agent_id}/sessions/{session_id}",
+        status_code=204,
+    )
     async def delete_agent_session(agent_id: str, session_id: str) -> None:
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
-        if agent.memory is None or agent.memory.db is None:
-            raise HTTPException(status_code=404, detail="Agent has no memory. Sessions are unavailable.")
+        if agent.db is None:
+            raise HTTPException(status_code=404, detail="Agent has no database. Sessions are unavailable.")
 
-        agent.memory.db.delete_session(session_id=session_id, session_type=SessionType.AGENT)
+        agent.db.delete_session(session_id=session_id)
 
-    @router.get("/agents", response_model=List[AgentResponse], response_model_exclude_none=True)
+    @router.get(
+        "/agents",
+        response_model=List[AgentResponse],
+        response_model_exclude_none=True,
+    )
     async def get_agents():
         if os.agents is None:
             return []
@@ -434,10 +562,10 @@ def get_base_router(
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail=f"Agent with id {agent_id} not found")
-        if agent.memory is None or agent.memory.db is None:
-            raise HTTPException(status_code=404, detail="Agent has no memory. Sessions are unavailable.")
+        if agent.db is None:
+            raise HTTPException(status_code=404, detail="Agent has no database. Sessions are unavailable.")
 
-        sessions, total_count = agent.memory.db.get_sessions(
+        sessions, total_count = agent.db.get_sessions(
             session_type=SessionType.AGENT,
             component_id=agent_id,
             user_id=user_id,
@@ -458,7 +586,11 @@ def get_base_router(
             ),
         )
 
-    @router.get("/agents/{agent_id}/sessions/{session_id}", response_model=AgentSessionDetailSchema, status_code=200)
+    @router.get(
+        "/agents/{agent_id}/sessions/{session_id}",
+        response_model=AgentSessionDetailSchema,
+        status_code=200,
+    )
     async def get_agent_session_by_id(
         agent_id: str,
         session_id: str,
@@ -467,10 +599,10 @@ def get_base_router(
         if agent is None:
             raise HTTPException(status_code=404, detail=f"Agent with id {agent_id} not found")
 
-        if agent.memory is None:
-            raise HTTPException(status_code=404, detail="Agent has no memory. Sessions are unavailable.")
+        if agent.db is None:
+            raise HTTPException(status_code=404, detail="Agent has no database. Sessions are unavailable.")
 
-        session = agent.memory.db.get_session(session_type=SessionType.AGENT, session_id=session_id)  # type: ignore
+        session = agent.db.get_session(session_type=SessionType.AGENT, session_id=session_id)  # type: ignore
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
 
@@ -489,16 +621,19 @@ def get_base_router(
         if agent is None:
             raise HTTPException(status_code=404, detail=f"Agent with id {agent_id} not found")
 
-        if agent.memory is None or agent.memory.db is None:
-            raise HTTPException(status_code=404, detail="Agent has no memory. Runs are unavailable.")
+        if agent.db is None:
+            raise HTTPException(status_code=404, detail="Agent has no database. Runs are unavailable.")
 
-        session = agent.memory.db.get_session(session_type=SessionType.AGENT, session_id=session_id)
+        session = agent.db.get_session(session_type=SessionType.AGENT, session_id=session_id, deserialize=False)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
 
-        return [RunSchema.from_run_response(run) for run in session.runs]  # type: ignore
+        return [RunSchema.from_dict(run) for run in session["runs"]]  # type: ignore
 
-    @router.get("/agents/{agent_id}", response_model=AgentResponse)
+    @router.get(
+        "/agents/{agent_id}",
+        response_model=AgentResponse,
+    )
     async def get_agent(agent_id: str):
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
@@ -506,7 +641,10 @@ def get_base_router(
 
         return AgentResponse.from_agent(agent)
 
-    @router.post("/agents/{agent_id}/sessions/{session_id}/rename", response_model=AgentSessionDetailSchema)
+    @router.post(
+        "/agents/{agent_id}/sessions/{session_id}/rename",
+        response_model=AgentSessionDetailSchema,
+    )
     async def rename_agent_session(
         agent_id: str,
         session_id: str,
@@ -515,8 +653,8 @@ def get_base_router(
         agent = get_agent_by_id(agent_id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
-        if agent.memory is None or agent.memory.db is None:
-            raise HTTPException(status_code=404, detail="Agent has no memory. Sessions are unavailable.")
+        if agent.db is None:
+            raise HTTPException(status_code=404, detail="Agent has no database. Sessions are unavailable.")
 
         session = agent.rename_session(session_id=session_id, session_name=session_name)
         if not session:
@@ -546,11 +684,6 @@ def get_base_router(
         else:
             logger.debug("Creating new session")
             session_id = str(uuid4())
-
-        if monitor:
-            team.monitoring = True
-        else:
-            team.monitoring = False
 
         base64_images: List[Image] = []
         base64_audios: List[Audio] = []
@@ -632,17 +765,24 @@ def get_base_router(
             )
             return run_response.to_dict()
 
-    @router.delete("/teams/{team_id}/sessions/{session_id}", status_code=204)
+    @router.delete(
+        "/teams/{team_id}/sessions/{session_id}",
+        status_code=204,
+    )
     async def delete_team_session(team_id: str, session_id: str) -> None:
         team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
-        if team.memory is None or team.memory.db is None:
-            raise HTTPException(status_code=404, detail="Team has no memory. Sessions are unavailable.")
+        if team.db is None:
+            raise HTTPException(status_code=404, detail="Team has no database. Sessions are unavailable.")
 
-        team.memory.db.delete_session(session_id=session_id, session_type=SessionType.TEAM)
+        team.db.delete_session(session_id=session_id)
 
-    @router.get("/teams", response_model=List[TeamResponse], response_model_exclude_none=True)
+    @router.get(
+        "/teams",
+        response_model=List[TeamResponse],
+        response_model_exclude_none=True,
+    )
     async def get_teams():
         if os.teams is None:
             return []
@@ -667,10 +807,10 @@ def get_base_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        if team.memory is None or team.memory.db is None:
-            raise HTTPException(status_code=404, detail="Team has no memory. Sessions are unavailable.")
+        if team.db is None:
+            raise HTTPException(status_code=404, detail="Team has no associated database. Sessions are unavailable.")
 
-        sessions, total_count = team.memory.db.get_sessions(
+        sessions, total_count = team.db.get_sessions(
             session_type=SessionType.TEAM,
             component_id=team_id,
             user_id=user_id,
@@ -692,7 +832,11 @@ def get_base_router(
             ),
         )
 
-    @router.get("/teams/{team_id}/sessions/{session_id}", response_model=TeamSessionDetailSchema, status_code=200)
+    @router.get(
+        "/teams/{team_id}/sessions/{session_id}",
+        response_model=TeamSessionDetailSchema,
+        status_code=200,
+    )
     async def get_team_session_by_id(
         team_id: str,
         session_id: str,
@@ -701,34 +845,45 @@ def get_base_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        if team.memory is None or team.memory.db is None:
-            raise HTTPException(status_code=404, detail="Team has no memory. Sessions are unavailable.")
+        if team.db is None:
+            raise HTTPException(status_code=404, detail="Team has no associated database. Sessions are unavailable.")
 
-        session = team.memory.db.get_session(session_type=SessionType.TEAM, session_id=session_id)
+        session = team.db.get_session(session_type=SessionType.TEAM, session_id=session_id)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
 
         return TeamSessionDetailSchema.from_session(session)  # type: ignore
 
-    @router.get("/teams/{team_id}/sessions/{session_id}/runs", response_model=List[RunSchema], status_code=200)
+    @router.get(
+        "/teams/{team_id}/sessions/{session_id}/runs",
+        response_model=List[TeamRunSchema],
+        status_code=200,
+    )
     async def get_team_session_runs(
         team_id: str,
         session_id: str,
-    ) -> List[RunSchema]:
+    ) -> List[TeamRunSchema]:
         team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        if team.memory is None or team.memory.db is None:
-            raise HTTPException(status_code=404, detail="Team has no memory. Runs are unavailable.")
+        if team.db is None:
+            raise HTTPException(status_code=404, detail="Team has no associated database. Runs are unavailable.")
 
-        session = team.memory.db.get_session(session_type=SessionType.TEAM, session_id=session_id)
+        session = team.db.get_session(session_type=SessionType.TEAM, session_id=session_id, deserialize=False)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
 
-        return [RunSchema.from_team_run_response(run) for run in session.runs]  # type: ignore
+        runs = session.get("runs")  # type: ignore
+        if not runs:
+            raise HTTPException(status_code=404, detail=f"Session with id {session_id} has no runs")
 
-    @router.get("/teams/{team_id}", response_model=TeamResponse)
+        return [TeamRunSchema.from_dict(run) for run in runs]
+
+    @router.get(
+        "/teams/{team_id}",
+        response_model=TeamResponse,
+    )
     async def get_team(team_id: str):
         team = get_team_by_id(team_id, os.teams)
         if team is None:
@@ -736,7 +891,10 @@ def get_base_router(
 
         return TeamResponse.from_team(team)
 
-    @router.post("/teams/{team_id}/sessions/{session_id}/rename", response_model=TeamSessionDetailSchema)
+    @router.post(
+        "/teams/{team_id}/sessions/{session_id}/rename",
+        response_model=TeamSessionDetailSchema,
+    )
     async def rename_team_session(
         team_id: str,
         session_id: str,
@@ -745,8 +903,8 @@ def get_base_router(
         team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
-        if team.memory is None or team.memory.db is None:
-            raise HTTPException(status_code=404, detail="Team has no memory. Sessions are unavailable.")
+        if team.db is None:
+            raise HTTPException(status_code=404, detail="Team has no database. Sessions are unavailable.")
 
         session = team.rename_session(session_id=session_id, session_name=session_name)
         if not session:
@@ -756,7 +914,30 @@ def get_base_router(
 
     # -- Workflow routes ---
 
-    @router.get("/workflows", response_model=List[WorkflowResponse], response_model_exclude_none=True)
+    @router.websocket("/workflows/ws")
+    async def workflow_websocket_endpoint(websocket: WebSocket):
+        """WebSocket endpoint for receiving real-time workflow events"""
+        connection_id = await websocket_manager.connect(websocket)
+
+        try:
+            while True:
+                data = await websocket.receive_text()
+                message = json.loads(data)
+
+                if message.get("action") == "ping":
+                    await websocket.send_text(json.dumps({"event": "pong"}))
+
+        except WebSocketDisconnect:
+            websocket_manager.disconnect(connection_id)
+        except Exception as e:
+            logger.error(f"WebSocket error: {e}")
+            websocket_manager.disconnect(connection_id)
+
+    @router.get(
+        "/workflows",
+        response_model=List[WorkflowResponse],
+        response_model_exclude_none=True,
+    )
     async def get_workflows():
         if os.workflows is None:
             return []
@@ -770,7 +951,10 @@ def get_base_router(
             for workflow in os.workflows
         ]
 
-    @router.get("/workflows/{workflow_id}", response_model=WorkflowResponse)
+    @router.get(
+        "/workflows/{workflow_id}",
+        response_model=WorkflowResponse,
+    )
     async def get_workflow(workflow_id: str):
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
@@ -783,33 +967,83 @@ def get_base_router(
         )
 
     @router.post("/workflows/{workflow_id}/runs")
-    async def create_workflow_run(workflow_id: str, body: WorkflowRunRequest):
+    async def create_workflow_run(
+        workflow_id: str,
+        message: str = Form(...),
+        stream: bool = Form(True),
+        session_id: Optional[str] = Form(None),
+        user_id: Optional[str] = Form(None),
+        background: Optional[bool] = Form(True),
+        connection_id: Optional[str] = Form(None),
+    ):
         # Retrieve the workflow by ID
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        if body.session_id is not None:
-            logger.debug(f"Continuing session: {body.session_id}")
+        if session_id:
+            logger.debug(f"Continuing session: {session_id}")
         else:
             logger.debug("Creating new session")
+            session_id = str(uuid4())
 
-        # Create a new instance of this workflow
-        new_workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id, "session_id": body.session_id})
-        new_workflow_instance.user_id = body.user_id
-        new_workflow_instance.session_name = None
-
-        # Return based on the response type
+        # Return based on stream parameter
         try:
-            if new_workflow_instance._run_return_type == "RunResponse":
-                # Return as a normal response
-                return new_workflow_instance.run(**body.input)
-            else:
-                # Return as a streaming response
+            if stream and not background:
                 return StreamingResponse(
-                    (result.to_json() for result in new_workflow_instance.run(**body.input)),
+                    workflow_response_streamer(
+                        workflow,
+                        message=message,
+                        session_id=session_id,
+                        user_id=user_id,
+                    ),
                     media_type="text/event-stream",
                 )
+            elif stream and background:
+                websocket_instance = None
+                if connection_id:
+                    websocket_instance = websocket_manager.active_connections.get(connection_id)
+                    if not websocket_instance:
+                        raise HTTPException(status_code=400, detail="Invalid WebSocket connection ID")
+
+                # Create workflow instance with WebSocket
+                workflow_with_ws = Workflow(
+                    workflow_id=workflow.workflow_id,
+                    name=workflow.name,
+                    description=workflow.description,
+                    db=workflow.db,
+                    steps=workflow.steps,
+                    websocket=websocket_instance,  # Pass WebSocket to workflow
+                )
+
+                run_response = await workflow_with_ws.arun(
+                    message=message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    stream=True,
+                    stream_intermediate_steps=True,
+                    background=True,
+                )
+
+                # Register the workflow run with the WebSocket connection
+                if connection_id:
+                    await websocket_manager.register_workflow_run(run_response.run_id, connection_id)
+
+                return {
+                    "status": "started",
+                    "run_id": run_response.run_id,
+                    "session_id": run_response.session_id,
+                    "connection_id": connection_id,
+                    "message": "Background streaming workflow started - events will be broadcast via WebSocket",
+                }
+            else:
+                run_response = await workflow.arun(
+                    message=message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    stream=False,
+                )
+                return run_response.to_dict()
         except Exception as e:
             # Handle unexpected runtime errors
             raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")

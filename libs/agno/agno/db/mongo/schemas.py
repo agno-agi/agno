@@ -20,7 +20,7 @@ USER_MEMORY_COLLECTION_SCHEMA = [
     {"key": "team_id"},
     {"key": "workflow_id"},
     {"key": "topics"},
-    {"key": "last_updated"},
+    {"key": "updated_at"},
 ]
 
 EVAL_COLLECTION_SCHEMA = [
@@ -67,4 +67,4 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
     if not indexes:
         raise ValueError(f"Unknown collection type: {collection_type}")
 
-    return indexes
+    return indexes  # type: ignore[return-value]

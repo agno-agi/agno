@@ -2,7 +2,6 @@ from typing import List
 
 from agno.knowledge.chunking.strategy import ChunkingStrategy
 from agno.knowledge.document.base import Document
-from agno.utils.log import log_info
 
 
 class FixedSizeChunking(ChunkingStrategy):

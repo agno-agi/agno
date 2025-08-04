@@ -68,7 +68,7 @@ USER_MEMORY_COLLECTION_SCHEMA = [
     {"key": "team_id"},
     {"key": "workflow_id"},
     {"key": "topics"},
-    {"key": "last_updated"},
+    {"key": "updated_at"},
     # Composite indexes for memory queries
     {"key": [("user_id", "ASCENDING"), ("agent_id", "ASCENDING")], "collection_group": False},
     {"key": [("user_id", "ASCENDING"), ("team_id", "ASCENDING")], "collection_group": False},
@@ -120,4 +120,4 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
     if not indexes:
         raise ValueError(f"Unknown collection type: {collection_type}")
 
-    return indexes
+    return indexes  # type: ignore

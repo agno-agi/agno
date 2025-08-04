@@ -6,8 +6,10 @@ from uuid import UUID
 
 from agno.db.base import SessionType
 from agno.models.message import Message
+from agno.models.metrics import Metrics
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
+from agno.run.v2.workflow import WorkflowRunResponse
 from agno.session.summary import SessionSummary
 
 
@@ -20,6 +22,8 @@ class CustomJSONEncoder(json.JSONEncoder):
         elif isinstance(obj, (date, datetime)):
             return obj.isoformat()
         elif isinstance(obj, Message):
+            return obj.to_dict()
+        elif isinstance(obj, Metrics):
             return obj.to_dict()
 
         return super().default(obj)
@@ -80,7 +84,9 @@ def deserialize_session_json_fields(session: dict) -> dict:
     if session.get("runs") is not None:
         if session["session_type"] == SessionType.AGENT.value:
             session["runs"] = [RunResponse.from_dict(run) for run in json.loads(session["runs"])]
-        elif session["session_type"] == SessionType.TEAM.value:
+        if session["session_type"] == SessionType.TEAM.value:
             session["runs"] = [TeamRunResponse.from_dict(run) for run in json.loads(session["runs"])]
+        if session["session_type"] == SessionType.WORKFLOW.value:
+            session["runs"] = [WorkflowRunResponse.from_dict(run) for run in json.loads(session["runs"])]
 
     return session

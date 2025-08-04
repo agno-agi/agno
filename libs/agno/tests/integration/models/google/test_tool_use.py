@@ -17,7 +17,6 @@ def test_tool_use():
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA?")
@@ -35,7 +34,6 @@ def test_tool_use_stream():
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
-        monitoring=False,
     )
 
     response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
@@ -64,7 +62,6 @@ async def test_async_tool_use():
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
-        monitoring=False,
     )
 
     response = await agent.arun("What is the current price of TSLA?")
@@ -83,7 +80,6 @@ async def test_async_tool_use_stream():
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
-        monitoring=False,
     )
 
     response_stream = await agent.arun(
@@ -118,7 +114,6 @@ def test_tool_use_with_native_structured_outputs():
         markdown=True,
         response_model=StockPrice,
         telemetry=False,
-        monitoring=False,
         delay_between_retries=5,
     )
     # Gemini does not support structured outputs for tool calls at this time
@@ -143,7 +138,6 @@ def test_tool_use_with_json_structured_outputs():
         response_model=StockPrice,
         use_json_mode=True,
         telemetry=False,
-        monitoring=False,
     )
     # Gemini does not support structured outputs for tool calls at this time
     response = agent.run("What is the current price of TSLA?")
@@ -161,7 +155,6 @@ def test_parallel_tool_calls():
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA and AAPL?")
@@ -184,7 +177,6 @@ def test_multiple_tool_calls():
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA and what is the latest news about it?")
@@ -205,7 +197,6 @@ def test_grounding():
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the weather in Tokyo?")
@@ -223,7 +214,6 @@ def test_grounding_stream():
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
-        monitoring=False,
     )
 
     response_stream = agent.run("What is the weather in Tokyo?", stream=True)
@@ -246,7 +236,6 @@ def test_search_stream():
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
-        monitoring=False,
     )
 
     response_stream = agent.run("What are the latest scientific studies about climate change from 2024?", stream=True)
@@ -278,7 +267,6 @@ def test_tool_use_with_enum():
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[get_color],
         telemetry=False,
-        monitoring=False,
     )
     response = agent.run("I want the color red.")
 

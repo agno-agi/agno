@@ -16,7 +16,6 @@ agent = Agent(
         "Analyse and prepare an NYT worthy article based on the information.",
     ],
     markdown=True,
-    show_tool_calls=True,
     add_datetime_to_instructions=True,
 )
 agent.print_response("Simulation theory")

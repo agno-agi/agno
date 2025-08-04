@@ -26,19 +26,8 @@ SESSION_TABLE_SCHEMA = {
     "updated_at": {"type": BigInteger, "nullable": True},
     "_unique_constraints": [
         {
-            "name": "uq_agent_session",
-            "columns": ["session_id", "agent_id"],
-            "where": "session_type = 'agent'",
-        },
-        {
-            "name": "uq_team_session",
-            "columns": ["session_id", "team_id"],
-            "where": "session_type = 'team'",
-        },
-        {
-            "name": "uq_workflow_session",
-            "columns": ["session_id", "workflow_id"],
-            "where": "session_type = 'workflow'",
+            "name": "uq_session_id",
+            "columns": ["session_id"],
         },
     ],
 }
@@ -52,7 +41,7 @@ USER_MEMORY_TABLE_SCHEMA = {
     "workflow_id": {"type": lambda: String(128), "nullable": True},
     "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
     "topics": {"type": JSON, "nullable": True},
-    "last_updated": {"type": BigInteger, "nullable": True, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True, "index": True},
 }
 
 EVAL_TABLE_SCHEMA = {
@@ -103,8 +92,6 @@ METRICS_TABLE_SCHEMA = {
     "completed": {"type": Boolean, "nullable": False, "default": False},
 }
 
-LEARNING_TABLE_SCHEMA = {}
-
 
 def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
@@ -120,9 +107,10 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "metrics": METRICS_TABLE_SCHEMA,
         "user_memories": USER_MEMORY_TABLE_SCHEMA,
         "knowledge_contents": KNOWLEDGE_TABLE_SCHEMA,
-        "learnings": {},
     }
     schema = schemas.get(table_type, {})
+
     if not schema:
         raise ValueError(f"Unknown table type: {table_type}")
-    return schema
+
+    return schema  # type: ignore[return-value]

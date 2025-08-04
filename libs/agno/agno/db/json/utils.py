@@ -32,7 +32,9 @@ def hydrate_session(session: dict) -> dict:
     return session
 
 
-def apply_sorting(data: List[Dict[str, Any]], sort_by: Optional[str] = None, sort_order: Optional[str] = None) -> List[Dict[str, Any]]:
+def apply_sorting(
+    data: List[Dict[str, Any]], sort_by: Optional[str] = None, sort_order: Optional[str] = None
+) -> List[Dict[str, Any]]:
     """Apply sorting to the given data list.
 
     Args:
@@ -89,7 +91,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
         "cache_write_tokens": 0,
         "reasoning_tokens": 0,
     }
-    model_counts = {}
+    model_counts: Dict[str, int] = {}
 
     session_types = [
         ("agent", "agent_sessions_count", "agent_runs_count"),
@@ -164,12 +166,14 @@ def fetch_all_sessions_data(
     if not dates_to_process:
         return None
 
-    all_sessions_data = {
+    all_sessions_data: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
         date_to_process.isoformat(): {"agent": [], "team": [], "workflow": []} for date_to_process in dates_to_process
     }
 
     for session in sessions:
-        session_date = date.fromtimestamp(session.get("created_at", start_timestamp)).isoformat()
+        session_date = (
+            datetime.fromtimestamp(session.get("created_at", start_timestamp), tz=timezone.utc).date().isoformat()
+        )
         if session_date in all_sessions_data:
             all_sessions_data[session_date][session["session_type"]].append(session)
 

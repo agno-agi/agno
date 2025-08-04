@@ -67,7 +67,6 @@ finance_agent = Agent(
         - Mention relevant regulatory concerns
     """),
     add_datetime_to_instructions=True,
-    show_tool_calls=True,
     markdown=True,
 )
 

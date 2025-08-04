@@ -34,7 +34,7 @@ agent = Agent(
 
 
 async def main():
-    async for run_response in await agent.arun(
+    async for run_response in agent.arun(
         "Send an email with the subject 'Hello' and the body 'Hello, world!'",
         stream=True,
     ):
@@ -62,10 +62,9 @@ async def main():
                     # Update the field value
                     field.value = user_value
 
-            run_response = await agent.acontinue_run(
+            async for resp in agent.acontinue_run(
                 run_response=run_response, stream=True
-            )
-            async for resp in run_response:
+            ):
                 print(resp.content, end="")
 
     # Or for simple debug flow

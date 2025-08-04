@@ -4,7 +4,7 @@ from textwrap import dedent
 from typing import Optional
 
 from agno.agent import Agent
-from agno.knowledge import AgentKnowledge
+from agno.knowledge.knowledge import Knowledge
 from agno.memory import Memory
 from agno.models.base import Model
 from agno.tools.calculator import CalculatorTools
@@ -21,7 +21,7 @@ tmp_dir.mkdir(exist_ok=True, parents=True)
 
 
 def get_agent(
-    agent_name: str, model: Model, memory: Memory, knowledge: AgentKnowledge
+    agent_name: str, model: Model, memory: Memory, knowledge: Knowledge
 ) -> Optional[Agent]:
     # Create a copy of the model to avoid side effects of the model being modified
     model_copy = deepcopy(model)

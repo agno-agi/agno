@@ -74,41 +74,41 @@ USER_MEMORY_TABLE_SCHEMA = {
         {"AttributeName": "agent_id", "AttributeType": "S"},
         {"AttributeName": "team_id", "AttributeType": "S"},
         {"AttributeName": "workflow_id", "AttributeType": "S"},
-        {"AttributeName": "last_updated", "AttributeType": "S"},
+        {"AttributeName": "updated_at", "AttributeType": "S"},
     ],
     "GlobalSecondaryIndexes": [
         {
-            "IndexName": "user_id-last_updated-index",
+            "IndexName": "user_id-updated_at-index",
             "KeySchema": [
                 {"AttributeName": "user_id", "KeyType": "HASH"},
-                {"AttributeName": "last_updated", "KeyType": "RANGE"},
+                {"AttributeName": "updated_at", "KeyType": "RANGE"},
             ],
             "Projection": {"ProjectionType": "ALL"},
             "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
         },
         {
-            "IndexName": "agent_id-last_updated-index",
+            "IndexName": "agent_id-updated_at-index",
             "KeySchema": [
                 {"AttributeName": "agent_id", "KeyType": "HASH"},
-                {"AttributeName": "last_updated", "KeyType": "RANGE"},
+                {"AttributeName": "updated_at", "KeyType": "RANGE"},
             ],
             "Projection": {"ProjectionType": "ALL"},
             "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
         },
         {
-            "IndexName": "team_id-last_updated-index",
+            "IndexName": "team_id-updated_at-index",
             "KeySchema": [
                 {"AttributeName": "team_id", "KeyType": "HASH"},
-                {"AttributeName": "last_updated", "KeyType": "RANGE"},
+                {"AttributeName": "updated_at", "KeyType": "RANGE"},
             ],
             "Projection": {"ProjectionType": "ALL"},
             "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
         },
         {
-            "IndexName": "workflow_id-last_updated-index",
+            "IndexName": "workflow_id-updated_at-index",
             "KeySchema": [
                 {"AttributeName": "workflow_id", "KeyType": "HASH"},
-                {"AttributeName": "last_updated", "KeyType": "RANGE"},
+                {"AttributeName": "updated_at", "KeyType": "RANGE"},
             ],
             "Projection": {"ProjectionType": "ALL"},
             "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
@@ -259,7 +259,7 @@ def get_table_schema_definition(table_type: str) -> Dict[str, Any]:
         "sessions": SESSION_TABLE_SCHEMA,
         "user_memories": USER_MEMORY_TABLE_SCHEMA,
         "evals": EVAL_TABLE_SCHEMA,
-        "knowledge_sources": KNOWLEDGE_TABLE_SCHEMA,
+        "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
     }
 

@@ -1,4 +1,7 @@
 """This cookbook shows how to add topics from Wikipedia and Arxiv to the knowledge base.
+
+It is important to specify the reader for the content when using topics.
+
 1. Run: `pip install agno wikipedia arxiv` to install the dependencies
 2. Run: `python cookbook/agent_concepts/knowledge/05_from_topic.py` to run the cookbook
 """
@@ -20,7 +23,7 @@ knowledge = Knowledge(
 # Add topics from Wikipedia
 knowledge.add_content(
     metadata={"user_tag": "Wikipedia content"},
-    topics=["Tesla"],
+    topics=["Tesla", "AI"],
     reader=WikipediaReader(),
 )
 

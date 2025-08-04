@@ -5,13 +5,9 @@ from typing import Any, Callable, Dict, List, Optional, Union
 from uuid import uuid4
 
 from agno.db.base import SessionType
-from agno.db.schemas import MemoryRow
 from agno.db.schemas.evals import EvalRunRecord
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.run.response import RunResponse
-from agno.run.team import TeamRunResponse
 from agno.session import Session
-from agno.session.summarizer import SessionSummary
 from agno.utils.log import log_debug, log_error, log_info
 
 # -- Serialization utils --
@@ -35,7 +31,7 @@ def serialize_to_dynamo_item(data: Dict[str, Any]) -> Dict[str, Any]:
             elif isinstance(value, str):
                 item[key] = {"S": value}
             elif isinstance(value, bool):
-                item[key] = {"BOOL": value}
+                item[key] = {"BOOL": str(value)}
             elif isinstance(value, (dict, list)):
                 item[key] = {"S": json.dumps(value)}
             else:
@@ -66,11 +62,6 @@ def deserialize_from_dynamodb_item(item: Dict[str, Any]) -> Dict[str, Any]:
     return data
 
 
-def serialize_memory_row(memory: MemoryRow) -> Dict[str, Any]:
-    """Serialize a MemoryRow to a DynamoDB item."""
-    return serialize_to_dynamo_item(memory.to_dict())
-
-
 def serialize_knowledge_row(knowledge: KnowledgeRow) -> Dict[str, Any]:
     """Convert KnowledgeRow to DynamoDB item format."""
     return serialize_to_dynamo_item(
@@ -94,11 +85,6 @@ def serialize_knowledge_row(knowledge: KnowledgeRow) -> Dict[str, Any]:
 def deserialize_knowledge_row(item: Dict[str, Any]) -> KnowledgeRow:
     """Convert DynamoDB item to KnowledgeRow."""
     data = deserialize_from_dynamodb_item(item)
-    # Convert timestamp fields back to datetime
-    if "created_at" in data and data["created_at"]:
-        data["created_at"] = datetime.fromtimestamp(data["created_at"], tz=timezone.utc)
-    if "updated_at" in data and data["updated_at"]:
-        data["updated_at"] = datetime.fromtimestamp(data["updated_at"], tz=timezone.utc)
     return KnowledgeRow(
         id=data["id"],
         name=data["name"],
@@ -144,8 +130,8 @@ def create_table_if_not_exists(dynamodb_client, table_name: str, schema: Dict[st
     """Create DynamoDB table if it doesn't exist."""
     try:
         dynamodb_client.describe_table(TableName=table_name)
-        log_debug(f"Table {table_name} already exists")
         return True
+
     except dynamodb_client.exceptions.ResourceNotFoundException:
         log_info(f"Creating table {table_name}")
         try:
@@ -153,8 +139,11 @@ def create_table_if_not_exists(dynamodb_client, table_name: str, schema: Dict[st
             # Wait for table to be created
             waiter = dynamodb_client.get_waiter("table_exists")
             waiter.wait(TableName=table_name)
-            log_info(f"Table {table_name} created successfully")
+
+            log_debug(f"Table {table_name} created successfully")
+
             return True
+
         except Exception as e:
             log_error(f"Failed to create table {table_name}: {e}")
             return False
@@ -273,27 +262,6 @@ def deserialize_session_result(
     return None
 
 
-def hydrate_session(session: dict) -> dict:
-    """Convert nested dictionaries to their corresponding object types.
-
-    Args:
-        session (dict): The session dictionary to hydrate.
-
-    Returns:
-        dict: The hydrated session dictionary.
-    """
-
-    if session.get("summary") is not None:
-        session["summary"] = SessionSummary.from_dict(session["summary"])
-    if session.get("runs") is not None:
-        if session["session_type"] == SessionType.AGENT:
-            session["runs"] = [RunResponse.from_dict(run) for run in session["runs"]]
-        elif session["session_type"] == SessionType.TEAM:
-            session["runs"] = [TeamRunResponse.from_dict(run) for run in session["runs"]]
-
-    return session
-
-
 def deserialize_session(session: Dict[str, Any]) -> Optional[Session]:
     """Deserialize session data from DynamoDB format to Session object."""
     try:
@@ -359,7 +327,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
         "cache_write_tokens": 0,
         "reasoning_tokens": 0,
     }
-    model_counts = {}
+    model_counts: Dict[str, int] = {}
     session_types = [
         ("agent", "agent_sessions_count", "agent_runs_count"),
         ("team", "team_sessions_count", "team_runs_count"),
@@ -437,11 +405,13 @@ def fetch_all_sessions_data(
     """
     if not dates_to_process:
         return None
-    all_sessions_data = {
+    all_sessions_data: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
         date_to_process.isoformat(): {"agent": [], "team": [], "workflow": []} for date_to_process in dates_to_process
     }
     for session in sessions:
-        session_date = date.fromtimestamp(session.get("created_at", start_timestamp)).isoformat()
+        session_date = (
+            datetime.fromtimestamp(session.get("created_at", start_timestamp), tz=timezone.utc).date().isoformat()
+        )
         if session_date in all_sessions_data:
             all_sessions_data[session_date][session["session_type"]].append(session)
     return all_sessions_data
@@ -527,7 +497,7 @@ def bulk_upsert_metrics(dynamodb_client, table_name: str, metrics_data: List[Dic
         for i in range(0, len(metrics_data), batch_size):
             batch = metrics_data[i : i + batch_size]
 
-            request_items = {table_name: []}
+            request_items: Dict[str, List[Dict[str, Any]]] = {table_name: []}
 
             for metric in batch:
                 request_items[table_name].append({"PutRequest": {"Item": metric}})
@@ -631,11 +601,11 @@ def execute_query_with_pagination(
 
     # Apply sorting at query level if sorting by created_at
     if sort_by == "created_at":
-        query_kwargs["ScanIndexForward"] = sort_order != "desc"
+        query_kwargs["ScanIndexForward"] = sort_order != "desc"  # type: ignore
 
     # Apply limit at DynamoDB level if no pagination
     if limit and not page:
-        query_kwargs["Limit"] = limit
+        query_kwargs["Limit"] = limit  # type: ignore
 
     items = []
     response = dynamodb_client.query(**query_kwargs)

@@ -17,7 +17,7 @@ from uagi import UAgIConfig, create_uagi
 
 
 async def initialize_session_state():
-    logger.info(f"---*--- Initializing session state ---*---")
+    logger.info("---*--- Initializing session state ---*---")
     if "uagi" not in st.session_state:
         st.session_state["uagi"] = None
     if "session_id" not in st.session_state:
@@ -115,8 +115,8 @@ async def show_user_memories(uagi_memory: Memory, user_id: str) -> None:
                         for memory in user_memories
                     ],
                     "Last Updated": [
-                        memory.last_updated.strftime("%Y-%m-%d %H:%M")
-                        if memory.last_updated
+                        memory.updated_at.strftime("%Y-%m-%d %H:%M")
+                        if memory.updated_at
                         else ""
                         for memory in user_memories
                     ],
@@ -270,7 +270,7 @@ def display_tool_calls(tool_calls_container, tools: List[ToolExecution]):
                     member_id = tool_args.get("member_id")
                     expander_title = f"🔄 {member_id.title()}"
                 elif is_memory_task:
-                    expander_title = f"💭 Updating Memory"
+                    expander_title = "💭 Updating Memory"
                 else:
                     expander_title = f"🛠️ {tool_name.replace('_', ' ').title()}"
 
@@ -474,9 +474,9 @@ def export_chat_history():
         str: Formatted markdown string of the chat history
     """
     if "messages" not in st.session_state or not st.session_state["messages"]:
-        return f"# UAgI - Chat History\n\nNo messages to export."
+        return "# UAgI - Chat History\n\nNo messages to export."
 
-    chat_text = f"# UAgI - Chat History\n\n"
+    chat_text = "# UAgI - Chat History\n\n"
     for msg in st.session_state["messages"]:
         role_label = "🤖 Assistant" if msg["role"] == "assistant" else "👤 User"
         chat_text += f"### {role_label}\n{msg['content']}\n\n"
@@ -505,7 +505,7 @@ async def utilities_widget(uagi: Team) -> None:
         if st.button("🔄 Start New Chat"):
             restart_uagi()
     with col2:
-        fn = f"uagi_chat_history.md"
+        fn = "uagi_chat_history.md"
         if "session_id" in st.session_state:
             fn = f"uagi_{st.session_state['session_id']}.md"
         if st.download_button(

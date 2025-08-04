@@ -118,7 +118,6 @@ research_scholar = Agent(
         Last Updated: {current_time}\
     """),
     markdown=True,
-    show_tool_calls=True,
     add_datetime_to_instructions=True,
     save_response_to_file="tmp/{message}.md",
 )

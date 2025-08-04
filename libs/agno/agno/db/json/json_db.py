@@ -26,7 +26,7 @@ class JsonDb(BaseDb):
         self,
         db_path: Optional[str] = None,
         session_table: Optional[str] = None,
-        user_memory_table: Optional[str] = None,
+        memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
@@ -37,14 +37,14 @@ class JsonDb(BaseDb):
         Args:
             db_path (Optional[str]): Path to the directory where JSON files will be stored.
             session_table (Optional[str]): Name of the JSON file to store sessions (without .json extension).
-            user_memory_table (Optional[str]): Name of the JSON file to store user memories.
+            memory_table (Optional[str]): Name of the JSON file to store memories.
             metrics_table (Optional[str]): Name of the JSON file to store metrics.
             eval_table (Optional[str]): Name of the JSON file to store evaluation runs.
             knowledge_table (Optional[str]): Name of the JSON file to store knowledge content.
         """
         super().__init__(
             session_table=session_table,
-            user_memory_table=user_memory_table,
+            memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
             knowledge_table=knowledge_table,
@@ -75,7 +75,6 @@ class JsonDb(BaseDb):
                 return json.load(f)
 
         except FileNotFoundError:
-            log_debug(f"Creating new JSON file: {file_path}")
             with open(file_path, "w") as f:
                 json.dump([], f)
             return []
@@ -136,7 +135,7 @@ class JsonDb(BaseDb):
                 return False
 
         except Exception as e:
-            log_warning(f"Error deleting session: {e}")
+            log_error(f"Error deleting session: {e}")
             return False
 
     def delete_sessions(self, session_ids: List[str]) -> None:
@@ -155,7 +154,7 @@ class JsonDb(BaseDb):
             log_debug(f"Successfully deleted sessions with ids: {session_ids}")
 
         except Exception as e:
-            log_warning(f"Error deleting sessions: {e}")
+            log_error(f"Error deleting sessions: {e}")
 
     def get_session(
         self,
@@ -200,11 +199,13 @@ class JsonDb(BaseDb):
                         return AgentSession.from_dict(session)
                     elif session_type == SessionType.TEAM:
                         return TeamSession.from_dict(session)
-                    elif session_type == SessionType.WORKFLOW:
+                    else:
                         return WorkflowSession.from_dict(session)
 
+            return None
+
         except Exception as e:
-            log_warning(f"Exception reading from session file: {e}")
+            log_error(f"Exception reading from session file: {e}")
             return None
 
     def get_sessions(
@@ -285,21 +286,20 @@ class JsonDb(BaseDb):
                     start_idx = (page - 1) * limit
                 filtered_sessions = filtered_sessions[start_idx : start_idx + limit]
 
-            hydrated_sessions = [hydrate_session(session_data) for session_data in filtered_sessions]
             if not deserialize:
-                return hydrated_sessions, total_count
+                return filtered_sessions, total_count
 
             if session_type == SessionType.AGENT:
-                return [AgentSession.from_dict(session) for session in hydrated_sessions]
+                return [AgentSession.from_dict(session) for session in filtered_sessions]  # type: ignore
             elif session_type == SessionType.TEAM:
-                return [TeamSession.from_dict(session) for session in hydrated_sessions]
+                return [TeamSession.from_dict(session) for session in filtered_sessions]  # type: ignore
             elif session_type == SessionType.WORKFLOW:
-                return [WorkflowSession.from_dict(session) for session in hydrated_sessions]
+                return [WorkflowSession.from_dict(session) for session in filtered_sessions]  # type: ignore
             else:
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_warning(f"Exception reading from session file: {e}")
+            log_error(f"Exception reading from session file: {e}")
             return [] if deserialize else ([], 0)
 
     def rename_session(
@@ -309,20 +309,18 @@ class JsonDb(BaseDb):
         try:
             sessions = self._read_json_file(self.session_table_name)
 
-            for i, session_data in enumerate(sessions):
-                if (
-                    session_data.get("session_id") == session_id
-                    and session_data.get("session_type") == session_type.value
-                ):
+            for i, session in enumerate(sessions):
+                if session.get("session_id") == session_id and session.get("session_type") == session_type.value:
                     # Update session name in session_data
-                    if "session_data" not in session_data:
-                        session_data["session_data"] = {}
-                    session_data["session_data"]["session_name"] = session_name
+                    if "session_data" not in session:
+                        session["session_data"] = {}
+                    session["session_data"]["session_name"] = session_name
 
-                    sessions[i] = session_data
+                    sessions[i] = session
                     self._write_json_file(self.session_table_name, sessions)
 
-                    session = hydrate_session(session_data)
+                    log_debug(f"Renamed session with id '{session_id}' to '{session_name}'")
+
                     if not deserialize:
                         return session
 
@@ -330,15 +328,18 @@ class JsonDb(BaseDb):
                         return AgentSession.from_dict(session)
                     elif session_type == SessionType.TEAM:
                         return TeamSession.from_dict(session)
-                    elif session_type == SessionType.WORKFLOW:
+                    else:
                         return WorkflowSession.from_dict(session)
 
             return None
+
         except Exception as e:
-            log_warning(f"Exception renaming session: {e}")
+            log_error(f"Exception renaming session: {e}")
             return None
 
-    def upsert_session(self, session: Session, deserialize: Optional[bool] = True) -> Optional[Session]:
+    def upsert_session(
+        self, session: Session, deserialize: Optional[bool] = True
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Insert or update a session in the JSON file."""
         try:
             sessions = self._read_json_file(self.session_table_name)
@@ -372,12 +373,15 @@ class JsonDb(BaseDb):
 
             self._write_json_file(self.session_table_name, sessions)
 
+            log_debug(f"Upserted session with id '{session.session_id}'")
+
             if not deserialize:
                 return session_dict
+
             return session
 
         except Exception as e:
-            log_warning(f"Exception upserting session: {e}")
+            log_error(f"Exception upserting session: {e}")
             return None
 
     def _matches_session_key(self, existing_session: Dict[str, Any], session: Session) -> bool:
@@ -391,52 +395,56 @@ class JsonDb(BaseDb):
         return False
 
     # -- Memory methods --
-    def delete_user_memory(self, memory_id: str) -> bool:
+    def delete_user_memory(self, memory_id: str):
         """Delete a user memory from the JSON file."""
         try:
-            memories = self._read_json_file(self.user_memory_table_name)
+            memories = self._read_json_file(self.memory_table_name)
             original_count = len(memories)
             memories = [m for m in memories if m.get("memory_id") != memory_id]
 
             if len(memories) < original_count:
-                self._write_json_file(self.user_memory_table_name, memories)
+                self._write_json_file(self.memory_table_name, memories)
                 log_debug(f"Successfully deleted user memory id: {memory_id}")
-                return True
             else:
-                log_debug(f"No user memory found with id: {memory_id}")
-                return False
+                log_debug(f"No memory found with id: {memory_id}")
+
         except Exception as e:
-            log_warning(f"Error deleting user memory: {e}")
-            return False
+            log_error(f"Error deleting memory: {e}")
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
         """Delete multiple user memories from the JSON file."""
         try:
-            memories = self._read_json_file(self.user_memory_table_name)
+            memories = self._read_json_file(self.memory_table_name)
             memories = [m for m in memories if m.get("memory_id") not in memory_ids]
-            self._write_json_file(self.user_memory_table_name, memories)
-            log_debug(f"Successfully deleted user memories with ids: {memory_ids}")
+            self._write_json_file(self.memory_table_name, memories)
+
+            log_debug(f"Successfully deleted {len(memory_ids)} user memories")
+
         except Exception as e:
-            log_warning(f"Error deleting user memories: {e}")
+            log_error(f"Error deleting memories: {e}")
 
     def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from the JSON file."""
         try:
-            memories = self._read_json_file(self.user_memory_table_name)
+            memories = self._read_json_file(self.memory_table_name)
+
             topics = set()
             for memory in memories:
                 memory_topics = memory.get("topics", [])
                 if isinstance(memory_topics, list):
                     topics.update(memory_topics)
             return list(topics)
+
         except Exception as e:
-            log_warning(f"Exception reading from memory file: {e}")
+            log_error(f"Exception reading from memory file: {e}")
             return []
 
-    def get_user_memory(self, memory_id: str, deserialize: Optional[bool] = True) -> Optional[UserMemory]:
+    def get_user_memory(
+        self, memory_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """Get a memory from the JSON file."""
         try:
-            memories = self._read_json_file(self.user_memory_table_name)
+            memories = self._read_json_file(self.memory_table_name)
 
             for memory_data in memories:
                 if memory_data.get("memory_id") == memory_id:
@@ -445,8 +453,9 @@ class JsonDb(BaseDb):
                     return UserMemory.from_dict(memory_data)
 
             return None
+
         except Exception as e:
-            log_warning(f"Exception reading from memory file: {e}")
+            log_error(f"Exception reading from memory file: {e}")
             return None
 
     def get_user_memories(
@@ -465,7 +474,7 @@ class JsonDb(BaseDb):
     ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
         """Get all memories from the JSON file with filtering and pagination."""
         try:
-            memories = self._read_json_file(self.user_memory_table_name)
+            memories = self._read_json_file(self.memory_table_name)
 
             # Apply filters
             filtered_memories = []
@@ -507,7 +516,7 @@ class JsonDb(BaseDb):
             return [UserMemory.from_dict(memory) for memory in filtered_memories]
 
         except Exception as e:
-            log_warning(f"Exception reading from memory file: {e}")
+            log_error(f"Exception reading from memory file: {e}")
             return [] if deserialize else ([], 0)
 
     def get_user_memory_stats(
@@ -515,7 +524,7 @@ class JsonDb(BaseDb):
     ) -> Tuple[List[Dict[str, Any]], int]:
         """Get user memory statistics."""
         try:
-            memories = self._read_json_file(self.user_memory_table_name)
+            memories = self._read_json_file(self.memory_table_name)
             user_stats = {}
 
             for memory in memories:
@@ -524,9 +533,9 @@ class JsonDb(BaseDb):
                     if user_id not in user_stats:
                         user_stats[user_id] = {"user_id": user_id, "total_memories": 0, "last_memory_updated_at": 0}
                     user_stats[user_id]["total_memories"] += 1
-                    last_updated = memory.get("last_updated", 0)
-                    if last_updated > user_stats[user_id]["last_memory_updated_at"]:
-                        user_stats[user_id]["last_memory_updated_at"] = last_updated
+                    updated_at = memory.get("updated_at", 0)
+                    if updated_at > user_stats[user_id]["last_memory_updated_at"]:
+                        user_stats[user_id]["last_memory_updated_at"] = updated_at
 
             stats_list = list(user_stats.values())
             stats_list.sort(key=lambda x: x["last_memory_updated_at"], reverse=True)
@@ -543,7 +552,7 @@ class JsonDb(BaseDb):
             return stats_list, total_count
 
         except Exception as e:
-            log_warning(f"Exception getting user memory stats: {e}")
+            log_error(f"Exception getting user memory stats: {e}")
             return [], 0
 
     def upsert_user_memory(
@@ -551,13 +560,13 @@ class JsonDb(BaseDb):
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """Upsert a user memory in the JSON file."""
         try:
-            memories = self._read_json_file(self.user_memory_table_name)
+            memories = self._read_json_file(self.memory_table_name)
 
             if memory.memory_id is None:
                 memory.memory_id = str(uuid4())
 
             memory_dict = memory.to_dict() if hasattr(memory, "to_dict") else memory.__dict__
-            memory_dict["last_updated"] = int(time.time())
+            memory_dict["updated_at"] = int(time.time())
 
             # Find existing memory to update
             memory_updated = False
@@ -570,15 +579,30 @@ class JsonDb(BaseDb):
             if not memory_updated:
                 memories.append(memory_dict)
 
-            self._write_json_file(self.user_memory_table_name, memories)
+            self._write_json_file(self.memory_table_name, memories)
+
+            log_debug(f"Upserted user memory with id '{memory.memory_id}'")
 
             if not deserialize:
                 return memory_dict
             return UserMemory.from_dict(memory_dict)
 
         except Exception as e:
-            log_error(f"Exception upserting user memory: {e}")
+            log_warning(f"Exception upserting user memory: {e}")
             return None
+
+    def clear_memories(self) -> None:
+        """Delete all memories from the database.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
+        try:
+            # Simply write an empty list to the memory JSON file
+            self._write_json_file(self.memory_table_name, [])
+
+        except Exception as e:
+            log_warning(f"Exception deleting all memories: {e}")
 
     # -- Metrics methods --
     def calculate_metrics(self) -> Optional[list[dict]]:
@@ -641,6 +665,8 @@ class JsonDb(BaseDb):
             if results:
                 self._write_json_file(self.metrics_table_name, metrics)
 
+            log_debug("Updated metrics calculations")
+
             return results
 
         except Exception as e:
@@ -699,7 +725,7 @@ class JsonDb(BaseDb):
             return filtered_sessions
 
         except Exception as e:
-            log_warning(f"Exception reading sessions for metrics: {e}")
+            log_error(f"Exception reading sessions for metrics: {e}")
             return []
 
     def get_metrics(
@@ -729,21 +755,40 @@ class JsonDb(BaseDb):
             return filtered_metrics, latest_updated_at
 
         except Exception as e:
-            log_warning(f"Exception getting metrics: {e}")
+            log_error(f"Exception getting metrics: {e}")
             return [], None
 
     # -- Knowledge methods --
+
     def delete_knowledge_content(self, id: str):
-        """Delete knowledge content by ID."""
+        """Delete a knowledge row from the database.
+
+        Args:
+            id (str): The ID of the knowledge row to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
             knowledge_items = [item for item in knowledge_items if item.get("id") != id]
             self._write_json_file(self.knowledge_table_name, knowledge_items)
+
         except Exception as e:
-            log_warning(f"Error deleting knowledge content: {e}")
+            log_error(f"Error deleting knowledge content: {e}")
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
-        """Get knowledge content by ID."""
+        """Get a knowledge row from the database.
+
+        Args:
+            id (str): The ID of the knowledge row to get.
+
+        Returns:
+            Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
 
@@ -752,8 +797,9 @@ class JsonDb(BaseDb):
                     return KnowledgeRow.model_validate(item)
 
             return None
+
         except Exception as e:
-            log_warning(f"Error getting knowledge content: {e}")
+            log_error(f"Error getting knowledge content: {e}")
             return None
 
     def get_knowledge_contents(
@@ -763,7 +809,20 @@ class JsonDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
-        """Get all knowledge contents from the JSON file."""
+        """Get all knowledge contents from the database.
+
+        Args:
+            limit (Optional[int]): The maximum number of knowledge contents to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+
+        Returns:
+            Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
 
@@ -782,11 +841,21 @@ class JsonDb(BaseDb):
             return [KnowledgeRow.model_validate(item) for item in knowledge_items], total_count
 
         except Exception as e:
-            log_warning(f"Error getting knowledge contents: {e}")
+            log_error(f"Error getting knowledge contents: {e}")
             return [], 0
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
-        """Upsert knowledge content in the JSON file."""
+        """Upsert knowledge content in the database.
+
+        Args:
+            knowledge_row (KnowledgeRow): The knowledge row to upsert.
+
+        Returns:
+            Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
             knowledge_dict = knowledge_row.model_dump()
@@ -803,13 +872,17 @@ class JsonDb(BaseDb):
                 knowledge_items.append(knowledge_dict)
 
             self._write_json_file(self.knowledge_table_name, knowledge_items)
+
+            log_debug(f"Upserted knowledge source with id '{knowledge_row.id}'")
+
             return knowledge_row
 
         except Exception as e:
-            log_warning(f"Error upserting knowledge row: {e}")
+            log_error(f"Error upserting knowledge row: {e}")
             return None
 
     # -- Eval methods --
+
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
         """Create an EvalRunRecord in the JSON file."""
         try:
@@ -823,9 +896,12 @@ class JsonDb(BaseDb):
             eval_runs.append(eval_dict)
             self._write_json_file(self.eval_table_name, eval_runs)
 
+            log_debug(f"Created eval run with id '{eval_run.run_id}'")
+
             return eval_run
+
         except Exception as e:
-            log_warning(f"Error creating eval run: {e}")
+            log_error(f"Error creating eval run: {e}")
             return None
 
     def delete_eval_run(self, eval_run_id: str) -> None:
@@ -839,9 +915,10 @@ class JsonDb(BaseDb):
                 self._write_json_file(self.eval_table_name, eval_runs)
                 log_debug(f"Deleted eval run with ID: {eval_run_id}")
             else:
-                log_warning(f"No eval run found with ID: {eval_run_id}")
+                log_debug(f"No eval run found with ID: {eval_run_id}")
+
         except Exception as e:
-            log_warning(f"Error deleting eval run {eval_run_id}: {e}")
+            log_error(f"Error deleting eval run {eval_run_id}: {e}")
 
     def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
         """Delete multiple eval runs from the JSON file."""
@@ -855,9 +932,10 @@ class JsonDb(BaseDb):
                 self._write_json_file(self.eval_table_name, eval_runs)
                 log_debug(f"Deleted {deleted_count} eval runs")
             else:
-                log_warning(f"No eval runs found with IDs: {eval_run_ids}")
+                log_debug(f"No eval runs found with IDs: {eval_run_ids}")
+
         except Exception as e:
-            log_warning(f"Error deleting eval runs {eval_run_ids}: {e}")
+            log_error(f"Error deleting eval runs {eval_run_ids}: {e}")
 
     def get_eval_run(
         self, eval_run_id: str, deserialize: Optional[bool] = True
@@ -873,8 +951,9 @@ class JsonDb(BaseDb):
                     return EvalRunRecord.model_validate(run_data)
 
             return None
+
         except Exception as e:
-            log_warning(f"Exception getting eval run {eval_run_id}: {e}")
+            log_error(f"Exception getting eval run {eval_run_id}: {e}")
             return None
 
     def get_eval_runs(
@@ -887,8 +966,8 @@ class JsonDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        eval_type: Optional[List[EvalType]] = None,
         filter_type: Optional[EvalFilterType] = None,
+        eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the JSON file with filtering and pagination."""
@@ -940,7 +1019,7 @@ class JsonDb(BaseDb):
             return [EvalRunRecord.model_validate(run) for run in filtered_runs]
 
         except Exception as e:
-            log_warning(f"Exception getting eval runs: {e}")
+            log_error(f"Exception getting eval runs: {e}")
             return [] if deserialize else ([], 0)
 
     def rename_eval_run(
@@ -957,11 +1036,15 @@ class JsonDb(BaseDb):
                     eval_runs[i] = run_data
                     self._write_json_file(self.eval_table_name, eval_runs)
 
+                    log_debug(f"Renamed eval run with id '{eval_run_id}' to '{name}'")
+
                     if not deserialize:
                         return run_data
+
                     return EvalRunRecord.model_validate(run_data)
 
             return None
+
         except Exception as e:
-            log_warning(f"Error renaming eval run {eval_run_id}: {e}")
+            log_error(f"Error renaming eval run {eval_run_id}: {e}")
             return None

@@ -2,7 +2,6 @@ import os
 from typing import Dict, List, Optional
 
 from agno.knowledge.reader.base import Reader
-from agno.utils.log import log_info
 
 
 class ReaderFactory:
@@ -123,6 +122,24 @@ class ReaderFactory:
         config = {"name": "CSV URL Reader", "description": "Reads CSV URLs"}
         config.update(kwargs)
         return CSVUrlReader(**config)
+
+    @classmethod
+    def _get_s3_reader(cls, **kwargs) -> Reader:
+        """Get S3 reader instance."""
+        from agno.knowledge.reader.s3_reader import S3Reader
+
+        config = {"name": "S3 Reader", "description": "Reads S3 files"}
+        config.update(kwargs)
+        return S3Reader(**config)
+
+    @classmethod
+    def _get_gcs_reader(cls, **kwargs) -> Reader:
+        """Get GCS reader instance."""
+        from agno.knowledge.reader.gcs_reader import GCSReader
+
+        config = {"name": "GCS Reader", "description": "Reads GCS files"}
+        config.update(kwargs)
+        return GCSReader(**config)
 
     @classmethod
     def _get_reader_method(cls, reader_key: str):

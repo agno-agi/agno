@@ -24,8 +24,8 @@ from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router
 from agno.os.settings import AgnoAPISettings
 from agno.team.team import Team
-from agno.utils.log import log_debug, log_info
-from agno.workflow.workflow import Workflow
+from agno.utils.log import log_debug, log_info, log_warning
+from agno.workflow.v2.workflow import Workflow
 
 
 class AgentOS:
@@ -42,7 +42,6 @@ class AgentOS:
         apps: Optional[List[BaseApp]] = None,
         settings: Optional[AgnoAPISettings] = None,
         fastapi_app: Optional[FastAPI] = None,
-        monitoring: bool = True,
     ):
         if not agents and not workflows and not teams:
             raise ValueError("Either agents, teams or workflows must be provided.")
@@ -58,7 +57,6 @@ class AgentOS:
         self.apps = apps or []
 
         self.os_id: Optional[str] = os_id
-        self.monitoring = monitoring
         self.description = description
 
         self.interfaces_loaded: List[Tuple[str, str]] = []
@@ -114,75 +112,56 @@ class AgentOS:
         }
 
         # Helper function to add unique components
-        def add_unique_component(component_type: str, component_id: str):
+        def _add_unique_component(component_type: str, component_id: str):
             if component_id not in seen_components[component_type]:
                 seen_components[component_type].add(component_id)
                 return True
             return False
 
+        def _auto_discover_entity_apps(entity: Union[Agent, Team]) -> List[BaseApp]:
+            if entity.db:
+                # Memory app
+                if _add_unique_component("memory", f"{entity.db.memory_table_name}"):
+                    discovered_apps.append(MemoryApp(db=entity.db))
+
+                # Session app
+                if entity.db.session_table_name:
+                    if _add_unique_component("session", f"{entity.db.session_table_name}"):
+                        discovered_apps.append(SessionApp(db=entity.db))
+
+                # Metrics app
+                if entity.db.metrics_table_name:
+                    if _add_unique_component("metrics", f"{entity.db.metrics_table_name}"):
+                        discovered_apps.append(MetricsApp(db=entity.db))
+
+                # Eval app
+                if entity.db.eval_table_name:
+                    if _add_unique_component("eval", f"{entity.db.eval_table_name}"):
+                        discovered_apps.append(EvalApp(db=entity.db))
+
+            # Knowledge app
+            if entity.knowledge:
+                if not entity.knowledge.contents_db:
+                    log_warning("Knowledge contents_db is required to use knowledge inside AgentOS.")
+                    return []
+
+                db = entity.knowledge.contents_db
+                if _add_unique_component("knowledge", f"{db.knowledge_table_name}") and entity.knowledge:
+                    discovered_apps.append(KnowledgeApp(knowledge=entity.knowledge))
+
+            return discovered_apps
+
         # Process agents
         if self.agents:
             for agent in self.agents:
-                if hasattr(agent, "memory") and agent.memory and hasattr(agent.memory, "db") and agent.memory.db:
-                    memory_id = id(agent.memory)
-                    db_id = id(agent.memory.db)
-
-                    # Memory app
-                    if add_unique_component("memory", str(memory_id)):
-                        discovered_apps.append(MemoryApp(memory=agent.memory))
-
-                    # Session app
-                    if agent.memory.db.session_table_name:
-                        if add_unique_component("session", str(db_id)):
-                            discovered_apps.append(SessionApp(db=agent.memory.db))
-
-                    # Metrics app
-                    if agent.memory.db.metrics_table_name:
-                        if add_unique_component("metrics", str(db_id)):
-                            discovered_apps.append(MetricsApp(db=agent.memory.db))
-
-                    # Eval app
-                    if agent.memory.db.eval_table_name:
-                        if add_unique_component("eval", str(db_id)):
-                            discovered_apps.append(EvalApp(db=agent.memory.db))
-
-                # Knowledge app
-                if hasattr(agent, "knowledge") and agent.knowledge:
-                    knowledge_id = id(agent.knowledge)
-                    if add_unique_component("knowledge", str(knowledge_id)):
-                        discovered_apps.append(KnowledgeApp(knowledge=agent.knowledge))
+                _auto_discover_entity_apps(agent)
 
         # Process teams
         if self.teams:
             for team in self.teams:
-                if hasattr(team, "memory") and team.memory and hasattr(team.memory, "db") and team.memory.db:
-                    memory_id = id(team.memory)
-                    db_id = id(team.memory.db)
-
-                    # Memory app
-                    if add_unique_component("memory", str(memory_id)):
-                        discovered_apps.append(MemoryApp(memory=team.memory))
-
-                    # Session app
-                    if team.memory.db.session_table_name:
-                        if add_unique_component("session", str(db_id)):
-                            discovered_apps.append(SessionApp(db=team.memory.db))
-
-                    # Metrics app
-                    if team.memory.db.metrics_table_name:
-                        if add_unique_component("metrics", str(db_id)):
-                            discovered_apps.append(MetricsApp(db=team.memory.db))
-
-                    # Eval app
-                    if team.memory.db.eval_table_name:
-                        if add_unique_component("eval", str(db_id)):
-                            discovered_apps.append(EvalApp(db=team.memory.db))
-
-                # Knowledge app
-                if hasattr(team, "knowledge") and team.knowledge:
-                    knowledge_id = id(team.knowledge)
-                    if add_unique_component("knowledge", str(knowledge_id)):
-                        discovered_apps.append(KnowledgeApp(knowledge=team.knowledge))
+                _auto_discover_entity_apps(team)
+                for member in team.members:
+                    _auto_discover_entity_apps(member)
 
         # Process workflows
         # TODO: Implement workflow app discovery
@@ -200,14 +179,6 @@ class AgentOS:
             self.os_id = str(uuid4())
 
         return self.os_id
-
-    def _set_monitoring(self) -> None:
-        """Override monitoring and telemetry settings based on environment variables."""
-
-        # Only override if the environment variable is set
-        monitor_env = getenv("AGNO_MONITOR")
-        if monitor_env is not None:
-            self.monitoring = monitor_env.lower() == "true"
 
     def get_app(self) -> FastAPI:
         if not self.fastapi_app:
@@ -239,11 +210,11 @@ class AgentOS:
 
         self.fastapi_app.middleware("http")(general_exception_handler)
 
-        # Attach base router
-        self.fastapi_app.include_router(get_base_router(self))
+        self.fastapi_app.include_router(get_base_router(self, settings=self.settings))
 
         for interface in self.interfaces:
-            self.fastapi_app.include_router(interface.get_router())
+            interface_router = interface.get_router()
+            self.fastapi_app.include_router(interface_router)
             self.interfaces_loaded.append((interface.type, interface.router_prefix))
 
         # Auto-discover apps if none are provided
@@ -256,16 +227,16 @@ class AgentOS:
 
             # Passing contextual agents and teams to the eval app, so it can use them to run evals.
             if app.type == "eval":
-                self.fastapi_app.include_router(
-                    app.get_router(
-                        index=app_index_map[app.type],
-                        agents=self.agents,
-                        teams=self.teams,
-                    )
+                app_router = app.get_router(
+                    index=app_index_map[app.type],
+                    agents=self.agents,
+                    teams=self.teams,
+                    settings=self.settings,
                 )
             else:
-                self.fastapi_app.include_router(app.get_router(index=app_index_map[app.type]))
+                app_router = app.get_router(index=app_index_map[app.type], settings=self.settings)
 
+            self.fastapi_app.include_router(app_router)
             self.apps_loaded.append((app.type, app.router_prefix))
 
         self.fastapi_app.add_middleware(
@@ -298,7 +269,7 @@ class AgentOS:
 
         # Create a panel with the Home and interface URLs
         panels = []
-        encoded_endpoint = f"{full_host}:{port}/home"
+        encoded_endpoint = f"http://{full_host}:{port}/home"
         panels.append(
             Panel(
                 f"[bold green]Home URL:[/bold green] {encoded_endpoint}",

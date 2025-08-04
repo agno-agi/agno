@@ -46,7 +46,6 @@ multi_language_team = Team(
             table_name="memories", db_url="postgres://ai:ai@localhost:5532/ai"
         )
     ),
-    show_tool_calls=True,
     markdown=True,
     instructions=[
         "You are a language router that directs questions to the appropriate language agent.",

@@ -2,12 +2,15 @@
 1. Run: `python cookbook/agent_concepts/knowledge/01_from_path.py` to run the cookbook
 """
 
-import asyncio
-
 from agno.agent import Agent
+from agno.db.postgres.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
 
+contents_db = PostgresDb(
+    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
+    knowledge_table="knowledge_contents",
+)
 # Create Knowledge Instance
 knowledge = Knowledge(
     name="Basic SDK Knowledge Base",
@@ -17,10 +20,9 @@ knowledge = Knowledge(
     ),
 )
 
-# Add from local file to the knowledge base
 knowledge.add_content(
     name="CV",
-    path="cookbook/agent_concepts/knowledge/testing_resources/",
+    path="cookbook_v2/knowledge/data/filters/cv_1.pdf",
     metadata={"user_tag": "Engineering Candidates"},
 )
 
@@ -33,6 +35,6 @@ agent = Agent(
 )
 
 agent.print_response(
-    "Who is the best candidate for the role of a software engineer?",
+    "What skills does Jordan Mitchell have?",
     markdown=True,
 )

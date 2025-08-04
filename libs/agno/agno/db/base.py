@@ -19,20 +19,20 @@ class BaseDb(ABC):
     def __init__(
         self,
         session_table: Optional[str] = None,
-        user_memory_table: Optional[str] = None,
+        memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
     ):
         self.session_table_name = session_table or "agno_sessions"
-        self.user_memory_table_name = user_memory_table or "agno_user_memories"
+        self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
 
     # --- Sessions ---
     @abstractmethod
-    def delete_session(self, session_id: Optional[str] = None, session_type: SessionType = SessionType.AGENT) -> bool:
+    def delete_session(self, session_id: str) -> bool:
         raise NotImplementedError
 
     @abstractmethod
@@ -56,12 +56,14 @@ class BaseDb(ABC):
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
         session_name: Optional[str] = None,
+        start_timestamp: Optional[int] = None,
+        end_timestamp: Optional[int] = None,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-    ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
+    ) -> Union[List[Session], List[Dict[str, Any]], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
     @abstractmethod
@@ -76,7 +78,12 @@ class BaseDb(ABC):
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         raise NotImplementedError
 
-    # --- User Memory ---
+    # --- Memory ---
+
+    @abstractmethod
+    def clear_memories(self) -> None:
+        raise NotImplementedError
+
     @abstractmethod
     def delete_user_memory(self, memory_id: str) -> None:
         raise NotImplementedError
@@ -109,7 +116,7 @@ class BaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-    ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
+    ) -> Union[List[UserMemory], List[Dict[str, Any]], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
     @abstractmethod
@@ -139,8 +146,24 @@ class BaseDb(ABC):
 
     # --- Knowledge ---
     @abstractmethod
+    def delete_knowledge_content(self, id: str):
+        """Delete a knowledge row from the database.
+
+        Args:
+            id (str): The ID of the knowledge row to delete.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
-        """Get knowledge content by ID."""
+        """Get a knowledge row from the database.
+
+        Args:
+            id (str): The ID of the knowledge row to get.
+
+        Returns:
+            Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -151,17 +174,32 @@ class BaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
-        """Get all knowledge content from the database."""
+        """Get all knowledge contents from the database.
+
+        Args:
+            limit (Optional[int]): The maximum number of knowledge contents to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+
+        Returns:
+            Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         raise NotImplementedError
 
     @abstractmethod
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
-        """Upsert knowledge content in the database."""
-        raise NotImplementedError
+        """Upsert knowledge content in the database.
 
-    @abstractmethod
-    def delete_knowledge_content(self, id: str):
-        """Delete knowledge content by ID."""
+        Args:
+            knowledge_row (KnowledgeRow): The knowledge row to upsert.
+
+        Returns:
+            Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
+        """
         raise NotImplementedError
 
     # --- Evals ---
@@ -186,7 +224,6 @@ class BaseDb(ABC):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        table: Optional[Any] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,

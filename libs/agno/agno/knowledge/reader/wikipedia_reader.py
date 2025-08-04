@@ -21,7 +21,7 @@ class WikipediaReader(Reader):
 
         except wikipedia.exceptions.PageError:
             summary = None
-            log_info(f"PageError: Page not found.")
+            log_info("PageError: Page not found.")
 
         # Only create Document if we successfully got a summary
         if summary:

@@ -22,7 +22,6 @@ def test_image_input():
         tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run(
@@ -41,7 +40,6 @@ def test_audio_input_bytes():
         model=OpenAIChat(id="gpt-4o-audio-preview", modalities=["text"]),
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
     response = agent.run("What is in this audio?", audio=[Audio(content=wav_data, format="wav")])
 
@@ -53,7 +51,6 @@ def test_audio_input_url():
         model=OpenAIChat(id="gpt-4o-audio-preview", modalities=["text"]),
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run(

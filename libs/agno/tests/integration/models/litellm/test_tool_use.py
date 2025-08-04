@@ -36,7 +36,6 @@ def test_tool_use():
         markdown=True,
         tools=[DuckDuckGoTools(cache_results=True)],
         telemetry=False,
-        monitoring=False,
     )
 
     # Get the response with a query that should trigger tool use
@@ -60,7 +59,6 @@ def test_tool_use_stream():
         markdown=True,
         tools=[YFinanceTools(cache_results=True)],
         telemetry=False,
-        monitoring=False,
     )
 
     response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
@@ -71,9 +69,8 @@ def test_tool_use_stream():
     for chunk in response_stream:
         responses.append(chunk)
         print(chunk.content)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
-                tool_call_seen = True
+        if hasattr(chunk, "event") and chunk.event in ["ToolCallStarted", "ToolCallCompleted"]:
+            tool_call_seen = True
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
@@ -89,7 +86,6 @@ async def test_async_tool_use():
         markdown=True,
         tools=[DuckDuckGoTools(cache_results=True)],
         telemetry=False,
-        monitoring=False,
     )
 
     # Get the response with a query that should trigger tool use
@@ -114,7 +110,6 @@ async def test_async_tool_use_streaming():
         markdown=True,
         tools=[YFinanceTools(cache_results=True)],
         telemetry=False,
-        monitoring=False,
     )
 
     response_stream = await agent.arun(
@@ -126,9 +121,8 @@ async def test_async_tool_use_streaming():
 
     async for chunk in response_stream:
         responses.append(chunk)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
-                tool_call_seen = True
+        if hasattr(chunk, "event") and chunk.event in ["ToolCallStarted", "ToolCallCompleted"]:
+            tool_call_seen = True
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
@@ -143,7 +137,6 @@ def test_parallel_tool_calls():
         markdown=True,
         tools=[DuckDuckGoTools(cache_results=True)],
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What are the latest news about both SpaceX and NASA?")
@@ -168,7 +161,6 @@ def test_multiple_tool_calls():
         markdown=True,
         tools=[DuckDuckGoTools(cache_results=True), get_weather],
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What's the latest news about SpaceX and what's the weather?")
@@ -193,7 +185,6 @@ def test_tool_call_custom_tool_no_parameters():
         markdown=True,
         tools=[get_time],
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What time is it?")
@@ -221,7 +212,6 @@ def test_tool_call_custom_tool_untyped_parameters():
         markdown=True,
         tools=[echo_message],
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Can you echo 'Hello World'?")

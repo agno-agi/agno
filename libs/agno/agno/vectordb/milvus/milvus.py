@@ -154,6 +154,7 @@ class Milvus(VectorDb):
             ("name", DataType.VARCHAR, 1000, False),
             ("content", DataType.VARCHAR, 65535, False),
             ("content_id", DataType.VARCHAR, 1000, False),
+            ("content_hash", DataType.VARCHAR, 1000, False),
             ("text", DataType.VARCHAR, 1000, False),
             ("meta_data", DataType.VARCHAR, 65535, False),
             ("usage", DataType.VARCHAR, 65535, False),
@@ -193,7 +194,7 @@ class Milvus(VectorDb):
         return index_params
 
     def _prepare_document_data(
-        self, document: Document, include_vectors: bool = True
+        self, content_hash: str, document: Document, include_vectors: bool = True
     ) -> Dict[str, Union[str, List[float], Dict[int, float], None]]:
         """
         Prepare document data for insertion.
@@ -227,6 +228,7 @@ class Milvus(VectorDb):
             "meta_data": meta_data_str,
             "content": cleaned_content,
             "usage": usage_str,
+            "content_hash": content_hash,
         }
 
         if include_vectors:
@@ -347,7 +349,7 @@ class Milvus(VectorDb):
                 filter=expr,
                 limit=1,
             )
-            return len(scroll_result[0]) > 0
+            return len(scroll_result) > 0 and len(scroll_result[0]) > 0
         return False
 
     def id_exists(self, id: str) -> bool:
@@ -359,9 +361,46 @@ class Milvus(VectorDb):
             return len(collection_points) > 0
         return False
 
-    def _insert_hybrid_document(self, document: Document) -> None:
+    def content_hash_exists(self, content_hash: str) -> bool:
+        """
+        Check if a document with the given content hash exists.
+
+        Args:
+            content_hash (str): The content hash to check.
+
+        Returns:
+            bool: True if a document with the given content hash exists, False otherwise.
+        """
+        if self.client:
+            expr = f'content_hash == "{content_hash}"'
+            scroll_result = self.client.query(
+                collection_name=self.collection,
+                filter=expr,
+                limit=1,
+            )
+            return len(scroll_result) > 0 and len(scroll_result[0]) > 0
+        return False
+
+    def _delete_by_content_hash(self, content_hash: str) -> bool:
+        """
+        Delete documents by content hash.
+
+        Args:
+            content_hash (str): The content hash to delete.
+
+        Returns:
+            bool: True if documents were deleted, False otherwise.
+        """
+        if self.client:
+            expr = f'content_hash == "{content_hash}"'
+            self.client.delete(collection_name=self.collection, filter=expr)
+            log_info(f"Deleted documents with content_hash '{content_hash}' from collection '{self.collection}'.")
+            return True
+        return False
+
+    def _insert_hybrid_document(self, content_hash: str, document: Document) -> None:
         """Insert a document with both dense and sparse vectors."""
-        data = self._prepare_document_data(document, include_vectors=True)
+        data = self._prepare_document_data(content_hash=document.content_hash, document=document, include_vectors=True)
 
         self.client.insert(
             collection_name=self.collection,
@@ -369,9 +408,9 @@ class Milvus(VectorDb):
         )
         log_debug(f"Inserted hybrid document: {document.name} ({document.meta_data})")
 
-    async def _async_insert_hybrid_document(self, document: Document) -> None:
+    async def _async_insert_hybrid_document(self, content_hash: str, document: Document) -> None:
         """Insert a document with both dense and sparse vectors asynchronously."""
-        data = self._prepare_document_data(document, include_vectors=True)
+        data = self._prepare_document_data(content_hash=document.content_hash, document=document, include_vectors=True)
 
         await self.async_client.insert(
             collection_name=self.collection,
@@ -379,13 +418,13 @@ class Milvus(VectorDb):
         )
         log_debug(f"Inserted hybrid document asynchronously: {document.name} ({document.meta_data})")
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents based on search type."""
         log_debug(f"Inserting {len(documents)} documents")
 
         if self.search_type == SearchType.hybrid:
             for document in documents:
-                self._insert_hybrid_document(document)
+                self._insert_hybrid_document(content_hash=content_hash, document=document)
         else:
             for document in documents:
                 document.embed(embedder=self.embedder)
@@ -404,6 +443,7 @@ class Milvus(VectorDb):
                     "meta_data": meta_data,
                     "content": cleaned_content,
                     "usage": document.usage,
+                    "content_hash": content_hash,
                 }
                 self.client.insert(
                     collection_name=self.collection,
@@ -413,12 +453,16 @@ class Milvus(VectorDb):
 
         log_info(f"Inserted {len(documents)} documents")
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         """Insert documents asynchronously based on search type."""
         log_info(f"Inserting {len(documents)} documents asynchronously")
 
         if self.search_type == SearchType.hybrid:
-            await asyncio.gather(*[self._async_insert_hybrid_document(doc) for doc in documents])
+            await asyncio.gather(
+                *[self._async_insert_hybrid_document(content_hash=content_hash, document=doc) for doc in documents]
+            )
         else:
 
             async def process_document(document):
@@ -438,6 +482,7 @@ class Milvus(VectorDb):
                     "meta_data": meta_data,
                     "content": cleaned_content,
                     "usage": document.usage,
+                    "content_hash": content_hash,
                 }
                 await self.async_client.insert(
                     collection_name=self.collection,
@@ -459,7 +504,7 @@ class Milvus(VectorDb):
         """
         return True
 
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """
         Upsert documents into the database.
 
@@ -485,6 +530,7 @@ class Milvus(VectorDb):
                 "meta_data": document.meta_data,
                 "content": cleaned_content,
                 "usage": document.usage,
+                "content_hash": content_hash,
             }
             self.client.upsert(
                 collection_name=self.collection,
@@ -492,7 +538,9 @@ class Milvus(VectorDb):
             )
             log_debug(f"Upserted document: {document.name} ({document.meta_data})")
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
         log_debug(f"Upserting {len(documents)} documents asynchronously")
 
         async def process_document(document):
@@ -507,6 +555,7 @@ class Milvus(VectorDb):
                 "meta_data": document.meta_data,
                 "content": cleaned_content,
                 "usage": document.usage,
+                "content_hash": content_hash,
             }
             await self.async_client.upsert(
                 collection_name=self.collection,

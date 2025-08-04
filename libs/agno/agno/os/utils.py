@@ -5,13 +5,11 @@ from fastapi import HTTPException, UploadFile
 from agno.agent.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.run.response import RunResponse
-from agno.run.team import TeamRunResponse
 from agno.team.team import Team
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger
-from agno.workflow.workflow import Workflow
+from agno.workflow.v2.workflow import Workflow
 
 
 def get_run_input(run_dict: Dict[str, Any]) -> str:
@@ -25,12 +23,25 @@ def get_run_input(run_dict: Dict[str, Any]) -> str:
 
 def get_session_name(session: Dict[str, Any]) -> str:
     """Get the session name from the given session dictionary"""
+
+    # If session_data.session_name is set, return that
     session_data = session.get("session_data")
     if session_data is not None and session_data.get("session_name") is not None:
         return session_data["session_name"]
+
+    # Otherwise use the original user message
     else:
         runs = session.get("runs", [])
-        run = runs[0].to_dict() if isinstance(runs[0], RunResponse) or isinstance(runs[0], TeamRunResponse) else runs[0]
+
+        # For teams, identify the first Team run and avoid using the first member's run
+        if session.get("session_type") == "team":
+            run = runs[0] if not runs[0].get("agent_id") else runs[1]
+        else:
+            run = runs[0]
+
+        if not isinstance(run, dict):
+            run = run.to_dict()
+
         if run and run["messages"]:
             for message in run["messages"]:
                 if message["role"] == "user":

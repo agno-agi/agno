@@ -80,7 +80,7 @@ class TestKnowledgeContentEndpoints:
 
     def test_upload_content_with_url(self, test_app, mock_knowledge):
         """Test content upload with URL."""
-        with patch("agno.os.apps.knowledge.router.process_content") as mock_process:
+        with patch("agno.os.apps.knowledge.router.process_content"):
             response = test_app.post(
                 "/content",
                 data={
@@ -96,9 +96,9 @@ class TestKnowledgeContentEndpoints:
             assert "content_id" in data
             assert data["status"] == "processing"
 
-    def test_upload_content_invalid_json(self, test_app, mock_knowledge):
+    def test_upload_content_invalid_json(self, test_app):
         """Test content upload with invalid JSON metadata."""
-        with patch("agno.os.apps.knowledge.router.process_content") as mock_process:
+        with patch("agno.os.apps.knowledge.router.process_content"):
             response = test_app.post(
                 "/content",
                 data={
@@ -292,9 +292,9 @@ class TestBackgroundTaskProcessing:
 class TestFileUploadScenarios:
     """Test suite for file upload scenarios."""
 
-    def test_upload_large_file(self, test_app, mock_knowledge):
+    def test_upload_large_file(self, test_app):
         """Test uploading a large file."""
-        with patch("agno.os.apps.knowledge.router.process_content") as mock_process:
+        with patch("agno.os.apps.knowledge.router.process_content"):
             # Create a large file content
             large_content = b"x" * (10 * 1024 * 1024)  # 10MB
             test_file = BytesIO(large_content)
@@ -307,9 +307,9 @@ class TestFileUploadScenarios:
             data = response.json()
             assert "content_id" in data
 
-    def test_upload_without_file(self, test_app, mock_knowledge):
+    def test_upload_without_file(self, test_app):
         """Test uploading content without a file."""
-        with patch("agno.os.apps.knowledge.router.process_content") as mock_process:
+        with patch("agno.os.apps.knowledge.router.process_content"):
             response = test_app.post(
                 "/content",
                 data={"name": "Text Content", "description": "Content without file", "metadata": '{"type": "text"}'},
@@ -319,9 +319,9 @@ class TestFileUploadScenarios:
             data = response.json()
             assert "content_id" in data
 
-    def test_upload_with_special_characters(self, test_app, mock_knowledge):
+    def test_upload_with_special_characters(self, test_app):
         """Test uploading content with special characters in metadata."""
-        with patch("agno.os.apps.knowledge.router.process_content") as mock_process:
+        with patch("agno.os.apps.knowledge.router.process_content"):
             special_metadata = {"special_chars": "!@#$%^&*()", "unicode": "测试内容", "quotes": '{"nested": "value"}'}
 
             response = test_app.post(

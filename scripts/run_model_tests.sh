@@ -57,6 +57,8 @@ pip install --upgrade pip
 
 print_info "Installing base packages..."
 pip install \
+    aioboto3 \
+    boto3 \
     docstring-parser \
     gitpython \
     httpx \

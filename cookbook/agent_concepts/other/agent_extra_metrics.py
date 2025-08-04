@@ -33,7 +33,6 @@ agent = Agent(
     model=OpenAIChat(id="o3-mini"),
     markdown=True,
     telemetry=False,
-    monitoring=False,
     debug_mode=True,
 )
 agent.print_response(
@@ -44,9 +43,7 @@ agent.print_response(
 print(f"Reasoning tokens: {agent.run_response.metrics['reasoning_tokens']}")
 
 
-agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False, monitoring=False
-)
+agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False)
 agent.run("Share a 2 sentence horror story" * 150)
 agent.print_response("Share a 2 sentence horror story" * 150)
 # Showing cached tokens metrics

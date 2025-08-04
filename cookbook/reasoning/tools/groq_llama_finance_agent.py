@@ -30,7 +30,6 @@ thinking_llama = Agent(
     - Check if all required information is collected and is valid
     - Verify that the planned action completes the task\
     """),
-    show_tool_calls=True,
     markdown=True,
 )
 thinking_llama.print_response("Write a report comparing NVDA to TSLA", stream=True)

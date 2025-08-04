@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from agno.knowledge.embedder import Embedder
 
@@ -17,8 +17,8 @@ class Document:
     usage: Optional[Dict[str, Any]] = None
     reranking_score: Optional[float] = None
     content_id: Optional[str] = None
+    content_origin: Optional[str] = None
     size: Optional[int] = None
-    name: Optional[str] = None
 
     def embed(self, embedder: Optional[Embedder] = None) -> None:
         """Embed the document using the provided embedder"""

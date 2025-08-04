@@ -242,6 +242,7 @@ class TeamRunResponse:
     session_id: Optional[str] = None
     # If the team is a member of a team, this will be the session id of the parent team
     team_session_id: Optional[str] = None
+    parent_run_id: Optional[str] = None
 
     tools: Optional[List[ToolExecution]] = None
     formatted_tool_calls: Optional[List[str]] = None

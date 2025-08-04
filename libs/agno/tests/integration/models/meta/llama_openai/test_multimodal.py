@@ -14,9 +14,7 @@ download_image(
 
 
 def test_image_input_file():
-    agent = Agent(
-        model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"), markdown=True, telemetry=False, monitoring=False
-    )
+    agent = Agent(model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"), markdown=True, telemetry=False)
 
     response = agent.run(
         "Tell me about this image?",
@@ -28,9 +26,7 @@ def test_image_input_file():
 
 
 def test_image_input_bytes():
-    agent = Agent(
-        model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"), markdown=True, telemetry=False, monitoring=False
-    )
+    agent = Agent(model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"), markdown=True, telemetry=False)
 
     image_bytes = image_path.read_bytes()
 

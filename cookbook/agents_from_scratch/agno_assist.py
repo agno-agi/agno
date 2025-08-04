@@ -9,7 +9,7 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.db.sqlite import SqliteStorage
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.url import UrlKnowledge
+from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.tools.dalle import DalleTools
 from agno.tools.eleven_labs import ElevenLabsTools
@@ -22,8 +22,7 @@ tmp_dir = cwd.joinpath("tmp")
 tmp_dir.mkdir(parents=True, exist_ok=True)
 
 # Initialize knowledge & storage
-agent_knowledge = UrlKnowledge(
-    urls=["https://docs.agno.com/llms-full.txt"],
+agent_knowledge = Knowledge(
     vector_db=LanceDb(
         uri=str(tmp_dir.joinpath("lancedb")),
         table_name="agno_assist_knowledge",
@@ -31,6 +30,8 @@ agent_knowledge = UrlKnowledge(
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
 )
+agent_knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt")
+
 agent_storage = SqliteStorage(
     table_name="agno_assist_sessions",
     db_file=str(tmp_dir.joinpath("agent_sessions.db")),
@@ -137,9 +138,4 @@ agno_assist = Agent(
 )
 
 if __name__ == "__main__":
-    # Set to False after the knowledge base is loaded
-    load_knowledge = False
-    if load_knowledge:
-        agent_knowledge.load()
-
     agno_assist.print_response("Tell me about the Agno framework", stream=True)
