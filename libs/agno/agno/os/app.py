@@ -265,14 +265,16 @@ class AgentOS:
 
         log_info(f"Starting AgentOS on {full_host}:{port}")
 
-        self.host_url = f"{full_host}:{port}"
-
         # Create a panel with the Home and interface URLs
         panels = []
-        encoded_endpoint = f"http://{full_host}:{port}/home"
+        public_endpoint = "https://os.agno.com/"
+        if getenv("AGNO_API_RUNTIME", "").lower() == "stg":
+            public_endpoint = "https://os-stg.agno.com/"
+            
+        interface_endpoint = f"http://{full_host}:{port}"
         panels.append(
             Panel(
-                f"[bold green]Home URL:[/bold green] {encoded_endpoint}",
+                f"[bold green]Home URL:[/bold green] {public_endpoint}",
                 title="Home",
                 expand=False,
                 border_style="green",
@@ -282,10 +284,10 @@ class AgentOS:
         )
         for interface_type, interface_prefix in self.interfaces_loaded:
             if interface_type == "whatsapp":
-                encoded_endpoint = f"{full_host}:{port}{interface_prefix}"
+                final_endpoint = f"{interface_endpoint}/{interface_prefix}"
                 panels.append(
                     Panel(
-                        f"[bold cyan]Whatsapp URL:[/bold cyan] {encoded_endpoint}",
+                        f"[bold cyan]Whatsapp URL:[/bold cyan] {final_endpoint}",
                         title="Whatsapp",
                         expand=False,
                         border_style="cyan",
@@ -294,10 +296,10 @@ class AgentOS:
                     )
                 )
             elif interface_type == "slack":
-                encoded_endpoint = f"{full_host}:{port}{interface_prefix}"
+                final_endpoint = f"{interface_endpoint}/{interface_prefix}"
                 panels.append(
                     Panel(
-                        f"[bold purple]Slack URL:[/bold purple] {encoded_endpoint}",
+                        f"[bold purple]Slack URL:[/bold purple] {final_endpoint}",
                         title="Slack",
                         expand=False,
                         border_style="purple",
