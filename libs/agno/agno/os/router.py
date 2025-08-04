@@ -79,21 +79,17 @@ class WebSocketManager:
     async def connect(self, websocket: WebSocket) -> str:
         """Accept WebSocket connection and return temporary connection ID"""
         await websocket.accept()
-        temp_connection_id = str(uuid4())
-        logger.debug(f"WebSocket connected: {temp_connection_id}")
+        logger.debug(f"WebSocket connected")
 
         # Send connection confirmation
         await websocket.send_text(
             json.dumps(
                 {
                     "event": "connected",
-                    "temp_connection_id": temp_connection_id,
                     "message": "Connected to workflow events",
                 }
             )
         )
-
-        return temp_connection_id
 
     async def register_workflow_websocket(self, run_id: str, websocket: WebSocket):
         """Register a workflow run with its WebSocket connection"""
