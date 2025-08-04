@@ -30,7 +30,7 @@ class YouTubeReader(Reader):
 
             # Combine transcript segments into full text
             transcript_text = ""
-            # The new API returns a FetchedTranscript object that's iterable
+
             for segment in transcript_data:
                 transcript_text += f"{segment.text} "
 
