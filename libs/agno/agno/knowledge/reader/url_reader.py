@@ -48,7 +48,6 @@ class URLReader(Reader):
         self, url: str, content: str, id: Optional[str] = None, name: Optional[str] = None
     ) -> Document:
         """Helper method to create a document from URL content"""
-        print(f"Creating document: {url}, {id}, {name}")
         parsed_url = urlparse(url)
         doc_name = name or parsed_url.path.strip("/").replace("/", "_").replace(" ", "_")
         if not doc_name:

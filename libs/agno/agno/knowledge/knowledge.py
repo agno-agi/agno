@@ -876,7 +876,8 @@ class Knowledge:
         if content.path:
             return hashlib.sha256(str(content.path).encode()).hexdigest()
         elif content.url:
-            return hashlib.sha256(content.url.encode()).hexdigest()
+            hash = hashlib.sha256(content.url.encode()).hexdigest()
+            return hash
         elif content.file_data and content.file_data.content:
             name = content.name or "content"
             return hashlib.sha256(name.encode()).hexdigest()
