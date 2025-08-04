@@ -265,46 +265,48 @@ class AgentOS:
 
         log_info(f"Starting AgentOS on {full_host}:{port}")
 
-        self.host_url = f"{full_host}:{port}"
-
         # Create a panel with the Home and interface URLs
         panels = []
-        encoded_endpoint = f"http://{full_host}:{port}/home"
+        public_endpoint = "https://os.agno.com/"
+        if getenv("AGNO_API_RUNTIME", "").lower() == "stg":
+            public_endpoint = "https://os-stg.agno.com/"
+            
+        os_endpoint = f"http://{full_host}:{port}"
+        
+        urls = [
+            f"[bold dark_orange]OS URL:[/bold dark_orange] {os_endpoint}"
+        ]
+
+        for interface_type, interface_prefix in self.interfaces_loaded:
+            if interface_type == "whatsapp":
+                final_endpoint = f"{os_endpoint}/{interface_prefix}"
+                urls.append(f"[bold cyan]Whatsapp URL:[/bold cyan] {final_endpoint}")
+            elif interface_type == "slack":
+                final_endpoint = f"{os_endpoint}/{interface_prefix}"
+                urls.append(f"[bold purple]Slack URL:[/bold purple] {final_endpoint}")
+                
+        
         panels.append(
             Panel(
-                f"[bold green]Home URL:[/bold green] {encoded_endpoint}",
-                title="Home",
+                "\n".join(urls),
+                title="Configuration",
                 expand=False,
-                border_style="green",
-                box=box.HEAVY,
+                border_style="dark_orange",
+                box=box.DOUBLE_EDGE,
                 padding=(2, 2),
             )
         )
-        for interface_type, interface_prefix in self.interfaces_loaded:
-            if interface_type == "whatsapp":
-                encoded_endpoint = f"{full_host}:{port}{interface_prefix}"
-                panels.append(
-                    Panel(
-                        f"[bold cyan]Whatsapp URL:[/bold cyan] {encoded_endpoint}",
-                        title="Whatsapp",
-                        expand=False,
-                        border_style="cyan",
-                        box=box.HEAVY,
-                        padding=(2, 2),
-                    )
-                )
-            elif interface_type == "slack":
-                encoded_endpoint = f"{full_host}:{port}{interface_prefix}"
-                panels.append(
-                    Panel(
-                        f"[bold purple]Slack URL:[/bold purple] {encoded_endpoint}",
-                        title="Slack",
-                        expand=False,
-                        border_style="purple",
-                        box=box.HEAVY,
-                        padding=(2, 2),
-                    )
-                )
+        
+        panels.append(
+            Panel(
+                f"{public_endpoint}",
+                title="Home Page",
+                expand=False,
+                border_style="green",
+                box=box.DOUBLE_EDGE,
+                padding=(2, 2),
+            )
+        )
 
         # Print the panel
         for panel in panels:

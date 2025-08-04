@@ -1,14 +1,31 @@
-"""Example showing how to use AgentOS with JSON files as database"""
+"""
+Example showing how to use AgentOS with JSON files hosted in GCS as database.
+
+GCS JSON Database Setup:
+- Uses JSON files stored in Google Cloud Storage as a lightweight database
+- Only requires a GCS bucket name - authentication follows the standard GCP patterns:
+  * Local development: `gcloud auth application-default login`
+  * Production: Set GOOGLE_APPLICATION_CREDENTIALS env var to service account key path
+  * GCP instances: Uses instance metadata automatically
+- Optional prefix parameter for organizing files (defaults to empty string)
+- Automatically creates JSON files in the bucket as needed
+
+Prerequisites:
+1. Create a GCS bucket
+2. Ensure proper GCS permissions
+3. Install google-cloud-storage: `pip install google-cloud-storage`
+"""
 
 from agno.agent import Agent
-from agno.db.json import JsonDb
+from agno.db.gcs_json import GcsJsonDb
 from agno.eval.accuracy import AccuracyEval
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team.team import Team
 
-# Setup the JSON database
-db = JsonDb(db_path="./agno_json_data")
+# Setup the GCS JSON database
+db = GcsJsonDb(bucket_name="agno_tests")
+
 
 # Setup a basic agent and a basic team
 agent = Agent(
@@ -56,4 +73,4 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="json_demo:app", reload=True)
+    agent_os.serve(app="gcs_json_demo:app", reload=True)

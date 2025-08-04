@@ -248,6 +248,7 @@ class PostgresDb(BaseDb):
             raise
 
     # -- Session methods --
+
     def delete_session(self, session_id: str) -> bool:
         """
         Delete a session from the database.

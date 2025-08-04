@@ -137,7 +137,7 @@ async def agent_response_streamer(
     files: Optional[List[FileMedia]] = None,
 ) -> AsyncGenerator:
     try:
-        run_response = await agent.arun(
+        run_response = agent.arun(
             message,
             session_id=session_id,
             user_id=user_id,
@@ -168,7 +168,7 @@ async def agent_continue_response_streamer(
     user_id: Optional[str] = None,
 ) -> AsyncGenerator:
     try:
-        continue_response = await agent.acontinue_run(
+        continue_response = agent.acontinue_run(
             run_id=run_id,
             updated_tools=updated_tools,
             session_id=session_id,
@@ -201,7 +201,7 @@ async def team_response_streamer(
 ) -> AsyncGenerator:
     """Run the given team asynchronously and yield its response"""
     try:
-        run_response = await team.arun(
+        run_response = team.arun(
             message,
             session_id=session_id,
             user_id=user_id,

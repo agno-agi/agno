@@ -2,7 +2,7 @@ from typing import List
 
 from agno.knowledge.document import Document
 from agno.knowledge.reader.base import Reader
-from agno.utils.log import log_info
+from agno.utils.log import log_info, log_debug
 
 try:
     import wikipedia  # noqa: F401
@@ -14,7 +14,7 @@ class WikipediaReader(Reader):
     auto_suggest: bool = True
 
     def read(self, topic: str) -> List[Document]:
-        print(f"Reading topic: {topic}")
+        log_debug(f"Reading Wikipedia topic: {topic}")
         summary = None
         try:
             summary = wikipedia.summary(topic, auto_suggest=self.auto_suggest)

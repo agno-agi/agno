@@ -51,6 +51,27 @@ class ContentResponseSchema(BaseModel):
         elif status is None:
             status = ContentStatus.PROCESSING  # Default for None values
 
+        # Helper function to safely parse timestamps
+        def parse_timestamp(timestamp_value):
+            if timestamp_value is None:
+                return None
+            try:
+                # If it's already a datetime object, return it
+                if isinstance(timestamp_value, datetime):
+                    return timestamp_value
+                # If it's a string, try to parse it as ISO format first
+                if isinstance(timestamp_value, str):
+                    try:
+                        return datetime.fromisoformat(timestamp_value.replace('Z', '+00:00'))
+                    except ValueError:
+                        # Try to parse as float/int timestamp
+                        timestamp_value = float(timestamp_value)
+                # If it's a number, use fromtimestamp
+                return datetime.fromtimestamp(timestamp_value, tz=timezone.utc)
+            except (ValueError, TypeError, OSError):
+                # If all parsing fails, return None
+                return None
+
         return cls(
             id=content.get("id"),  # type: ignore
             name=content.get("name"),
@@ -60,12 +81,8 @@ class ContentResponseSchema(BaseModel):
             metadata=content.get("metadata"),
             status=status,
             status_message=content.get("status_message"),
-            created_at=datetime.fromtimestamp(content["created_at"], tz=timezone.utc)
-            if content.get("created_at")
-            else None,
-            updated_at=datetime.fromtimestamp(content["updated_at"], tz=timezone.utc)
-            if content.get("updated_at")
-            else None,
+            created_at=parse_timestamp(content.get("created_at")),
+            updated_at=parse_timestamp(content.get("updated_at")),
             # TODO: These fields are not available in the Content class. Fix the inconsistency
             access_count=None,
             linked_to=None,
