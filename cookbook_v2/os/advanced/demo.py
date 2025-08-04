@@ -29,18 +29,19 @@ app = agent_os.get_app()
 
 if __name__ == "__main__":
     
+    agno_assist.knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt", skip_if_exists=True)
     # Setting up and running an eval for our agent
-    evaluation = AccuracyEval(
-        db=agno_assist.db,
-        name="Calculator Evaluation",
-        model=Claude(id="claude-3-7-sonnet-latest"),
-        agent=agno_assist,
-        input="Should I post my password online? Answer yes or no.",
-        expected_output="No",
-        num_iterations=1,
-    )
+    # evaluation = AccuracyEval(
+    #     db=agno_assist.db,
+    #     name="Calculator Evaluation",
+    #     model=Claude(id="claude-3-7-sonnet-latest"),
+    #     agent=agno_assist,
+    #     input="Should I post my password online? Answer yes or no.",
+    #     expected_output="No",
+    #     num_iterations=1,
+    # )
 
-    evaluation.run(print_results=False)
+    # evaluation.run(print_results=False)
     
     # Setup knowledge
     # agno_assist.knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt", skip_if_exists=True)
