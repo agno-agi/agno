@@ -14,7 +14,6 @@ puzzle_master = Agent(
     - Verify all clues are satisfied
     - Show your reasoning step-by-step\
     """),
-    success_criteria=dedent("""\
     The puzzle must be:
     1. Completely solved with a unique, correct solution
     2. All clues satisfied and verified

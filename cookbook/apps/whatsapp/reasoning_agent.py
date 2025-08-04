@@ -17,7 +17,7 @@ reasoning_finance_agent = Agent(
         ),
     ],
     instructions="Use tables to display data. When you use thinking tools, keep the thinking brief.",
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 

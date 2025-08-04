@@ -96,7 +96,8 @@ def test_image_generation():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        create_default_system_message=False,
+        monitoring=False,
+        build_context=False,
         system_message=None,
     )
 
@@ -122,7 +123,8 @@ def test_image_generation_streaming():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        create_default_system_message=False,
+        monitoring=False,
+        build_context=False,
         system_message=None,
     )
 
@@ -151,7 +153,8 @@ def test_image_editing():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        create_default_system_message=False,
+        monitoring=False,
+        build_context=False,
         system_message=None,
     )
 
@@ -179,7 +182,8 @@ def test_image_generation_with_detailed_prompt():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        create_default_system_message=False,
+        monitoring=False,
+        build_context=False,
         system_message=None,
     )
 
@@ -212,8 +216,8 @@ def test_combined_text_and_image_generation():
         exponential_backoff=True,
         delay_between_retries=5,
         markdown=True,
-        telemetry=False,
-        create_default_system_message=False,
+        monitoring=False,
+        build_context=False,
         system_message=None,
     )
 

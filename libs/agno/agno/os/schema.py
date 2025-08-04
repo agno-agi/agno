@@ -151,7 +151,6 @@ class TeamResponse(BaseModel):
     mode: Optional[str] = None
     model: Optional[ModelResponse] = None
     tools: Optional[List[Dict[str, Any]]] = None
-    success_criteria: Optional[str] = None
     instructions: Optional[Union[List[str], str]] = None
     members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = None
     expected_output: Optional[str] = None
@@ -215,7 +214,6 @@ class TeamResponse(BaseModel):
                 model=team.model.id if team.model else None,
                 provider=team.model.provider or team.model.__class__.__name__ if team.model else None,
             ),
-            success_criteria=team.success_criteria,
             instructions=team_instructions,
             description=team.description,
             tools=formatted_tools,

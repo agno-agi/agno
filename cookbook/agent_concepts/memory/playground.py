@@ -36,7 +36,7 @@ agent = Agent(
     # Give the agent a tool to access chat history
     read_chat_history=True,
     # Add datetime to the instructions
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     # Use markdown for the response
     markdown=True,
     # Add a tool to search the web

@@ -50,6 +50,7 @@ from agno.session.workflow import WorkflowSession
 from agno.team.team import Team
 from agno.utils.log import (
     log_debug,
+    log_error,
     logger,
     set_log_level_to_debug,
     set_log_level_to_info,
@@ -226,12 +227,37 @@ class Workflow:
 
         self._update_workflow_session_state()
 
-    def rename_session(self, session_name: str):
-        """Rename the current session and save to storage"""
+    def _generate_workflow_session_name(self, session_id: str) -> str:
+        """Generate a name for the workflow session"""
 
-        # -*- Read from storage
-        self.read_from_storage()
-        # -*- Rename session
+        if self.session_id is None:
+            return f"Workflow Session - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+
+        workflow_session = self.get_workflow_session()
+        datetime_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        new_session_name = f"Workflow Session-{datetime_str}"
+
+        if self.description:
+            truncated_desc = self.description[:40] + "-" if len(self.description) > 40 else self.description
+            new_session_name = f"{truncated_desc} - {datetime_str}"
+        return new_session_name
+
+    def set_session_name(
+        self, session_id: Optional[str] = None, autogenerate: bool = False, session_name: Optional[str] = None
+    ):
+        """Set the session name and save to storage"""
+        if self.session_id is None and session_id is None:
+            raise Exception("Session ID is not set")
+        session_id = session_id or self.session_id
+
+        if autogenerate:
+            # -*- Generate name for session
+            session_name = self._generate_workflow_session_name(session_id=session_id)
+            log_debug(f"Generated Workflow Session Name: {session_name}")
+        elif session_name is None:
+            raise Exception("Session name is not set")
+
+        self.get_workflow_session()
         self.session_name = session_name
         # -*- Save to storage
         self.write_to_storage()

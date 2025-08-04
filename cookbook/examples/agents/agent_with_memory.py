@@ -18,7 +18,7 @@ agent = Agent(
     memory=memory,
     # Enable the Agent to dynamically create and manage user memories
     enable_agentic_memory=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
