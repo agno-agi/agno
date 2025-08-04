@@ -17,6 +17,7 @@ from fastapi.responses import StreamingResponse
 
 from agno.agent.agent import Agent
 from agno.app.agui.utils import convert_agui_messages_to_agno_messages, stream_agno_response_as_agui_events
+from agno.models.response import ToolExecution
 from agno.team.team import Team
 
 logger = logging.getLogger(__name__)
@@ -33,8 +34,6 @@ def run_agent(agent: Agent, run_input: RunAgentInput) -> Iterator[BaseEvent]:
             and run_input.state
             and run_input.state.get("status") == "paused_for_confirmation"
         ):
-            from agno.models.response import ToolExecution
-
             updated_tools = [ToolExecution.from_dict(t) for t in run_input.state.get("tools_to_confirm", [])]
 
             response_stream = agent.continue_run(
@@ -44,26 +43,19 @@ def run_agent(agent: Agent, run_input: RunAgentInput) -> Iterator[BaseEvent]:
                 stream=True,
                 stream_intermediate_steps=True,
             )
+        else:
+            # Preparing the input for the Agent and emitting the run started event
+            messages = convert_agui_messages_to_agno_messages(run_input.messages or [])
+            yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
-            for event in stream_agno_response_as_agui_events(
-                response_stream=response_stream,
-                thread_id=run_input.thread_id,
+            # Request streaming response from agent
+            response_stream = agent.run(
                 run_id=run_id,
-            ):
-                yield event
-            return
-
-        # Preparing the input for the Agent and emitting the run started event
-        messages = convert_agui_messages_to_agno_messages(run_input.messages or [])
-        yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
-
-        # Request streaming response from agent
-        response_stream = agent.run(
-            messages=messages,
-            session_id=run_input.thread_id,
-            stream=True,
-            stream_intermediate_steps=True,
-        )
+                messages=messages,
+                session_id=run_input.thread_id,
+                stream=True,
+                stream_intermediate_steps=True,
+            )
 
         # Stream the response content in AG-UI format
         for event in stream_agno_response_as_agui_events(
@@ -83,28 +75,6 @@ def run_team(team: Team, input: RunAgentInput) -> Iterator[BaseEvent]:
     """Run the contextual Team, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format."""
     run_id = input.run_id or str(uuid.uuid4())
     try:
-        # Handle continuation from a paused state
-        if hasattr(input, "state") and input.state and input.state.get("status") == "paused_for_confirmation":
-            from agno.models.response import ToolExecution
-
-            updated_tools = [ToolExecution.from_dict(t) for t in input.state.get("tools_to_confirm", [])]
-
-            response_stream = team.continue_run(
-                run_id=run_id,
-                updated_tools=updated_tools,
-                session_id=input.thread_id,
-                stream=True,
-                stream_intermediate_steps=True,
-            )
-
-            for event in stream_agno_response_as_agui_events(
-                response_stream=response_stream,
-                thread_id=input.thread_id,
-                run_id=run_id,
-            ):
-                yield event
-            return
-
         # Extract the last user message for team execution
         messages = convert_agui_messages_to_agno_messages(input.messages or [])
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=run_id)
@@ -119,9 +89,7 @@ def run_team(team: Team, input: RunAgentInput) -> Iterator[BaseEvent]:
 
         # Stream the response content in AG-UI format
         for event in stream_agno_response_as_agui_events(
-            response_stream=response_stream,
-            thread_id=input.thread_id,
-            run_id=run_id,
+            response_stream=response_stream, thread_id=input.thread_id, run_id=run_id
         ):
             yield event
 
