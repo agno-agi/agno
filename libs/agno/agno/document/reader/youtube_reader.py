@@ -23,12 +23,16 @@ class YouTubeReader(Reader):
             log_info(f"Reading transcript for video: {video_id}")
 
             # Get transcript
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+            print(f"Fetching transcript for video: {video_id}")
+            # Create an instance of YouTubeTranscriptApi 
+            ytt_api = YouTubeTranscriptApi()
+            transcript_data = ytt_api.fetch(video_id)
 
             # Combine transcript segments into full text
             transcript_text = ""
-            for segment in transcript_list:
-                transcript_text += f"{segment['text']} "
+            # The new API returns a FetchedTranscript object that's iterable
+            for segment in transcript_data:
+                transcript_text += f"{segment.text} "
 
             documents = [
                 Document(
