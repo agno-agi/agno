@@ -176,10 +176,17 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
     "AttributeDefinitions": [
         {"AttributeName": "id", "AttributeType": "S"},
-        {"AttributeName": "user_id", "AttributeType": "S"},
+        {"AttributeName": "name", "AttributeType": "S"},
+        {"AttributeName": "description", "AttributeType": "S"},
+        {"AttributeName": "metadata", "AttributeType": "S"},
         {"AttributeName": "type", "AttributeType": "S"},
+        {"AttributeName": "size", "AttributeType": "N"},
+        {"AttributeName": "linked_to", "AttributeType": "S"},
+        {"AttributeName": "access_count", "AttributeType": "N"},
         {"AttributeName": "status", "AttributeType": "S"},
+        {"AttributeName": "status_message", "AttributeType": "S"},
         {"AttributeName": "created_at", "AttributeType": "N"},
+        {"AttributeName": "updated_at", "AttributeType": "N"},
     ],
     "GlobalSecondaryIndexes": [
         {

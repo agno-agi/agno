@@ -14,7 +14,6 @@ SESSION_TABLE_SCHEMA = {
     "team_id": {"type": lambda: String(128), "nullable": True},
     "workflow_id": {"type": lambda: String(128), "nullable": True},
     "user_id": {"type": lambda: String(128), "nullable": True},
-    "team_session_id": {"type": lambda: String(128), "nullable": True},  # TODO: remove this column
     "session_data": {"type": JSON, "nullable": True},
     "agent_data": {"type": JSON, "nullable": True},
     "team_data": {"type": JSON, "nullable": True},
@@ -68,10 +67,10 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "size": {"type": BigInteger, "nullable": True},
     "linked_to": {"type": lambda: String(128), "nullable": True},
     "access_count": {"type": BigInteger, "nullable": True},
-    "created_at": {"type": BigInteger, "nullable": True},
-    "updated_at": {"type": BigInteger, "nullable": True},
     "status": {"type": lambda: String(50), "nullable": True},
     "status_message": {"type": Text, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
 }
 
 METRICS_TABLE_SCHEMA = {

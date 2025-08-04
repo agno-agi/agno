@@ -78,6 +78,7 @@ KNOWLEDGE_SCHEMA = {
     "created_at": {"type": "integer"},
     "updated_at": {"type": "integer"},
     "status": {"type": "string"},
+    "status_message": {"type": "string"},
 }
 
 
