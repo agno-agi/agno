@@ -128,7 +128,7 @@ class Agent:
     # Dependencies available for tools and prompt functions
     dependencies: Optional[Dict[str, Any]] = None
     # If True, add the dependencies to the user prompt
-    add_dependencies: bool = False
+    add_dependencies_to_context: bool = False
 
     # --- Agent Memory ---
     # Memory manager to use for this agent
@@ -341,7 +341,7 @@ class Agent:
         num_history_sessions: Optional[int] = None,
         cache_session: bool = True,
         dependencies: Optional[Dict[str, Any]] = None,
-        add_dependencies: bool = False,
+        add_dependencies_to_context: bool = False,
         db: Optional[BaseDb] = None,
         memory_manager: Optional[MemoryManager] = None,
         enable_agentic_memory: bool = False,
@@ -425,7 +425,7 @@ class Agent:
         self.cache_session = cache_session
 
         self.dependencies = dependencies
-        self.add_dependencies = add_dependencies
+        self.add_dependencies_to_context = add_dependencies_to_context
 
         self.db = db
 
@@ -4373,7 +4373,7 @@ class Agent:
             user_msg_content_str += self.convert_documents_to_string(references.references) + "\n"
             user_msg_content_str += "</references>"
         # 4.2 Add context to user message
-        if self.add_dependencies and self.dependencies is not None:
+        if self.add_dependencies_to_context and self.dependencies is not None:
             user_msg_content_str += "\n\n<context>\n"
             user_msg_content_str += self.convert_context_to_string(self.dependencies) + "\n"
             user_msg_content_str += "</context>"

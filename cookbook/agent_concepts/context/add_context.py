@@ -39,7 +39,7 @@ agent = Agent(
     # think of it as dependency injection for Agents
     dependencies={"top_hackernews_stories": get_top_hackernews_stories},
     # We can add the entire dependencies dictionary to the user message
-    add_dependencies=True,
+    add_dependencies_to_context=True,
     markdown=True,
 )
 

@@ -176,7 +176,7 @@ class Team:
     # User provided dependencies
     dependencies: Optional[Dict[str, Any]] = None
     # If True, add the dependencies to the user prompt
-    add_dependencies: bool = False
+    add_dependencies_to_context: bool = False
 
     # --- Agent Knowledge ---
     knowledge: Optional[Knowledge] = None
@@ -328,7 +328,7 @@ class Team:
         system_message: Optional[Union[str, Callable, Message]] = None,
         system_message_role: str = "system",
         dependencies: Optional[Dict[str, Any]] = None,
-        add_dependencies: bool = False,
+        add_dependencies_to_context: bool = False,
         knowledge: Optional[Knowledge] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_references: bool = False,
@@ -406,7 +406,7 @@ class Team:
         self.success_criteria = success_criteria
 
         self.dependencies = dependencies
-        self.add_dependencies = add_dependencies
+        self.add_dependencies_to_context = add_dependencies_to_context
 
         self.knowledge = knowledge
         self.knowledge_filters = knowledge_filters
@@ -5328,7 +5328,7 @@ class Team:
                 user_message_content += self._convert_documents_to_string(references.references) + "\n"
                 user_message_content += "</references>"
             # Add context to user message
-            if self.add_dependencies and self.dependencies is not None:
+            if self.add_dependencies_to_context and self.dependencies is not None:
                 user_message_content += "\n\n<context>\n"
                 user_message_content += self._convert_dependencies_to_string(self.dependencies) + "\n"
                 user_message_content += "</context>"

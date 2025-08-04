@@ -20,7 +20,7 @@ agent = Agent(
     model=OpenAIChat(),
     tools=[zep_tools],
     dependencies={"memory": zep_tools.get_zep_memory(memory_type="context")},
-    add_dependencies=True,
+    add_dependencies_to_context=True,
 )
 
 # Interact with the Agent so that it can learn about the user

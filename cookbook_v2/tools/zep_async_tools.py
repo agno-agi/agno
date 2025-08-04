@@ -27,7 +27,7 @@ async def main():
         dependencies={
             "memory": lambda: zep_tools.get_zep_memory(memory_type="context"),
         },
-        add_dependencies=True,
+        add_dependencies_to_context=True,
     )
 
     # Interact with the Agent
