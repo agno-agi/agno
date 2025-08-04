@@ -148,8 +148,6 @@ knowledge = Knowledge(
     ),
 )
 
-# knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt", skip_if_exists=True)
-
 agno_assist = Agent(
     name="Agno Assist",
     model=Claude(id="claude-3-7-sonnet-latest"),
