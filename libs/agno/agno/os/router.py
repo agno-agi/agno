@@ -76,8 +76,8 @@ class WebSocketManager:
         # Store active connections: {run_id: websocket}
         self.active_connections: Dict[str, WebSocket] = active_connections or {}
 
-    async def connect(self, websocket: WebSocket) -> str:
-        """Accept WebSocket connection and return temporary connection ID"""
+    async def connect(self, websocket: WebSocket):
+        """Accept WebSocket connection"""
         await websocket.accept()
         logger.debug(f"WebSocket connected")
 
