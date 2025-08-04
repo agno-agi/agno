@@ -3,7 +3,7 @@ from typing import List
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_debug, log_info, logger
 
 try:
     from youtube_transcript_api import YouTubeTranscriptApi
@@ -23,7 +23,7 @@ class YouTubeReader(Reader):
             log_info(f"Reading transcript for video: {video_id}")
 
             # Get transcript
-            print(f"Fetching transcript for video: {video_id}")
+            log_debug(f"Fetching transcript for video: {video_id}")
             # Create an instance of YouTubeTranscriptApi 
             ytt_api = YouTubeTranscriptApi()
             transcript_data = ytt_api.fetch(video_id)
