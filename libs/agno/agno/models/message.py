@@ -338,8 +338,12 @@ class Message(BaseModel):
                             if isinstance(tool_call_arguments, dict)
                             else json.loads(tool_call_arguments)
                         )
-                        arguments = ", ".join(f"{k}: {v}" for k, v in tool_call_args.items())
-                        tool_calls_list.append(f"    Arguments: '{arguments}'")
+                        # Ensure tool_call_args is a dictionary before calling .items()
+                        if isinstance(tool_call_args, dict):
+                            arguments = ", ".join(f"{k}: {v}" for k, v in tool_call_args.items())
+                            tool_calls_list.append(f"    Arguments: '{arguments}'")
+                        else:
+                            tool_calls_list.append(f"    Arguments: '{tool_call_args}'")
                     except json.JSONDecodeError:
                         tool_calls_list.append("    Arguments: 'Invalid JSON format'")
             tool_calls_str = "\n".join(tool_calls_list)
