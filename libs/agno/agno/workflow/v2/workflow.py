@@ -12,6 +12,7 @@ from typing import (
     List,
     Literal,
     Optional,
+    Type,
     Union,
     overload,
 )
@@ -135,6 +136,8 @@ class Workflow:
 
     websocket_handler: Optional[WebSocketHandler] = None
 
+    input_schema: Optional[Type[BaseModel]] = None
+
     def __init__(
         self,
         workflow_id: Optional[str] = None,
@@ -151,6 +154,7 @@ class Workflow:
         stream_intermediate_steps: bool = False,
         store_events: bool = False,
         events_to_skip: Optional[List[WorkflowRunEvent]] = None,
+        input_schema: Optional[Type[BaseModel]] = None,
     ):
         self.workflow_id = workflow_id
         self.name = name
@@ -166,6 +170,30 @@ class Workflow:
         self.events_to_skip = events_to_skip or []
         self.stream = stream
         self.stream_intermediate_steps = stream_intermediate_steps
+        self.input_schema = input_schema
+
+    def _validate_input(self, message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]]) -> None:
+        """Type-aware validation: only validate if message type matches input_schema expectations"""
+        if self.input_schema is None:
+            return
+
+        if message is None:
+            raise ValueError("Input required when input_schema is set")
+
+        if isinstance(message, BaseModel):
+            if isinstance(message, self.input_schema):
+                try:
+                    # Re-validate to catch any field validation errors
+                    message.model_validate(message.model_dump())
+                    return
+                except Exception as e:
+                    raise ValueError(f"BaseModel validation failed: {str(e)}")
+            else:
+                # Different BaseModel types
+                raise ValueError(f"Expected {self.input_schema.__name__} but got {type(message).__name__}")
+
+        else:
+            raise ValueError(f"Cannot validate {type(message)} against input_schema")
 
     @property
     def run_parameters(self) -> Dict[str, Any]:
@@ -1412,6 +1440,8 @@ class Workflow:
     ) -> Union[WorkflowRunResponse, Iterator[WorkflowRunResponseEvent]]:
         """Execute the workflow synchronously with optional streaming"""
 
+        self._validate_input(message)
+
         if background:
             raise RuntimeError("Background execution is not supported for sync run()")
 
@@ -1531,6 +1561,8 @@ class Workflow:
         **kwargs: Any,
     ) -> Union[WorkflowRunResponse, AsyncIterator[WorkflowRunResponseEvent]]:
         """Execute the workflow synchronously with optional streaming"""
+
+        self._validate_input(message)
 
         websocket_handler = None
         if websocket:
