@@ -153,6 +153,8 @@ class Team:
     add_datetime_to_context: bool = False
     # If True, add the current location to the instructions to give the team a sense of location
     add_location_to_context: bool = False
+    # If True, add the team name to the instructions
+    add_name_to_context: bool = False
     # If True, add the tools available to team members to the system message
     add_member_tools_to_system_message: bool = True
 
@@ -160,6 +162,12 @@ class Team:
     system_message: Optional[Union[str, Callable, Message]] = None
     # Role for the system message
     system_message_role: str = "system"
+
+    # --- Extra Messages ---
+    # A list of extra messages added after the system message and before the user message.
+    # Use these for few-shot learning or to provide additional context to the Model.
+    # Note: these are not retained in memory, they are added directly to the messages sent to the model.
+    additional_messages: Optional[List[Union[Dict, Message]]] = None
 
     # --- Database ---
     # Database to use for this agent
@@ -319,9 +327,11 @@ class Team:
         markdown: bool = False,
         add_datetime_to_context: bool = False,
         add_location_to_context: bool = False,
+        add_name_to_context: bool = False,
         add_member_tools_to_system_message: bool = True,
         system_message: Optional[Union[str, Callable, Message]] = None,
         system_message_role: str = "system",
+        additional_messages: Optional[List[Union[Dict, Message]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
         knowledge: Optional[Knowledge] = None,
@@ -395,9 +405,11 @@ class Team:
         self.markdown = markdown
         self.add_datetime_to_context = add_datetime_to_context
         self.add_location_to_context = add_location_to_context
+        self.add_name_to_context = add_name_to_context
         self.add_member_tools_to_system_message = add_member_tools_to_system_message
         self.system_message = system_message
         self.system_message_role = system_message_role
+        self.additional_messages = additional_messages
 
         self.dependencies = dependencies
         self.add_dependencies_to_context = add_dependencies_to_context
@@ -4967,6 +4979,10 @@ class Team:
                 if location_str:
                     additional_information.append(f"Your approximate location is: {location_str}.")
 
+        # 1.3.4 Add team name if provided
+        if self.name is not None and self.add_name_to_context:
+            additional_information.append(f"Your name is: {self.name}.")
+
         if self.knowledge is not None and self.enable_agentic_knowledge_filters:
             valid_filters = getattr(self.knowledge, "valid_metadata_filters", None)
             if valid_filters:
@@ -5042,9 +5058,6 @@ class Team:
             system_message_content += "It is important that you update the shared context as often as possible.\n"
             system_message_content += "To update the shared context, use the `set_shared_context` tool.\n"
             system_message_content += "</shared_context>\n\n"
-
-        if self.name is not None:
-            system_message_content += f"Your name is: {self.name}\n\n"
 
         # Attached media
         if audio is not None or images is not None or videos is not None or files is not None:
@@ -5182,8 +5195,9 @@ class Team:
 
         To build the RunMessages object:
         1. Add system message to run_messages
-        2. Add history to run_messages
-        3. Add user message to run_messages
+        2. Add extra messages to run_messages
+        3. Add history to run_messages
+        4. Add user message to run_messages
 
         """
         # Initialize the RunMessages object
@@ -5197,7 +5211,39 @@ class Team:
             run_messages.system_message = system_message
             run_messages.messages.append(system_message)
 
-        # 2. Add history to run_messages
+        # 2. Add extra messages to run_messages if provided
+        if self.additional_messages is not None:
+            messages_to_add_to_run_response: List[Message] = []
+            if run_messages.extra_messages is None:
+                run_messages.extra_messages = []
+
+            for _m in self.additional_messages:
+                if isinstance(_m, Message):
+                    messages_to_add_to_run_response.append(_m)
+                    run_messages.messages.append(_m)
+                    run_messages.extra_messages.append(_m)
+                elif isinstance(_m, dict):
+                    try:
+                        _m_parsed = Message.model_validate(_m)
+                        messages_to_add_to_run_response.append(_m_parsed)
+                        run_messages.messages.append(_m_parsed)
+                        run_messages.extra_messages.append(_m_parsed)
+                    except Exception as e:
+                        log_warning(f"Failed to validate message: {e}")
+            # Add the extra messages to the run_response
+            if len(messages_to_add_to_run_response) > 0:
+                log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
+                if self.run_response.extra_data is None:
+                    self.run_response.extra_data = RunResponseExtraData(
+                        additional_messages=messages_to_add_to_run_response
+                    )
+                else:
+                    if self.run_response.extra_data.additional_messages is None:
+                        self.run_response.extra_data.additional_messages = messages_to_add_to_run_response
+                    else:
+                        self.run_response.extra_data.additional_messages.extend(messages_to_add_to_run_response)
+
+        # 3. Add history to run_messages
         if self.add_history_to_context:
             from copy import deepcopy
 
@@ -5222,7 +5268,7 @@ class Team:
                 # Extend the messages with the history
                 run_messages.messages += history_copy
 
-        # 3. Add user message to run_messages
+        # 4. Add user message to run_messages
         user_message = self._get_user_message(
             message,
             user_id=user_id,
