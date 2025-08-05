@@ -254,22 +254,6 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
             background=True,
         )
 
-        # Register the WebSocket with the actual run_id
-        await websocket_manager.register_workflow_websocket(run_response.run_id, websocket)
-
-        # Send workflow started confirmation with run_id
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "event": "workflow_started",
-                    "run_id": run_response.run_id,
-                    "workflow_id": workflow_id,
-                    "session_id": run_response.session_id,
-                    "message": "Workflow execution started",
-                }
-            )
-        )
-
     except Exception as e:
         logger.error(f"Error executing workflow via WebSocket: {e}")
         await websocket.send_text(json.dumps({"event": "error", "error": str(e)}))
@@ -1063,3 +1047,48 @@ def get_base_router(
             name=workflow.name,
             description=workflow.description,
         )
+
+    @router.post("/workflows/{workflow_id}/runs")
+    async def create_workflow_run(
+        workflow_id: str,
+        message: str = Form(...),
+        stream: bool = Form(True),
+        session_id: Optional[str] = Form(None),
+        user_id: Optional[str] = Form(None),
+    ):
+        # Retrieve the workflow by ID
+        workflow = get_workflow_by_id(workflow_id, os.workflows)
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+
+        if session_id:
+            logger.debug(f"Continuing session: {session_id}")
+        else:
+            logger.debug("Creating new session")
+            session_id = str(uuid4())
+
+        # Return based on stream parameter
+        try:
+            if stream:
+                return StreamingResponse(
+                    workflow_response_streamer(
+                        workflow,
+                        message=message,
+                        session_id=session_id,
+                        user_id=user_id,
+                    ),
+                    media_type="text/event-stream",
+                )
+            else:
+                run_response = await workflow.arun(
+                    message=message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    stream=False,
+                )
+                return run_response.to_dict()
+        except Exception as e:
+            # Handle unexpected runtime errors
+            raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
+
+    return router
