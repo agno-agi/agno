@@ -6,7 +6,7 @@ from uuid import uuid4
 from agno.document.base import Document
 from agno.document.reader.base import Reader
 from agno.utils.http import async_fetch_with_retry, fetch_with_retry
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_error, log_info, logger
 
 try:
     from pypdf import PdfReader as DocumentReader  # noqa: F401
@@ -84,11 +84,35 @@ async def async_process_image_page(doc_name: str, page_number: int, page: Any) -
 
 
 class BasePDFReader(Reader):
+    def __init__(self, password: Optional[str] = None, **kwargs):
+        super().__init__(**kwargs)
+        self.password = password
+
     def _build_chunked_documents(self, documents: List[Document]) -> List[Document]:
         chunked_documents: List[Document] = []
         for document in documents:
             chunked_documents.extend(self.chunk_document(document))
         return chunked_documents
+
+    def _descrypt_pdf(self, doc_reader: DocumentReader, doc_name: str) -> bool:
+        if not doc_reader.is_encrypted:
+            return True
+
+        if not self.password:
+            logger.error(f"PDF {doc_name} is password protected but no password provided")
+            return False
+
+        try:
+            decrypted_pdf = doc_reader.decrypt(self.password)
+            if decrypted_pdf:
+                log_info(f"Successfully decrypted PDF {doc_name} with user password")
+                return True
+            else:
+                log_error(f"Failed to decrypt PDF {doc_name}: incorrect password")
+                return False
+        except Exception as e:
+            log_error(f"Error decrypting PDF {doc_name}: {e}")
+            return False
 
 
 class PDFReader(BasePDFReader):
@@ -109,6 +133,10 @@ class PDFReader(BasePDFReader):
             doc_reader = DocumentReader(pdf)
         except PdfStreamError as e:
             logger.error(f"Error reading PDF: {e}")
+            return []
+
+        # Handle PDF decryption if needed
+        if not self._descrypt_pdf(doc_reader, doc_name):
             return []
 
         documents = []
@@ -142,6 +170,10 @@ class PDFReader(BasePDFReader):
             logger.error(f"Error reading PDF: {e}")
             return []
 
+        # Handle PDF decryption if needed
+        if not self._descrypt_pdf(doc_reader, doc_name):
+            return []
+
         async def _process_document(doc_name: str, page_number: int, page: Any) -> Document:
             return Document(
                 name=doc_name,
@@ -166,8 +198,8 @@ class PDFReader(BasePDFReader):
 class PDFUrlReader(BasePDFReader):
     """Reader for PDF files from URL"""
 
-    def __init__(self, proxy: Optional[str] = None, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, proxy: Optional[str] = None, password: Optional[str] = None, **kwargs):
+        super().__init__(password=password, **kwargs)
         self.proxy = proxy
 
     def read(self, url: str) -> List[Document]:
@@ -183,6 +215,10 @@ class PDFUrlReader(BasePDFReader):
 
         doc_name = url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
         doc_reader = DocumentReader(BytesIO(response.content))
+
+        # Handle PDF decryption if needed
+        if not self._descrypt_pdf(doc_reader, doc_name):
+            return []
 
         documents = []
         for page_number, page in enumerate(doc_reader.pages, start=1):
@@ -214,6 +250,10 @@ class PDFUrlReader(BasePDFReader):
 
         doc_name = url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
         doc_reader = DocumentReader(BytesIO(response.content))
+
+        # Handle PDF decryption if needed
+        if not self._descrypt_pdf(doc_reader, doc_name):
+            return []
 
         async def _process_document(doc_name: str, page_number: int, page: Any) -> Document:
             return Document(
@@ -254,6 +294,10 @@ class PDFImageReader(BasePDFReader):
         log_info(f"Reading: {doc_name}")
         doc_reader = DocumentReader(pdf)
 
+        # Handle PDF decryption if needed
+        if not self._descrypt_pdf(doc_reader, doc_name):
+            return []
+
         documents = []
         for page_number, page in enumerate(doc_reader.pages, start=1):
             documents.append(process_image_page(doc_name, page_number, page))
@@ -278,6 +322,10 @@ class PDFImageReader(BasePDFReader):
         log_info(f"Reading: {doc_name}")
         doc_reader = DocumentReader(pdf)
 
+        # Handle PDF decryption if needed
+        if not self._descrypt_pdf(doc_reader, doc_name):
+            return []
+
         documents = await asyncio.gather(
             *[
                 async_process_image_page(doc_name, page_number, page)
@@ -293,8 +341,8 @@ class PDFImageReader(BasePDFReader):
 class PDFUrlImageReader(BasePDFReader):
     """Reader for PDF files from URL with text and images extraction"""
 
-    def __init__(self, proxy: Optional[str] = None, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, proxy: Optional[str] = None, password: Optional[str] = None, **kwargs):
+        super().__init__(password=password, **kwargs)
         self.proxy = proxy
 
     def read(self, url: str) -> List[Document]:
@@ -311,6 +359,10 @@ class PDFUrlImageReader(BasePDFReader):
 
         doc_name = url.split("/")[-1].split(".")[0].replace(" ", "_")
         doc_reader = DocumentReader(BytesIO(response.content))
+
+        # Handle PDF decryption if needed
+        if not self._descrypt_pdf(doc_reader, doc_name):
+            return []
 
         documents = []
         for page_number, page in enumerate(doc_reader.pages, start=1):
@@ -339,6 +391,10 @@ class PDFUrlImageReader(BasePDFReader):
 
         doc_name = url.split("/")[-1].split(".")[0].replace(" ", "_")
         doc_reader = DocumentReader(BytesIO(response.content))
+
+        # Handle PDF decryption if needed
+        if not self._descrypt_pdf(doc_reader, doc_name):
+            return []
 
         documents = await asyncio.gather(
             *[

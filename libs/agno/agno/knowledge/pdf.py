@@ -6,7 +6,7 @@ from pydantic import Field
 from agno.document import Document
 from agno.document.reader.pdf_reader import PDFImageReader, PDFReader
 from agno.knowledge.agent import AgentKnowledge
-from agno.utils.log import log_info, logger
+from agno.utils.log import log_error, log_info, logger
 
 
 class PDFKnowledgeBase(AgentKnowledge):
@@ -47,7 +47,19 @@ class PDFKnowledgeBase(AgentKnowledge):
 
     def _is_valid_pdf(self, path: Path) -> bool:
         """Helper to check if path is a valid PDF file."""
-        return path.exists() and path.is_file() and path.suffix == ".pdf" and path.name not in self.exclude_files
+        if not path.exists():
+            log_error(f"PDF file not found: {path}")
+            return False
+        if not path.is_file():
+            log_error(f"Path is not a file: {path}")
+            return False
+        if path.suffix != ".pdf":
+            log_error(f"File is not a PDF: {path}")
+            return False
+        if path.name in self.exclude_files:
+            log_error(f"PDF file excluded: {path}")
+            return False
+        return True
 
     @property
     async def async_document_lists(self) -> AsyncIterator[List[Document]]:
