@@ -234,24 +234,15 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
         if not session_id:
             session_id = str(uuid4())
 
-        # Create workflow instance with WebSocket
-        workflow_with_ws = Workflow(
-            workflow_id=workflow.workflow_id,
-            name=workflow.name,
-            description=workflow.description,
-            db=workflow.db,
-            steps=workflow.steps,
-            websocket=websocket,  # Pass WebSocket directly
-        )
-
         # Execute workflow in background with streaming
-        run_response = await workflow_with_ws.arun(
+        await workflow.arun(
             message=user_message,
             session_id=session_id,
             user_id=user_id,
             stream=True,
             stream_intermediate_steps=True,
             background=True,
+            websocket=websocket,
         )
 
     except Exception as e:
