@@ -274,6 +274,10 @@ class Agent:
     parser_model: Optional[Model] = None
     # Provide a prompt for the parser model
     parser_model_prompt: Optional[str] = None
+    # Provide an output model to structure the response from the main model
+    output_model: Optional[Model] = None
+    # Provide a prompt for the output model
+    output_model_prompt: Optional[str] = None
     # If True, the response from the Model is converted into the response_model
     # Otherwise, the response is returned as a JSON string
     parse_response: bool = True
@@ -414,6 +418,7 @@ class Agent:
         parser_model_prompt: Optional[str] = None,
         response_model: Optional[Type[BaseModel]] = None,
         parse_response: bool = True,
+        output_model: Optional[Type[BaseModel]] = None,
         structured_outputs: Optional[bool] = None,
         use_json_mode: bool = False,
         save_response_to_file: Optional[str] = None,
@@ -517,6 +522,7 @@ class Agent:
         self.parser_model_prompt = parser_model_prompt
         self.response_model = response_model
         self.parse_response = parse_response
+        self.output_model = output_model
 
         self.structured_outputs = structured_outputs
 
@@ -794,6 +800,9 @@ class Agent:
 
         # If a parser model is provided, structure the response separately
         self._parse_response_with_parser_model(model_response, run_messages)
+
+        # If an output model is provided, structure the response separately
+        self._parse_response_with_output_model(model_response, run_messages)
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
@@ -5034,6 +5043,19 @@ class Agent:
             Message(role="user", content=run_response.content),
         ]
 
+    def get_messages_for_output_model(self, model_response: ModelResponse) -> List[Message]:
+        """Get the messages for the output model."""
+        system_content = (
+            self.output_model_prompt
+            if self.output_model_prompt is not None
+            else "You are tasked with expanding on the provided data."
+        )
+
+        return [
+            Message(role="system", content=system_content),
+            Message(role="user", content=model_response.content),
+        ]
+
     def get_session_summary(self, session_id: Optional[str] = None, user_id: Optional[str] = None):
         """Get the session summary for the given session ID and user ID."""
         if self.memory is None:
@@ -6353,6 +6375,17 @@ class Agent:
                     yield self._handle_event(create_parser_model_response_completed_event(run_response), run_response)
             else:
                 log_warning("A response model is required to parse the response with a parser model")
+
+    def _parse_response_with_output_model(self, model_response: ModelResponse, run_messages: RunMessages) -> None:
+        """Parse the model response using the output model."""
+        if self.output_model is None:
+            return
+
+        messages_for_output_model = self.get_messages_for_output_model(model_response)
+        output_model_response: ModelResponse = self.output_model.response(
+            messages=messages_for_output_model,
+        )
+        model_response.content = output_model_response.content
 
     def _handle_event(self, event: RunResponseEvent, run_response: RunResponse):
         # We only store events that are not run_response_content events
