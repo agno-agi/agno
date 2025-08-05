@@ -9,7 +9,6 @@ knowledge_base = PDFKnowledgeBase(
     path="pw_protected.pdf",
     vector_db=PgVector(
         table_name="pdf_documents_password",
-        # Can inspect database via psql e.g. "psql -h localhost -p 5432 -U ai -d ai"
         db_url=db_url,
     ),
     reader=PDFReader(chunk=True, password="samplefiles"),
@@ -24,4 +23,4 @@ agent = Agent(
     show_tool_calls=True,
 )
 
-agent.print_response("What are the different types of Encryption")
+agent.print_response("What are the different types of Encryption?")
