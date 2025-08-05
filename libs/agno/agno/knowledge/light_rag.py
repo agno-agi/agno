@@ -144,7 +144,7 @@ class LightRagKnowledgeBase(AgentKnowledge):
         logger.debug("Loading LightRagKnowledgeBase")
         for text_list in self._text_document_lists():
             for text in text_list:
-                await self._insert_text(text)
+                await self.insert_text(text)
 
     async def aload(
         self,
@@ -189,19 +189,22 @@ class LightRagKnowledgeBase(AgentKnowledge):
             else:
                 return [Document(content=str(result), meta_data={"query": query, "mode": mode})]
 
-    async def _insert_text(self, text: str) -> Dict[str, Any]:
+    async def insert_text(self, file_source: str, text: str) -> Dict[str, Any]:
         """Insert text into the LightRAG server."""
         import httpx
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{self.lightrag_server_url}/documents/text",
-                json={"text": text},
+                json={
+                    "file_source": file_source,
+                    "text": text
+                },
                 headers={"Content-Type": "application/json"},
             )
             response.raise_for_status()
             result = response.json()
-            logger.debug(f"Text insertion result: {result}")
+            logger.info(f"Text insertion result: {result}")
             return result
 
     def _is_valid_url(self, url: str) -> bool:

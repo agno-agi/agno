@@ -1,12 +1,17 @@
 from os import getenv
+import asyncio
 
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.lightrag import LightRag
 
-vector_db = LightRag()
+vector_db = LightRag(
+    api_key=getenv("LIGHTRAG_API_KEY"),
+)
 
-vector_db._insert_text("Hello, world!")
+# vector_db._insert_text("Hello, world!")
+
+
 
 # knowledge = Knowledge(
 #     name="My Pinecone Knowledge Base",
@@ -14,11 +19,15 @@ vector_db._insert_text("Hello, world!")
 #     vector_db=vector_db,
 # )
 
+
 # knowledge.add_content(
 #     name="Recipes",
-#     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+#     path="cookbook_v2/knowledge/data/filters/cv_1.pdf",
 #     metadata={"doc_type": "recipe_book"},
 # )
+
+result = asyncio.run(vector_db._insert_text("This is my source", "Hello, world!"))
+print(result)
 
 # agent = Agent(
 #     knowledge=knowledge,
