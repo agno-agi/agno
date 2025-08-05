@@ -50,7 +50,6 @@ from agno.session.workflow import WorkflowSession
 from agno.team.team import Team
 from agno.utils.log import (
     log_debug,
-    log_error,
     logger,
     set_log_level_to_debug,
     set_log_level_to_info,

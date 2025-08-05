@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from agno.exceptions import AgentRunException
 from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations, Message
-from agno.models.metrics import Metrics
+from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run.response import RunResponseContentEvent, RunResponseEvent
 from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
@@ -1143,7 +1143,7 @@ class Model(ABC):
         """Create a function call result message."""
         kwargs = {}
         if timer is not None:
-            kwargs["metrics"] = Metrics(time=timer.elapsed)
+            kwargs["metrics"] = MessageMetrics(duration=timer.elapsed)
         return Message(
             role=self.tool_message_role,
             content=output if success else function_call.error,

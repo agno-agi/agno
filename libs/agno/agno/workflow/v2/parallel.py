@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import AsyncIterator, Awaitable, Callable, Iterator, List, Optional, Union
 
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics
 from agno.run.response import RunResponseEvent
 from agno.run.team import TeamRunResponseEvent
 from agno.run.v2.workflow import (
@@ -142,13 +142,13 @@ class Parallel:
             metrics=aggregated_metrics,
         )
 
-    def _extract_metrics_from_response(self, step_outputs: List[StepOutput]) -> Optional[Metrics]:
+    def _extract_metrics_from_response(self, step_outputs: List[StepOutput]) -> Optional[RunMetrics]:
         """Extract and aggregate metrics from parallel step outputs"""
         if not step_outputs:
             return None
 
         # Aggregate metrics from all parallel step outputs
-        total_metrics = Metrics()
+        total_metrics = RunMetrics()
 
         for result in step_outputs:
             if result.metrics:
@@ -159,7 +159,7 @@ class Parallel:
             total_metrics.input_tokens == 0
             and total_metrics.output_tokens == 0
             and total_metrics.total_tokens == 0
-            and total_metrics.time is None
+            and total_metrics.duration is None
         ):
             return None
 

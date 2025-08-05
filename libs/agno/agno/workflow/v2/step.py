@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.media import Audio, AudioArtifact, Image, ImageArtifact, Video, VideoArtifact
-from agno.models.metrics import Metrics
+from agno.models.metrics import RunMetrics
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
 from agno.run.v2.workflow import (
@@ -151,7 +151,7 @@ class Step:
         else:
             raise ValueError("No executor configured")
 
-    def _extract_metrics_from_response(self, response: Union[RunResponse, TeamRunResponse]) -> Optional[Metrics]:
+    def _extract_metrics_from_response(self, response: Union[RunResponse, TeamRunResponse]) -> Optional[RunMetrics]:
         """Extract metrics from agent or team response"""
         if hasattr(response, "metrics") and response.metrics:
             return response.metrics

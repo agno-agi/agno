@@ -34,7 +34,7 @@ from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageAr
 from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageReferences
-from agno.models.metrics import Metrics
+from agno.models.metrics import SessionMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.base import RunResponseExtraData, RunStatus
@@ -467,8 +467,8 @@ class Team:
         self.telemetry = telemetry
 
         # --- Params not to be set by user ---
-        self.session_metrics: Optional[Metrics] = None
-        self.full_team_session_metrics: Optional[Metrics] = None
+        self.session_metrics: Optional[SessionMetrics] = None
+        self.full_team_session_metrics: Optional[SessionMetrics] = None
 
         self.run_id: Optional[str] = None
         self.run_input: Optional[Union[str, List, Dict, BaseModel]] = None
@@ -4042,22 +4042,26 @@ class Team:
             async for item in reason_generator:
                 yield item
 
-    def _calculate_session_metrics(self, messages: List[Message]) -> Metrics:
-        session_metrics = Metrics()
+    def _calculate_session_metrics(self, messages: List[Message]) -> SessionMetrics:
+        """Sum the metrics of the given messages into a SessionMetrics object"""
+        session_metrics = SessionMetrics()
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
 
-        # Get metrics of the team-agent's messages
+        # Get metrics of the team leader's messages
         for m in messages:
             if m.role == assistant_message_role and m.metrics is not None:
                 session_metrics += m.metrics
 
         return session_metrics
 
-    def _calculate_full_team_session_metrics(self, messages: List[Message]) -> Metrics:
+    def _calculate_full_team_session_metrics(self, messages: List[Message]) -> SessionMetrics:
+        """Sum the metrics of the given messages into a SessionMetrics object"""
+
         current_session_metrics = self.session_metrics or self._calculate_session_metrics(messages)
         current_session_metrics = replace(current_session_metrics)
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
 
+        # Sum the metrics of all messages in the session (this includes members' responses)
         for run in self.team_session.runs:  # type: ignore
             if run.messages is not None:
                 for m in run.messages:
@@ -4066,23 +4070,26 @@ class Team:
 
         return current_session_metrics
 
-    def calculate_metrics(self, messages: List[Message], for_session: bool = False) -> Metrics:
-        metrics = Metrics()
+    def calculate_metrics(
+        self, messages: List[Message], for_session: bool = False
+    ) -> Union[SessionMetrics, Dict[str, Any]]:
+        """Sum the metrics of the given messages into a SessionMetrics object"""
+        metrics = SessionMetrics()
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
+
         for m in messages:
             if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
                 metrics += m.metrics
 
-        return metrics if for_session else metrics.to_dict()  # type: ignore
+        return metrics if for_session else metrics.to_dict()
 
-    def set_session_metrics(self, run_messages: RunMessages):
+    def set_session_metrics(self, run_messages: RunMessages) -> None:
         """Calculate session metrics"""
-        # Calculate initial metrics
+
         if self.session_metrics is None:
-            self.session_metrics = self.calculate_metrics(run_messages.messages, for_session=True)
-        # Update metrics
+            self.session_metrics = self.calculate_metrics(run_messages.messages, for_session=True)  # type: ignore
         else:
-            self.session_metrics += self.calculate_metrics(run_messages.messages, for_session=True)
+            self.session_metrics += self.calculate_metrics(run_messages.messages, for_session=True)  # type: ignore
 
     def update_session_metrics(self):
         """Calculate session metrics"""
@@ -6874,7 +6881,7 @@ class Team:
             if "session_metrics" in session.session_data:
                 session_metrics_from_db = session.session_data.get("session_metrics")
                 if session_metrics_from_db is not None and isinstance(session_metrics_from_db, dict):
-                    self.session_metrics = Metrics(**session_metrics_from_db)
+                    self.session_metrics = SessionMetrics(**session_metrics_from_db)
 
             # Get images, videos, and audios from the database
             if "images" in session.session_data:
