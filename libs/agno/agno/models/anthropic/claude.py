@@ -534,7 +534,7 @@ class Claude(Model):
                 usage_dict["cache_write_tokens"] = response.usage.cache_creation_input_tokens
 
             if hasattr(response.usage, "cache_read_input_tokens") and response.usage.cache_read_input_tokens:
-                usage_dict["cached_tokens"] = response.usage.cache_read_input_tokens
+                usage_dict["cache_read_tokens"] = response.usage.cache_read_input_tokens
 
             model_response.response_usage = usage_dict
 
@@ -619,7 +619,7 @@ class Claude(Model):
                 usage_dict["cache_write_tokens"] = response.usage.cache_creation_input_tokens
 
             if hasattr(response.usage, "cache_read_input_tokens") and response.usage.cache_read_input_tokens:
-                usage_dict["cached_tokens"] = response.usage.cache_read_input_tokens
+                usage_dict["cache_read_tokens"] = response.usage.cache_read_input_tokens
 
             model_response.response_usage = usage_dict
 

@@ -775,7 +775,7 @@ class Gemini(Model):
                 "input_tokens": usage.prompt_token_count or 0,
                 "output_tokens": output_tokens,
                 "total_tokens": usage.total_token_count or 0,
-                "cached_tokens": usage.cached_content_token_count or 0,
+                "cache_read_tokens": usage.cached_content_token_count or 0,
             }
 
         # If we have no content but have a role, add a default empty content
@@ -859,7 +859,7 @@ class Gemini(Model):
                     "input_tokens": usage.prompt_token_count or 0,
                     "output_tokens": output_tokens,
                     "total_tokens": usage.total_token_count or 0,
-                    "cached_tokens": usage.cached_content_token_count or 0,
+                    "cache_read_tokens": usage.cached_content_token_count or 0,
                 }
 
         return model_response

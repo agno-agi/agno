@@ -178,7 +178,7 @@ def test_prompt_caching():
 
     response = agent.run("Explain the difference between REST and GraphQL APIs with examples")
     # This test needs a clean Anthropic cache to run. If the cache is not empty, we skip the test.
-    if response.metrics.get("cached_tokens", [0])[0] > 0:
+    if response.metrics.get("cache_read_tokens", [0])[0] > 0:
         log_warning(
             "A cache is already active in this Anthropic context. This test can't run until the cache is cleared."
         )
@@ -187,10 +187,10 @@ def test_prompt_caching():
     # Asserting the system prompt is cached on the first run
     assert response.content is not None
     assert response.metrics.get("cache_write_tokens", [0])[0] > 0
-    assert response.metrics.get("cached_tokens", [0])[0] == 0
+    assert response.metrics.get("cache_read_tokens", [0])[0] == 0
 
     # Asserting the cached prompt is used on the second run
     response = agent.run("What are the key principles of clean code and how do I apply them in Python?")
     assert response.content is not None
     assert response.metrics.get("cache_write_tokens", [0])[0] == 0
-    assert response.metrics.get("cached_tokens", [0])[0] > 0
+    assert response.metrics.get("cache_read_tokens", [0])[0] > 0

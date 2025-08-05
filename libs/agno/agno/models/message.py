@@ -262,8 +262,8 @@ class Message(BaseModel):
                 token_metrics.append(f"cache_write_tokens={self.metrics.cache_write_tokens}")
             if self.metrics.reasoning_tokens and self.metrics.reasoning_tokens > 0:
                 token_metrics.append(f"reasoning={self.metrics.reasoning_tokens}")
-            if self.metrics.total_audio_tokens and self.metrics.total_audio_tokens > 0:
-                token_metrics.append(f"audio={self.metrics.total_audio_tokens}")
+            if self.metrics.audio_total_tokens and self.metrics.audio_total_tokens > 0:
+                token_metrics.append(f"audio={self.metrics.audio_total_tokens}")
             if token_metrics:
                 _logger(f"* Tokens:                      {', '.join(token_metrics)}")
 

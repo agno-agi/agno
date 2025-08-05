@@ -33,7 +33,7 @@ def _assert_cache_metrics(response: RunResponse, expect_cache_write: bool = Fals
         pytest.fail("Response metrics is None")
 
     cache_write_tokens = response.metrics.get("cache_write_tokens", [0])
-    cache_read_tokens = response.metrics.get("cached_tokens", [0])
+    cache_read_tokens = response.metrics.get("cache_read_tokens", [0])
 
     if expect_cache_write:
         assert sum(cache_write_tokens) > 0, "Expected cache write tokens but found none"
@@ -90,7 +90,7 @@ def test_usage_metrics_parsing():
         "input_tokens": 100,
         "output_tokens": 50,
         "cache_write_tokens": 80,
-        "cached_tokens": 20,
+        "cache_read_tokens": 20,
     }
     assert model_response.response_usage == expected_usage
 
@@ -115,7 +115,7 @@ def test_prompt_caching_with_agent():
         pytest.fail("Response metrics is None")
 
     cache_creation_tokens = response.metrics.get("cache_write_tokens", [0])[0]
-    cache_hit_tokens = response.metrics.get("cached_tokens", [0])[0]
+    cache_hit_tokens = response.metrics.get("cache_read_tokens", [0])[0]
 
     print(f"Cache creation tokens: {cache_creation_tokens}")
     print(f"Cache hit tokens: {cache_hit_tokens}")
@@ -135,7 +135,7 @@ def test_prompt_caching_with_agent():
         response2 = agent.run("How would you implement monitoring for this architecture?")
         if response2.metrics is None:
             pytest.fail("Response2 metrics is None")
-        cache_read_tokens = response2.metrics.get("cached_tokens", [0])[0]
+        cache_read_tokens = response2.metrics.get("cache_read_tokens", [0])[0]
         assert cache_read_tokens > 0, f"Expected cache read tokens but found {cache_read_tokens}"
     else:
         print(f"✅ Cache was used with {cache_hit_tokens} tokens from previous run")

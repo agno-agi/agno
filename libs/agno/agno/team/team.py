@@ -1871,10 +1871,10 @@ class Team:
                             )
 
                             metrics = tool_call.metrics
-                            if metrics is not None and metrics.time is not None and reasoning_state is not None:
+                            if metrics is not None and metrics.duration is not None and reasoning_state is not None:
                                 reasoning_state["reasoning_time_taken"] = reasoning_state[
                                     "reasoning_time_taken"
-                                ] + float(metrics.time)
+                                ] + float(metrics.duration)
 
                         yield self._handle_event(
                             create_team_tool_call_completed_event(
@@ -7620,7 +7620,7 @@ class Team:
         if self.workflow_session_state is not None and len(self.workflow_session_state) > 0:
             session_data["workflow_session_state"] = self.workflow_session_state
         if self.session_metrics is not None:
-            session_data["session_metrics"] = asdict(self.session_metrics) if self.session_metrics is not None else None
+            session_data["session_metrics"] = self.session_metrics.to_dict() if self.session_metrics else None
         if self.images is not None:
             session_data["images"] = [img.to_dict() for img in self.images]  # type: ignore
         if self.videos is not None:

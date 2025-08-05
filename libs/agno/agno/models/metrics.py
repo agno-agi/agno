@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, Optional
 
 from agno.utils.timer import Timer
@@ -14,9 +14,9 @@ class SessionMetrics:
     total_tokens: int = 0
 
     # Audio token usage
-    input_audio_tokens: int = 0
-    output_audio_tokens: int = 0
-    total_audio_tokens: int = 0
+    audio_input_tokens: int = 0
+    audio_output_tokens: int = 0
+    audio_total_tokens: int = 0
 
     # Cache token usage
     cache_read_tokens: int = 0
@@ -32,15 +32,11 @@ class SessionMetrics:
     additional_metrics: Optional[dict] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        metrics_dict = asdict(self)
-        # Remove timer if it exists (for RunMetrics)
-        metrics_dict.pop("timer", None)
-        metrics_dict = {
+        return {
             k: v
-            for k, v in metrics_dict.items()
+            for k, v in asdict(self).items()
             if v is not None and (not isinstance(v, (int, float)) or v != 0) and (not isinstance(v, dict) or len(v) > 0)
         }
-        return metrics_dict
 
     def __add__(self, other: "SessionMetrics") -> "SessionMetrics":
         # Create new instance of the same type as self
@@ -49,9 +45,9 @@ class SessionMetrics:
             input_tokens=self.input_tokens + other.input_tokens,
             output_tokens=self.output_tokens + other.output_tokens,
             total_tokens=self.total_tokens + other.total_tokens,
-            total_audio_tokens=self.total_audio_tokens + other.total_audio_tokens,
-            input_audio_tokens=self.input_audio_tokens + other.input_audio_tokens,
-            output_audio_tokens=self.output_audio_tokens + other.output_audio_tokens,
+            audio_total_tokens=self.audio_total_tokens + other.audio_total_tokens,
+            audio_input_tokens=self.audio_input_tokens + other.audio_input_tokens,
+            audio_output_tokens=self.audio_output_tokens + other.audio_output_tokens,
             cache_read_tokens=self.cache_read_tokens + other.cache_read_tokens,
             cache_write_tokens=self.cache_write_tokens + other.cache_write_tokens,
             reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
@@ -86,13 +82,24 @@ class RunMetrics(SessionMetrics):
     """Metrics for a single run. Contains the metrics from the base class plus some related to the run duration specifics."""
 
     # Internal timer utility for tracking execution time
-    timer: Optional[Timer] = field(default=None, init=False)
+    timer: Optional[Timer] = None
     # Time from run start to first token generation, in seconds
     time_to_first_token: Optional[float] = None
     # Total end-to-end run time, in seconds
     duration: Optional[float] = None
     # Time spent on model inference only, in seconds
     model_duration: Optional[float] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        metrics_dict = asdict(self)
+        # Remove the timer util
+        metrics_dict.pop("timer", None)
+        metrics_dict = {
+            k: v
+            for k, v in metrics_dict.items()
+            if v is not None and (not isinstance(v, (int, float)) or v != 0) and (not isinstance(v, dict) or len(v) > 0)
+        }
+        return metrics_dict
 
     def __add__(self, other: "RunMetrics") -> "RunMetrics":
         result: RunMetrics = super().__add__(other)  # type: ignore

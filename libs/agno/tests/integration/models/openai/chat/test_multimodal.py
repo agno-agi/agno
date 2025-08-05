@@ -75,11 +75,11 @@ def test_audio_tokens():
     )
     response = agent.run("What is in this audio?", audio=[Audio(content=wav_data, format="wav")])
 
-    audio_tokens = response.metrics.get("audio_tokens")
-    input_audio_tokens = response.metrics.get("input_audio_tokens")
-    output_audio_tokens = response.metrics.get("output_audio_tokens")
+    audio_tokens = response.metrics.get("audio_total_tokens")
+    audio_input_tokens = response.metrics.get("audio_input_tokens")
+    audio_output_tokens = response.metrics.get("audio_output_tokens")
 
-    assert audio_tokens is not None and input_audio_tokens is not None and output_audio_tokens is not None
+    assert audio_tokens is not None and audio_input_tokens is not None and audio_output_tokens is not None
     assert sum(audio_tokens) > 0
-    assert sum(input_audio_tokens) > 0
-    assert sum(output_audio_tokens) > 0
+    assert sum(audio_input_tokens) > 0
+    assert sum(audio_output_tokens) > 0

@@ -21,10 +21,10 @@ def _assert_metrics(response: RunResponse):
 
     assert response.metrics.get("completion_tokens_details") is not None
     assert response.metrics.get("prompt_tokens_details") is not None
-    assert response.metrics.get("audio_tokens") is not None
-    assert response.metrics.get("input_audio_tokens") is not None
-    assert response.metrics.get("output_audio_tokens") is not None
-    assert response.metrics.get("cached_tokens") is not None
+    assert response.metrics.get("audio_total_tokens") is not None
+    assert response.metrics.get("audio_input_tokens") is not None
+    assert response.metrics.get("audio_output_tokens") is not None
+    assert response.metrics.get("cache_read_tokens") is not None
     assert response.metrics.get("reasoning_tokens") is not None
 
 
@@ -185,17 +185,17 @@ def test_history():
 
 
 @pytest.mark.skip(reason="This test is flaky and needs to be fixed")
-def test_cached_tokens():
-    """Assert cached_tokens is populated correctly and returned in the metrics"""
+def test_cache_read_tokens():
+    """Assert cache_read_tokens is populated correctly and returned in the metrics"""
     agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
     # Multiple + one large prompt to ensure token caching is triggered
     agent.run("Share a 2 sentence horror story")
     response = agent.run("Share a 2 sentence horror story" * 250)
 
-    cached_tokens = response.metrics.get("cached_tokens")
-    assert cached_tokens is not None
-    assert sum(cached_tokens) > 0
+    cache_read_tokens = response.metrics.get("cache_read_tokens")
+    assert cache_read_tokens is not None
+    assert sum(cache_read_tokens) > 0
 
 
 def test_reasoning_tokens():

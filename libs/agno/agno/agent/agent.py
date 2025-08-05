@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import ChainMap, deque
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from os import getenv
 from textwrap import dedent
 from typing import (
@@ -34,7 +34,7 @@ from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageAr
 from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageReferences
-from agno.models.metrics import MessageMetrics, SessionMetrics
+from agno.models.metrics import MessageMetrics, RunMetrics, SessionMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.base import RunResponseExtraData, RunStatus
@@ -2717,7 +2717,7 @@ class Agent:
         # Update the RunResponse messages
         run_response.messages = messages_for_run_response
         # Update the RunResponse metrics
-        run_response.metrics = self.calculate_metrics(messages_for_run_response)
+        run_response.metrics = self.calculate_run_metrics(messages_for_run_response)
 
     def add_run_to_session(self, run_response: RunResponse):
         """Add the given RunResponse to memory, together with some calculated data"""
@@ -2727,9 +2727,9 @@ class Agent:
     def set_session_metrics(self, run_messages: RunMessages) -> None:
         """Calculate metrics for the contextual session"""
         if self.session_metrics is None:
-            self.session_metrics = self.calculate_metrics(run_messages.messages)
+            self.session_metrics = self.calculate_session_metrics(run_messages.messages)
         else:
-            self.session_metrics += self.calculate_metrics(run_messages.messages)
+            self.session_metrics += self.calculate_session_metrics(run_messages.messages)
 
     def update_memory(
         self,
@@ -2817,7 +2817,7 @@ class Agent:
         # Update the RunResponse messages
         run_response.messages = messages_for_run_response
         # Update the RunResponse metrics
-        run_response.metrics = self.calculate_metrics(messages_for_run_response)
+        run_response.metrics = self.calculate_run_metrics(messages_for_run_response)
 
         # Update the run_response audio if streaming
         if model_response.audio is not None:
@@ -2886,7 +2886,7 @@ class Agent:
         # Update the RunResponse messages
         run_response.messages = messages_for_run_response
         # Update the RunResponse metrics
-        run_response.metrics = self.calculate_metrics(messages_for_run_response)
+        run_response.metrics = self.calculate_run_metrics(messages_for_run_response)
 
         # Update the run_response audio if streaming
         if model_response.audio is not None:
@@ -3080,10 +3080,10 @@ class Agent:
                             reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
                             metrics = tool_call.metrics
-                            if metrics is not None and metrics.time is not None and reasoning_state is not None:
+                            if metrics is not None and metrics.duration is not None and reasoning_state is not None:
                                 reasoning_state["reasoning_time_taken"] = reasoning_state[
                                     "reasoning_time_taken"
-                                ] + float(metrics.time)
+                                ] + float(metrics.duration)
                         yield self._handle_event(
                             create_tool_call_completed_event(
                                 from_run_response=run_response, tool=tool_call, content=model_response_event.content
@@ -3649,7 +3649,7 @@ class Agent:
         if self.workflow_session_state is not None and len(self.workflow_session_state) > 0:
             session_data["workflow_session_state"] = self.workflow_session_state
         if self.session_metrics is not None:
-            session_data["session_metrics"] = asdict(self.session_metrics) if self.session_metrics is not None else None
+            session_data["session_metrics"] = self.session_metrics.to_dict() if self.session_metrics else None
         if self.images is not None:
             session_data["images"] = [img.to_dict() for img in self.images]  # type: ignore
         if self.videos is not None:
@@ -4953,9 +4953,20 @@ class Agent:
         else:
             self.run_response.reasoning_content += reasoning_content
 
-    def calculate_metrics(self, messages: List[Message]) -> SessionMetrics:
+    def calculate_session_metrics(self, messages: List[Message]) -> SessionMetrics:
         """Sum the metrics of the given messages into a SessionMetrics object"""
         metrics = SessionMetrics()
+
+        assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
+        for m in messages:
+            if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
+                metrics += m.metrics
+
+        return metrics
+
+    def calculate_run_metrics(self, messages: List[Message]) -> RunMetrics:
+        """Sum the metrics of the given messages into a RunMetrics object"""
+        metrics = RunMetrics()
 
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
         for m in messages:

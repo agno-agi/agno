@@ -40,4 +40,4 @@ print(f"First run cache write tokens = {response.metrics['cache_write_tokens']}"
 response = agent.run(
     "What are the key principles of clean code and how do I apply them in Python?"
 )
-print(f"Second run cache read tokens = {response.metrics['cached_tokens']}")
+print(f"Second run cache read tokens = {response.metrics['cache_read_tokens']}")
