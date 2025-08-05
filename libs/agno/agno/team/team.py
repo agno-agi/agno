@@ -5512,6 +5512,13 @@ class Team:
                 return Message.model_validate(message)
             except Exception as e:
                 log_warning(f"Failed to validate message: {e}")
+        elif isinstance(message, BaseModel):
+            try:
+                # Create a user message with the BaseModel content
+                content = message.model_dump_json(indent=2, exclude_none=True)
+                return Message(role="user", content=content)
+            except Exception as e:
+                log_warning(f"Failed to convert BaseModel to message: {e}")
 
     def get_messages_for_parser_model(
         self, model_response: ModelResponse, response_format: Optional[Union[Dict, Type[BaseModel]]]
