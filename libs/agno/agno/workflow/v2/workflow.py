@@ -166,7 +166,6 @@ class Workflow:
         self.events_to_skip = events_to_skip or []
         self.stream = stream
         self.stream_intermediate_steps = stream_intermediate_steps
-        self.websocket_handler: Optional[WebSocketHandler] = None
 
     @property
     def run_parameters(self) -> Dict[str, Any]:
