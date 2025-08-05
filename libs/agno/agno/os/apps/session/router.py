@@ -59,7 +59,6 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         session_type: SessionType = Query(default=SessionType.AGENT, description="Session type filter", alias="type"),
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         session = db.get_session(session_id=session_id, session_type=session_type)
-        breakpoint()
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id '{session_id}' not found")
 
