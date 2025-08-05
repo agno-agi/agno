@@ -79,7 +79,7 @@ class WebSocketManager:
     async def connect(self, websocket: WebSocket):
         """Accept WebSocket connection"""
         await websocket.accept()
-        logger.debug(f"WebSocket connected")
+        logger.debug("WebSocket connected")
 
         # Send connection confirmation
         await websocket.send_text(

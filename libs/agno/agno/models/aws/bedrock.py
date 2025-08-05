@@ -6,7 +6,7 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Ty
 from pydantic import BaseModel
 
 from agno.exceptions import AgnoError, ModelProviderError
-from agno.models.base import MessageData, Model, _add_usage_metrics_to_assistant_message
+from agno.models.base import MessageData, Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_error, log_warning
@@ -638,7 +638,7 @@ class AwsBedrock(Model):
                 should_yield = True
 
             if model_response.response_usage is not None:
-                _add_usage_metrics_to_assistant_message(
+                self._add_metrics_to_assistant_message(
                     assistant_message=assistant_message, response_usage=model_response.response_usage
                 )
 
@@ -744,7 +744,7 @@ class AwsBedrock(Model):
                 should_yield = True
 
             if model_response.response_usage is not None:
-                _add_usage_metrics_to_assistant_message(
+                self._add_metrics_to_assistant_message(
                     assistant_message=assistant_message, response_usage=model_response.response_usage
                 )
 

@@ -286,7 +286,6 @@ class AgentSessionDetailSchema(BaseModel):
     agent_data: Optional[dict]
     agent_sessions: list
     response_latency_avg: Optional[float]
-    total_tokens: Optional[int]
     metrics: Optional[dict]
     chat_history: Optional[List[dict]]
     created_at: Optional[datetime]
@@ -307,9 +306,6 @@ class AgentSessionDetailSchema(BaseModel):
             agent_data=session.agent_data,
             agent_sessions=[],
             response_latency_avg=0,
-            total_tokens=session.session_data.get("session_metrics", {}).get("total_tokens")
-            if session.session_data
-            else None,
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,
             chat_history=[message.to_dict() for message in session.get_chat_history()],
             created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
@@ -325,7 +321,6 @@ class TeamSessionDetailSchema(BaseModel):
     session_summary: Optional[dict]
     metrics: Optional[dict]
     team_data: Optional[dict]
-    total_tokens: Optional[int]
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
 
@@ -341,9 +336,6 @@ class TeamSessionDetailSchema(BaseModel):
             session_summary=session_dict.get("summary") if session_dict.get("summary") else None,
             user_id=session.user_id,
             team_data=session.team_data,
-            total_tokens=session.session_data.get("session_metrics", {}).get("total_tokens")
-            if session.session_data
-            else None,
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,
             created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
             updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,

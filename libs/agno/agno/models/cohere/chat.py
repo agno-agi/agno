@@ -5,7 +5,7 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Ty
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
-from agno.models.base import MessageData, Model, _add_usage_metrics_to_assistant_message
+from agno.models.base import MessageData, Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_error
@@ -321,7 +321,7 @@ class Cohere(Model):
             and response.delta.usage is not None
             and response.delta.usage.tokens is not None
         ):
-            _add_usage_metrics_to_assistant_message(
+            self._add_metrics_to_assistant_message(
                 assistant_message=assistant_message,
                 response_usage={
                     "input_tokens": int(response.delta.usage.tokens.input_tokens) or 0,  # type: ignore
