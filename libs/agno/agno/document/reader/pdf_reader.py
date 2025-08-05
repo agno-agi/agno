@@ -94,7 +94,7 @@ class BasePDFReader(Reader):
             chunked_documents.extend(self.chunk_document(document))
         return chunked_documents
 
-    def _descrypt_pdf(self, doc_reader: DocumentReader, doc_name: str) -> bool:
+    def _decrypt_pdf(self, doc_reader: DocumentReader, doc_name: str) -> bool:
         if not doc_reader.is_encrypted:
             return True
 
@@ -136,7 +136,7 @@ class PDFReader(BasePDFReader):
             return []
 
         # Handle PDF decryption if needed
-        if not self._descrypt_pdf(doc_reader, doc_name):
+        if not self._decrypt_pdf(doc_reader, doc_name):
             return []
 
         documents = []
@@ -171,7 +171,7 @@ class PDFReader(BasePDFReader):
             return []
 
         # Handle PDF decryption if needed
-        if not self._descrypt_pdf(doc_reader, doc_name):
+        if not self._decrypt_pdf(doc_reader, doc_name):
             return []
 
         async def _process_document(doc_name: str, page_number: int, page: Any) -> Document:
@@ -217,7 +217,7 @@ class PDFUrlReader(BasePDFReader):
         doc_reader = DocumentReader(BytesIO(response.content))
 
         # Handle PDF decryption if needed
-        if not self._descrypt_pdf(doc_reader, doc_name):
+        if not self._decrypt_pdf(doc_reader, doc_name):
             return []
 
         documents = []
@@ -252,7 +252,7 @@ class PDFUrlReader(BasePDFReader):
         doc_reader = DocumentReader(BytesIO(response.content))
 
         # Handle PDF decryption if needed
-        if not self._descrypt_pdf(doc_reader, doc_name):
+        if not self._decrypt_pdf(doc_reader, doc_name):
             return []
 
         async def _process_document(doc_name: str, page_number: int, page: Any) -> Document:
@@ -295,7 +295,7 @@ class PDFImageReader(BasePDFReader):
         doc_reader = DocumentReader(pdf)
 
         # Handle PDF decryption if needed
-        if not self._descrypt_pdf(doc_reader, doc_name):
+        if not self._decrypt_pdf(doc_reader, doc_name):
             return []
 
         documents = []
@@ -323,7 +323,7 @@ class PDFImageReader(BasePDFReader):
         doc_reader = DocumentReader(pdf)
 
         # Handle PDF decryption if needed
-        if not self._descrypt_pdf(doc_reader, doc_name):
+        if not self._decrypt_pdf(doc_reader, doc_name):
             return []
 
         documents = await asyncio.gather(
@@ -361,7 +361,7 @@ class PDFUrlImageReader(BasePDFReader):
         doc_reader = DocumentReader(BytesIO(response.content))
 
         # Handle PDF decryption if needed
-        if not self._descrypt_pdf(doc_reader, doc_name):
+        if not self._decrypt_pdf(doc_reader, doc_name):
             return []
 
         documents = []
@@ -393,7 +393,7 @@ class PDFUrlImageReader(BasePDFReader):
         doc_reader = DocumentReader(BytesIO(response.content))
 
         # Handle PDF decryption if needed
-        if not self._descrypt_pdf(doc_reader, doc_name):
+        if not self._decrypt_pdf(doc_reader, doc_name):
             return []
 
         documents = await asyncio.gather(
