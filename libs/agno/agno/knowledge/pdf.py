@@ -7,7 +7,7 @@ from typing_extensions import TypedDict
 from agno.document import Document
 from agno.document.reader.pdf_reader import PDFImageReader, PDFReader
 from agno.knowledge.agent import AgentKnowledge
-from agno.utils.log import log_error, log_info, logger
+from agno.utils.log import log_error, log_error, log_info, logger
 
 
 class PDFConfig(TypedDict, total=False):

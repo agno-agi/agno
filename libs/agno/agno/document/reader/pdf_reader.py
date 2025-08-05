@@ -177,6 +177,7 @@ class BasePDFReader(Reader):
         split_on_pages: bool = True,
         page_start_numbering_format: Optional[str] = None,
         page_end_numbering_format: Optional[str] = None,
+        password: Optional[str] = None,
         **kwargs,
     ):
         if page_start_numbering_format is None:
@@ -187,6 +188,7 @@ class BasePDFReader(Reader):
         self.split_on_pages = split_on_pages
         self.page_start_numbering_format = page_start_numbering_format
         self.page_end_numbering_format = page_end_numbering_format
+        self.password = password
 
         super().__init__(**kwargs)
 
@@ -278,6 +280,26 @@ class BasePDFReader(Reader):
 
         return self._create_documents(pdf_content_clean, doc_name, use_uuid_for_id, shift)
 
+    def _descrypt_pdf(self, doc_reader: DocumentReader, doc_name: str) -> bool:
+        if not doc_reader.is_encrypted:
+            return True
+
+        if not self.password:
+            logger.error(f"PDF {doc_name} is password protected but no password provided")
+            return False
+
+        try:
+            decrypted_pdf = doc_reader.decrypt(self.password)
+            if decrypted_pdf:
+                log_info(f"Successfully decrypted PDF {doc_name} with user password")
+                return True
+            else:
+                log_error(f"Failed to decrypt PDF {doc_name}: incorrect password")
+                return False
+        except Exception as e:
+            log_error(f"Error decrypting PDF {doc_name}: {e}")
+            return False
+
 
 class PDFReader(BasePDFReader):
     """Reader for PDF files"""
@@ -299,6 +321,10 @@ class PDFReader(BasePDFReader):
             logger.error(f"Error reading PDF: {e}")
             return []
 
+        # Handle PDF decryption if needed
+        if not self._descrypt_pdf(doc_reader, doc_name):
+            return []
+
         # Read and chunk.
         return self._pdf_reader_to_documents(pdf_reader, doc_name, use_uuid_for_id=True)
 
@@ -317,6 +343,10 @@ class PDFReader(BasePDFReader):
             pdf_reader = DocumentReader(pdf)
         except PdfStreamError as e:
             logger.error(f"Error reading PDF: {e}")
+            return []
+
+        # Handle PDF decryption if needed
+        if not self._descrypt_pdf(doc_reader, doc_name):
             return []
 
         # Read and chunk.
@@ -344,6 +374,10 @@ class PDFUrlReader(BasePDFReader):
         doc_name = url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
         pdf_reader = DocumentReader(BytesIO(response.content))
 
+        # Handle PDF decryption if needed
+        if not self._descrypt_pdf(doc_reader, doc_name):
+            return []
+
         # Read and chunk.
         return self._pdf_reader_to_documents(pdf_reader, doc_name, use_uuid_for_id=False)
 
@@ -363,6 +397,10 @@ class PDFUrlReader(BasePDFReader):
 
         doc_name = url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
         pdf_reader = DocumentReader(BytesIO(response.content))
+
+        # Handle PDF decryption if needed
+        if not self._descrypt_pdf(doc_reader, doc_name):
+            return []
 
         # Read and chunk.
         return await self._async_pdf_reader_to_documents(pdf_reader, doc_name, use_uuid_for_id=False)
@@ -386,6 +424,10 @@ class PDFImageReader(BasePDFReader):
         log_info(f"Reading: {doc_name}")
         pdf_reader = DocumentReader(pdf)
 
+        # Handle PDF decryption if needed
+        if not self._descrypt_pdf(doc_reader, doc_name):
+            return []
+
         # Read and chunk.
         return self._pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
 
@@ -403,6 +445,10 @@ class PDFImageReader(BasePDFReader):
 
         log_info(f"Reading: {doc_name}")
         pdf_reader = DocumentReader(pdf)
+
+        # Handle PDF decryption if needed
+        if not self._descrypt_pdf(doc_reader, doc_name):
+            return []
 
         # Read and chunk.
         return await self._async_pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
@@ -430,6 +476,10 @@ class PDFUrlImageReader(BasePDFReader):
         doc_name = url.split("/")[-1].split(".")[0].replace(" ", "_")
         pdf_reader = DocumentReader(BytesIO(response.content))
 
+        # Handle PDF decryption if needed
+        if not self._descrypt_pdf(doc_reader, doc_name):
+            return []
+
         # Read and chunk.
         return self._pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
 
@@ -450,6 +500,10 @@ class PDFUrlImageReader(BasePDFReader):
 
         doc_name = url.split("/")[-1].split(".")[0].replace(" ", "_")
         pdf_reader = DocumentReader(BytesIO(response.content))
+
+        # Handle PDF decryption if needed
+        if not self._descrypt_pdf(doc_reader, doc_name):
+            return []
 
         # Read and chunk.
         return await self._async_pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
