@@ -315,12 +315,10 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         print_results: bool = True,
     ) -> Optional[AccuracyResult]:
         if self.agent is None and self.team is None:
-            logger.error("You need to provide one of 'agent' or 'team' to run the evaluation.")
-            return None
+            raise ValueError("You need to provide one of 'agent' or 'team' to run the evaluation.")
 
         if self.agent is not None and self.team is not None:
-            logger.error("Provide only one of 'agent' or 'team' to run the evaluation.")
-            return None
+            raise ValueError("Provide only one of 'agent' or 'team' to run the evaluation.")
 
         from rich.console import Console
         from rich.live import Live
@@ -435,12 +433,10 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         print_results: bool = True,
     ) -> Optional[AccuracyResult]:
         if self.agent is None and self.team is None:
-            logger.error("You need to provide one of 'agent' or 'team' to run the evaluation.")
-            return None
+            raise ValueError("You need to provide one of 'agent' or 'team' to run the evaluation.")
 
         if self.agent is not None and self.team is not None:
-            logger.error("Provide only one of 'agent' or 'team' to run the evaluation.")
-            return None
+            raise ValueError("Provide only one of 'agent' or 'team' to run the evaluation.")
 
         from rich.console import Console
         from rich.live import Live
