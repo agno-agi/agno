@@ -311,11 +311,11 @@ class OpenAIResponses(Model):
         formatted_tools = []
         if tools:
             for _tool in tools:
-                if _tool["type"] == "function":
-                    _tool_dict = _tool["function"]
+                if _tool.get("type") == "function":
+                    _tool_dict = _tool.get("function", {})
                     _tool_dict["type"] = "function"
-                    for prop in _tool_dict["parameters"]["properties"].values():
-                        if isinstance(prop["type"], list):
+                    for prop in _tool_dict.get("parameters", {}).get("properties", {}).values():
+                        if isinstance(prop.get("type", ""), list):
                             prop["type"] = prop["type"][0]
 
                     formatted_tools.append(_tool_dict)
