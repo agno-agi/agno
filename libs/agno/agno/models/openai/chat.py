@@ -720,3 +720,35 @@ class OpenAIChat(Model):
             model_response.response_usage = response_delta.usage
 
         return model_response
+
+    def _add_provider_specific_metrics_to_assistant_message(
+        self, assistant_message: Message, response_usage: dict
+    ) -> None:
+        """
+        Add OpenAI specific usage metrics fields to the assistant message.
+
+        Args:
+            assistant_message: Message to update with metrics
+            response_usage: Usage data from OpenAI
+        """
+
+        # Add the OpenAI specific prompt_tokens_details field
+        if prompt_token_details := response_usage.get("prompt_tokens_details"):
+            assistant_message.metrics.provider_metrics = assistant_message.metrics.provider_metrics or {}
+            assistant_message.metrics.provider_metrics["prompt_tokens_details"] = prompt_token_details
+            if audio_total_tokens := prompt_token_details.get("audio_total_tokens"):
+                assistant_message.metrics.audio_input_tokens = audio_total_tokens
+            if cache_read_tokens := prompt_token_details.get("cache_read_tokens"):
+                assistant_message.metrics.cache_read_tokens = cache_read_tokens
+
+        # Add the OpenAI specific completion_tokens_details field
+        if completion_tokens_details := response_usage.get("completion_tokens_details"):
+            assistant_message.metrics.provider_metrics = assistant_message.metrics.provider_metrics or {}
+            assistant_message.metrics.provider_metrics["completion_tokens_details"] = completion_tokens_details
+            if audio_total_tokens := completion_tokens_details.get("audio_total_tokens"):
+                assistant_message.metrics.audio_output_tokens = audio_total_tokens
+            if reasoning_tokens := completion_tokens_details.get("reasoning_tokens"):
+                assistant_message.metrics.reasoning_tokens = reasoning_tokens
+
+        # Add the generic usage metrics
+        # _add_usage_metrics_to_assistant_message(assistant_message, response_usage)

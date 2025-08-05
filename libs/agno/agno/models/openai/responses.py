@@ -8,7 +8,7 @@ from typing_extensions import Literal
 
 from agno.exceptions import ModelProviderError
 from agno.media import File
-from agno.models.base import MessageData, Model, _add_usage_metrics_to_assistant_message
+from agno.models.base import MessageData, Model
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_error, log_warning
@@ -808,7 +808,7 @@ class OpenAIResponses(Model):
             if stream_event.response.usage is not None:
                 model_response.response_usage = stream_event.response.usage
 
-            _add_usage_metrics_to_assistant_message(
+            add_usage_metrics_to_assistant_message(
                 assistant_message=assistant_message,
                 response_usage=model_response.response_usage,
             )

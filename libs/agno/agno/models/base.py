@@ -62,138 +62,6 @@ def _log_messages(messages: List[Message]) -> None:
         m.log(metrics=False)
 
 
-def _add_usage_metrics_to_assistant_message(assistant_message: Message, response_usage: Any) -> None:
-    """
-    Add usage metrics from the model provider to the assistant message.
-
-    Args:
-        assistant_message: Message to update with metrics
-        response_usage: Usage data from model provider
-    """
-
-    # Standard token metrics
-    if isinstance(response_usage, dict):
-        if "input_tokens" in response_usage and response_usage.get("input_tokens") is not None:
-            assistant_message.metrics.input_tokens = response_usage.get("input_tokens", 0)
-        if "output_tokens" in response_usage and response_usage.get("output_tokens") is not None:
-            assistant_message.metrics.output_tokens = response_usage.get("output_tokens", 0)
-        if "prompt_tokens" in response_usage and response_usage.get("prompt_tokens") is not None:
-            assistant_message.metrics.input_tokens = response_usage.get("prompt_tokens", 0)
-        if "completion_tokens" in response_usage and response_usage.get("completion_tokens") is not None:
-            assistant_message.metrics.output_tokens = response_usage.get("completion_tokens", 0)
-        if "cache_read_tokens" in response_usage and response_usage.get("cache_read_tokens") is not None:
-            assistant_message.metrics.cache_read_tokens = response_usage.get("cache_read_tokens", 0)
-        if "cache_write_tokens" in response_usage and response_usage.get("cache_write_tokens") is not None:
-            assistant_message.metrics.cache_write_tokens = response_usage.get("cache_write_tokens", 0)
-        if "total_tokens" in response_usage and response_usage.get("total_tokens") is not None:
-            assistant_message.metrics.total_tokens = response_usage.get("total_tokens", 0)
-        else:
-            assistant_message.metrics.total_tokens = (
-                assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
-            )
-    else:
-        if hasattr(response_usage, "input_tokens") and response_usage.input_tokens:
-            assistant_message.metrics.input_tokens = response_usage.input_tokens
-        if hasattr(response_usage, "output_tokens") and response_usage.output_tokens:
-            assistant_message.metrics.output_tokens = response_usage.output_tokens
-        if hasattr(response_usage, "prompt_tokens") and response_usage.prompt_tokens is not None:
-            assistant_message.metrics.input_tokens = response_usage.prompt_tokens
-            assistant_message.metrics.prompt_tokens = response_usage.prompt_tokens
-        if hasattr(response_usage, "completion_tokens") and response_usage.completion_tokens is not None:
-            assistant_message.metrics.output_tokens = response_usage.completion_tokens
-            assistant_message.metrics.completion_tokens = response_usage.completion_tokens
-        if hasattr(response_usage, "total_tokens") and response_usage.total_tokens is not None:
-            assistant_message.metrics.total_tokens = response_usage.total_tokens
-        if hasattr(response_usage, "cache_read_tokens") and response_usage.cache_read_tokens is not None:
-            assistant_message.metrics.cache_read_tokens = response_usage.cache_read_tokens
-        if hasattr(response_usage, "cache_write_tokens") and response_usage.cache_write_tokens is not None:
-            assistant_message.metrics.cache_write_tokens = response_usage.cache_write_tokens
-
-    # If you didn't capture any total tokens
-    if not assistant_message.metrics.total_tokens:
-        if assistant_message.metrics.input_tokens is None:
-            assistant_message.metrics.input_tokens = 0
-        if assistant_message.metrics.output_tokens is None:
-            assistant_message.metrics.output_tokens = 0
-
-        assistant_message.metrics.total_tokens = (
-            assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
-        )
-
-    # Additional metrics (e.g., from Groq, Ollama)
-    if isinstance(response_usage, dict) and "additional_metrics" in response_usage:
-        assistant_message.metrics.additional_metrics = response_usage["additional_metrics"]
-
-    # Token details (e.g., from OpenAI)
-    if hasattr(response_usage, "prompt_tokens_details"):
-        if isinstance(response_usage.prompt_tokens_details, dict):
-            assistant_message.metrics.prompt_tokens_details = response_usage.prompt_tokens_details
-            if (
-                "audio_total_tokens" in response_usage.prompt_tokens_details
-                and response_usage.prompt_tokens_details["audio_total_tokens"] is not None
-            ):
-                assistant_message.metrics.audio_input_tokens = response_usage.prompt_tokens_details[
-                    "audio_total_tokens"
-                ]
-            if (
-                "cache_read_tokens" in response_usage.prompt_tokens_details
-                and response_usage.prompt_tokens_details["cache_read_tokens"] is not None
-            ):
-                assistant_message.metrics.cache_read_tokens = response_usage.prompt_tokens_details["cache_read_tokens"]
-        elif hasattr(response_usage.prompt_tokens_details, "model_dump"):
-            assistant_message.metrics.prompt_tokens_details = response_usage.prompt_tokens_details.model_dump(
-                exclude_none=True
-            )
-            if (
-                hasattr(response_usage.prompt_tokens_details, "audio_total_tokens")
-                and response_usage.prompt_tokens_details.audio_total_tokens is not None
-            ):
-                assistant_message.metrics.audio_input_tokens = response_usage.prompt_tokens_details.audio_total_tokens
-            if (
-                hasattr(response_usage.prompt_tokens_details, "cache_read_tokens")
-                and response_usage.prompt_tokens_details.cache_read_tokens is not None
-            ):
-                assistant_message.metrics.cache_read_tokens = response_usage.prompt_tokens_details.cache_read_tokens
-
-    if hasattr(response_usage, "completion_tokens_details"):
-        if isinstance(response_usage.completion_tokens_details, dict):
-            assistant_message.metrics.completion_tokens_details = response_usage.completion_tokens_details
-            if (
-                "audio_total_tokens" in response_usage.completion_tokens_details
-                and response_usage.completion_tokens_details["audio_total_tokens"] is not None
-            ):
-                assistant_message.metrics.audio_output_tokens = response_usage.completion_tokens_details[
-                    "audio_total_tokens"
-                ]
-            if (
-                "reasoning_tokens" in response_usage.completion_tokens_details
-                and response_usage.completion_tokens_details["reasoning_tokens"] is not None
-            ):
-                assistant_message.metrics.reasoning_tokens = response_usage.completion_tokens_details[
-                    "reasoning_tokens"
-                ]
-        elif hasattr(response_usage.completion_tokens_details, "model_dump"):
-            assistant_message.metrics.completion_tokens_details = response_usage.completion_tokens_details.model_dump(
-                exclude_none=True
-            )
-            if (
-                hasattr(response_usage.completion_tokens_details, "audio_total_tokens")
-                and response_usage.completion_tokens_details.audio_total_tokens is not None
-            ):
-                assistant_message.metrics.audio_output_tokens = (
-                    response_usage.completion_tokens_details.audio_total_tokens
-                )
-            if (
-                hasattr(response_usage.completion_tokens_details, "reasoning_tokens")
-                and response_usage.completion_tokens_details.reasoning_tokens is not None
-            ):
-                assistant_message.metrics.reasoning_tokens = response_usage.completion_tokens_details.reasoning_tokens
-
-    assistant_message.metrics.audio_total_tokens = (
-        assistant_message.metrics.audio_input_tokens + assistant_message.metrics.audio_output_tokens
-    )
-
-
 def _handle_agent_exception(a_exc: AgentRunException, additional_messages: Optional[List[Message]] = None) -> None:
     """Handle AgentRunException and collect additional messages."""
     if additional_messages is None:
@@ -317,6 +185,71 @@ class Model(ABC):
             ModelResponse: Parsed response delta
         """
         pass
+
+    def _add_provider_specific_metrics_to_assistant_message(
+        self, assistant_message: Message, response_usage: Any
+    ) -> None:
+        """Handle metrics fields specific to the contextual provider e.g. OpenAI"""
+        pass
+
+    def _add_metrics_to_assistant_message(self, assistant_message: Message, response_usage: Any) -> None:
+        """
+        Add usage metrics from the model provider to the assistant message.
+
+        Args:
+            assistant_message: Message to update with metrics
+            response_usage: Usage data from model provider
+        """
+
+        if isinstance(response_usage, dict):
+            if "input_tokens" in response_usage and response_usage.get("input_tokens") is not None:
+                assistant_message.metrics.input_tokens = response_usage.get("input_tokens", 0)
+            if "output_tokens" in response_usage and response_usage.get("output_tokens") is not None:
+                assistant_message.metrics.output_tokens = response_usage.get("output_tokens", 0)
+            if "cached_tokens" in response_usage and response_usage.get("cache_read_tokens") is not None:
+                assistant_message.metrics.cache_read_tokens = response_usage.get("cache_read_tokens", 0)
+            if "cache_read_tokens" in response_usage and response_usage.get("cache_read_tokens") is not None:
+                assistant_message.metrics.cache_read_tokens = response_usage.get("cache_read_tokens", 0)
+            if "cache_write_tokens" in response_usage and response_usage.get("cache_write_tokens") is not None:
+                assistant_message.metrics.cache_write_tokens = response_usage.get("cache_write_tokens", 0)
+            if "total_tokens" in response_usage and response_usage.get("total_tokens") is not None:
+                assistant_message.metrics.total_tokens = response_usage.get("total_tokens", 0)
+            else:
+                assistant_message.metrics.total_tokens = (
+                    assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
+                )
+        else:
+            if hasattr(response_usage, "input_tokens") and response_usage.input_tokens:
+                assistant_message.metrics.input_tokens = response_usage.input_tokens
+            if hasattr(response_usage, "output_tokens") and response_usage.output_tokens:
+                assistant_message.metrics.output_tokens = response_usage.output_tokens
+            if hasattr(response_usage, "total_tokens") and response_usage.total_tokens is not None:
+                assistant_message.metrics.total_tokens = response_usage.total_tokens
+            if hasattr(response_usage, "cache_read_tokens") and response_usage.cache_read_tokens is not None:
+                assistant_message.metrics.cache_read_tokens = response_usage.cache_read_tokens
+            if hasattr(response_usage, "cache_write_tokens") and response_usage.cache_write_tokens is not None:
+                assistant_message.metrics.cache_write_tokens = response_usage.cache_write_tokens
+
+        # Set the main token metrics fields to 0 if not set
+        if not assistant_message.metrics.total_tokens:
+            if assistant_message.metrics.input_tokens is None:
+                assistant_message.metrics.input_tokens = 0
+            if assistant_message.metrics.output_tokens is None:
+                assistant_message.metrics.output_tokens = 0
+            assistant_message.metrics.total_tokens = (
+                assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
+            )
+
+        assistant_message.metrics.audio_total_tokens = (
+            assistant_message.metrics.audio_input_tokens + assistant_message.metrics.audio_output_tokens
+        )
+
+        # Handle additional metrics if present
+        if isinstance(response_usage, dict) and "additional_metrics" in response_usage:
+            assistant_message.metrics.additional_metrics = response_usage["additional_metrics"]
+
+        # Provider-specific fields are handled inside each Model implementation
+        self._add_provider_specific_metrics_to_assistant_message(assistant_message, response_usage)
 
     def response(
         self,
@@ -709,8 +642,9 @@ class Model(ABC):
 
         # Add usage metrics if provided
         if provider_response.response_usage is not None:
-            _add_usage_metrics_to_assistant_message(
-                assistant_message=assistant_message, response_usage=provider_response.response_usage
+            self._add_metrics_to_assistant_message(
+                assistant_message=assistant_message,
+                response_usage=provider_response.response_usage,
             )
 
         return assistant_message
@@ -1082,8 +1016,9 @@ class Model(ABC):
             stream_data.extra.update(model_response_delta.extra)
 
         if model_response_delta.response_usage is not None:
-            _add_usage_metrics_to_assistant_message(
-                assistant_message=assistant_message, response_usage=model_response_delta.response_usage
+            self._add_metrics_to_assistant_message(
+                assistant_message=assistant_message,
+                response_usage=model_response_delta.response_usage,
             )
 
         if should_yield:
