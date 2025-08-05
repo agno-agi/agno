@@ -88,7 +88,6 @@ agent_with_storage = Agent(
     - Best practices and common patterns"""),
     knowledge=agent_knowledge,
     storage=agent_storage,
-    
     # To provide the agent with the chat history
     # We can either:
     # 1. Provide the agent with a tool to read the chat history

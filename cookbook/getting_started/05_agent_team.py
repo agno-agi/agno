@@ -77,7 +77,6 @@ agent_team = Team(
     members=[web_agent, finance_agent],
     model=OpenAIChat(id="gpt-4o"),
     mode="coordinate",
-
     instructions=dedent("""\
         You are the lead editor of a prestigious financial news desk! 📰
 

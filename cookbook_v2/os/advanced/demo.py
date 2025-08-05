@@ -4,12 +4,12 @@ AgentOS Demo
 Set the OS_SECURITY_KEY environment variable to your OS security key to enable authentication.
 """
 
+from _agents import agno_assist, sage
+from _teams import finance_reasoning_team
 from agno.db.postgres.postgres import PostgresDb
 from agno.eval.accuracy import AccuracyEval
-from agno.os import AgentOS
-from _agents import sage, agno_assist
-from _teams import finance_reasoning_team
 from agno.models.anthropic.claude import Claude
+from agno.os import AgentOS
 
 # Database connection
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -28,7 +28,6 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    
     # Setting up and running an eval for our agent
     evaluation = AccuracyEval(
         db=agno_assist.db,
@@ -41,7 +40,7 @@ if __name__ == "__main__":
     )
 
     # evaluation.run(print_results=False)
-    
+
     # Setup knowledge
     # agno_assist.knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt", skip_if_exists=True)
 

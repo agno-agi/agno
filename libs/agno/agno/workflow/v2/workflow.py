@@ -132,7 +132,6 @@ class Workflow:
 
     os_id: Optional[str] = None
 
-    websocket: Optional[WebSocket] = None
     websocket_handler: Optional[WebSocketHandler] = None
 
     def __init__(
@@ -151,7 +150,6 @@ class Workflow:
         stream_intermediate_steps: bool = False,
         store_events: bool = False,
         events_to_skip: Optional[List[WorkflowRunEvent]] = None,
-        websocket: Optional[WebSocket] = None,
     ):
         self.workflow_id = workflow_id
         self.name = name
@@ -167,7 +165,6 @@ class Workflow:
         self.events_to_skip = events_to_skip or []
         self.stream = stream
         self.stream_intermediate_steps = stream_intermediate_steps
-        self.websocket_handler = WebSocketHandler(websocket=websocket) if websocket else None
 
     @property
     def run_parameters(self) -> Dict[str, Any]:
@@ -269,7 +266,10 @@ class Workflow:
         self.db.delete_session(session_id=session_id)
 
     def _handle_event(
-        self, event: "WorkflowRunResponseEvent", workflow_run_response: WorkflowRunResponse
+        self,
+        event: "WorkflowRunResponseEvent",
+        workflow_run_response: WorkflowRunResponse,
+        websocket_handler: Optional[WebSocketHandler] = None,
     ) -> "WorkflowRunResponseEvent":
         """Handle workflow events for storage - similar to Team._handle_event"""
         if self.store_events:
@@ -292,13 +292,13 @@ class Workflow:
             workflow_run_response.events.append(event)
 
         # Broadcast to WebSocket if available (async context only)
-        if self.websocket_handler:
+        if websocket_handler:
             import asyncio
 
             try:
                 loop = asyncio.get_running_loop()
                 if loop:
-                    asyncio.create_task(self.websocket_handler.handle_event(event))
+                    asyncio.create_task(websocket_handler.handle_event(event))
             except RuntimeError:
                 pass
 
@@ -740,7 +740,7 @@ class Workflow:
 
                         else:
                             # Yield other internal events
-                            yield event  # type: ignore
+                            yield self._handle_event(event, workflow_run_response)  # type: ignore
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
                         break
@@ -981,6 +981,7 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         workflow_run_response: WorkflowRunResponse,
         stream_intermediate_steps: bool = False,
+        websocket_handler: Optional[WebSocketHandler] = None,
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunResponseEvent]:
         """Execute a specific pipeline by name with event streaming"""
@@ -993,7 +994,7 @@ class Workflow:
             workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
         )
-        yield self._handle_event(workflow_started_event, workflow_run_response)
+        yield self._handle_event(workflow_started_event, workflow_run_response, websocket_handler=websocket_handler)
 
         if callable(self.steps):
             if iscoroutinefunction(self.steps):  # type: ignore
@@ -1102,11 +1103,11 @@ class Workflow:
                                 yield step_output_event
 
                         elif isinstance(event, WorkflowRunResponseEvent):  # type: ignore
-                            yield self._handle_event(event, workflow_run_response)  # type: ignore
+                            yield self._handle_event(event, workflow_run_response, websocket_handler=websocket_handler)  # type: ignore
 
                         else:
                             # Yield other internal events
-                            yield event  # type: ignore
+                            yield self._handle_event(event, workflow_run_response, websocket_handler=websocket_handler)  # type: ignore
 
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
@@ -1162,7 +1163,7 @@ class Workflow:
             step_responses=workflow_run_response.step_responses,  # type: ignore[arg-type]
             extra_data=workflow_run_response.extra_data,
         )
-        yield self._handle_event(workflow_completed_event, workflow_run_response)
+        yield self._handle_event(workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler)
 
         # Store the completed workflow response
         self._save_run_to_storage(workflow_run_response)
@@ -1272,6 +1273,7 @@ class Workflow:
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
         stream_intermediate_steps: bool = False,
+        websocket_handler: Optional[WebSocketHandler] = None,
         **kwargs: Any,
     ) -> WorkflowRunResponse:
         """Execute workflow in background with streaming and WebSocket broadcasting"""
@@ -1327,6 +1329,7 @@ class Workflow:
                     execution_input=inputs,
                     workflow_run_response=workflow_run_response,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    websocket_handler=websocket_handler,
                     **kwargs,
                 ):
                     # Events are automatically broadcast by _handle_event
@@ -1492,6 +1495,7 @@ class Workflow:
         stream: Literal[False] = False,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
+        websocket: Optional[WebSocket] = None,
     ) -> WorkflowRunResponse: ...
 
     @overload
@@ -1507,6 +1511,7 @@ class Workflow:
         stream: Literal[True] = True,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
+        websocket: Optional[WebSocket] = None,
     ) -> AsyncIterator[WorkflowRunResponseEvent]: ...
 
     async def arun(
@@ -1521,11 +1526,19 @@ class Workflow:
         stream: bool = False,
         stream_intermediate_steps: Optional[bool] = False,
         background: Optional[bool] = False,
+        websocket: Optional[WebSocket] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunResponse, AsyncIterator[WorkflowRunResponseEvent]]:
         """Execute the workflow synchronously with optional streaming"""
+
+        websocket_handler = None
+        if websocket:
+            from agno.workflow.v2.types import WebSocketHandler
+
+            websocket_handler = WebSocketHandler(websocket=websocket)
+
         if background:
-            if stream and self.websocket_handler:
+            if stream and websocket:
                 # Background + Streaming + WebSocket = Real-time events
                 return await self._arun_background_stream(
                     message=message,
@@ -1536,9 +1549,10 @@ class Workflow:
                     images=images,
                     videos=videos,
                     stream_intermediate_steps=stream_intermediate_steps or False,
+                    websocket_handler=websocket_handler,
                     **kwargs,
                 )
-            elif stream and not self.websocket_handler:
+            elif stream and not websocket:
                 # Background + Streaming but no WebSocket = Not supported
                 raise ValueError("Background streaming execution requires a WebSocket for real-time events")
             else:
@@ -1617,10 +1631,13 @@ class Workflow:
                 execution_input=inputs,
                 workflow_run_response=workflow_run_response,
                 stream_intermediate_steps=stream_intermediate_steps,
+                websocket=websocket,
                 **kwargs,
             )
         else:
-            return await self._aexecute(execution_input=inputs, workflow_run_response=workflow_run_response, **kwargs)
+            return await self._aexecute(
+                execution_input=inputs, workflow_run_response=workflow_run_response, websocket=websocket, **kwargs
+            )
 
     def _prepare_steps(self):
         """Prepare the steps for execution"""

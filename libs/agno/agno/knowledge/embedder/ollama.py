@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import logger, log_error
+from agno.utils.log import log_error, logger
 
 try:
     import importlib.metadata as metadata

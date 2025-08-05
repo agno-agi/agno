@@ -576,7 +576,6 @@ async def run_workflow_background_stream(request: Dict[str, Any]):
             db_file="tmp/workflow_v2_bg.db",
             session_table="workflow_v2_bg",
         ),
-        websocket=websocket_conn,
     )
 
     try:
@@ -587,6 +586,7 @@ async def run_workflow_background_stream(request: Dict[str, Any]):
             stream=True,
             stream_intermediate_steps=True,
             background=True,
+            websocket=websocket_conn,
         )
 
         return {

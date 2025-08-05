@@ -2,7 +2,7 @@ from typing import List
 
 from agno.knowledge.document import Document
 from agno.knowledge.reader.base import Reader
-from agno.utils.log import log_info, log_debug
+from agno.utils.log import log_debug, log_info
 
 try:
     import wikipedia  # noqa: F401
