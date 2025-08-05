@@ -31,7 +31,7 @@ agent = Agent(
     # Store the chat history in the database
     storage=storage,
     # Add chat history to the messages
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_runs=3,
     # Give the agent a tool to access chat history
     read_chat_history=True,

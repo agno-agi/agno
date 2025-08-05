@@ -62,7 +62,7 @@ def test_run_response_metrics():
 def test_session_metrics_with_add_history():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        add_history_to_messages=True,
+        add_history_to_context=True,
         num_history_runs=3,
         markdown=True,
         telemetry=False,

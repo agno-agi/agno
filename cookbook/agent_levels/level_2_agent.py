@@ -31,7 +31,7 @@ agent = Agent(
     db=db,
     add_datetime_to_context=True,
     # Add the chat history to the messages
-    add_history_to_messages=True,
+    add_history_to_context=True,
     # Number of history runs
     num_history_runs=3,
     markdown=True,

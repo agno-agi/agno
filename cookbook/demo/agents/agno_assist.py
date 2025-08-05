@@ -127,7 +127,7 @@ agno_assist = Agent(
         db_url=db_url,
         table_name="agno_assist_sessions",
     ),
-    add_history_to_messages=True,
+    add_history_to_context=True,
     add_datetime_to_context=True,
     markdown=True,
     tools=[

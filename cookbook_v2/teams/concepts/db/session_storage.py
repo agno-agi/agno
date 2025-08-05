@@ -15,7 +15,7 @@ db = PostgresDb(db_url=db_url, session_table="sessions")
 #     members=[agent],
 #     db=db,
 #     session_id="team_session_storage",
-#     add_history_to_messages=True,
+#     add_history_to_context=True,
 # )
 
 # team.print_response("Tell me a new interesting fact about space. Ask your team members to help you.")
@@ -24,7 +24,7 @@ db = PostgresDb(db_url=db_url, session_table="sessions")
 agent = Agent(
     agent_id="test_agent",
     model=OpenAIChat(id="gpt-4o-mini"),
-    add_history_to_messages=True,
+    add_history_to_context=True,
 )
 
 team = Team(

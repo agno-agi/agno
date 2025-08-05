@@ -124,13 +124,11 @@ class Agent:
     # If True, cache the session in memory
     cache_session: bool = True
 
-    # --- Agent Context ---
-    # Context available for tools and prompt functions
-    context: Optional[Dict[str, Any]] = None
-    # If True, add the context to the user prompt
-    add_context: bool = False
-    # If True, resolve the context (i.e. call any functions in the context) before running the agent
-    resolve_context: bool = True
+    # --- Agent Dependencies ---
+    # Dependencies available for tools and prompt functions
+    dependencies: Optional[Dict[str, Any]] = None
+    # If True, add the dependencies to the user prompt
+    add_dependencies_to_context: bool = False
 
     # --- Agent Memory ---
     # Memory manager to use for this agent
@@ -149,8 +147,8 @@ class Agent:
     db: Optional[BaseDb] = None
 
     # --- Agent History ---
-    # add_history_to_messages=true adds messages from the chat history to the messages list sent to the Model.
-    add_history_to_messages: bool = False
+    # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
+    add_history_to_context: bool = False
     # Number of historical runs to include in the messages
     num_history_runs: int = 3
 
@@ -339,9 +337,8 @@ class Agent:
         search_session_history: Optional[bool] = False,
         num_history_sessions: Optional[int] = None,
         cache_session: bool = True,
-        context: Optional[Dict[str, Any]] = None,
-        add_context: bool = False,
-        resolve_context: bool = True,
+        dependencies: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: bool = False,
         db: Optional[BaseDb] = None,
         memory_manager: Optional[MemoryManager] = None,
         enable_agentic_memory: bool = False,
@@ -350,7 +347,7 @@ class Agent:
         enable_session_summaries: bool = False,
         add_session_summary_references: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
-        add_history_to_messages: bool = False,
+        add_history_to_context: bool = False,
         num_history_runs: int = 3,
         knowledge: Optional[Knowledge] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
@@ -422,9 +419,8 @@ class Agent:
 
         self.cache_session = cache_session
 
-        self.context = context
-        self.add_context = add_context
-        self.resolve_context = resolve_context
+        self.dependencies = dependencies
+        self.add_dependencies_to_context = add_dependencies_to_context
 
         self.db = db
 
@@ -437,7 +433,7 @@ class Agent:
         self.enable_session_summaries = enable_session_summaries
         self.add_session_summary_references = add_session_summary_references
 
-        self.add_history_to_messages = add_history_to_messages
+        self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
 
         self.knowledge = knowledge
@@ -982,9 +978,9 @@ class Agent:
         # Read existing session from database
         self.get_agent_session(session_id=session_id, user_id=user_id)
 
-        # Resolve context
-        if self.context is not None:
-            self.resolve_run_context()
+        # Resolve dependencies
+        if self.dependencies is not None:
+            self.resolve_run_dependencies()
 
         # Prepare arguments for the model
         self.set_default_model()
@@ -1377,9 +1373,9 @@ class Agent:
         # Read existing session from storage
         self.get_agent_session(session_id=session_id, user_id=user_id)
 
-        # Read existing session from storage
-        if self.context is not None:
-            self.resolve_run_context()
+        # Resolve dependencies
+        if self.dependencies is not None:
+            self.resolve_run_dependencies()
 
         # Prepare arguments for the model
         self.set_default_model()
@@ -1654,8 +1650,8 @@ class Agent:
             self.run_id = self.run_response.run_id
 
         # Read existing session from storage
-        if self.context is not None:
-            self.resolve_run_context()
+        if self.dependencies is not None:
+            self.resolve_run_dependencies()
 
         # Prepare arguments for the model
         self.set_default_model()
@@ -2048,8 +2044,8 @@ class Agent:
             self.run_id = self.run_response.run_id
 
         # Read existing session from storage
-        if self.context is not None:
-            self.resolve_run_context()
+        if self.dependencies is not None:
+            self.resolve_run_dependencies()
 
         # Prepare arguments for the model
         self.set_default_model()
@@ -3590,37 +3586,37 @@ class Agent:
                 log_debug("Model does not support structured or JSON schema outputs.")
                 return json_response_format
 
-    def resolve_run_context(self) -> None:
+    def resolve_run_dependencies(self) -> None:
         from inspect import signature
 
-        log_debug("Resolving context")
-        if not isinstance(self.context, dict):
-            log_warning("Context is not a dict")
+        log_debug("Resolving dependencies")
+        if not isinstance(self.dependencies, dict):
+            log_warning("Dependencies is not a dict")
             return
 
-        for key, value in self.context.items():
+        for key, value in self.dependencies.items():
             if callable(value):
                 try:
                     sig = signature(value)
                     result = value(agent=self) if "agent" in sig.parameters else value()
                     if result is not None:
-                        self.context[key] = result
+                        self.dependencies[key] = result
                 except Exception as e:
-                    log_warning(f"Failed to resolve context for '{key}': {e}")
+                    log_warning(f"Failed to resolve dependencies for '{key}': {e}")
             else:
-                self.context[key] = value
+                self.dependencies[key] = value
 
-    async def aresolve_run_context(self) -> None:
+    async def aresolve_run_dependencies(self) -> None:
         from inspect import iscoroutine, signature
 
         log_debug("Resolving context (async)")
-        if not isinstance(self.context, dict):
+        if not isinstance(self.dependencies, dict):
             log_warning("Context is not a dict")
             return
 
-        for key, value in self.context.items():
+        for key, value in self.dependencies.items():
             if not callable(value):
-                self.context[key] = value
+                self.dependencies[key] = value
                 continue
 
             try:
@@ -3630,7 +3626,7 @@ class Agent:
                 if iscoroutine(result):
                     result = await result
 
-                self.context[key] = result
+                self.dependencies[key] = result
             except Exception as e:
                 log_warning(f"Failed to resolve context for '{key}': {e}")
 
@@ -3942,7 +3938,7 @@ class Agent:
             self.session_state or {},
             self.team_session_state or {},
             self.workflow_session_state or {},
-            self.context or {},
+            self.dependencies or {},
             self.extra_data or {},
             {"user_id": self.user_id} if self.user_id is not None else {},
         )
@@ -4349,10 +4345,10 @@ class Agent:
             user_msg_content_str += self.convert_documents_to_string(references.references) + "\n"
             user_msg_content_str += "</references>"
         # 4.2 Add context to user message
-        if self.add_context and self.context is not None:
-            user_msg_content_str += "\n\n<context>\n"
-            user_msg_content_str += self.convert_context_to_string(self.context) + "\n"
-            user_msg_content_str += "</context>"
+        if self.add_dependencies_to_context and self.dependencies is not None:
+            user_msg_content_str += "\n\n<additional context>\n"
+            user_msg_content_str += self.convert_context_to_string(self.dependencies) + "\n"
+            user_msg_content_str += "</additional context>"
 
         # Use the string version for the final content
         user_msg_content = user_msg_content_str
@@ -4449,7 +4445,7 @@ class Agent:
                         self.run_response.extra_data.additional_messages.extend(messages_to_add_to_run_response)
 
         # 3. Add history to run_messages
-        if self.add_history_to_messages and self.agent_session is not None:
+        if self.add_history_to_context and self.agent_session is not None:
             from copy import deepcopy
 
             history: List[Message] = self.agent_session.get_messages_from_last_n_runs(

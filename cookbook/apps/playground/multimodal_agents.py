@@ -30,7 +30,7 @@ image_agent = Agent(
         "Don't provide the URL of the image in the response. Only describe what image was generated.",
     ],
     markdown=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     add_datetime_to_context=True,
     storage=SqliteStorage(
         table_name="image_agent",
@@ -50,7 +50,7 @@ ml_gif_agent = Agent(
         "Don't provide the URL of the image in the response. Only describe what image was generated.",
     ],
     markdown=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     add_datetime_to_context=True,
     storage=SqliteStorage(
         table_name="ml_gif_agent",
@@ -77,7 +77,7 @@ ml_music_agent = Agent(
         "Do not include any file names, URLs or technical details in responses.",
     ],
     markdown=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     add_datetime_to_context=True,
     storage=SqliteStorage(
         table_name="ml_music_agent",
@@ -97,7 +97,7 @@ ml_video_agent = Agent(
         "Don't provide the URL of the video in the response. Only describe what video was generated.",
     ],
     markdown=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     add_datetime_to_context=True,
     storage=SqliteStorage(
         table_name="ml_video_agent",
@@ -117,7 +117,7 @@ fal_agent = Agent(
         "Don't provide the URL of the video in the response. Only describe what video was generated.",
     ],
     markdown=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     add_datetime_to_context=True,
     storage=SqliteStorage(
         table_name="fal_agent",
@@ -137,7 +137,7 @@ gif_agent = Agent(
         "Don't return the URL, only describe what you created.",
     ],
     markdown=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     add_datetime_to_context=True,
     storage=SqliteStorage(
         table_name="gif_agent",
@@ -166,7 +166,7 @@ audio_agent = Agent(
         "The audio should be long and detailed.",
     ],
     markdown=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     add_datetime_to_context=True,
     storage=SqliteStorage(
         table_name="audio_agent",

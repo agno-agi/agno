@@ -42,7 +42,7 @@ web_agent = Agent(
     ],
     markdown=True,
     enable_agentic_memory=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     add_datetime_to_context=True,
 )
 
@@ -75,7 +75,7 @@ finance_agent = Agent(
     ],
     markdown=True,
     enable_agentic_memory=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     add_datetime_to_context=True,
 )
 # *******************************

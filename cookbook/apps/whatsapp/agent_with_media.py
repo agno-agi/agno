@@ -5,7 +5,7 @@ from agno.models.google import Gemini
 media_agent = Agent(
     name="Media Agent",
     model=Gemini(id="gemini-2.0-flash"),
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_responses=3,
     add_datetime_to_context=True,
     markdown=True,

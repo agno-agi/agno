@@ -98,7 +98,7 @@ def test_with_memory():
     """Test that the model retains context from previous interactions."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        add_history_to_messages=True,
+        add_history_to_context=True,
         num_history_responses=5,
         markdown=True,
         telemetry=False,
@@ -175,7 +175,7 @@ def test_history():
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
         storage=SqliteAgentStorage(table_name="responses_agent_sessions", db_file="tmp/agent_storage.db"),
-        add_history_to_messages=True,
+        add_history_to_context=True,
         telemetry=False,
     )
     agent.run("Hello")

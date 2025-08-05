@@ -11,7 +11,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 def test_image_input():
     agent = Agent(
         model=Cohere(id="c4ai-aya-vision-8b"),
-        add_history_to_messages=True,
+        add_history_to_context=True,
         markdown=True,
         telemetry=False,
     )

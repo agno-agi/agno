@@ -35,7 +35,7 @@ personal_agent = Agent(
     name="Basic Agent",
     model=Claude(id="claude-sonnet-4-20250514"),
     tools=[GoogleSearchTools()],
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_responses=3,
     add_datetime_to_context=True,
     markdown=True,

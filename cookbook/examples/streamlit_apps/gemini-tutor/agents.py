@@ -82,7 +82,7 @@ class TutorAppAgent:
             session_id=str(uuid.uuid4()),
             read_chat_history=True,
             read_tool_call_history=True,
-            add_history_to_messages=True,
+            add_history_to_context=True,
             num_history_responses=5,
             description=tutor_description,  # Pass formatted description
             instructions=tutor_instructions,  # Pass formatted instructions

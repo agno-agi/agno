@@ -192,7 +192,7 @@ def create_agent(
         knowledge=agent_knowledge,
         tools=[PythonTools(base_dir=tmp_dir.joinpath("agno_assist"), read_files=True)],
         storage=agent_storage,
-        add_history_to_messages=True,
+        add_history_to_context=True,
         num_history_responses=3,
         read_chat_history=True,
         markdown=True,

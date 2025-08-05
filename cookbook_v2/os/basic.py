@@ -11,7 +11,7 @@ from agno.workflow.v2.step import Step
 from agno.workflow.v2.workflow import Workflow
 
 # Setup the database
-db = PostgresDb(db_url="postgresql://postgres:postgres@localhost:5432/agno")
+db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 # Setup basic agents, teams and workflows
 basic_agent = Agent(
@@ -21,7 +21,7 @@ basic_agent = Agent(
     db=db,
     enable_session_summaries=True,
     enable_user_memories=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_runs=3,
     add_datetime_to_context=True,
     markdown=True,

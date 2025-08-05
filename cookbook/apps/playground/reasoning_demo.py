@@ -39,7 +39,7 @@ finance_agent = Agent(
     storage=SqliteStorage(
         table_name="finance_agent", db_file=agent_storage_file, auto_upgrade_schema=True
     ),
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_responses=5,
     add_datetime_to_context=True,
     markdown=True,
@@ -53,7 +53,7 @@ cot_agent = Agent(
     storage=SqliteStorage(
         table_name="cot_agent", db_file=agent_storage_file, auto_upgrade_schema=True
     ),
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_responses=3,
     add_datetime_to_context=True,
     markdown=True,
@@ -86,7 +86,7 @@ reasoning_tool_agent = Agent(
         db_file=agent_storage_file,
         auto_upgrade_schema=True,
     ),
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_responses=3,
     add_datetime_to_context=True,
     markdown=True,

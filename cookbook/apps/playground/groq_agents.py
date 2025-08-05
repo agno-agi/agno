@@ -30,7 +30,7 @@ web_agent = Agent(
     storage=SqliteStorage(
         table_name="web_agent", db_file=xai_agent_storage, auto_upgrade_schema=True
     ),
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_responses=2,
     add_name_to_context=True,
     add_datetime_to_context=True,
@@ -55,7 +55,7 @@ finance_agent = Agent(
     storage=SqliteStorage(
         table_name="finance_agent", db_file=xai_agent_storage, auto_upgrade_schema=True
     ),
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_responses=5,
     add_name_to_context=True,
     add_datetime_to_context=True,
@@ -81,7 +81,7 @@ youtube_agent = Agent(
     storage=SqliteStorage(
         table_name="youtube_agent", db_file=xai_agent_storage, auto_upgrade_schema=True
     ),
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_responses=5,
     add_name_to_context=True,
     add_datetime_to_context=True,

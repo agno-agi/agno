@@ -8,7 +8,7 @@ image_agent = Agent(
     tools=[OpenAITools(image_model="gpt-image-1")],
     markdown=True,
     debug_mode=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
 )
 
 

@@ -73,5 +73,5 @@ def get_github_agent(debug_mode: bool = True) -> Optional[Agent]:
         ],
         markdown=True,
         debug_mode=debug_mode,
-        add_history_to_messages=True,
+        add_history_to_context=True,
     )

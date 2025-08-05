@@ -33,7 +33,7 @@ audio_agent = Agent(
     storage=PostgresStorage(
         table_name="agent_sessions", db_url=db_url, auto_upgrade_schema=True
     ),
-    add_history_to_messages=True,
+    add_history_to_context=True,
     add_datetime_to_context=True,
     markdown=True,
 )
@@ -46,7 +46,7 @@ video_agent = Agent(
     storage=PostgresStorage(
         table_name="agent_sessions", db_url=db_url, auto_upgrade_schema=True
     ),
-    add_history_to_messages=True,
+    add_history_to_context=True,
     add_datetime_to_context=True,
     markdown=True,
 )

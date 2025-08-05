@@ -121,9 +121,8 @@ def get_agentic_rag_agent(
         search_knowledge=True,  # This setting gives the model a tool to search the knowledge base for information
         read_chat_history=True,  # This setting gives the model a tool to get chat history
         tools=[DuckDuckGoTools()],
-        markdown=True,  # This setting tellss the model to format messages in markdown
-        # add_chat_history_to_messages=True,
-        add_history_to_messages=True,  # Adds chat history to messages
+        markdown=True,  # This setting tells the model to format messages in markdown
+        add_history_to_context=True,  # Adds chat history to context
         add_datetime_to_context=True,
         debug_mode=debug_mode,
         read_tool_call_history=True,

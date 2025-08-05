@@ -18,8 +18,8 @@ time.sleep(10)
 agent = Agent(
     model=OpenAIChat(),
     tools=[zep_tools],
-    context={"memory": zep_tools.get_zep_memory(memory_type="context")},
-    add_context=True,
+    dependencies={"memory": zep_tools.get_zep_memory(memory_type="context")},
+    add_dependencies_to_context=True,
 )
 
 # Ask the Agent about the user

@@ -72,7 +72,7 @@ async def test_async_basic_stream():
 def test_with_memory():
     agent = Agent(
         model=Cerebras(id="llama-4-scout-17b-16e-instruct"),
-        add_history_to_messages=True,
+        add_history_to_context=True,
         num_history_runs=5,
         markdown=True,
         telemetry=False,
@@ -120,7 +120,7 @@ def test_history():
     agent = Agent(
         model=Cerebras(id="llama-4-scout-17b-16e-instruct"),
         storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
-        add_history_to_messages=True,
+        add_history_to_context=True,
         telemetry=False,
     )
     agent.run("Hello")

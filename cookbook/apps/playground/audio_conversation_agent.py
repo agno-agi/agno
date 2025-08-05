@@ -12,7 +12,7 @@ audio_and_text_agent = Agent(
         audio={"voice": "alloy", "format": "pcm16"},  # Wav not supported for streaming
     ),
     debug_mode=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     add_datetime_to_context=True,
     storage=SqliteStorage(
         table_name="audio_agent", db_file="tmp/audio_agent.db", auto_upgrade_schema=True

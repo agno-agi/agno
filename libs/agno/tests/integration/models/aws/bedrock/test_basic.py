@@ -49,7 +49,7 @@ def test_basic_stream():
 def test_with_memory():
     agent = Agent(
         model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
-        add_history_to_messages=True,
+        add_history_to_context=True,
         telemetry=False,
         markdown=True,
     )
@@ -119,7 +119,7 @@ def test_history():
     agent = Agent(
         model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
         storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
-        add_history_to_messages=True,
+        add_history_to_context=True,
         telemetry=False,
     )
     agent.run("Hello")
@@ -169,7 +169,7 @@ async def test_async_with_memory():
     """Test async agent with memory functionality."""
     agent = Agent(
         model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
-        add_history_to_messages=True,
+        add_history_to_context=True,
         telemetry=False,
         markdown=True,
     )
@@ -241,7 +241,7 @@ async def test_async_history():
     agent = Agent(
         model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
         storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
-        add_history_to_messages=True,
+        add_history_to_context=True,
         telemetry=False,
     )
 

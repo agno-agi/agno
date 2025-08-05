@@ -34,7 +34,7 @@ agno_assist_voice = Agent(
         table_name="agno_assist_voice_sessions",
         db_file=str(tmp_dir.joinpath("agents.db")),
     ),
-    add_history_to_messages=True,
+    add_history_to_context=True,
     add_datetime_to_context=True,
     markdown=True,
 )

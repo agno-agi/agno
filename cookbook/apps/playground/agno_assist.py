@@ -152,7 +152,7 @@ agno_support = Agent(
         db_file="tmp/agents.db",
         auto_upgrade_schema=True,
     ),
-    add_history_to_messages=True,
+    add_history_to_context=True,
     add_datetime_to_context=True,
     markdown=True,
 )
@@ -174,7 +174,7 @@ agno_support_voice = Agent(
         db_file="tmp/agents.db",
         auto_upgrade_schema=True,
     ),
-    add_history_to_messages=True,
+    add_history_to_context=True,
     add_datetime_to_context=True,
     markdown=True,
 )

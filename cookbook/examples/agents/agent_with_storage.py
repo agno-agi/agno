@@ -12,7 +12,7 @@ agent = Agent(
     model=Claude(id="claude-3-7-sonnet-latest"),
     storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agents.db"),
     tools=[DuckDuckGoTools()],
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_runs=3,
     add_datetime_to_context=True,
     markdown=True,

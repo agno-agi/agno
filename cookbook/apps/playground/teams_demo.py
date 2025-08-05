@@ -47,7 +47,7 @@ video_agent = Agent(
     storage=agent_storage,
     memory=memory,
     enable_user_memories=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     add_datetime_to_context=True,
     markdown=True,
 )
@@ -60,7 +60,7 @@ audio_agent = Agent(
     storage=agent_storage,
     memory=memory,
     enable_user_memories=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     add_datetime_to_context=True,
     markdown=True,
 )

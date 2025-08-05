@@ -35,11 +35,11 @@ def get_top_hackernews_stories(num_stories: int = 5) -> str:
 # Create a Context-Aware Agent that can access real-time HackerNews data
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    # Each function in the context is resolved when the agent is run,
+    # Each function in the dependencies is resolved when the agent is run,
     # think of it as dependency injection for Agents
-    context={"top_hackernews_stories": get_top_hackernews_stories},
-    # We can add the entire context dictionary to the user message
-    add_context=True,
+    dependencies={"top_hackernews_stories": get_top_hackernews_stories},
+    # We can add the entire dependencies dictionary to the user message
+    add_dependencies_to_context=True,
     markdown=True,
 )
 

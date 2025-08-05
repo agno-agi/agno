@@ -34,7 +34,7 @@ if retrieved_file is not None:
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-exp"),
         markdown=True,
-        add_history_to_messages=True,
+        add_history_to_context=True,
     )
 
     agent.print_response(

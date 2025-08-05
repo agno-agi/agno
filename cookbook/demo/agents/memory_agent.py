@@ -41,7 +41,7 @@ def get_memory_agent(
         memory=memory,
         enable_agentic_memory=True,
         storage=memory_agent_storage,
-        add_history_to_messages=True,
+        add_history_to_context=True,
         num_history_runs=5,
         add_datetime_to_context=True,
         markdown=True,

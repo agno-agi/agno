@@ -11,7 +11,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     user_id="user_1",
     storage=SqliteStorage(table_name="agent_sessions_new", db_file="tmp/data.db"),
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_runs=3,
     search_session_history=True,  # allow searching previous sessions
     num_history_sessions=2,  # only include the last 2 sessions in the search to avoid context length issues

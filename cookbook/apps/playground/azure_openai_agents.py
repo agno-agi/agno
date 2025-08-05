@@ -28,7 +28,7 @@ web_agent = Agent(
     storage=SqliteStorage(
         table_name="web_agent", db_file=agent_storage_file, auto_upgrade_schema=True
     ),
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_responses=5,
     add_datetime_to_context=True,
     markdown=True,
@@ -51,7 +51,7 @@ finance_agent = Agent(
     storage=SqliteStorage(
         table_name="finance_agent", db_file=agent_storage_file, auto_upgrade_schema=True
     ),
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_responses=5,
     add_datetime_to_context=True,
     markdown=True,
@@ -69,7 +69,7 @@ image_agent = Agent(
     ],
     markdown=True,
     debug_mode=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     add_datetime_to_context=True,
     storage=SqliteStorage(
         table_name="image_agent", db_file=agent_storage_file, auto_upgrade_schema=True
@@ -122,7 +122,7 @@ research_agent = Agent(
         db_file=agent_storage_file,
         auto_upgrade_schema=True,
     ),
-    add_history_to_messages=True,
+    add_history_to_context=True,
     add_datetime_to_context=True,
     markdown=True,
 )
@@ -139,7 +139,7 @@ youtube_agent = Agent(
         "If you cannot find the answer in the video, say so and ask the user to provide more details.",
         "Keep your answers concise and engaging.",
     ],
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_responses=5,
     add_datetime_to_context=True,
     storage=SqliteStorage(

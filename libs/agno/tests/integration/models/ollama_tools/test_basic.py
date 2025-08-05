@@ -132,7 +132,7 @@ def test_history():
     agent = Agent(
         model=OllamaTools(id="mistral"),
         storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
-        add_history_to_messages=True,
+        add_history_to_context=True,
         telemetry=False,
     )
     agent.run("Hello")

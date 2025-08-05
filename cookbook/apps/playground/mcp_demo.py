@@ -54,7 +54,7 @@ async def run_server() -> None:
                 db_file=agent_storage_file,
                 auto_upgrade_schema=True,
             ),
-            add_history_to_messages=True,
+            add_history_to_context=True,
             num_history_responses=3,
             add_datetime_to_context=True,
             markdown=True,

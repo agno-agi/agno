@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
-from sqlalchemy import Index, UniqueConstraint
+from sqlalchemy import Index, String, UniqueConstraint
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.postgres.schemas import get_table_schema_definition
@@ -24,7 +24,7 @@ from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
-    from sqlalchemy import and_, func, update
+    from sqlalchemy import func, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -824,8 +824,8 @@ class PostgresDb(BaseDb):
                 if team_id is not None:
                     stmt = stmt.where(table.c.team_id == team_id)
                 if topics is not None:
-                    topic_conditions = [text(f"topics::text LIKE '%\"{topic}\"%'") for topic in topics]
-                    stmt = stmt.where(and_(*topic_conditions))
+                    for topic in topics:
+                        stmt = stmt.where(func.cast(table.c.topics, String).like(f'%"{topic}"%'))
                 if search_content is not None:
                     stmt = stmt.where(func.cast(table.c.memory, postgresql.TEXT).ilike(f"%{search_content}%"))
 

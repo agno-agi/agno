@@ -71,7 +71,7 @@ async def test_async_basic_stream():
 def test_with_memory():
     agent = Agent(
         model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
-        add_history_to_messages=True,
+        add_history_to_context=True,
         num_history_runs=5,
         markdown=True,
         telemetry=False,

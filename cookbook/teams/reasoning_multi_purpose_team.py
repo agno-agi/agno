@@ -142,7 +142,7 @@ agno_assist = Agent(
             knowledge=agno_assist_knowledge, add_instructions=True, add_few_shot=True
         ),
     ],
-    add_history_to_messages=True,
+    add_history_to_context=True,
     add_datetime_to_context=True,
 )
 

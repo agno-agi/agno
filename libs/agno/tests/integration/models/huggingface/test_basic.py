@@ -82,7 +82,7 @@ def test_exception_handling():
 def test_with_memory():
     agent = Agent(
         model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),
-        add_history_to_messages=True,
+        add_history_to_context=True,
         num_history_responses=5,
         markdown=True,
         telemetry=False,
@@ -151,7 +151,7 @@ def test_history():
     agent = Agent(
         model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),
         storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
-        add_history_to_messages=True,
+        add_history_to_context=True,
         telemetry=False,
     )
     agent.run("Hello")

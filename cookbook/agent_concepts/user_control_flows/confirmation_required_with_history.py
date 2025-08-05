@@ -57,7 +57,7 @@ def get_top_hackernews_stories(num_stories: int) -> str:
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[get_top_hackernews_stories],
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_responses=2,
     markdown=True,
 )

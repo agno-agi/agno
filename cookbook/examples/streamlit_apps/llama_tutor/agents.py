@@ -178,7 +178,7 @@ def tutor_agent(
         read_chat_history=True,
         read_tool_call_history=True,
         # Append previous conversation responses into the new messages for context.
-        add_history_to_messages=True,
+        add_history_to_context=True,
         num_history_responses=num_history_responses,
         add_datetime_to_context=True,
         add_name_to_context=True,

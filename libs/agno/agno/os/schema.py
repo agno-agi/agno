@@ -154,7 +154,7 @@ class TeamResponse(BaseModel):
     instructions: Optional[Union[List[str], str]] = None
     members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = None
     expected_output: Optional[str] = None
-    context: Optional[str] = None
+    dependencies: Optional[str] = None
     enable_agentic_context: Optional[bool] = None
     memory: Optional[Dict[str, Any]] = None
     knowledge: Optional[Dict[str, Any]] = None
@@ -218,7 +218,7 @@ class TeamResponse(BaseModel):
             description=team.description,
             tools=formatted_tools,
             expected_output=team.expected_output,
-            context=json.dumps(team.context) if isinstance(team.context, dict) else team.context,
+            dependencies=json.dumps(team.dependencies) if isinstance(team.dependencies, dict) else team.dependencies,
             enable_agentic_context=team.enable_agentic_context,
             mode=team.mode,
             memory=memory_info,

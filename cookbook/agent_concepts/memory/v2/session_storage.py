@@ -10,7 +10,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     db=db,
     session_id="session_storage",
-    add_history_to_messages=True,
+    add_history_to_context=True,
 )
 
 agent.print_response("Tell me a new interesting fact about space")

@@ -72,7 +72,7 @@ async def test_async_basic_stream():
 def test_with_memory():
     agent = Agent(
         model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
-        add_history_to_messages=True,
+        add_history_to_context=True,
         num_history_runs=5,
         markdown=True,
         telemetry=False,
@@ -142,7 +142,7 @@ def test_history():
     agent = Agent(
         model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db", auto_upgrade_schema=True),
-        add_history_to_messages=True,
+        add_history_to_context=True,
         telemetry=False,
     )
     agent.run("Hello")
