@@ -91,28 +91,28 @@ if __name__ == "__main__":
         target_audience="Tech professionals and business leaders",
     )
 
-    # Should work properly, as its in sync with input schema
+    # 1. Should work properly, as its in sync with input schema
     content_creation_workflow.print_response(
         message=research_topic,
         markdown=True,
     )
 
-    # Should fail, as some fields present in input schema are missing here
-    content_creation_workflow.print_response(
-        message=ResearchTopic(
-            topic="AI trends in 2024",
-            focus_areas=[
-                "Machine Learning",
-                "Natural Language Processing",
-                "Computer Vision",
-                "AI Ethics",
-            ],
-        ),
-        markdown=True,
-    )
+    # 2. Should fail, as some fields present in input schema are missing here
+    # content_creation_workflow.print_response(
+    #     message=ResearchTopic(
+    #         topic="AI trends in 2024",
+    #         focus_areas=[
+    #             "Machine Learning",
+    #             "Natural Language Processing",
+    #             "Computer Vision",
+    #             "AI Ethics",
+    #         ],
+    #     ),
+    #     markdown=True,
+    # )
 
-    # Should fail, as its not in sync with input schema, diff pydantic model provided
-    content_creation_workflow.print_response(
-        message=DifferentModel(name="test"),
-        markdown=True,
-    )
+    # 3. Should fail, as its not in sync with input schema, diff pydantic model provided
+    # content_creation_workflow.print_response(
+    #     message=DifferentModel(name="test"),
+    #     markdown=True,
+    # )

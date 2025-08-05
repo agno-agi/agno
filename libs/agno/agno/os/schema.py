@@ -241,6 +241,7 @@ class WorkflowResponse(BaseModel):
     workflow_id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
+    input_schema: Optional[Dict[str, Any]] = None
 
 
 class WorkflowRunRequest(BaseModel):
