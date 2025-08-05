@@ -120,6 +120,7 @@ class SingleStoreStorage(Storage):
             specific_columns = [
                 Column("workflow_id", mysql.TEXT),
                 Column("workflow_data", mysql.JSON),
+                Column("runs", mysql.JSON),
             ]
 
         # Create table with all columns
@@ -518,7 +519,9 @@ class SingleStoreStorage(Storage):
                             "workflow_id": session.workflow_id,  # type: ignore
                             "user_id": session.user_id,
                             "workflow_name": session.workflow_name,  # type: ignore
-                            "runs": session_dict.get("runs"),
+                            "runs": json.dumps(session_dict.get("runs"), ensure_ascii=False)
+                            if session_dict.get("runs")
+                            else None,
                             "workflow_data": json.dumps(session.workflow_data, ensure_ascii=False)  # type: ignore
                             if session.workflow_data is not None  # type: ignore
                             else None,
