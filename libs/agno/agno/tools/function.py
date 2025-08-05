@@ -335,7 +335,9 @@ class Function(BaseModel):
 
         # Don't wrap coroutines with validate_call if pydantic version is less than 2.10.0
         if iscoroutinefunction(func) and pydantic_version < Version("2.10.0"):
-            log_debug(f"Skipping validate_call for {func.__name__} because pydantic version is less than 2.10.0, please consider upgrading to pydantic 2.10.0 or higher")
+            log_debug(
+                f"Skipping validate_call for {func.__name__} because pydantic version is less than 2.10.0, please consider upgrading to pydantic 2.10.0 or higher"
+            )
             return func
 
         # Don't wrap callables that are already wrapped with validate_call
