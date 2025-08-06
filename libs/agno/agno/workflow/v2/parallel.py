@@ -97,7 +97,6 @@ class Parallel:
                 executor_type="parallel",
                 executor_name=self.name or "Parallel",
                 parallel_step_outputs=parallel_step_outputs,
-                response=single_result.response,
                 images=single_result.images,
                 videos=single_result.videos,
                 audio=single_result.audio,
@@ -192,6 +191,8 @@ class Parallel:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        workflow_run_response: Optional[WorkflowRunResponse] = None,
+        store_executor_responses: bool = True,
     ) -> StepOutput:
         """Execute all steps in parallel and return aggregated result"""
         # Use workflow logger for parallel orchestration
@@ -203,7 +204,13 @@ class Parallel:
             """Execute a single step and preserve its original index"""
             index, step = step_with_index
             try:
-                result = step.execute(step_input, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+                result = step.execute(
+                    step_input,
+                    session_id=session_id,
+                    user_id=user_id,
+                    workflow_run_response=workflow_run_response,
+                    store_executor_responses=store_executor_responses,
+                )  # type: ignore[union-attr]
                 return (index, result)
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{index}")
@@ -277,6 +284,7 @@ class Parallel:
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunResponse] = None,
         step_index: Optional[Union[int, tuple]] = None,
+        store_executor_responses: bool = True,
     ) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
         """Execute all steps in parallel with streaming support"""
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
@@ -318,6 +326,7 @@ class Parallel:
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
                     step_index=sub_step_index,
+                    store_executor_responses=store_executor_responses,
                 ):
                     events.append(event)
                 return (index, events)
@@ -418,6 +427,8 @@ class Parallel:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        workflow_run_response: Optional[WorkflowRunResponse] = None,
+        store_executor_responses: bool = True,
     ) -> StepOutput:
         """Execute all steps in parallel using asyncio and return aggregated result"""
         # Use workflow logger for async parallel orchestration
@@ -429,7 +440,13 @@ class Parallel:
             """Execute a single step asynchronously and preserve its original index"""
             index, step = step_with_index
             try:
-                result = await step.aexecute(step_input, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+                result = await step.aexecute(
+                    step_input,
+                    session_id=session_id,
+                    user_id=user_id,
+                    workflow_run_response=workflow_run_response,
+                    store_executor_responses=store_executor_responses,
+                )  # type: ignore[union-attr]
                 return (index, result)
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{index}")
@@ -504,6 +521,7 @@ class Parallel:
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunResponse] = None,
         step_index: Optional[Union[int, tuple]] = None,
+        store_executor_responses: bool = True,
     ) -> AsyncIterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
         """Execute all steps in parallel with async streaming support"""
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
@@ -545,6 +563,7 @@ class Parallel:
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
                     step_index=sub_step_index,
+                    store_executor_responses=store_executor_responses,
                 ):  # type: ignore[union-attr]
                     events.append(event)
                 return (index, events)

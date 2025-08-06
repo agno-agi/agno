@@ -176,7 +176,7 @@ def test_basic_steps_execution(workflow_storage):
 
     response = workflow.run(message="test message")
 
-    assert len(response.step_responses) == 1
+    assert len(response.step_results) == 1
     assert "Step2: Step1: test message" in response.content
 
 
@@ -225,7 +225,7 @@ async def test_async_steps_execution(workflow_storage):
 
     response = await workflow.arun(message="async test")
 
-    assert len(response.step_responses) == 1
+    assert len(response.step_results) == 1
     assert "Step2: AsyncStep: async test" in response.content
 
 
@@ -354,5 +354,5 @@ def test_steps_with_other_workflow_steps(workflow_storage):
 
     response = workflow.run(message="test")
 
-    assert len(response.step_responses) == 3
+    assert len(response.step_results) == 3
     assert "final_grouped2_grouped1_individual_output" in response.content

@@ -145,7 +145,12 @@ class Condition:
         return False
 
     def execute(
-        self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
+        self,
+        step_input: StepInput,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        workflow_run_response: Optional[WorkflowRunResponse] = None,
+        store_executor_responses: bool = True,
     ) -> List[StepOutput]:
         """Execute the condition and its steps with sequential chaining if condition is true"""
         log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
@@ -167,7 +172,13 @@ class Condition:
 
         for i, step in enumerate(self.steps):
             try:
-                step_output = step.execute(current_step_input, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+                step_output = step.execute(
+                    current_step_input,
+                    session_id=session_id,
+                    user_id=user_id,
+                    workflow_run_response=workflow_run_response,
+                    store_executor_responses=store_executor_responses,
+                )  # type: ignore[union-attr]
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
                 if isinstance(step_output, list):
@@ -220,6 +231,7 @@ class Condition:
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunResponse] = None,
         step_index: Optional[Union[int, tuple]] = None,
+        store_executor_responses: bool = True,
     ) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
         """Execute the condition with streaming support - mirrors Loop logic"""
         log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
@@ -283,6 +295,7 @@ class Condition:
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
+                    store_executor_responses=store_executor_responses,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)
@@ -348,7 +361,12 @@ class Condition:
             yield result
 
     async def aexecute(
-        self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
+        self,
+        step_input: StepInput,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        workflow_run_response: Optional[WorkflowRunResponse] = None,
+        store_executor_responses: bool = True,
     ) -> List[StepOutput]:
         """Async execute the condition and its steps with sequential chaining"""
         log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
@@ -372,7 +390,13 @@ class Condition:
 
         for i, step in enumerate(self.steps):
             try:
-                step_output = await step.aexecute(current_step_input, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+                step_output = await step.aexecute(
+                    current_step_input,
+                    session_id=session_id,
+                    user_id=user_id,
+                    workflow_run_response=workflow_run_response,
+                    store_executor_responses=store_executor_responses,
+                )  # type: ignore[union-attr]
 
                 # Handle both single StepOutput and List[StepOutput]
                 if isinstance(step_output, list):
@@ -423,6 +447,7 @@ class Condition:
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunResponse] = None,
         step_index: Optional[Union[int, tuple]] = None,
+        store_executor_responses: bool = True,
     ) -> AsyncIterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
         """Async execute the condition with streaming support - mirrors Loop logic"""
         log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
@@ -488,6 +513,7 @@ class Condition:
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
+                    store_executor_responses=store_executor_responses,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)

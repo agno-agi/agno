@@ -180,7 +180,7 @@ def test_basic_loop(workflow_storage):
 
     response = workflow.run(message="test")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 1
+    assert len(response.step_results) == 1
     assert "AI trends" in response.content
 
 
@@ -209,13 +209,13 @@ def test_loop_with_parallel(workflow_storage):
     response = workflow.run(message="test")
     assert isinstance(response, WorkflowRunResponse)
 
-    # Check the parallel step output in step_responses
-    parallel_step_output = response.step_responses[0][0]  # First step's first output
+    # Check the parallel step output in step_results
+    parallel_step_output = response.step_results[0][0]  # First step's first output
     assert "research data" in parallel_step_output.content
     assert "Analyzed" in parallel_step_output.content
 
     # Check summary step output
-    summary_step_output = response.step_responses[0][1]  # First step's second output
+    summary_step_output = response.step_results[0][1]  # First step's second output
     assert "Summary of findings" in summary_step_output.content
 
 

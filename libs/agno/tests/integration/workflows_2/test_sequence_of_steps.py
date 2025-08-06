@@ -36,7 +36,7 @@ def test_function_sequence_non_streaming(workflow_storage):
 
     assert isinstance(response, WorkflowRunResponse)
     assert "Content: Hello World | Referencing: Research: test" in response.content
-    assert len(response.step_responses) == 2
+    assert len(response.step_results) == 2
 
 
 def test_function_sequence_streaming(workflow_storage):
@@ -74,7 +74,7 @@ def test_agent_sequence_non_streaming(workflow_storage, test_agent):
 
     assert isinstance(response, WorkflowRunResponse)
     assert response.content is not None
-    assert len(response.step_responses) == 2
+    assert len(response.step_results) == 2
 
 
 def test_team_sequence_non_streaming(workflow_storage, test_team):
@@ -93,7 +93,7 @@ def test_team_sequence_non_streaming(workflow_storage, test_team):
 
     assert isinstance(response, WorkflowRunResponse)
     assert response.content is not None
-    assert len(response.step_responses) == 2
+    assert len(response.step_results) == 2
 
 
 @pytest.mark.asyncio

@@ -194,8 +194,8 @@ class StepOutput:
     # For parallel steps: store individual step outputs
     parallel_step_outputs: Optional[Dict[str, "StepOutput"]] = None
 
-    # Execution response
-    response: Optional[Union[RunResponse, TeamRunResponse]] = None
+    # Link to the run ID of the step execution
+    step_run_id: Optional[str] = None
 
     # Media outputs
     images: Optional[List[ImageArtifact]] = None
@@ -224,7 +224,7 @@ class StepOutput:
 
         return {
             "content": content_dict,
-            "response": self.response.to_dict() if self.response else None,
+            "step_run_id": self.step_run_id,
             "images": [img.to_dict() for img in self.images] if self.images else None,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,
             "audio": [aud.to_dict() for aud in self.audio] if self.audio else None,
@@ -237,19 +237,6 @@ class StepOutput:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "StepOutput":
         """Create StepOutput from dictionary"""
-        from agno.run.response import RunResponse
-        from agno.run.team import TeamRunResponse
-
-        # Reconstruct response if present
-        response_data = data.get("response")
-        response: Optional[Union[RunResponse, TeamRunResponse]] = None
-        if response_data:
-            # Determine if it's RunResponse or TeamRunResponse based on structure
-            if "team_id" in response_data or "team_name" in response_data:
-                response = TeamRunResponse.from_dict(response_data)
-            else:
-                response = RunResponse.from_dict(response_data)
-
         # Reconstruct media artifacts
         images = data.get("images")
         if images:
@@ -265,7 +252,7 @@ class StepOutput:
 
         return cls(
             content=data.get("content"),
-            response=response,
+            step_run_id=data.get("step_run_id"),
             images=images,
             videos=videos,
             audio=audio,

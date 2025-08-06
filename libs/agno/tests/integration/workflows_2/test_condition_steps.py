@@ -161,12 +161,12 @@ def test_basic_condition_true(workflow_storage):
 
     response = workflow.run(message="Market shows 40% growth")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 2
+    assert len(response.step_results) == 2
     # Condition output is a list
-    assert isinstance(response.step_responses[1], list)
+    assert isinstance(response.step_results[1], list)
     # One step executed in condition
-    assert len(response.step_responses[1]) == 1
-    assert "Fact check complete" in response.step_responses[1][0].content
+    assert len(response.step_results[1]) == 1
+    assert "Fact check complete" in response.step_results[1][0].content
 
 
 def test_basic_condition_false(workflow_storage):
@@ -182,8 +182,8 @@ def test_basic_condition_false(workflow_storage):
     assert isinstance(response, WorkflowRunResponse)
 
     # Should have 2 step responses: research_step + empty condition result
-    assert len(response.step_responses) == 2
-    assert response.step_responses[1] == []  # Condition returned empty list
+    assert len(response.step_results) == 2
+    assert response.step_results[1] == []  # Condition returned empty list
 
 
 def test_parallel_with_conditions(workflow_storage):
@@ -203,10 +203,10 @@ def test_parallel_with_conditions(workflow_storage):
 
     response = workflow.run(message="AI market shows 40% growth")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 2  # research_step + parallel
+    assert len(response.step_results) == 2  # research_step + parallel
 
     # Check the parallel output structure
-    parallel_output = response.step_responses[1]
+    parallel_output = response.step_results[1]
     assert parallel_output.success is True
     assert "SUCCESS: analysis_step" in parallel_output.content
     assert "SUCCESS: fact_check_step" in parallel_output.content
@@ -267,8 +267,8 @@ def test_nested_conditions(workflow_storage):
 
     response = workflow.run(message="AI market shows 40% growth")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 1
-    outer_condition = response.step_responses[0]
+    assert len(response.step_results) == 1
+    outer_condition = response.step_results[0]
     assert isinstance(outer_condition, list)
     # research_step + inner condition result
     assert len(outer_condition) == 2
@@ -285,9 +285,9 @@ async def test_async_condition(workflow_storage):
 
     response = await workflow.arun(message="AI technology")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 1
-    assert isinstance(response.step_responses[0], list)
-    assert len(response.step_responses[0]) == 1
+    assert len(response.step_results) == 1
+    assert isinstance(response.step_results[0], list)
+    assert len(response.step_results[0]) == 1
 
 
 @pytest.mark.asyncio

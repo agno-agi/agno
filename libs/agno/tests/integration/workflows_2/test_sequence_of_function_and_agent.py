@@ -22,7 +22,7 @@ def test_basic_sequence(workflow_storage):
 
     response = workflow.run(message="test")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 2
+    assert len(response.step_results) == 2
     assert "Second: First: test" in response.content
 
 
@@ -36,8 +36,8 @@ def test_function_and_agent_sequence(workflow_storage, test_agent):
 
     response = workflow.run(message="test")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 2
-    assert response.step_responses[1].success
+    assert len(response.step_results) == 2
+    assert response.step_results[1].success
 
 
 def test_function_and_team_sequence(workflow_storage, test_team):
@@ -50,8 +50,8 @@ def test_function_and_team_sequence(workflow_storage, test_team):
 
     response = workflow.run(message="test")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 2
-    assert response.step_responses[1].success
+    assert len(response.step_results) == 2
+    assert response.step_results[1].success
 
 
 def test_function_streaming_sequence(workflow_storage):
@@ -115,6 +115,6 @@ def test_mixed_sequence(workflow_storage, test_agent, test_team):
 
     response = workflow.run(message="test")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 3
-    assert "Function: test" in response.step_responses[0].content
-    assert all(step.success for step in response.step_responses[1:])
+    assert len(response.step_results) == 3
+    assert "Function: test" in response.step_results[0].content
+    assert all(step.success for step in response.step_results[1:])
