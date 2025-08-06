@@ -84,7 +84,9 @@ async def main():
                 else:
                     # We update the tools in place
                     tool.confirmed = True
-            run_response = await agent.acontinue_run(stream=True)
+            run_response = await agent.acontinue_run(
+                run_response=run_response, stream=True
+            )
             async for resp in run_response:
                 print(resp.content, end="")
 

@@ -59,8 +59,8 @@ for run_response in agent.run(
                 # Update the field value
                 field.value = user_value
 
-        run_response = (
-            agent.continue_run()
+        run_response = agent.continue_run(
+            run_response=run_response, stream=True
         )  # or agent.continue_run(run_response=agent.run_response)
     pprint.pprint_run_response(run_response)
 
