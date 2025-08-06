@@ -7,10 +7,6 @@ from uuid import UUID
 from agno.db.base import SessionType
 from agno.models.message import Message
 from agno.models.metrics import Metrics
-from agno.run.response import RunResponse
-from agno.run.team import TeamRunResponse
-from agno.run.v2.workflow import WorkflowRunResponse
-from agno.session.summary import SessionSummary
 
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -78,15 +74,15 @@ def deserialize_session_json_fields(session: dict) -> dict:
     if session.get("chat_history") is not None:
         session["chat_history"] = json.loads(session["chat_history"])
     if session.get("summary") is not None:
-        session["summary"] = SessionSummary.from_dict(json.loads(session["summary"]))
+        session["summary"] = json.loads(session["summary"])
     if session.get("session_data") is not None and isinstance(session["session_data"], str):
         session["session_data"] = json.loads(session["session_data"])
     if session.get("runs") is not None:
         if session["session_type"] == SessionType.AGENT.value:
-            session["runs"] = [RunResponse.from_dict(run) for run in json.loads(session["runs"])]
+            session["runs"] = json.loads(session["runs"])
         if session["session_type"] == SessionType.TEAM.value:
-            session["runs"] = [TeamRunResponse.from_dict(run) for run in json.loads(session["runs"])]
+            session["runs"] = json.loads(session["runs"])
         if session["session_type"] == SessionType.WORKFLOW.value:
-            session["runs"] = [WorkflowRunResponse.from_dict(run) for run in json.loads(session["runs"])]
+            session["runs"] = json.loads(session["runs"])
 
     return session
