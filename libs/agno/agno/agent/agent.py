@@ -3856,8 +3856,8 @@ class Agent:
             Optional[AgentSession]: The saved AgentSession or None if not saved.
         """
 
-        # If the agent is a member of a team, do not save the session to the database
-        if self.db is not None and self.team_id is None:
+        # If the agent is a member of a team or a workflow, do not save the session to the database
+        if self.db is not None and self.team_id is None and self.workflow_id is None:
             session = self.get_agent_session(session_id=session_id, user_id=user_id)
 
             if session is None:

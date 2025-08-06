@@ -38,6 +38,8 @@ from agno.os.schema import (
     TeamSessionDetailSchema,
     TeamSummaryResponse,
     WorkflowResponse,
+    WorkflowRunSchema,
+    WorkflowSessionDetailSchema,
     WorkflowSummaryResponse,
 )
 from agno.os.settings import AgnoAPISettings
@@ -79,7 +81,7 @@ class WebSocketManager:
     async def connect(self, websocket: WebSocket):
         """Accept WebSocket connection"""
         await websocket.accept()
-        logger.debug(f"WebSocket connected")
+        logger.debug("WebSocket connected")
 
         # Send connection confirmation
         await websocket.send_text(
@@ -1033,6 +1035,7 @@ def get_base_router(
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
+        # TODO: Detail response
         return WorkflowResponse(
             workflow_id=workflow.workflow_id,
             name=workflow.name,
@@ -1081,5 +1084,81 @@ def get_base_router(
         except Exception as e:
             # Handle unexpected runtime errors
             raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
+
+    @router.get(
+        "/workflows/{workflow_id}/sessions",
+        response_model=PaginatedResponse[SessionSchema],
+        response_model_exclude_none=True,
+    )
+    async def get_workflow_sessions(
+        workflow_id: str,
+        user_id: Optional[str] = Query(default=None, description="Filter sessions by user ID"),
+        limit: Optional[int] = Query(default=20, description="Number of sessions to return"),
+        page: Optional[int] = Query(default=1, description="Page number"),
+        sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
+        sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
+    ):
+        workflow = get_workflow_by_id(workflow_id, os.workflows)
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        if workflow.db is None:
+            raise HTTPException(status_code=404, detail="Workflow has no database. Sessions are unavailable.")
+
+        sessions, total_count = workflow.db.get_sessions(
+            session_type=SessionType.WORKFLOW,
+            component_id=workflow_id,
+            limit=limit,
+            page=page,
+            user_id=user_id,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            deserialize=False,
+        )
+
+        return PaginatedResponse(
+            data=[SessionSchema.from_dict(session) for session in sessions],  # type: ignore
+            meta=PaginationInfo(
+                page=page,
+                limit=limit,
+                total_count=total_count,  # type: ignore
+                total_pages=(total_count + limit - 1) // limit if limit is not None and limit > 0 else 0,  # type: ignore
+            ),
+        )
+
+    @router.get(
+        "/workflows/{workflow_id}/sessions/{session_id}",
+        response_model=WorkflowSessionDetailSchema,
+        response_model_exclude_none=True,
+    )
+    async def get_workflow_session(workflow_id: str, session_id: str):
+        workflow = get_workflow_by_id(workflow_id, os.workflows)
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        if workflow.db is None:
+            raise HTTPException(status_code=404, detail="Workflow has no database. Sessions are unavailable.")
+
+        session = workflow.db.get_session(session_type=SessionType.WORKFLOW, session_id=session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
+
+        return WorkflowSessionDetailSchema.from_session(session)  # type: ignore
+
+    @router.get(
+        "/workflows/{workflow_id}/sessions/{session_id}/runs",
+        response_model=List[WorkflowRunSchema],
+        response_model_exclude_none=True,
+    )
+    async def get_workflow_session_runs(workflow_id: str, session_id: str):
+        workflow = get_workflow_by_id(workflow_id, os.workflows)
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        if workflow.db is None:
+            raise HTTPException(status_code=404, detail="Workflow has no database. Runs are unavailable.")
+
+        session = workflow.db.get_session(session_type=SessionType.WORKFLOW, session_id=session_id, deserialize=False)
+        if not session:
+            raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
+
+        return [WorkflowRunSchema.from_dict(run) for run in session["runs"]]  # type: ignore
 
     return router

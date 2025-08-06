@@ -128,6 +128,8 @@ class Loop:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        workflow_run_response: Optional[WorkflowRunResponse] = None,
+        store_executor_responses: bool = True,
     ) -> List[StepOutput]:
         """Execute loop steps with iteration control - mirrors workflow execution logic"""
         # Use workflow logger for loop orchestration
@@ -146,7 +148,13 @@ class Loop:
             loop_step_outputs = {}  # Track outputs within this loop iteration
 
             for i, step in enumerate(self.steps):
-                step_output = step.execute(current_step_input, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+                step_output = step.execute(
+                    current_step_input,
+                    session_id=session_id,
+                    user_id=user_id,
+                    workflow_run_response=workflow_run_response,
+                    store_executor_responses=store_executor_responses,
+                )  # type: ignore[union-attr]
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition steps)
                 if isinstance(step_output, list):
@@ -204,6 +212,7 @@ class Loop:
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunResponse] = None,
         step_index: Optional[Union[int, tuple]] = None,
+        store_executor_responses: bool = True,
     ) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
         """Execute loop steps with streaming support - mirrors workflow execution logic"""
         log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
@@ -267,6 +276,7 @@ class Loop:
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
                     step_index=composite_step_index,
+                    store_executor_responses=store_executor_responses,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_iteration.append(event)
@@ -364,6 +374,8 @@ class Loop:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        workflow_run_response: Optional[WorkflowRunResponse] = None,
+        store_executor_responses: bool = True,
     ) -> List[StepOutput]:
         """Execute loop steps asynchronously with iteration control - mirrors workflow execution logic"""
         # Use workflow logger for async loop orchestration
@@ -382,7 +394,13 @@ class Loop:
             loop_step_outputs = {}  # Track outputs within this loop iteration
 
             for i, step in enumerate(self.steps):
-                step_output = await step.aexecute(current_step_input, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+                step_output = await step.aexecute(
+                    current_step_input,
+                    session_id=session_id,
+                    user_id=user_id,
+                    workflow_run_response=workflow_run_response,
+                    store_executor_responses=store_executor_responses,
+                )  # type: ignore[union-attr]
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition steps)
                 if isinstance(step_output, list):
@@ -443,6 +461,7 @@ class Loop:
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunResponse] = None,
         step_index: Optional[Union[int, tuple]] = None,
+        store_executor_responses: bool = True,
     ) -> AsyncIterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
         """Execute loop steps with async streaming support - mirrors workflow execution logic"""
         log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
@@ -506,6 +525,7 @@ class Loop:
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
                     step_index=composite_step_index,
+                    store_executor_responses=store_executor_responses,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_iteration.append(event)
