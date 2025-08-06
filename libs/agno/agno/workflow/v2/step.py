@@ -354,7 +354,7 @@ class Step:
                         step_input.previous_step_outputs,
                     )
 
-                    if self._executor_type in ["agent", "team"]:            
+                    if self._executor_type in ["agent", "team"]:
                         # Switch to appropriate logger based on executor type
                         if self._executor_type == "agent":
                             use_agent_logger()
@@ -379,11 +379,11 @@ class Step:
                             stream_intermediate_steps=stream_intermediate_steps,
                             # Pass workflow context directly via kwargs
                             workflow_context={
-                                'workflow_id': workflow_run_response.workflow_id if workflow_run_response else None,
-                                'workflow_run_id': workflow_run_response.run_id if workflow_run_response else None,
-                                'step_id': self.step_id,
-                                'step_name': self.name
-                            }
+                                "workflow_id": workflow_run_response.workflow_id if workflow_run_response else None,
+                                "workflow_run_id": workflow_run_response.run_id if workflow_run_response else None,
+                                "step_id": self.step_id,
+                                "step_name": self.name,
+                            },
                         )
 
                         if store_executor_responses:
@@ -691,11 +691,11 @@ class Step:
                             stream_intermediate_steps=stream_intermediate_steps,
                             # Pass workflow context directly via kwargs
                             workflow_context={
-                                'workflow_id': workflow_run_response.workflow_id if workflow_run_response else None,
-                                'workflow_run_id': workflow_run_response.run_id if workflow_run_response else None,
-                                'step_id': self.step_id,
-                                'step_name': self.name
-                            }
+                                "workflow_id": workflow_run_response.workflow_id if workflow_run_response else None,
+                                "workflow_run_id": workflow_run_response.run_id if workflow_run_response else None,
+                                "step_id": self.step_id,
+                                "step_name": self.name,
+                            },
                         )
 
                         if store_executor_responses:
