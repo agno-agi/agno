@@ -240,7 +240,7 @@ class Team:
     # If True, the agent creates/updates user memories at the end of runs
     enable_user_memories: bool = False
     # If True, the agent adds a reference to the user memories in the response
-    add_memory_references: Optional[bool] = None
+    add_memories_to_context: Optional[bool] = None
     # If True, the agent creates/updates session summaries at the end of runs
     enable_session_summaries: bool = False
     # # Session summary model
@@ -347,7 +347,7 @@ class Team:
         db: Optional[BaseDb] = None,
         enable_agentic_memory: bool = False,
         enable_user_memories: bool = False,
-        add_memory_references: Optional[bool] = None,
+        add_memories_to_context: Optional[bool] = None,
         enable_session_summaries: bool = False,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_session_summary_to_context: Optional[bool] = None,
@@ -430,7 +430,7 @@ class Team:
 
         self.enable_agentic_memory = enable_agentic_memory
         self.enable_user_memories = enable_user_memories
-        self.add_memory_references = add_memory_references
+        self.add_memories_to_context = add_memories_to_context
         self.enable_session_summaries = enable_session_summaries
         self.session_summary_manager = session_summary_manager
         self.add_session_summary_to_context = add_session_summary_to_context
@@ -581,8 +581,8 @@ class Team:
             if self.memory_manager.db is None:
                 self.memory_manager.db = self.db
 
-        if self.add_memory_references is None:
-            self.add_memory_references = (
+        if self.add_memories_to_context is None:
+            self.add_memories_to_context = (
                 self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None
             )
 
@@ -5060,7 +5060,7 @@ class Team:
             system_message_content += "</attached_media>\n\n"
 
         # Then add memories to the system prompt
-        if self.add_memory_references:
+        if self.add_memories_to_context:
             _memory_manager_not_set = False
             if not user_id:
                 user_id = "default"
