@@ -1758,7 +1758,7 @@ class Team:
         ):
             if self.stream_member_events:
                 # We just bubble the event up
-                yield self._handle_event(model_response_event, run_response, workflow_context)  # type: ignore
+                yield self._handle_event(model_response_event, run_response)  # type: ignore
             else:
                 # Don't yield anything
                 return
