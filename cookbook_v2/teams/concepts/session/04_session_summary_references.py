@@ -1,6 +1,6 @@
 """
-This example shows how to use the `add_session_summary_references` parameter in the Agent config to
-add references to the session summaries to the Agent.
+This example shows how to use the `add_session_summary_to_context` parameter in the Team config to
+add session summaries to the Team context.
 
 Start the postgres db locally on Docker by running: cookbook/scripts/run_pgvector.sh
 """
@@ -35,19 +35,19 @@ team = Team(
     model=OpenAIChat(id="gpt-4o"),
     db=db,
     session_id="session_summary",
-    add_session_summary_references=True,
+    add_session_summary_to_context=True,
 )
 
 team.print_response("I also like to play basketball.")
 
-# Alternatively, you can create a new session summary without adding references to the session summary.
+# Alternatively, you can create a new session summary without adding the session summary to context.
 
 # team = Team(
 #     model=OpenAIChat(id="gpt-4o"),
 #     db=db,
 #     session_id="session_summary",
 #     enable_session_summaries=True,
-#     add_session_summary_references=False,
+#     add_session_summary_to_context=False,
 # )
 
 # team.print_response("I also like to play basketball.")

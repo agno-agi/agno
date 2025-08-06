@@ -252,8 +252,8 @@ class Team:
     # # Session summary prompt
     # session_summary_prompt: Optional[str] = None
     session_summary_manager: Optional[SessionSummaryManager] = None
-    # If True, the agent adds a reference to the session summaries in the response
-    add_session_summary_references: Optional[bool] = None
+    # If True, the team adds session summaries to the context
+    add_session_summary_to_context: Optional[bool] = None
 
     # --- Team History ---
     # add_history_to_messages=true adds messages from the chat history to the messages list sent to the Model.
@@ -354,7 +354,7 @@ class Team:
         add_memory_references: Optional[bool] = None,
         enable_session_summaries: bool = False,
         session_summary_manager: Optional[SessionSummaryManager] = None,
-        add_session_summary_references: Optional[bool] = None,
+        add_session_summary_to_context: Optional[bool] = None,
         add_history_to_messages: bool = False,
         num_history_runs: int = 3,
         extra_data: Optional[Dict[str, Any]] = None,
@@ -439,7 +439,7 @@ class Team:
         self.add_memory_references = add_memory_references
         self.enable_session_summaries = enable_session_summaries
         self.session_summary_manager = session_summary_manager
-        self.add_session_summary_references = add_session_summary_references
+        self.add_session_summary_to_context = add_session_summary_to_context
         self.add_history_to_messages = add_history_to_messages
         self.num_history_runs = num_history_runs
 
@@ -614,8 +614,8 @@ class Team:
             if self.session_summary_manager.model is None:
                 self.session_summary_manager.model = self.model
 
-        if self.add_session_summary_references is None:
-            self.add_session_summary_references = (
+        if self.add_session_summary_to_context is None:
+            self.add_session_summary_to_context = (
                 self.enable_session_summaries or self.session_summary_manager is not None
             )
 
@@ -5129,7 +5129,7 @@ class Team:
                 )
 
         # Then add a summary of the interaction to the system prompt
-        if self.add_session_summary_references and self.team_session.summary is not None:
+        if self.add_session_summary_to_context and self.team_session.summary is not None:
             system_message_content += "Here is a brief summary of your previous interactions:\n\n"
             system_message_content += "<summary_of_previous_interactions>\n"
             system_message_content += self.team_session.summary

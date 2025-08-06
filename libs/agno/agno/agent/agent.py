@@ -117,8 +117,8 @@ class Agent:
     num_history_sessions: Optional[int] = None
     # If True, the agent creates/updates session summaries at the end of runs
     enable_session_summaries: bool = False
-    # If True, the agent adds a reference to the session summaries in the response
-    add_session_summary_references: Optional[bool] = None
+    # If True, the agent adds session summaries to the context
+    add_session_summary_to_context: Optional[bool] = None
     # Session summary manager
     session_summary_manager: Optional[SessionSummaryManager] = None
     # If True, cache the session in memory
@@ -351,7 +351,7 @@ class Agent:
         enable_user_memories: bool = False,
         add_memory_references: Optional[bool] = None,
         enable_session_summaries: bool = False,
-        add_session_summary_references: Optional[bool] = None,
+        add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_history_to_messages: bool = False,
         num_history_runs: int = 3,
@@ -440,7 +440,7 @@ class Agent:
 
         self.session_summary_manager = session_summary_manager
         self.enable_session_summaries = enable_session_summaries
-        self.add_session_summary_references = add_session_summary_references
+        self.add_session_summary_to_context = add_session_summary_to_context
 
         self.add_history_to_messages = add_history_to_messages
         self.num_history_runs = num_history_runs
@@ -606,8 +606,8 @@ class Agent:
             if self.session_summary_manager.model is None:
                 self.session_summary_manager.model = self.model
 
-        if self.add_session_summary_references is None:
-            self.add_session_summary_references = (
+        if self.add_session_summary_to_context is None:
+            self.add_session_summary_to_context = (
                 self.enable_session_summaries or self.session_summary_manager is not None
             )
 
@@ -4118,7 +4118,7 @@ class Agent:
 
         # 3.3.11 Then add a summary of the interaction to the system prompt
         if (
-            self.add_session_summary_references
+            self.add_session_summary_to_context
             and self.agent_session is not None
             and self.agent_session.summary is not None
         ):
