@@ -11,6 +11,7 @@ from agno.os.apps.memory import MemoryApp
 from agno.os.utils import format_team_tools, format_tools, get_run_input, get_session_name
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
+from agno.workflow.v2.workflow import Workflow
 
 
 class InterfaceResponse(BaseModel):
@@ -241,6 +242,17 @@ class WorkflowResponse(BaseModel):
     workflow_id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
+    steps: Optional[List[Dict[str, Any]]] = None
+
+    @classmethod
+    def from_workflow(cls, workflow: Workflow) -> "WorkflowResponse":
+        workflow_dict = workflow.to_dict()
+        return cls(
+            workflow_id=workflow.workflow_id,
+            name=workflow.name,
+            description=workflow.description,
+            steps=workflow_dict.get("steps"),
+        )
 
 
 class WorkflowRunRequest(BaseModel):
@@ -353,7 +365,7 @@ class WorkflowSessionDetailSchema(BaseModel):
 
     session_data: Optional[dict]
     workflow_data: Optional[dict]
-    extra_data: Optional[dict]
+    metadata: Optional[dict]
 
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
@@ -371,7 +383,7 @@ class WorkflowSessionDetailSchema(BaseModel):
             session_name=session_name,
             session_data=session.session_data,
             workflow_data=session.workflow_data,
-            extra_data=session.extra_data,
+            metadata=session.metadata,
             created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
             updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
         )
@@ -455,7 +467,6 @@ class WorkflowRunSchema(BaseModel):
     content_type: Optional[str]
     status: Optional[str]
     step_results: Optional[list[dict]]
-    step_member_runs: Optional[list[dict]]
     metrics: Optional[dict]
     created_at: Optional[datetime]
 
@@ -471,7 +482,6 @@ class WorkflowRunSchema(BaseModel):
             status=run_response.get("status", ""),
             metrics=run_response.get("workflow_metrics", {}),
             step_results=run_response.get("step_results", []),
-            step_member_runs=run_response.get("step_member_runs", []),
             created_at=datetime.fromtimestamp(run_response["created_at"], tz=timezone.utc)
             if run_response["created_at"]
             else None,
