@@ -315,15 +315,15 @@ class TestUpdateEvent:
         assert "error" not in result_data
 
 
+@patch("agno.tools.googlecalendar.build")
 class TestDeleteEvent:
     """Test delete_event method."""
 
     def setup_method(self):
         """Set up test fixtures."""
-        with patch("agno.tools.googlecalendar.build"):
-            self.tools = GoogleCalendarTools(access_token="test_token")
-            self.mock_service = Mock()
-            self.tools.service = self.mock_service
+        self.tools = GoogleCalendarTools(access_token="test_token")
+        self.mock_service = Mock()
+        self.tools.service = self.mock_service
 
     def test_delete_event_success(self):
         """Test successful event deletion."""
@@ -336,15 +336,15 @@ class TestDeleteEvent:
         assert "deleted successfully" in result_data["message"]
 
 
+@patch("agno.tools.googlecalendar.build")
 class TestFetchAllEvents:
     """Test fetch_all_events method."""
 
     def setup_method(self):
         """Set up test fixtures."""
-        with patch("agno.tools.googlecalendar.build"):
-            self.tools = GoogleCalendarTools(access_token="test_token")
-            self.mock_service = Mock()
-            self.tools.service = self.mock_service
+        self.tools = GoogleCalendarTools(access_token="test_token")
+        self.mock_service = Mock()
+        self.tools.service = self.mock_service
 
     def test_fetch_all_events_success(self):
         """Test successful fetching of all events."""
@@ -373,6 +373,7 @@ class TestFetchAllEvents:
         assert result_data == page1_events + page2_events
 
 
+@patch("agno.tools.googlecalendar.build")
 class TestFindAvailableSlots:
     """Test find_available_slots method."""
 
