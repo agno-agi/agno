@@ -351,7 +351,7 @@ class Team:
         enable_session_summaries: bool = False,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_session_summary_to_context: Optional[bool] = None,
-        add_history_to_messages: bool = False,
+        add_history_to_context: bool = False,
         num_history_runs: int = 3,
         extra_data: Optional[Dict[str, Any]] = None,
         reasoning: bool = False,
@@ -434,7 +434,7 @@ class Team:
         self.enable_session_summaries = enable_session_summaries
         self.session_summary_manager = session_summary_manager
         self.add_session_summary_to_context = add_session_summary_to_context
-        self.add_history_to_messages = add_history_to_messages
+        self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
         self.extra_data = extra_data
 
