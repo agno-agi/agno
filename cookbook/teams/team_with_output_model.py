@@ -8,7 +8,7 @@ itinerary_planner = Agent(
     name="Itinerary Planner",
     model=Claude(id="claude-sonnet-4-20250514"),
     description="You help people plan amazing vacations. Use the tools at your disposal to find latest information about the destination.",
-    # tools=[DuckDuckGoTools()],
+    tools=[DuckDuckGoTools()],
 )
 
 national_park_expert = Team(
