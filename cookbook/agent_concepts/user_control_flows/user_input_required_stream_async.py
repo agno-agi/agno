@@ -62,9 +62,7 @@ async def main():
                     # Update the field value
                     field.value = user_value
 
-            run_response = await agent.acontinue_run(
-                run_response=run_response, stream=True
-            )
+            run_response = await agent.acontinue_run(stream=True)
             async for resp in run_response:
                 print(resp.content, end="")
 
