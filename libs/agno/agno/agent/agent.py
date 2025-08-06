@@ -2727,9 +2727,9 @@ class Agent:
     def set_session_metrics(self, run_messages: RunMessages) -> None:
         """Calculate metrics for the contextual session"""
         if self.session_metrics is None:
-            self.session_metrics = self.calculate_session_metrics(run_messages.messages)
+            self.session_metrics = self.calculate_run_metrics(run_messages.messages)
         else:
-            self.session_metrics += self.calculate_session_metrics(run_messages.messages)
+            self.session_metrics += self.calculate_run_metrics(run_messages.messages)
 
     def update_memory(
         self,
@@ -4958,17 +4958,6 @@ class Agent:
             self.run_response.reasoning_content = reasoning_content
         else:
             self.run_response.reasoning_content += reasoning_content
-
-    def calculate_session_metrics(self, messages: List[Message]) -> SessionMetrics:
-        """Sum the metrics of the given messages into a SessionMetrics object"""
-        metrics = SessionMetrics()
-
-        assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
-        for m in messages:
-            if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
-                metrics += m.metrics
-
-        return metrics
 
     def calculate_run_metrics(self, messages: List[Message]) -> RunMetrics:
         """Sum the metrics of the given messages into a RunMetrics object"""
