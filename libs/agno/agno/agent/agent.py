@@ -3079,7 +3079,7 @@ class Agent:
 
                             reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
-                            metrics = tool_call.metrics
+                            tool_call_metrics = tool_call.metrics
                             if metrics is not None and metrics.duration is not None and reasoning_state is not None:
                                 reasoning_state["reasoning_time_taken"] = reasoning_state[
                                     "reasoning_time_taken"
