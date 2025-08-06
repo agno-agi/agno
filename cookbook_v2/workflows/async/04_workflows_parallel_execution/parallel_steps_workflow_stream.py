@@ -3,8 +3,8 @@ import asyncio
 from agno.agent import Agent
 from agno.tools.googlesearch import GoogleSearchTools
 from agno.tools.hackernews import HackerNewsTools
-from agno.workflow.v2 import Step, Workflow
-from agno.workflow.v2.parallel import Parallel
+from agno.workflow import Step, Workflow
+from agno.workflow.parallel import Parallel
 
 # Create agents
 researcher = Agent(name="Researcher", tools=[HackerNewsTools(), GoogleSearchTools()])

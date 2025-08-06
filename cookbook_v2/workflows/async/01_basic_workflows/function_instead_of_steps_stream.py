@@ -4,8 +4,8 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools.hackernews import HackerNewsTools
-from agno.workflow.v2.types import WorkflowExecutionInput
-from agno.workflow.v2.workflow import Workflow
+from agno.workflow.types import WorkflowExecutionInput
+from agno.workflow.workflow import Workflow
 
 # Define agents
 hackernews_agent = Agent(

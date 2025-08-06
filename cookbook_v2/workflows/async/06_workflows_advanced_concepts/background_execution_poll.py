@@ -3,14 +3,12 @@ import asyncio
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.run.base import RunStatus
-from agno.run.v2.workflow import WorkflowRunResponse
 from agno.team import Team
 from agno.tools.googlesearch import GoogleSearchTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.utils.pprint import pprint_run_response
-from agno.workflow.v2.step import Step
-from agno.workflow.v2.workflow import Workflow
+from agno.workflow.step import Step
+from agno.workflow.workflow import Workflow
 
 # Define agents
 hackernews_agent = Agent(

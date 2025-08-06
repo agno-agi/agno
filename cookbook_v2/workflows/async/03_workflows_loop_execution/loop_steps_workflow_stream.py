@@ -4,8 +4,8 @@ from typing import List
 from agno.agent import Agent
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
-from agno.workflow.v2 import Loop, Step, Workflow
-from agno.workflow.v2.types import StepOutput
+from agno.workflow import Loop, Step, Workflow
+from agno.workflow.types import StepOutput
 
 # Create agents for research
 research_agent = Agent(

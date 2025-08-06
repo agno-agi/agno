@@ -5,11 +5,11 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.models.gemini import GeminiTools
 from agno.tools.openai import OpenAITools
-from agno.workflow.v2.router import Router
-from agno.workflow.v2.step import Step
-from agno.workflow.v2.steps import Steps
-from agno.workflow.v2.types import StepInput
-from agno.workflow.v2.workflow import Workflow
+from agno.workflow.router import Router
+from agno.workflow.step import Step
+from agno.workflow.steps import Steps
+from agno.workflow.types import StepInput
+from agno.workflow.workflow import Workflow
 from pydantic import BaseModel
 
 

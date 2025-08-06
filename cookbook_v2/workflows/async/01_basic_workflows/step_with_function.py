@@ -4,12 +4,12 @@ from typing import AsyncIterator, Union
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.run.v2.workflow import WorkflowRunResponseEvent
+from agno.run.workflow import WorkflowRunResponseEvent
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
-from agno.workflow.v2.step import Step, StepInput, StepOutput
-from agno.workflow.v2.workflow import Workflow
+from agno.workflow.step import Step, StepInput, StepOutput
+from agno.workflow.workflow import Workflow
 
 # Define agents
 hackernews_agent = Agent(
