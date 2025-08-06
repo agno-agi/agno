@@ -8,7 +8,13 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.os.apps.memory import MemoryApp
-from agno.os.utils import format_team_tools, format_tools, get_run_input, get_session_name
+from agno.os.utils import (
+    format_team_tools,
+    format_tools,
+    get_run_input,
+    get_session_name,
+    get_workflow_input_schema_dict,
+)
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
 from agno.workflow.v2.workflow import Workflow
@@ -253,6 +259,7 @@ class WorkflowResponse(BaseModel):
             name=workflow.name,
             description=workflow.description,
             steps=workflow_dict.get("steps"),
+            input_schema=get_workflow_input_schema_dict(workflow),
         )
 
 

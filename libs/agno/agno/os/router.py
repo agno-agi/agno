@@ -47,6 +47,7 @@ from agno.os.utils import (
     get_agent_by_id,
     get_team_by_id,
     get_workflow_by_id,
+    get_workflow_input_schema_dict,
     process_audio,
     process_document,
     process_image,
@@ -1019,7 +1020,7 @@ def get_base_router(
                 workflow_id=str(workflow.workflow_id),
                 name=workflow.name,
                 description=workflow.description,
-                input_schema=workflow.input_schema_dict,
+                input_schema=get_workflow_input_schema_dict(workflow),
             )
             for workflow in os.workflows
         ]
