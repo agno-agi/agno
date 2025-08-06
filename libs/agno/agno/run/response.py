@@ -37,6 +37,9 @@ class RunEvent(str, Enum):
     parser_model_response_started = "ParserModelResponseStarted"
     parser_model_response_completed = "ParserModelResponseCompleted"
 
+    output_model_response_started = "OutputModelResponseStarted"
+    output_model_response_completed = "OutputModelResponseCompleted"
+
 
 @dataclass
 class BaseAgentRunResponseEvent(BaseRunResponseEvent):
@@ -82,6 +85,7 @@ class RunResponseContentEvent(BaseAgentRunResponseEvent):
     content: Optional[Any] = None
     content_type: str = "str"
     thinking: Optional[str] = None
+    reasoning_content: Optional[str] = None
     citations: Optional[Citations] = None
     response_audio: Optional[AudioResponse] = None  # Model audio response
     image: Optional[ImageArtifact] = None  # Image attached to the response
@@ -190,6 +194,16 @@ class ParserModelResponseCompletedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.parser_model_response_completed.value
 
 
+@dataclass
+class OutputModelResponseStartedEvent(BaseAgentRunResponseEvent):
+    event: str = RunEvent.output_model_response_started.value
+
+
+@dataclass
+class OutputModelResponseCompletedEvent(BaseAgentRunResponseEvent):
+    event: str = RunEvent.output_model_response_completed.value
+
+
 RunResponseEvent = Union[
     RunResponseStartedEvent,
     RunResponseContentEvent,
@@ -207,6 +221,8 @@ RunResponseEvent = Union[
     ToolCallCompletedEvent,
     ParserModelResponseStartedEvent,
     ParserModelResponseCompletedEvent,
+    OutputModelResponseStartedEvent,
+    OutputModelResponseCompletedEvent,
 ]
 
 
@@ -228,6 +244,8 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.tool_call_completed.value: ToolCallCompletedEvent,
     RunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,
     RunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
+    RunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,
+    RunEvent.output_model_response_completed.value: OutputModelResponseCompletedEvent,
 }
 
 
