@@ -12,7 +12,6 @@ from fastapi import (
     Query,
     UploadFile,
     WebSocket,
-    WebSocketDisconnect,
 )
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -996,11 +995,6 @@ def get_base_router(
                     # Handle workflow execution directly via WebSocket
                     await handle_workflow_via_websocket(websocket, message, os)
 
-        except WebSocketDisconnect:
-            # Clean up any run_ids associated with this websocket
-            runs_to_remove = [run_id for run_id, ws in websocket_manager.active_connections.items() if ws == websocket]
-            for run_id in runs_to_remove:
-                await websocket_manager.disconnect_by_run_id(run_id)
         except Exception as e:
             logger.error(f"WebSocket error: {e}")
             # Clean up any run_ids associated with this websocket
