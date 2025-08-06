@@ -224,6 +224,10 @@ class StepOutput:
 
         return {
             "content": content_dict,
+            "step_name": self.step_name,
+            "step_id": self.step_id,
+            "executor_type": self.executor_type,
+            "executor_name": self.executor_name,
             "step_run_id": self.step_run_id,
             "images": [img.to_dict() for img in self.images] if self.images else None,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,
@@ -251,6 +255,10 @@ class StepOutput:
             audio = [AudioArtifact.model_validate(aud) for aud in audio]
 
         return cls(
+            step_name=data.get("step_name"),
+            step_id=data.get("step_id"),
+            executor_type=data.get("executor_type"),
+            executor_name=data.get("executor_name"),
             content=data.get("content"),
             step_run_id=data.get("step_run_id"),
             images=images,

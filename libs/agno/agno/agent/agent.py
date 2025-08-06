@@ -807,6 +807,7 @@ class Agent:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
         refresh_session_before_write: Optional[bool] = False,
+        workflow_context: Optional[Dict] = None,
     ) -> Iterator[RunResponseEvent]:
         """Run the Agent and yield the RunResponse.
 
@@ -823,7 +824,7 @@ class Agent:
 
         # Start the Run by yielding a RunStarted event
         if stream_intermediate_steps:
-            yield self._handle_event(create_run_response_started_event(run_response), run_response)
+            yield self._handle_event(create_run_response_started_event(run_response), run_response, workflow_context)
 
         # 1. Reason about the task if reasoning is enabled
         yield from self._handle_reasoning_stream(run_messages=run_messages)
@@ -868,7 +869,9 @@ class Agent:
         self.run_response.status = RunStatus.completed
 
         if stream_intermediate_steps:
-            yield self._handle_event(create_run_response_completed_event(from_run_response=run_response), run_response)
+            yield self._handle_event(
+                create_run_response_completed_event(from_run_response=run_response), run_response, workflow_context
+            )
 
         # 6. Save session to storage
         self.save_session(user_id=user_id, session_id=session_id)
@@ -951,6 +954,9 @@ class Agent:
         self.initialize_agent(debug_mode=debug_mode)
 
         log_debug(f"Session ID: {session_id}", center=True)
+
+        # Extract workflow context from kwargs if present
+        workflow_context = kwargs.pop("workflow_context", None)
 
         # Initialize Knowledge Filters
         effective_filters = knowledge_filters
@@ -1059,6 +1065,7 @@ class Agent:
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
                         refresh_session_before_write=refresh_session_before_write,
+                        workflow_context=workflow_context,
                     )
                     return response_iterator
                 else:
@@ -1204,6 +1211,7 @@ class Agent:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
         refresh_session_before_write: Optional[bool] = False,
+        workflow_context: Optional[Dict] = None,
     ) -> AsyncIterator[RunResponseEvent]:
         """Run the Agent and yield the RunResponse.
 
@@ -1219,7 +1227,7 @@ class Agent:
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
         # Start the Run by yielding a RunStarted event
         if stream_intermediate_steps:
-            yield self._handle_event(create_run_response_started_event(run_response), run_response)
+            yield self._handle_event(create_run_response_started_event(run_response), run_response, workflow_context)
 
         # 1. Reason about the task if reasoning is enabled
         async for item in self._ahandle_reasoning_stream(run_messages=run_messages):
@@ -1268,7 +1276,9 @@ class Agent:
         self.run_response.status = RunStatus.completed
 
         if stream_intermediate_steps:
-            yield self._handle_event(create_run_response_completed_event(from_run_response=run_response), run_response)
+            yield self._handle_event(
+                create_run_response_completed_event(from_run_response=run_response), run_response, workflow_context
+            )
 
         # 6. Save session to storage
         self.save_session(user_id=user_id, session_id=session_id)
@@ -1348,6 +1358,9 @@ class Agent:
 
         # Initialize the Agent
         self.initialize_agent(debug_mode=debug_mode)
+
+        # Extract workflow context from kwargs if present
+        workflow_context = kwargs.pop("workflow_context", None)
 
         effective_filters = knowledge_filters
         # When filters are passed manually
@@ -1455,6 +1468,7 @@ class Agent:
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
                         refresh_session_before_write=refresh_session_before_write,
+                        workflow_context=workflow_context,
                     )  # type: ignore[assignment]
                 else:
                     return self._arun(
@@ -5736,7 +5750,16 @@ class Agent:
             else:
                 log_warning("A response model is required to parse the response with a parser model")
 
-    def _handle_event(self, event: RunResponseEvent, run_response: RunResponse):
+    def _handle_event(
+        self, event: RunResponseEvent, run_response: RunResponse, workflow_context: Optional[Dict] = None
+    ):
+        if workflow_context:
+            event.workflow_id = workflow_context.get("workflow_id")
+            event.workflow_run_id = workflow_context.get("workflow_run_id")
+            event.step_id = workflow_context.get("step_id")
+            event.step_name = workflow_context.get("step_name")
+            event.step_index = workflow_context.get("step_index")
+
         # We only store events that are not run_response_content events
         events_to_skip = [event.value for event in self.events_to_skip] if self.events_to_skip else []
         if self.store_events and event.event not in events_to_skip:

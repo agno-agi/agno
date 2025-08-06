@@ -786,6 +786,7 @@ class Team:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
+        workflow_context: Optional[Dict] = None,
     ) -> Iterator[Union[TeamRunResponseEvent, RunResponseEvent]]:
         """Run the Team and return the response iterator.
 
@@ -805,7 +806,9 @@ class Team:
 
         # Start the Run by yielding a RunStarted event
         if stream_intermediate_steps:
-            yield self._handle_event(create_team_run_response_started_event(run_response), run_response)
+            yield self._handle_event(
+                create_team_run_response_started_event(run_response), run_response, workflow_context
+            )
 
         # 2. Get a response from the model
         yield from self._handle_model_response_stream(
@@ -830,6 +833,7 @@ class Team:
                     from_run_response=run_response,
                 ),
                 run_response,
+                workflow_context,
             )
 
         # 5. Calculate session metrics
@@ -905,6 +909,9 @@ class Team:
         # Initialize Team
         self.initialize_team(session_id=session_id)
 
+        # Extract workflow context from kwargs if present
+        workflow_context = kwargs.pop("workflow_context", None)
+
         # Initialize Knowledge Filters
         effective_filters = knowledge_filters
 
@@ -970,6 +977,7 @@ class Team:
             videos=videos,
             audio=audio,
             files=files,
+            workflow_context=workflow_context,
         )
 
         # Create a run_id for this specific run
@@ -1050,6 +1058,7 @@ class Team:
                         session_id=session_id,
                         user_id=user_id,
                         response_format=response_format,
+                        workflow_context=workflow_context,
                     )
 
                     return response_iterator
@@ -1107,6 +1116,7 @@ class Team:
         session_id: str,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        workflow_context: Optional[Dict] = None,
     ) -> TeamRunResponse:
         """Run the Team and return the response.
 
@@ -1173,6 +1183,7 @@ class Team:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
+        workflow_context: Optional[Dict] = None,
     ) -> AsyncIterator[Union[TeamRunResponseEvent, RunResponseEvent]]:
         """Run the Team and return the response.
 
@@ -1191,7 +1202,7 @@ class Team:
         # Start the Run by yielding a RunStarted event
         if stream_intermediate_steps:
             yield self._handle_event(
-                create_team_run_response_started_event(from_run_response=run_response), run_response
+                create_team_run_response_started_event(from_run_response=run_response), run_response, workflow_context
             )
 
         # 2. Get a response from the model
@@ -1221,7 +1232,7 @@ class Team:
 
         if stream_intermediate_steps:
             yield self._handle_event(
-                create_team_run_response_completed_event(from_run_response=run_response), run_response
+                create_team_run_response_completed_event(from_run_response=run_response), run_response, workflow_context
             )
 
         # 5. Calculate session metrics
@@ -1298,6 +1309,9 @@ class Team:
 
         # Initialize Team
         self.initialize_team(session_id=session_id)
+
+        # Extract workflow context from kwargs if present
+        workflow_context = kwargs.pop("workflow_context", None)
 
         effective_filters = knowledge_filters
 
@@ -1430,6 +1444,7 @@ class Team:
                         user_id=user_id,
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
+                        workflow_context=workflow_context,
                     )
                     return response_iterator
                 else:
@@ -2221,7 +2236,19 @@ class Team:
             else:
                 log_warning("A response model is required to parse the response with a parser model")
 
-    def _handle_event(self, event: Union[RunResponseEvent, TeamRunResponseEvent], run_response: TeamRunResponse):
+    def _handle_event(
+        self,
+        event: Union[RunResponseEvent, TeamRunResponseEvent],
+        run_response: TeamRunResponse,
+        workflow_context: Optional[Dict] = None,
+    ):
+        if workflow_context:
+            event.workflow_id = workflow_context.get("workflow_id")
+            event.workflow_run_id = workflow_context.get("workflow_run_id")
+            event.step_id = workflow_context.get("step_id")
+            event.step_name = workflow_context.get("step_name")
+            event.step_index = workflow_context.get("step_index")
+
         # We only store events that are not run_response_content events
         events_to_skip = [event.value for event in self.events_to_skip] if self.events_to_skip else []
         if self.store_events and event.event not in events_to_skip:
@@ -4673,6 +4700,7 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         audio: Optional[Sequence[Audio]] = None,
         files: Optional[Sequence[File]] = None,
+        workflow_context: Optional[Dict] = None,
     ) -> None:
         # Prepare tools
         _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
@@ -4730,6 +4758,7 @@ class Team:
                 audio=audio,  # type: ignore
                 files=files,  # type: ignore
                 knowledge_filters=knowledge_filters,
+                workflow_context=workflow_context,
             )
             _tools.append(forward_task_func)
             if self.get_member_information_tool:
@@ -4748,6 +4777,7 @@ class Team:
                     audio=audio,  # type: ignore
                     files=files,  # type: ignore
                     knowledge_filters=knowledge_filters,
+                    workflow_context=workflow_context,
                 )
             )
             if self.get_member_information_tool:
@@ -4764,6 +4794,7 @@ class Team:
                 videos=videos,  # type: ignore
                 audio=audio,  # type: ignore
                 files=files,  # type: ignore
+                workflow_context=workflow_context,
             )
             _tools.append(run_member_agents_func)
 
@@ -5706,6 +5737,7 @@ class Team:
         videos: Optional[List[Video]] = None,
         audio: Optional[List[Audio]] = None,
         files: Optional[List[File]] = None,
+        workflow_context: Optional[Dict] = None,
     ) -> Function:
         if not images:
             images = []
@@ -5765,6 +5797,7 @@ class Team:
                         files=files,
                         stream=True,
                         stream_intermediate_steps=stream_intermediate_steps,
+                        workflow_context=workflow_context,
                     )
                     for member_agent_run_response_chunk in member_agent_run_response_stream:
                         check_if_run_cancelled(member_agent_run_response_chunk)
@@ -5987,6 +6020,7 @@ class Team:
         audio: Optional[List[Audio]] = None,
         files: Optional[List[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        workflow_context: Optional[Dict] = None,
     ) -> Function:
         if not images:
             images = []
@@ -6059,6 +6093,7 @@ class Team:
                     files=files,
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    workflow_context=workflow_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
@@ -6205,6 +6240,7 @@ class Team:
                     files=files,
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    workflow_context=workflow_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
@@ -6373,6 +6409,7 @@ class Team:
         audio: Optional[Sequence[Audio]] = None,
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        workflow_context: Optional[Dict] = None,
     ) -> Function:
         if not images:
             images = []
@@ -6447,6 +6484,7 @@ class Team:
                     files=files,
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    workflow_context=workflow_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
@@ -6587,6 +6625,7 @@ class Team:
                     files=files,
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    workflow_context=workflow_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
