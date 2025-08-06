@@ -7,6 +7,8 @@ from agno.reasoning.step import ReasoningStep
 from agno.run.response import (
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
+    OutputModelResponseCompletedEvent,
+    OutputModelResponseStartedEvent,
     ParserModelResponseCompletedEvent,
     ParserModelResponseStartedEvent,
     ReasoningCompletedEvent,
@@ -25,6 +27,8 @@ from agno.run.response import (
 )
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
+from agno.run.team import OutputModelResponseCompletedEvent as TeamOutputModelResponseCompletedEvent
+from agno.run.team import OutputModelResponseStartedEvent as TeamOutputModelResponseStartedEvent
 from agno.run.team import ParserModelResponseCompletedEvent as TeamParserModelResponseCompletedEvent
 from agno.run.team import ParserModelResponseStartedEvent as TeamParserModelResponseStartedEvent
 from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
@@ -356,6 +360,7 @@ def create_run_response_content_event(
     content: Optional[Any] = None,
     content_type: Optional[str] = None,
     thinking: Optional[str] = None,
+    reasoning_content: Optional[str] = None,
     redacted_thinking: Optional[str] = None,
     citations: Optional[Citations] = None,
     response_audio: Optional[AudioResponse] = None,
@@ -372,6 +377,7 @@ def create_run_response_content_event(
         content=content,
         content_type=content_type or "str",
         thinking=thinking_combined,
+        reasoning_content=reasoning_content,
         citations=citations,
         response_audio=response_audio,
         image=image,
@@ -446,6 +452,50 @@ def create_team_parser_model_response_completed_event(
     from_run_response: TeamRunResponse,
 ) -> TeamParserModelResponseCompletedEvent:
     return TeamParserModelResponseCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        team_session_id=from_run_response.team_session_id,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_output_model_response_started_event(from_run_response: RunResponse) -> OutputModelResponseStartedEvent:
+    return OutputModelResponseStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        team_session_id=from_run_response.team_session_id,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_output_model_response_completed_event(from_run_response: RunResponse) -> OutputModelResponseCompletedEvent:
+    return OutputModelResponseCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        team_session_id=from_run_response.team_session_id,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_team_output_model_response_started_event(
+    from_run_response: TeamRunResponse,
+) -> TeamOutputModelResponseStartedEvent:
+    return TeamOutputModelResponseStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        team_session_id=from_run_response.team_session_id,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_team_output_model_response_completed_event(
+    from_run_response: TeamRunResponse,
+) -> TeamOutputModelResponseCompletedEvent:
+    return TeamOutputModelResponseCompletedEvent(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
