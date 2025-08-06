@@ -2780,7 +2780,7 @@ class Agent:
         run_messages: RunMessages,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
-        workflow_context: Optional[Dict[str, Any]] = None,
+        workflow_context: Optional[Dict] = None,
     ) -> Iterator[RunResponseEvent]:
         self.model = cast(Model, self.model)
 
@@ -2849,7 +2849,7 @@ class Agent:
         run_messages: RunMessages,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
-        workflow_context: Optional[Dict[str, Any]] = None,
+        workflow_context: Optional[Dict] = None,
     ) -> AsyncIterator[RunResponseEvent]:
         self.model = cast(Model, self.model)
 
@@ -2922,7 +2922,7 @@ class Agent:
         reasoning_state: Optional[Dict[str, Any]] = None,
         parse_structured_output: bool = False,
         stream_intermediate_steps: bool = False,
-        workflow_context: Optional[Dict[str, Any]] = None,
+        workflow_context: Optional[Dict] = None,
     ) -> Iterator[RunResponseEvent]:
         if isinstance(model_response_event, tuple(get_args(RunResponseEvent))) or isinstance(
             model_response_event, tuple(get_args(TeamRunResponseEvent))
