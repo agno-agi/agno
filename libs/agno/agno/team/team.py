@@ -2471,6 +2471,10 @@ class Team:
                 model_response_event=model_response_event,
             )
 
+        # Update the TeamRunResponse content
+        run_response.content = model_response.content
+        run_response.created_at = model_response.created_at
+
         if stream_intermediate_steps:
             yield self._handle_event(create_team_output_model_response_completed_event(run_response), run_response)
 
@@ -2512,9 +2516,6 @@ class Team:
 
         model_response_stream = self.output_model.aresponse_stream(messages=messages_for_output_model)
 
-        if stream_intermediate_steps:
-            yield self._handle_event(create_team_output_model_response_completed_event(run_response), run_response)
-
         async for model_response_event in model_response_stream:
             for event in self._handle_model_response_chunk(
                 run_response=run_response,
@@ -2522,6 +2523,13 @@ class Team:
                 model_response_event=model_response_event,
             ):
                 yield event
+
+        # Update the TeamRunResponse content
+        run_response.content = model_response.content
+        run_response.created_at = model_response.created_at
+
+        if stream_intermediate_steps:
+            yield self._handle_event(create_team_output_model_response_completed_event(run_response), run_response)
 
         # Build a list of messages that should be added to the RunResponse
         messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]

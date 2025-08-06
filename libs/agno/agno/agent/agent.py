@@ -6462,10 +6462,6 @@ class Agent:
 
         messages_for_output_model = self.get_messages_for_output_model(run_messages.messages)
 
-        # Remove the last assistant message from the messages list
-        if run_response.messages is not None:
-            run_response.messages.pop(-1)
-
         model_response = ModelResponse(content="")
 
         for model_response_event in self.output_model.response_stream(messages=messages_for_output_model):
@@ -6510,10 +6506,6 @@ class Agent:
             yield self._handle_event(create_output_model_response_started_event(run_response), run_response)
 
         messages_for_output_model = self.get_messages_for_output_model(run_messages.messages)
-
-        # Remove the last assistant message from the messages list
-        if run_response.messages is not None:
-            run_response.messages.pop(-1)
 
         model_response = ModelResponse(content="")
 

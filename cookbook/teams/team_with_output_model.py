@@ -1,3 +1,7 @@
+"""
+This example shows how to use the output_model parameter to specify the model that should be used to generate the final response.
+"""
+
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
