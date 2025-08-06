@@ -47,6 +47,7 @@ class BaseAgentRunResponseEvent(BaseRunResponseEvent):
     run_id: Optional[str] = None
     session_id: Optional[str] = None
     team_session_id: Optional[str] = None
+    tools: Optional[List[ToolExecution]] = None
 
     # For backwards compatibility
     content: Optional[Any] = None
