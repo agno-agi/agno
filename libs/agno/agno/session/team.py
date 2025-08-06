@@ -30,8 +30,8 @@ class TeamSession:
     team_data: Optional[Dict[str, Any]] = None
     # Session Data: session_name, session_state, images, videos, audio
     session_data: Optional[Dict[str, Any]] = None
-    # Extra Data stored with this agent
-    extra_data: Optional[Dict[str, Any]] = None
+    # Metadata stored with this team
+    metadata: Optional[Dict[str, Any]] = None
     # List of all runs in the session
     runs: Optional[list[Union[TeamRunResponse, RunResponse]]] = None
     # Summary of the session
@@ -82,7 +82,7 @@ class TeamSession:
             workflow_id=data.get("workflow_id"),
             team_data=data.get("team_data"),
             session_data=data.get("session_data"),
-            extra_data=data.get("extra_data"),
+            metadata=data.get("metadata"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
             runs=serialized_runs,

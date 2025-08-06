@@ -50,7 +50,7 @@ class MessageData:
     # Data from the provider that we might need on subsequent messages
     response_provider_data: Optional[Dict[str, Any]] = None
 
-    extra: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
 def _log_messages(messages: List[Message]) -> None:
@@ -394,7 +394,7 @@ class Model(ABC):
 
                 # Format and add results to messages
                 self.format_function_call_results(
-                    messages=messages, function_call_results=function_call_results, **model_response.extra or {}
+                    messages=messages, function_call_results=function_call_results, **model_response.metadata or {}
                 )
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
@@ -504,7 +504,7 @@ class Model(ABC):
 
                 # Format and add results to messages
                 self.format_function_call_results(
-                    messages=messages, function_call_results=function_call_results, **model_response.extra or {}
+                    messages=messages, function_call_results=function_call_results, **model_response.metadata or {}
                 )
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
@@ -585,10 +585,10 @@ class Model(ABC):
             model_response.audio = assistant_message.audio_output
         if assistant_message.image_output is not None:
             model_response.image = assistant_message.image_output
-        if provider_response.extra is not None:
-            if model_response.extra is None:
-                model_response.extra = {}
-            model_response.extra.update(provider_response.extra)
+        if provider_response.metadata is not None:
+            if model_response.metadata is None:
+                model_response.metadata = {}
+            model_response.metadata.update(provider_response.metadata)
 
     async def _aprocess_model_response(
         self,
@@ -641,10 +641,10 @@ class Model(ABC):
             model_response.audio = assistant_message.audio_output
         if assistant_message.image_output is not None:
             model_response.image = assistant_message.image_output
-        if provider_response.extra is not None:
-            if model_response.extra is None:
-                model_response.extra = {}
-            model_response.extra.update(provider_response.extra)
+        if provider_response.metadata is not None:
+            if model_response.metadata is None:
+                model_response.metadata = {}
+            model_response.metadata.update(provider_response.metadata)
 
     def _populate_assistant_message(
         self,
@@ -822,9 +822,9 @@ class Model(ABC):
                 function_call_count += len(function_call_results)
 
                 # Format and add results to messages
-                if stream_data and stream_data.extra is not None:
+                if stream_data and stream_data.metadata is not None:
                     self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **stream_data.extra
+                        messages=messages, function_call_results=function_call_results, **stream_data.metadata
                     )
                 else:
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
@@ -969,9 +969,9 @@ class Model(ABC):
                 function_call_count += len(function_call_results)
 
                 # Format and add results to messages
-                if stream_data and stream_data.extra is not None:
+                if stream_data and stream_data.metadata is not None:
                     self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **stream_data.extra
+                        messages=messages, function_call_results=function_call_results, **stream_data.metadata
                     )
                 else:
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
@@ -1070,10 +1070,10 @@ class Model(ABC):
             if stream_data.response_image is None:
                 stream_data.response_image = model_response_delta.image
 
-        if model_response_delta.extra is not None:
-            if stream_data.extra is None:
-                stream_data.extra = {}
-            stream_data.extra.update(model_response_delta.extra)
+        if model_response_delta.metadata is not None:
+            if stream_data.metadata is None:
+                stream_data.metadata = {}
+            stream_data.metadata.update(model_response_delta.metadata)
 
         if model_response_delta.response_usage is not None:
             _add_usage_metrics_to_assistant_message(

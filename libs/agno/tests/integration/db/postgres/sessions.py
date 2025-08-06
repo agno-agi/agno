@@ -49,7 +49,7 @@ def sample_agent_session() -> AgentSession:
         workflow_id="test_workflow_1",
         session_data={"session_name": "Test Agent Session", "key": "value"},
         agent_data={"name": "Test Agent", "model": "gpt-4"},
-        extra_data={"extra_key": "extra_value"},
+        metadata={"extra_key": "extra_value"},
         runs=[agent_run],
         summary=None,
         created_at=int(time.time()),
@@ -75,7 +75,7 @@ def sample_team_session() -> TeamSession:
         workflow_id="test_workflow_1",
         session_data={"session_name": "Test Team Session", "key": "value"},
         team_data={"name": "Test Team", "model": "gpt-4"},
-        extra_data={"extra_key": "extra_value"},
+        metadata={"extra_key": "extra_value"},
         runs=[team_run],
         summary=None,
         created_at=int(time.time()),
@@ -599,7 +599,7 @@ def test_upsert_session_handles_all_agent_session_fields(postgres_db_real: Postg
             "audio": ["audio1.wav"],
             "custom_field": "custom_value",
         },
-        extra_data={"extra_key1": "extra_value1", "extra_key2": {"nested": "data"}, "extra_list": [1, 2, 3]},
+        metadata={"extra_key1": "extra_value1", "extra_key2": {"nested": "data"}, "extra_list": [1, 2, 3]},
         agent_data={
             "name": "Comprehensive Agent",
             "model": "gpt-4",
@@ -625,7 +625,7 @@ def test_upsert_session_handles_all_agent_session_fields(postgres_db_real: Postg
     assert result.user_id == comprehensive_agent_session.user_id
     assert result.workflow_id == comprehensive_agent_session.workflow_id
     assert result.session_data == comprehensive_agent_session.session_data
-    assert result.extra_data == comprehensive_agent_session.extra_data
+    assert result.metadata == comprehensive_agent_session.metadata
     assert result.agent_data == comprehensive_agent_session.agent_data
     assert result.created_at == comprehensive_agent_session.created_at
     assert result.updated_at == comprehensive_agent_session.updated_at
@@ -670,7 +670,7 @@ def test_upsert_session_handles_all_team_session_fields(postgres_db_real: Postgr
             "audio": ["team_audio1.wav"],
             "team_custom_field": "team_custom_value",
         },
-        extra_data={
+        metadata={
             "team_extra_key1": "team_extra_value1",
             "team_extra_key2": {"nested": "team_data"},
             "team_metrics": {"efficiency": 0.95},
@@ -693,7 +693,7 @@ def test_upsert_session_handles_all_team_session_fields(postgres_db_real: Postgr
     assert result.user_id == comprehensive_team_session.user_id
     assert result.team_data == comprehensive_team_session.team_data
     assert result.session_data == comprehensive_team_session.session_data
-    assert result.extra_data == comprehensive_team_session.extra_data
+    assert result.metadata == comprehensive_team_session.metadata
     assert isinstance(result.summary, SessionSummary)
     assert result.summary.to_dict() == comprehensive_team_session.summary
     assert result.created_at == comprehensive_team_session.created_at

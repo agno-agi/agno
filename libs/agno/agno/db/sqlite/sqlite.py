@@ -555,7 +555,7 @@ class SqliteDb(BaseDb):
                         user_id=serialized_session.get("user_id"),
                         agent_data=serialized_session.get("agent_data"),
                         session_data=serialized_session.get("session_data"),
-                        extra_data=serialized_session.get("extra_data"),
+                        metadata=serialized_session.get("metadata"),
                         runs=serialized_session.get("runs"),
                         chat_history=serialized_session.get("chat_history"),
                         summary=serialized_session.get("summary"),
@@ -573,7 +573,7 @@ class SqliteDb(BaseDb):
                             summary=serialized_session.get("summary"),
                             agent_data=serialized_session.get("agent_data"),
                             session_data=serialized_session.get("session_data"),
-                            extra_data=serialized_session.get("extra_data"),
+                            metadata=serialized_session.get("metadata"),
                             updated_at=int(time.time()),
                         ),
                     )
@@ -600,7 +600,7 @@ class SqliteDb(BaseDb):
                         updated_at=serialized_session.get("created_at"),
                         team_data=serialized_session.get("team_data"),
                         session_data=serialized_session.get("session_data"),
-                        extra_data=serialized_session.get("extra_data"),
+                        metadata=serialized_session.get("metadata"),
                     )
 
                     stmt = stmt.on_conflict_do_update(
@@ -613,7 +613,7 @@ class SqliteDb(BaseDb):
                             runs=serialized_session.get("runs"),
                             team_data=serialized_session.get("team_data"),
                             session_data=serialized_session.get("session_data"),
-                            extra_data=serialized_session.get("extra_data"),
+                            metadata=serialized_session.get("metadata"),
                             updated_at=int(time.time()),
                         ),
                     )
@@ -640,7 +640,7 @@ class SqliteDb(BaseDb):
                         updated_at=serialized_session.get("updated_at") or int(time.time()),
                         workflow_data=serialized_session.get("workflow_data"),
                         session_data=serialized_session.get("session_data"),
-                        extra_data=serialized_session.get("extra_data"),
+                        metadata=serialized_session.get("metadata"),
                     )
                     stmt = stmt.on_conflict_do_update(
                         index_elements=["session_id"],
@@ -652,7 +652,7 @@ class SqliteDb(BaseDb):
                             runs=serialized_session.get("runs"),
                             workflow_data=serialized_session.get("workflow_data"),
                             session_data=serialized_session.get("session_data"),
-                            extra_data=serialized_session.get("extra_data"),
+                            metadata=serialized_session.get("metadata"),
                             updated_at=int(time.time()),
                         ),
                     )

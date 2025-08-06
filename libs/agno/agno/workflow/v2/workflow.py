@@ -794,7 +794,7 @@ class Workflow:
             workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
             step_responses=workflow_run_response.step_responses,  # type: ignore
-            extra_data=workflow_run_response.extra_data,
+            metadata=workflow_run_response.metadata,
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response)
 
@@ -1162,7 +1162,7 @@ class Workflow:
             workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
             step_responses=workflow_run_response.step_responses,  # type: ignore[arg-type]
-            extra_data=workflow_run_response.extra_data,
+            metadata=workflow_run_response.metadata,
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler)
 
@@ -1998,7 +1998,7 @@ class Workflow:
                     console.print(step_panel)  # type: ignore
 
                 # Show final summary
-                if workflow_response.extra_data:
+                if workflow_response.metadata:
                     status = workflow_response.status.value  # type: ignore
                     summary_content = ""
                     summary_content += f"""\n\n**Status:** {status}"""
@@ -2476,7 +2476,7 @@ class Workflow:
                         live_log.update(status, refresh=True)
 
                         # Show final summary
-                        if response.extra_data:
+                        if response.metadata:
                             status = response.status
                             summary_content = ""
                             summary_content += f"""\n\n**Status:** {status}"""
@@ -2771,7 +2771,7 @@ class Workflow:
                     console.print(step_panel)  # type: ignore
 
                 # Show final summary
-                if workflow_response.extra_data:
+                if workflow_response.metadata:
                     status = workflow_response.status.value  # type: ignore
                     summary_content = ""
                     summary_content += f"""\n\n**Status:** {status}"""
@@ -3249,7 +3249,7 @@ class Workflow:
                         live_log.update(status, refresh=True)
 
                         # Show final summary
-                        if response.extra_data:
+                        if response.metadata:
                             status = response.status
                             summary_content = ""
                             summary_content += f"""\n\n**Status:** {status}"""
