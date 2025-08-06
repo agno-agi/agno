@@ -30,8 +30,8 @@ class AgentSession:
 
     # Session Data: session_name, session_state, images, videos, audio
     session_data: Optional[Dict[str, Any]] = None
-    # Extra Data stored with this agent
-    extra_data: Optional[Dict[str, Any]] = None
+    # Metadata stored with this agent
+    metadata: Optional[Dict[str, Any]] = None
     # Agent Data: agent_id, name and model
     agent_data: Optional[Dict[str, Any]] = None
     # List of all runs in the session
@@ -66,8 +66,7 @@ class AgentSession:
         if summary is not None and isinstance(summary, dict):
             summary = SessionSummary.from_dict(summary)
 
-        # TODO: remove after extra_data is renamed to metadata everywhere
-        extra_data = data.get("extra_data", data.get("metadata"))
+        metadata = data.get("metadata")
 
         return cls(
             session_id=data.get("session_id"),  # type: ignore
@@ -78,7 +77,7 @@ class AgentSession:
             team_id=data.get("team_id"),
             agent_data=data.get("agent_data"),
             session_data=data.get("session_data"),
-            extra_data=extra_data,
+            metadata=metadata,
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
             runs=runs,

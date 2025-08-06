@@ -46,8 +46,8 @@ def serialize_session_json_fields(session: dict) -> dict:
         session["team_data"] = json.dumps(session["team_data"])
     if session.get("workflow_data") is not None:
         session["workflow_data"] = json.dumps(session["workflow_data"])
-    if session.get("extra_data") is not None:
-        session["extra_data"] = json.dumps(session["extra_data"])
+    if session.get("metadata") is not None:
+        session["metadata"] = json.dumps(session["metadata"])
     if session.get("chat_history") is not None:
         session["chat_history"] = json.dumps(session["chat_history"])
     if session.get("summary") is not None:
@@ -73,8 +73,8 @@ def deserialize_session_json_fields(session: dict) -> dict:
         session["team_data"] = json.loads(session["team_data"])
     if session.get("workflow_data") is not None:
         session["workflow_data"] = json.loads(session["workflow_data"])
-    if session.get("extra_data") is not None:
-        session["extra_data"] = json.loads(session["extra_data"])
+    if session.get("metadata") is not None:
+        session["metadata"] = json.loads(session["metadata"])
     if session.get("chat_history") is not None:
         session["chat_history"] = json.loads(session["chat_history"])
     if session.get("summary") is not None:

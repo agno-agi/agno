@@ -782,7 +782,7 @@ for event in workflow.run(message="AI trends", stream=True, stream_intermediate_
             
     elif isinstance(event, WorkflowCompletedEvent):
         print(f"🎉 Workflow Completed: {event.workflow_name}")
-        print(f"   Total Steps: {len(event.step_responses)}")
+        print(f"   Total Steps: {len(event.step_results)}")
         # Show final output preview
         if hasattr(event, 'content') and event.content:
             preview = str(event.content)[:150] + "..." if len(str(event.content)) > 150 else str(event.content)

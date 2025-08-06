@@ -7,6 +7,8 @@ from pydantic import BaseModel
 
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
 from agno.run.base import RunStatus
+from agno.run.response import RunResponse
+from agno.run.team import TeamRunResponse
 from agno.utils.log import log_error
 
 if TYPE_CHECKING:
@@ -65,8 +67,8 @@ class BaseWorkflowRunResponseEvent:
             _dict["content"] = self.content.model_dump(exclude_none=True)
 
         # Handle StepOutput fields that contain Message objects
-        if hasattr(self, "step_responses") and self.step_responses is not None:
-            _dict["step_responses"] = [step.to_dict() for step in self.step_responses]
+        if hasattr(self, "step_results") and self.step_results is not None:
+            _dict["step_results"] = [step.to_dict() for step in self.step_results]
 
         if hasattr(self, "step_response") and self.step_response is not None:
             _dict["step_response"] = self.step_response.to_dict()
@@ -128,8 +130,8 @@ class WorkflowCompletedEvent(BaseWorkflowRunResponseEvent):
     content_type: str = "str"
 
     # Store actual step execution results as StepOutput objects
-    step_responses: List["StepOutput"] = field(default_factory=list)  # noqa: F821
-    extra_data: Optional[Dict[str, Any]] = None
+    step_results: List["StepOutput"] = field(default_factory=list)  # noqa: F821
+    metadata: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -422,7 +424,10 @@ class WorkflowRunResponse:
     response_audio: Optional[AudioResponse] = None
 
     # Store actual step execution results as StepOutput objects
-    step_responses: List[Union["StepOutput", List["StepOutput"]]] = field(default_factory=list)  # noqa: F821
+    step_results: List[Union["StepOutput", List["StepOutput"]]] = field(default_factory=list)  # noqa: F821
+
+    # Store agent/team responses separately with parent_run_id references
+    step_executor_runs: Optional[List[Union[RunResponse, TeamRunResponse]]] = None
 
     # Store events from workflow execution
     events: Optional[List[WorkflowRunResponseEvent]] = None
@@ -430,7 +435,7 @@ class WorkflowRunResponse:
     # Workflow metrics aggregated from all steps
     workflow_metrics: Optional["WorkflowMetrics"] = None
 
-    extra_data: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
     created_at: int = field(default_factory=lambda: int(time()))
 
     status: RunStatus = RunStatus.pending
@@ -446,12 +451,13 @@ class WorkflowRunResponse:
             if v is not None
             and k
             not in [
-                "extra_data",
+                "metadata",
                 "images",
                 "videos",
                 "audio",
                 "response_audio",
-                "step_responses",
+                "step_results",
+                "step_executor_runs",
                 "events",
                 "workflow_metrics",
             ]
@@ -460,8 +466,8 @@ class WorkflowRunResponse:
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
 
-        if self.extra_data is not None:
-            _dict["extra_data"] = self.extra_data
+        if self.metadata is not None:
+            _dict["metadata"] = self.metadata
 
         if self.images is not None:
             _dict["images"] = [img.to_dict() for img in self.images]
@@ -475,16 +481,19 @@ class WorkflowRunResponse:
         if self.response_audio is not None:
             _dict["response_audio"] = self.response_audio.to_dict()
 
-        if self.step_responses:
+        if self.step_results:
             flattened_responses = []
-            for step_response in self.step_responses:
+            for step_response in self.step_results:
                 if isinstance(step_response, list):
                     # Handle List[StepOutput] from workflow components like Steps
                     flattened_responses.extend([s.to_dict() for s in step_response])
                 else:
                     # Handle single StepOutput
                     flattened_responses.append(step_response.to_dict())
-            _dict["step_responses"] = flattened_responses
+            _dict["step_results"] = flattened_responses
+
+        if self.step_executor_runs:
+            _dict["step_executor_runs"] = [run.to_dict() for run in self.step_executor_runs]
 
         if self.workflow_metrics is not None:
             _dict["workflow_metrics"] = self.workflow_metrics.to_dict()
@@ -496,12 +505,6 @@ class WorkflowRunResponse:
             _dict["events"] = [e.to_dict() for e in self.events]
 
         return _dict
-
-    def to_json(self) -> str:
-        import json
-
-        _dict = self.to_dict()
-        return json.dumps(_dict, indent=2)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "WorkflowRunResponse":
@@ -515,14 +518,25 @@ class WorkflowRunResponse:
 
             workflow_metrics = WorkflowMetrics.from_dict(workflow_metrics_dict)
 
-        step_responses = data.pop("step_responses", [])
-        parsed_step_responses: List[Union["StepOutput", List["StepOutput"]]] = []
-        if step_responses:
-            for step_output_dict in step_responses:
+        step_results = data.pop("step_results", [])
+        parsed_step_results: List[Union["StepOutput", List["StepOutput"]]] = []
+        if step_results:
+            for step_output_dict in step_results:
                 # Reconstruct StepOutput from dict
-                parsed_step_responses.append(StepOutput.from_dict(step_output_dict))
+                parsed_step_results.append(StepOutput.from_dict(step_output_dict))
 
-        extra_data = data.pop("extra_data", None)
+        # Parse step_executor_runs
+        step_executor_runs_data = data.pop("step_executor_runs", [])
+        step_executor_runs: List[Union[RunResponse, TeamRunResponse]] = []
+        if step_executor_runs_data:
+            step_executor_runs = []
+            for run_data in step_executor_runs_data:
+                if "team_id" in run_data or "team_name" in run_data:
+                    step_executor_runs.append(TeamRunResponse.from_dict(run_data))
+                else:
+                    step_executor_runs.append(RunResponse.from_dict(run_data))
+
+        metadata = data.pop("metadata", None)
 
         images = data.pop("images", [])
         images = [ImageArtifact.model_validate(image) for image in images] if images else None
@@ -539,14 +553,15 @@ class WorkflowRunResponse:
         events = data.pop("events", [])
 
         return cls(
-            step_responses=parsed_step_responses,
-            extra_data=extra_data,
+            step_results=parsed_step_results,
+            metadata=metadata,
             images=images,
             videos=videos,
             audio=audio,
             response_audio=response_audio,
             events=events,
             workflow_metrics=workflow_metrics,
+            step_executor_runs=step_executor_runs,
             **data,
         )
 

@@ -158,7 +158,12 @@ class Step:
         return None
 
     def execute(
-        self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
+        self,
+        step_input: StepInput,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        workflow_run_response: Optional["WorkflowRunResponse"] = None,
+        store_executor_responses: bool = True,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         log_debug(f"Executing step: {self.name}")
@@ -239,6 +244,9 @@ class Step:
                             user_id=user_id,
                         )
 
+                        if store_executor_responses:
+                            self._store_executor_response(workflow_run_response)
+
                         # Switch back to workflow logger after execution
                         use_workflow_logger()
                     else:
@@ -271,6 +279,7 @@ class Step:
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional["WorkflowRunResponse"] = None,
         step_index: Optional[Union[int, tuple]] = None,
+        store_executor_responses: bool = True,
     ) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
@@ -365,6 +374,9 @@ class Step:
                             stream_intermediate_steps=stream_intermediate_steps,
                         )
 
+                        if store_executor_responses:
+                            self._store_executor_response(workflow_run_response)
+
                         for event in response_stream:
                             yield event  # type: ignore[misc]
                         final_response = self._process_step_output(self.active_executor.run_response)  # type: ignore
@@ -416,7 +428,12 @@ class Step:
         return
 
     async def aexecute(
-        self, step_input: StepInput, session_id: Optional[str] = None, user_id: Optional[str] = None
+        self,
+        step_input: StepInput,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        workflow_run_response: Optional["WorkflowRunResponse"] = None,
+        store_executor_responses: bool = True,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         logger.info(f"Executing async step (non-streaming): {self.name}")
@@ -514,6 +531,9 @@ class Step:
                             user_id=user_id,
                         )
 
+                        if store_executor_responses:
+                            self._store_executor_response(workflow_run_response)
+
                         # Switch back to workflow logger after execution
                         use_workflow_logger()
                     else:
@@ -546,6 +566,7 @@ class Step:
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional["WorkflowRunResponse"] = None,
         step_index: Optional[Union[int, tuple]] = None,
+        store_executor_responses: bool = True,
     ) -> AsyncIterator[Union[WorkflowRunResponseEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
@@ -658,6 +679,9 @@ class Step:
                             stream_intermediate_steps=stream_intermediate_steps,
                         )
 
+                        if store_executor_responses:
+                            self._store_executor_response(workflow_run_response)
+
                         async for event in response_stream:
                             log_debug(f"Received async event from agent: {type(event).__name__}")
                             yield event  # type: ignore[misc]
@@ -706,6 +730,20 @@ class Step:
 
         return
 
+    def _store_executor_response(self, workflow_run_response: "WorkflowRunResponse") -> None:
+        """Store agent/team responses in step_executor_runs if enabled"""
+        if self._executor_type in ["agent", "team"]:
+            # propogate the workflow run id as parent run id to the executor response
+            self.active_executor.run_response.parent_run_id = workflow_run_response.run_id
+
+            # Get the raw response from the step's active executor
+            raw_response = self.active_executor.run_response
+            if raw_response and isinstance(raw_response, (RunResponse, TeamRunResponse)):
+                if workflow_run_response.step_executor_runs is None:
+                    workflow_run_response.step_executor_runs = []
+                # Add to step_executor_runs
+                workflow_run_response.step_executor_runs.append(raw_response)
+
     def _prepare_message(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]],
@@ -744,7 +782,7 @@ class Step:
             executor_type=self._executor_type,
             executor_name=self.executor_name,
             content=response.content,
-            response=response,
+            step_run_id=getattr(response, "run_id", None),
             images=images,
             videos=videos,
             audio=audio,

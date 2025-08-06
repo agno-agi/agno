@@ -14,12 +14,21 @@ from agno.utils.log import logger
 from agno.workflow.v2.workflow import Workflow
 
 
-def get_run_input(run_dict: Dict[str, Any]) -> str:
+def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> str:
     """Get the run input from the given run dictionary"""
+
+    if is_workflow_run:
+        step_executor_runs = run_dict.get("step_executor_runs", [])
+        if step_executor_runs:
+            for message in step_executor_runs[0].get("messages", []):
+                if message.get("role") == "user":
+                    return message.get("content", "")
+
     if run_dict.get("messages") is not None:
         for message in run_dict["messages"]:
             if message.get("role") == "user":
                 return message.get("content", "")
+
     return ""
 
 
@@ -38,6 +47,11 @@ def get_session_name(session: Dict[str, Any]) -> str:
         # For teams, identify the first Team run and avoid using the first member's run
         if session.get("session_type") == "team":
             run = runs[0] if not runs[0].get("agent_id") else runs[1]
+
+        # TODO: we need messages or run_input somewhere
+        elif session.get("session_type") == "workflow":
+            return ""
+
         else:
             run = runs[0]
 

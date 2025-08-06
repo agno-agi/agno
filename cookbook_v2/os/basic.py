@@ -38,6 +38,7 @@ basic_workflow = Workflow(
     workflow_id="basic-workflow",
     name="Basic Workflow",
     description="Just a simple workflow",
+    db=db,
     steps=[
         Step(
             name="step1",

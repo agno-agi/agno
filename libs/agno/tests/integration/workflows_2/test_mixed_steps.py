@@ -69,8 +69,8 @@ def test_loop_with_parallel(workflow_storage):
 
     response = workflow.run(message="test topic")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 1  # One loop output
-    loop_outputs = response.step_responses[0]
+    assert len(response.step_results) == 1  # One loop output
+    loop_outputs = response.step_results[0]
     assert isinstance(loop_outputs, list)
     assert len(loop_outputs) >= 2  # At least two iterations
 
@@ -95,7 +95,7 @@ def test_loop_with_condition(workflow_storage):
 
     response = workflow.run(message="test data")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 1
+    assert len(response.step_results) == 1
     assert "Analysis" in response.content
 
 
@@ -123,7 +123,7 @@ def test_condition_with_loop(workflow_storage):
 
     response = workflow.run(message="test topic")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 2  # Research + Condition
+    assert len(response.step_results) == 2  # Research + Condition
 
 
 def test_parallel_with_loops(workflow_storage):
@@ -152,7 +152,7 @@ def test_parallel_with_loops(workflow_storage):
 
     response = workflow.run(message="test topic")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 1  # One parallel output
+    assert len(response.step_results) == 1  # One parallel output
 
 
 def test_nested_conditions_and_loops(workflow_storage):
@@ -181,7 +181,7 @@ def test_nested_conditions_and_loops(workflow_storage):
 
     response = workflow.run(message="test data")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 1  # One condition output
+    assert len(response.step_results) == 1  # One condition output
 
 
 def test_parallel_with_conditions_and_loops(workflow_storage):
@@ -206,7 +206,7 @@ def test_parallel_with_conditions_and_loops(workflow_storage):
 
     response = workflow.run(message="test data")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 2  # Parallel + Summary
+    assert len(response.step_results) == 2  # Parallel + Summary
 
 
 @pytest.mark.asyncio
@@ -298,7 +298,7 @@ def test_router_with_loop(workflow_storage):
 
     response = workflow.run(message="test data")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 1
+    assert len(response.step_results) == 1
     assert "Research" in response.content
 
 
@@ -336,8 +336,8 @@ def test_loop_with_router(workflow_storage):
 
     response = workflow.run(message="test data")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 1
-    assert isinstance(response.step_responses[0], list)
+    assert len(response.step_results) == 1
+    assert isinstance(response.step_results[0], list)
 
 
 def test_parallel_with_routers(workflow_storage):
@@ -375,7 +375,7 @@ def test_parallel_with_routers(workflow_storage):
 
     response = workflow.run(message="test data complete")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 1
+    assert len(response.step_results) == 1
 
 
 def test_router_with_condition_and_loop(workflow_storage):
@@ -410,7 +410,7 @@ def test_router_with_condition_and_loop(workflow_storage):
 
     response = workflow.run(message="test research data")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 2
+    assert len(response.step_results) == 2
 
 
 def test_nested_routers(workflow_storage):
@@ -450,7 +450,7 @@ def test_nested_routers(workflow_storage):
 
     response = workflow.run(message="test research data")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 1
+    assert len(response.step_results) == 1
 
 
 def test_router_streaming(workflow_storage):
