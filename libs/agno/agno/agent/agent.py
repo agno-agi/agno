@@ -3080,10 +3080,16 @@ class Agent:
                             reasoning_step = self.update_reasoning_content_from_tool_call(tool_name, tool_args)
 
                             tool_call_metrics = tool_call.metrics
-                            if metrics is not None and metrics.duration is not None and reasoning_state is not None:
+
+                            if (
+                                tool_call_metrics is not None
+                                and tool_call_metrics.duration is not None
+                                and reasoning_state is not None
+                            ):
                                 reasoning_state["reasoning_time_taken"] = reasoning_state[
                                     "reasoning_time_taken"
-                                ] + float(metrics.duration)
+                                ] + float(tool_call_metrics.duration)
+
                         yield self._handle_event(
                             create_tool_call_completed_event(
                                 from_run_response=run_response, tool=tool_call, content=model_response_event.content
