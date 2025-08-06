@@ -116,3 +116,14 @@ if __name__ == "__main__":
     #     message=DifferentModel(name="test"),
     #     markdown=True,
     # )
+
+    # 4. Pass a valid dict that matches ResearchTopic
+    # content_creation_workflow.print_response(
+    #     message={
+    #         "topic": "AI trends in 2024",
+    #         "focus_areas": ["Machine Learning", "Computer Vision"],
+    #         "target_audience": "Tech professionals",
+    #         "sources_required": 8
+    #     },
+    #     markdown=True,
+    # )

@@ -136,7 +136,7 @@ class Workflow:
     websocket_handler: Optional[WebSocketHandler] = None
 
     input_schema: Optional[Type[BaseModel]] = None
-    
+
     # Control whether to store executor responses (agent/team responses) in flattened runs
     store_executor_responses: bool = True
 
@@ -176,14 +176,16 @@ class Workflow:
         self.store_executor_responses = store_executor_responses
         self.input_schema = input_schema
 
-    def _validate_input(self, message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]]) -> Optional[BaseModel]:
+    def _validate_input(
+        self, message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]]
+    ) -> Optional[BaseModel]:
         """Parse and validate input against input_schema if provided"""
         if self.input_schema is None:
             return None
-            
+
         if message is None:
             raise ValueError("Input required when input_schema is set")
-        
+
         # Case 1: Message is already a BaseModel instance
         if isinstance(message, BaseModel):
             if isinstance(message, self.input_schema):
@@ -196,7 +198,7 @@ class Workflow:
             else:
                 # Different BaseModel types
                 raise ValueError(f"Expected {self.input_schema.__name__} but got {type(message).__name__}")
-        
+
         # Case 2: Message is a dict
         elif isinstance(message, dict):
             try:
@@ -204,10 +206,12 @@ class Workflow:
                 return validated_model
             except Exception as e:
                 raise ValueError(f"Failed to parse dict into {self.input_schema.__name__}: {str(e)}")
-        
+
         # Case 3: Other types not supported for structured input
         else:
-            raise ValueError(f"Cannot validate {type(message)} against input_schema. Expected dict or {self.input_schema.__name__} instance.")
+            raise ValueError(
+                f"Cannot validate {type(message)} against input_schema. Expected dict or {self.input_schema.__name__} instance."
+            )
 
     @property
     def run_parameters(self) -> Dict[str, Any]:

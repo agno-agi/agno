@@ -1032,7 +1032,7 @@ def get_base_router(
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
-            
+
         return WorkflowResponse.from_workflow(workflow)
 
     @router.post("/workflows/{workflow_id}/runs")
