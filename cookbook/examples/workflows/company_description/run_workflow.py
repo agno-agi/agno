@@ -11,8 +11,8 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.run.response import RunResponse
 from agno.utils.log import log_error, log_info
-from agno.workflow.v2 import Parallel, Step, Workflow
-from agno.workflow.v2.types import StepInput, StepOutput
+from agno.workflow import Parallel, Step, Workflow
+from agno.workflow.types import StepInput, StepOutput
 from prompts import SUPPLIER_PROFILE_DICT, SUPPLIER_PROFILE_INSTRUCTIONS_GENERAL
 
 crawler_step = Step(

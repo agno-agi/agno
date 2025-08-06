@@ -8,8 +8,8 @@ from agents import (
     report_compiler_agent,
     switching_barriers_agent,
 )
-from agno.workflow.v2 import Condition, Parallel, Step, Workflow
-from agno.workflow.v2.types import StepInput
+from agno.workflow import Condition, Parallel, Step, Workflow
+from agno.workflow.types import StepInput
 from models import ProcurementAnalysisRequest
 
 

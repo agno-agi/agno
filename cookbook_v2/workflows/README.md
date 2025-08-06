@@ -71,7 +71,7 @@ The beauty of this approach is that you maintain the full power and flexibility 
 **Example**: Research → Preprocess data in a function before next step → Content Creation
 
 ```python
-from agno.workflow.v2 import Step, Workflow
+from agno.workflow import Step, Workflow
 
 def data_preprocessor(step_input):
     # Custom preprocessing logic
@@ -134,7 +134,7 @@ For migration to 2.0 refer to this section- [Migration from Workflows 1.0](#migr
 **You can name your steps** for better logging and future support on the Agno platform:
 
 ```python
-from agno.workflow.v2 import Step, Workflow
+from agno.workflow import Step, Workflow
 
 # Named steps for better tracking
 workflow = Workflow(
@@ -167,7 +167,7 @@ workflow.print_response(
 ![Parallel Steps](/cookbook/workflows_2/assets/parallel_steps.png)
 
 ```python
-from agno.workflow.v2 import Parallel, Step, Workflow
+from agno.workflow import Parallel, Step, Workflow
 
 workflow = Workflow(
     name="Parallel Research Pipeline",
@@ -198,7 +198,7 @@ workflow.print_response("Write about the latest AI developments", markdown=True)
 ![Condition Steps](/cookbook/workflows_2/assets/condition_steps.png)
 
 ```python
-from agno.workflow.v2 import Condition, Step, Workflow
+from agno.workflow import Condition, Step, Workflow
 
 def is_tech_topic(step_input) -> bool:
     topic = step_input.message.lower()
@@ -232,7 +232,7 @@ workflow.print_response("Comprehensive analysis of AI and machine learning trend
 ![Loop Steps](/cookbook/workflows_2/assets/loop_steps.png)
 
 ```python
-from agno.workflow.v2 import Loop, Step, Workflow
+from agno.workflow import Loop, Step, Workflow
 
 def quality_check(outputs) -> bool:
     # Return True to break loop, False to continue
@@ -267,7 +267,7 @@ workflow.print_response("Research the impact of renewable energy on global marke
 ![Router Steps](/cookbook/workflows_2/assets/router_steps.png)
 
 ```python
-from agno.workflow.v2 import Router, Step, Workflow
+from agno.workflow import Router, Step, Workflow
 
 def route_by_topic(step_input) -> List[Step]:
     topic = step_input.message.lower()
@@ -305,7 +305,7 @@ workflow.print_response("Latest developments in artificial intelligence and mach
 Better Routing: Use with Router for clean branching logic
 
 ```python
-from agno.workflow.v2 import Steps, Step, Workflow
+from agno.workflow import Steps, Step, Workflow
 
 # Create a reusable content creation sequence
 article_creation_sequence = Steps(
@@ -331,7 +331,7 @@ workflow.print_response("Write an article about renewable energy", markdown=True
 This is where Steps really shines - creating distinct sequences for different content types or workflows:
 
 ```python
-from agno.workflow.v2 import Steps, Router, Step, Workflow
+from agno.workflow import Steps, Router, Step, Workflow
 
 # Define two completely different workflows as Steps
 image_sequence = Steps(
@@ -397,7 +397,7 @@ media_workflow.print_response("Create a cinematic video of city timelapse", mark
 **Example**: Conditions + Parallel + Loops + Custom Post-Processing Function + Routing
 
 ```python
-from agno.workflow.v2 import Condition, Loop, Parallel, Router, Step, Workflow
+from agno.workflow import Condition, Loop, Parallel, Router, Step, Workflow
 
 def research_post_processor(step_input) -> StepOutput:
     """Post-process and consolidate research data from parallel conditions"""
@@ -796,7 +796,7 @@ for event in workflow.run(message="AI trends", stream=True, stream_intermediate_
 Share data across workflow steps:
 
 ```python
-from agno.workflow.v2 import Workflow
+from agno.workflow import Workflow
 from agno.agent.agent import Agent
 
 # Access state in agent tools

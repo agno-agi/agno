@@ -14,8 +14,8 @@ from agents import (
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools
-from agno.workflow.v2 import Condition, Loop, Parallel, Router, Step, Steps, Workflow
-from agno.workflow.v2.types import StepInput, StepOutput
+from agno.workflow import Condition, Loop, Parallel, Router, Step, Steps, Workflow
+from agno.workflow.types import StepInput, StepOutput
 from models import InvestmentAnalysisRequest, InvestmentType, RiskLevel
 
 

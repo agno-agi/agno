@@ -3,7 +3,7 @@ from agents import (
     triage_agent,
 )
 from agno.utils.log import log_info
-from agno.workflow.v2 import Workflow
+from agno.workflow import Workflow
 
 
 def cache_solution(workflow: Workflow, query: str, solution: str):

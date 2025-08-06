@@ -7,10 +7,10 @@ from agno.db.sqlite import SqliteDb
 from agno.os import AgentOS
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
-from agno.workflow.v2.loop import Loop
-from agno.workflow.v2.step import Step
-from agno.workflow.v2.types import StepOutput
-from agno.workflow.v2.workflow import Workflow
+from agno.workflow.loop import Loop
+from agno.workflow.step import Step
+from agno.workflow.types import StepOutput
+from agno.workflow.workflow import Workflow
 
 research_agent = Agent(
     name="Research Agent",

@@ -9,8 +9,8 @@ from agno.os import AgentOS
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
-from agno.workflow.v2.step import Step
-from agno.workflow.v2.workflow import Workflow
+from agno.workflow.step import Step
+from agno.workflow.workflow import Workflow
 from pydantic import BaseModel, Field
 
 
