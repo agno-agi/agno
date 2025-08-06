@@ -244,7 +244,8 @@ class Step:
                             user_id=user_id,
                         )
 
-                        self._store_member_run(workflow_run_response, store_executor_responses)
+                        if store_executor_responses:
+                            self._store_executor_response(workflow_run_response)
 
                         # Switch back to workflow logger after execution
                         use_workflow_logger()
@@ -373,7 +374,8 @@ class Step:
                             stream_intermediate_steps=stream_intermediate_steps,
                         )
 
-                        self._store_member_run(workflow_run_response, store_executor_responses)
+                        if store_executor_responses:
+                            self._store_executor_response(workflow_run_response)
 
                         for event in response_stream:
                             yield event  # type: ignore[misc]
@@ -529,7 +531,8 @@ class Step:
                             user_id=user_id,
                         )
 
-                        self._store_member_run(workflow_run_response, store_executor_responses)
+                        if store_executor_responses:
+                            self._store_executor_response(workflow_run_response)
 
                         # Switch back to workflow logger after execution
                         use_workflow_logger()
@@ -676,7 +679,8 @@ class Step:
                             stream_intermediate_steps=stream_intermediate_steps,
                         )
 
-                        self._store_member_run(workflow_run_response, store_executor_responses)
+                        if store_executor_responses:
+                            self._store_executor_response(workflow_run_response)
 
                         async for event in response_stream:
                             log_debug(f"Received async event from agent: {type(event).__name__}")
@@ -726,21 +730,19 @@ class Step:
 
         return
 
-    def _store_member_run(
-        self, workflow_run_response: "WorkflowRunResponse", store_executor_responses: bool = True
-    ) -> None:
-        """Store agent/team responses in step_member_runs if enabled"""
-        if store_executor_responses and self._executor_type in ["agent", "team"]:
+    def _store_executor_response(self, workflow_run_response: "WorkflowRunResponse") -> None:
+        """Store agent/team responses in step_executor_runs if enabled"""
+        if self._executor_type in ["agent", "team"]:
             # propogate the workflow run id as parent run id to the executor response
             self.active_executor.run_response.parent_run_id = workflow_run_response.run_id
 
             # Get the raw response from the step's active executor
-            raw_response = getattr(self.active_executor, "run_response", None)
+            raw_response = self.active_executor.run_response
             if raw_response and isinstance(raw_response, (RunResponse, TeamRunResponse)):
-                if workflow_run_response.step_member_runs is None:
-                    workflow_run_response.step_member_runs = []
-                # Add to step_member_runs
-                workflow_run_response.step_member_runs.append(raw_response)
+                if workflow_run_response.step_executor_runs is None:
+                    workflow_run_response.step_executor_runs = []
+                # Add to step_executor_runs
+                workflow_run_response.step_executor_runs.append(raw_response)
 
     def _prepare_message(
         self,

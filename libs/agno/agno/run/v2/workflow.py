@@ -427,7 +427,7 @@ class WorkflowRunResponse:
     step_results: List[Union["StepOutput", List["StepOutput"]]] = field(default_factory=list)  # noqa: F821
 
     # Store agent/team responses separately with parent_run_id references
-    step_member_runs: Optional[List[Union[RunResponse, TeamRunResponse]]] = None
+    step_executor_runs: Optional[List[Union[RunResponse, TeamRunResponse]]] = None
 
     # Store events from workflow execution
     events: Optional[List[WorkflowRunResponseEvent]] = None
@@ -457,7 +457,7 @@ class WorkflowRunResponse:
                 "audio",
                 "response_audio",
                 "step_results",
-                "step_member_runs",
+                "step_executor_runs",
                 "events",
                 "workflow_metrics",
             ]
@@ -492,8 +492,8 @@ class WorkflowRunResponse:
                     flattened_responses.append(step_response.to_dict())
             _dict["step_results"] = flattened_responses
 
-        if self.step_member_runs:
-            _dict["step_member_runs"] = [run.to_dict() for run in self.step_member_runs]
+        if self.step_executor_runs:
+            _dict["step_executor_runs"] = [run.to_dict() for run in self.step_executor_runs]
 
         if self.workflow_metrics is not None:
             _dict["workflow_metrics"] = self.workflow_metrics.to_dict()
@@ -525,16 +525,16 @@ class WorkflowRunResponse:
                 # Reconstruct StepOutput from dict
                 parsed_step_results.append(StepOutput.from_dict(step_output_dict))
 
-        # Parse step_member_runs
-        step_member_runs_data = data.pop("step_member_runs", [])
-        step_member_runs: List[Union[RunResponse, TeamRunResponse]] = []
-        if step_member_runs_data:
-            step_member_runs = []
-            for run_data in step_member_runs_data:
+        # Parse step_executor_runs
+        step_executor_runs_data = data.pop("step_executor_runs", [])
+        step_executor_runs: List[Union[RunResponse, TeamRunResponse]] = []
+        if step_executor_runs_data:
+            step_executor_runs = []
+            for run_data in step_executor_runs_data:
                 if "team_id" in run_data or "team_name" in run_data:
-                    step_member_runs.append(TeamRunResponse.from_dict(run_data))
+                    step_executor_runs.append(TeamRunResponse.from_dict(run_data))
                 else:
-                    step_member_runs.append(RunResponse.from_dict(run_data))
+                    step_executor_runs.append(RunResponse.from_dict(run_data))
 
         extra_data = data.pop("extra_data", None)
 
@@ -554,7 +554,7 @@ class WorkflowRunResponse:
 
         return cls(
             step_results=parsed_step_results,
-            step_member_runs=step_member_runs,
+            step_executor_runs=step_executor_runs,
             extra_data=extra_data,
             images=images,
             videos=videos,
