@@ -490,23 +490,13 @@ class Model(ABC):
         """
         # Generate response
         assistant_message.metrics.start_timer()
-        response = self.invoke(
+        provider_response = self.invoke(
+            assistant_message=assistant_message,
             messages=messages,
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
         )
-        assistant_message.metrics.stop_timer()
-
-        # Parse provider response
-        provider_response: ModelResponse = self.parse_provider_response(response, response_format=response_format)
-
-        # Add parsed data to model response
-        if provider_response.parsed is not None:
-            model_response.parsed = provider_response.parsed
-
-        # Populate the assistant message
-        self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
 
         # Update model response with assistant message content and audio
         if assistant_message.content is not None:

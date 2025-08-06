@@ -314,25 +314,44 @@ class OpenAIChat(Model):
     def invoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> ChatCompletion:
+    ) -> ModelResponse:
         """
-        Send a chat completion request to the OpenAI API.
+        Send a chat completion request to the OpenAI API and parse the response.
 
         Args:
             messages (List[Message]): A list of messages to send to the model.
+            assistant_message (Message): The assistant message to populate.
+            response_format (Optional[Union[Dict, Type[BaseModel]]]): The response format to use.
+            tools (Optional[List[Dict[str, Any]]]): The tools to use.
+            tool_choice (Optional[Union[str, Dict[str, Any]]]): The tool choice to use.
 
         Returns:
-            ChatCompletion: The chat completion response from the API.
+            ModelResponse: The chat completion response from the API.
         """
         try:
-            return self.get_client().chat.completions.create(
+            response = self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
+            assistant_message.metrics.stop_timer()
+
+            # Parse provider response
+            provider_response: ModelResponse = self.parse_provider_response(response, response_format=response_format)
+
+            # Add parsed data to model response
+            if provider_response.parsed is not None:
+                response.parsed = provider_response.parsed
+
+            # Populate the assistant message
+            self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
+
+            return provider_response
+
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")
             error_message = e.response.json().get("error", {})
@@ -374,25 +393,44 @@ class OpenAIChat(Model):
     async def ainvoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> ChatCompletion:
+    ) -> ModelResponse:
         """
         Sends an asynchronous chat completion request to the OpenAI API.
 
         Args:
             messages (List[Message]): A list of messages to send to the model.
+            assistant_message (Message): The assistant message to populate.
+            response_format (Optional[Union[Dict, Type[BaseModel]]]): The response format to use.
+            tools (Optional[List[Dict[str, Any]]]): The tools to use.
+            tool_choice (Optional[Union[str, Dict[str, Any]]]): The tool choice to use.
 
         Returns:
-            ChatCompletion: The chat completion response from the API.
+            ModelResponse: The chat completion response from the API.
         """
         try:
-            return await self.get_async_client().chat.completions.create(
+            response = await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
+            assistant_message.metrics.stop_timer()
+
+            # Parse provider response
+            provider_response: ModelResponse = self.parse_provider_response(response, response_format=response_format)
+
+            # Add parsed data to model response
+            if provider_response.parsed is not None:
+                response.parsed = provider_response.parsed
+
+            # Populate the assistant message
+            self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
+
+            return provider_response
+
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")
             error_message = e.response.json().get("error", {})
@@ -434,10 +472,11 @@ class OpenAIChat(Model):
     def invoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Iterator[ChatCompletionChunk]:
+    ) -> Iterator[ModelResponse]:
         """
         Send a streaming chat completion request to the OpenAI API.
 
