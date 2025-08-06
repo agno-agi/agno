@@ -55,10 +55,10 @@ from agno.os.utils import (
 )
 from agno.run.response import RunResponse, RunResponseErrorEvent
 from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
-from agno.run.v2.workflow import WorkflowErrorEvent
+from agno.run.workflow import WorkflowErrorEvent
 from agno.team.team import Team
 from agno.utils.log import log_debug, log_error, log_warning, logger
-from agno.workflow.v2.workflow import Workflow
+from agno.workflow.workflow import Workflow
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
