@@ -230,6 +230,10 @@ class Team:
     parser_model: Optional[Model] = None
     # Provide a prompt for the parser model
     parser_model_prompt: Optional[str] = None
+    # Provide an output model to parse the response from the team
+    output_model: Optional[Model] = None
+    # Provide a prompt for the output model
+    output_model_prompt: Optional[str] = None
     # If `response_model` is set, sets the response mode of the model, i.e. if the model should explicitly respond with a JSON object instead of a Pydantic model
     use_json_mode: bool = False
     # If True, parse the response
@@ -346,6 +350,8 @@ class Team:
         response_model: Optional[Type[BaseModel]] = None,
         parser_model: Optional[Model] = None,
         parser_model_prompt: Optional[str] = None,
+        output_model: Optional[Model] = None,
+        output_model_prompt: Optional[str] = None,
         use_json_mode: bool = False,
         parse_response: bool = True,
         memory: Optional[Union[TeamMemory, Memory]] = None,
@@ -432,6 +438,8 @@ class Team:
         self.response_model = response_model
         self.parser_model = parser_model
         self.parser_model_prompt = parser_model_prompt
+        self.output_model = output_model
+        self.output_model_prompt = output_model_prompt
         self.use_json_mode = use_json_mode
         self.parse_response = parse_response
 
@@ -1016,6 +1024,9 @@ class Team:
             tool_call_limit=self.tool_call_limit,
         )
 
+        # If an output model is provided, generate output using the output model
+        self._parse_response_with_output_model(model_response, run_messages)
+
         # If a parser model is provided, structure the response separately
         self._parse_response_with_parser_model(model_response, run_messages)
 
@@ -1085,12 +1096,26 @@ class Team:
             yield self._handle_event(create_team_run_response_started_event(run_response), run_response)
 
         # 2. Get a response from the model
-        yield from self._handle_model_response_stream(
-            run_response=run_response,
-            run_messages=run_messages,
-            response_format=response_format,
-            stream_intermediate_steps=stream_intermediate_steps,
-        )
+        if self.output_model is None:
+            yield from self._handle_model_response_stream(
+                run_response=run_response,
+                run_messages=run_messages,
+                response_format=response_format,
+                stream_intermediate_steps=stream_intermediate_steps,
+            )
+        else:
+            for event in self._handle_model_response_stream(
+                run_response=run_response,
+                run_messages=run_messages,
+                response_format=response_format,
+                stream_intermediate_steps=stream_intermediate_steps,
+            ):
+                # TODO: Custom event for main response when using output model
+                pass
+
+            yield from self._generate_response_with_output_model_stream(
+                run_response=run_response, run_messages=run_messages
+            )
 
         # If a parser model is provided, structure the response separately
         yield from self._parse_response_with_parser_model_stream(
@@ -2386,6 +2411,37 @@ class Team:
                     )
             else:
                 log_warning("A response model is required to parse the response with a parser model")
+
+    def _parse_response_with_output_model(self, model_response: ModelResponse, run_messages: RunMessages) -> None:
+        """Parse the model response using the output model."""
+        if self.output_model is None:
+            return
+
+        messages_for_output_model = self.get_messages_for_output_model(run_messages.messages)
+        output_model_response: ModelResponse = self.output_model.response(messages=messages_for_output_model)
+        model_response.content = output_model_response.content
+
+    def _generate_response_with_output_model_stream(self, run_response: TeamRunResponse, run_messages: RunMessages):
+        """Parse the model response using the output model stream."""
+        if self.output_model is None:
+            return
+
+        messages_for_output_model = self.get_messages_for_output_model(run_messages.messages)
+        model_response = ModelResponse(content="")
+
+        for model_response_event in self.output_model.response_stream(messages=messages_for_output_model):
+            yield from self._handle_model_response_chunk(
+                run_response=run_response,
+                full_model_response=model_response,
+                model_response_event=model_response_event,
+            )
+
+        # Build a list of messages that should be added to the RunResponse
+        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+        # Update the RunResponse messages
+        run_response.messages = messages_for_run_response
+        # Update the RunResponse metrics
+        run_response.metrics = self._aggregate_metrics_from_messages(messages_for_run_response)
 
     def _handle_event(self, event: Union[RunResponseEvent, TeamRunResponseEvent], run_response: TeamRunResponse):
         # We only store events that are not run_response_content events
@@ -5564,6 +5620,24 @@ class Team:
             Message(role="system", content=system_content),
             Message(role="user", content=run_response.content),
         ]
+
+    def get_messages_for_output_model(self, messages: List[Message]) -> List[Message]:
+        """Get the messages for the output model."""
+
+        if self.output_model_prompt is not None:
+            system_message_exists = False
+            for message in messages:
+                if message.role == "system":
+                    system_message_exists = True
+                    message.content = self.output_model_prompt
+                    break
+            if not system_message_exists:
+                messages.insert(0, Message(role="system", content=self.output_model_prompt))
+
+        # Remove the last assistant message from the messages list
+        messages.pop(-1)
+
+        return messages
 
     def _format_message_with_state_variables(self, message: Any, user_id: Optional[str] = None) -> Any:
         """Format a message with the session state variables."""

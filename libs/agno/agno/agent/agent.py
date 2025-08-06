@@ -418,7 +418,8 @@ class Agent:
         parser_model_prompt: Optional[str] = None,
         response_model: Optional[Type[BaseModel]] = None,
         parse_response: bool = True,
-        output_model: Optional[Type[BaseModel]] = None,
+        output_model: Optional[Model] = None,
+        output_model_prompt: Optional[str] = None,
         structured_outputs: Optional[bool] = None,
         use_json_mode: bool = False,
         save_response_to_file: Optional[str] = None,
@@ -523,6 +524,7 @@ class Agent:
         self.response_model = response_model
         self.parse_response = parse_response
         self.output_model = output_model
+        self.output_model_prompt = output_model_prompt
 
         self.structured_outputs = structured_outputs
 
@@ -797,12 +799,11 @@ class Agent:
             tool_call_limit=self.tool_call_limit,
             response_format=response_format,
         )
+        # If an output model is provided, generate output using the output model
+        self._generate_response_with_output_model(model_response, run_messages)
 
         # If a parser model is provided, structure the response separately
         self._parse_response_with_parser_model(model_response, run_messages)
-
-        # If an output model is provided, structure the response separately
-        self._parse_response_with_output_model(model_response, run_messages)
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
@@ -883,13 +884,31 @@ class Agent:
         index_of_last_user_message = len(run_messages.messages)
 
         # 2. Process model response
-        for event in self._handle_model_response_stream(
-            run_response=run_response,
-            run_messages=run_messages,
-            response_format=response_format,
-            stream_intermediate_steps=stream_intermediate_steps,
-        ):
-            yield event
+        if self.output_model is None:
+            for event in self._handle_model_response_stream(
+                run_response=run_response,
+                run_messages=run_messages,
+                response_format=response_format,
+                stream_intermediate_steps=stream_intermediate_steps,
+            ):
+                yield event
+        else:
+            for event in self._handle_model_response_stream(
+                run_response=run_response,
+                run_messages=run_messages,
+                response_format=response_format,
+                stream_intermediate_steps=stream_intermediate_steps,
+            ):
+                if stream_intermediate_steps:
+                    # TODO: Custom event for main response when using output model
+                    yield self._handle_event(
+                        create_run_response_content_event(run_response, event.content), run_response
+                    )
+
+            # If an output model is provided, generate output using the output model
+            yield from self._generate_response_with_output_model_stream(
+                run_response=run_response, run_messages=run_messages
+            )
 
         # If a parser model is provided, structure the response separately
         yield from self._parse_response_with_parser_model_stream(
@@ -5043,18 +5062,23 @@ class Agent:
             Message(role="user", content=run_response.content),
         ]
 
-    def get_messages_for_output_model(self, model_response: ModelResponse) -> List[Message]:
+    def get_messages_for_output_model(self, messages: List[Message]) -> List[Message]:
         """Get the messages for the output model."""
-        system_content = (
-            self.output_model_prompt
-            if self.output_model_prompt is not None
-            else "You are tasked with expanding on the provided data."
-        )
 
-        return [
-            Message(role="system", content=system_content),
-            Message(role="user", content=model_response.content),
-        ]
+        if self.output_model_prompt is not None:
+            system_message_exists = False
+            for message in messages:
+                if message.role == "system":
+                    system_message_exists = True
+                    message.content = self.output_model_prompt
+                    break
+            if not system_message_exists:
+                messages.insert(0, Message(role="system", content=self.output_model_prompt))
+
+        # Remove the last assistant message from the messages list
+        messages.pop(-1)
+
+        return messages
 
     def get_session_summary(self, session_id: Optional[str] = None, user_id: Optional[str] = None):
         """Get the session summary for the given session ID and user ID."""
@@ -6376,16 +6400,37 @@ class Agent:
             else:
                 log_warning("A response model is required to parse the response with a parser model")
 
-    def _parse_response_with_output_model(self, model_response: ModelResponse, run_messages: RunMessages) -> None:
+    def _generate_response_with_output_model(self, model_response: ModelResponse, run_messages: RunMessages) -> None:
         """Parse the model response using the output model."""
         if self.output_model is None:
             return
 
-        messages_for_output_model = self.get_messages_for_output_model(model_response)
-        output_model_response: ModelResponse = self.output_model.response(
-            messages=messages_for_output_model,
-        )
+        messages_for_output_model = self.get_messages_for_output_model(run_messages.messages)
+        output_model_response: ModelResponse = self.output_model.response(messages=messages_for_output_model)
         model_response.content = output_model_response.content
+
+    def _generate_response_with_output_model_stream(self, run_response: RunResponse, run_messages: RunMessages):
+        """Parse the model response using the output model."""
+        messages_for_output_model = self.get_messages_for_output_model(run_messages.messages)
+
+        # Remove the last assistant message from the messages list
+        run_response.messages.pop(-1)
+
+        model_response = ModelResponse(content="")
+
+        for model_response_event in self.output_model.response_stream(messages=messages_for_output_model):
+            yield from self._handle_model_response_chunk(
+                run_response=run_response,
+                model_response=model_response,
+                model_response_event=model_response_event,
+            )
+
+        # Build a list of messages that should be added to the RunResponse
+        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+        # Update the RunResponse messages
+        run_response.messages = messages_for_run_response
+        # Update the RunResponse metrics
+        run_response.metrics = self.aggregate_metrics_from_messages(messages_for_run_response)
 
     def _handle_event(self, event: RunResponseEvent, run_response: RunResponse):
         # We only store events that are not run_response_content events
