@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
+
 from fastapi import UploadFile
 
 from agno.knowledge.reader import Reader

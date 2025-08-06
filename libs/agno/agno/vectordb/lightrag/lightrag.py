@@ -1,11 +1,11 @@
-from typing import Any, Dict, List, Optional
 import asyncio
+from typing import Any, Dict, List, Optional
+
+import httpx
 
 from agno.knowledge.document import Document
-
-from agno.utils.log import log_debug, log_info, log_warning, log_error
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
-import httpx
 
 DEFAULT_SERVER_URL = "http://localhost:9621"
 
@@ -95,7 +95,6 @@ class LightRag(VectorDb):
 
         mode: str = "hybrid"  # Default mode, can be "local", "global", or "hybrid"
         try:
-
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     f"{self.server_url}/query",
@@ -117,6 +116,7 @@ class LightRag(VectorDb):
         except Exception as e:
             log_error(f"Unexpected error during LightRAG server search: {type(e).__name__}: {str(e)}")
             import traceback
+
             log_error(f"Full traceback: {traceback.format_exc()}")
             return None
 
@@ -163,6 +163,7 @@ class LightRag(VectorDb):
     def delete_by_external_id(self, external_id: str) -> bool:
         """Delete documents by external ID (sync wrapper)"""
         import asyncio
+
         try:
             return asyncio.run(self.async_delete_by_external_id(external_id))
         except Exception as e:
@@ -172,17 +173,14 @@ class LightRag(VectorDb):
     async def async_delete_by_external_id(self, external_id: str) -> bool:
         """Delete documents by external ID"""
         try:
-            payload = {
-                "doc_ids": [external_id],
-                "delete_file": False
-            }
-            
+            payload = {"doc_ids": [external_id], "delete_file": False}
+
             async with httpx.AsyncClient() as client:
                 response = await client.request(
                     method="DELETE",
                     url=f"{self.server_url}/documents/delete_document",
                     headers=self._get_headers(),
-                    json=payload
+                    json=payload,
                 )
                 response.raise_for_status()
                 return True
@@ -205,31 +203,27 @@ class LightRag(VectorDb):
             result = response.json()
             log_debug(f"Text insertion result: {result}")
             return result
-        
+
     async def insert_file_bytes(
-            self, 
-            file_content: bytes, 
-            filename: Optional[str] = None, 
-            content_type: Optional[str] = None, 
-            send_metadata: bool = False,
-            skip_if_exists: bool = False
-        ) -> Dict[str, Any]:
+        self,
+        file_content: bytes,
+        filename: Optional[str] = None,
+        content_type: Optional[str] = None,
+        send_metadata: bool = False,
+        skip_if_exists: bool = False,
+    ) -> Dict[str, Any]:
         """Insert file from raw bytes into the LightRAG server."""
-        
+
         if not file_content:
             log_warning("File content is empty.")
             return {"error": "File content is empty"}
-        
+
         if send_metadata and filename and content_type:
             # Send with filename and content type (full UploadFile format)
-            files = {
-                "file": (filename, file_content, content_type)
-            }
+            files = {"file": (filename, file_content, content_type)}
         else:
             # Send just binary data
-            files = {
-                "file": file_content
-            }
+            files = {"file": file_content}
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -253,15 +247,12 @@ class LightRag(VectorDb):
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{self.server_url}/documents/text",
-                json={
-                    "file_source": file_source,
-                    "text": text
-                },
+                json={"file_source": file_source, "text": text},
                 headers=self._get_headers(),
             )
             response.raise_for_status()
             result = response.json()
-            
+
             log_info(f"Text insertion result: {result}")
             track_id = result["track_id"]
             log_info(f"Track ID: {track_id}")
@@ -280,20 +271,19 @@ class LightRag(VectorDb):
             result = response.json()
 
             log_debug(f"Document ID result: {result}")
-            
+
             # Extract document ID from the documents array
             if "documents" in result and len(result["documents"]) > 0:
                 document_id = result["documents"][0]["id"]
                 return document_id
             else:
-                raise ValueError(f"No documents found in track response: {result}")
-        
+                log_error(f"No documents found in track response: {result}")
+                return None
 
     def _is_valid_url(self, url: str) -> bool:
         """Helper to check if URL is valid."""
         # TODO: Define supported extensions or implement proper URL validation
         return True
-    
 
     async def lightrag_retriever(
         self,
@@ -312,7 +302,7 @@ class LightRag(VectorDb):
             List of retrieved documents or None if search fails
         """
 
-        mode: str = "hybrid",  # Default mode, can be "local", "global", or "hybrid"
+        mode: str = ("hybrid",)  # Default mode, can be "local", "global", or "hybrid"
 
         try:
             import httpx
@@ -342,7 +332,6 @@ class LightRag(VectorDb):
             log_error(f"Full traceback: {traceback.format_exc()}")
             return None
 
-
     def _format_lightrag_response(self, result: Any, query: str, mode: str) -> List[Document]:
         print("Hitting format lightrag response")
         """Format LightRAG server response to expected document format."""
@@ -350,28 +339,25 @@ class LightRag(VectorDb):
         # Convert the response to the expected format
         if isinstance(result, dict) and "response" in result:
             # Wrap the response in a Document object
-            return [Document(
-                content=result["response"], 
-                meta_data={"source": "lightrag", "query": query, "mode": mode}
-            )]
+            return [
+                Document(content=result["response"], meta_data={"source": "lightrag", "query": query, "mode": mode})
+            ]
         elif isinstance(result, list):
             # Convert list items to Document objects
             documents = []
             for item in result:
                 if isinstance(item, dict) and "content" in item:
-                    documents.append(Document(
-                        content=item["content"],
-                        meta_data=item.get("metadata", {"source": "lightrag", "query": query, "mode": mode})
-                    ))
+                    documents.append(
+                        Document(
+                            content=item["content"],
+                            meta_data=item.get("metadata", {"source": "lightrag", "query": query, "mode": mode}),
+                        )
+                    )
                 else:
-                    documents.append(Document(
-                        content=str(item),
-                        meta_data={"source": "lightrag", "query": query, "mode": mode}
-                    ))
+                    documents.append(
+                        Document(content=str(item), meta_data={"source": "lightrag", "query": query, "mode": mode})
+                    )
             return documents
         else:
             # If it's a string or other format, wrap it in a Document
-            return [Document(
-                content=str(result), 
-                meta_data={"source": "lightrag", "query": query, "mode": mode}
-            )]
+            return [Document(content=str(result), meta_data={"source": "lightrag", "query": query, "mode": mode})]
