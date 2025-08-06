@@ -353,7 +353,7 @@ class WorkflowSessionDetailSchema(BaseModel):
 
     session_data: Optional[dict]
     workflow_data: Optional[dict]
-    extra_data: Optional[dict]
+    metadata: Optional[dict]
 
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
@@ -371,7 +371,7 @@ class WorkflowSessionDetailSchema(BaseModel):
             session_name=session_name,
             session_data=session.session_data,
             workflow_data=session.workflow_data,
-            extra_data=session.extra_data,
+            metadata=session.metadata,
             created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
             updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
         )
