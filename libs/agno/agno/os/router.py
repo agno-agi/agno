@@ -363,8 +363,7 @@ def get_base_router(
             ],
             apps=apps_response,
             agents=[
-                AgentSummaryResponse(agent_id=agent.agent_id, name=agent.name, description=agent.description)
-                for agent in os.agents
+                AgentSummaryResponse(id=agent.id, name=agent.name, description=agent.description) for agent in os.agents
             ]
             if os.agents
             else [],
@@ -408,16 +407,16 @@ def get_base_router(
 
     # -- Agent routes ---
 
-    @router.post("/agents/{agent_id}/runs")
+    @router.post("/agents/{id}/runs")
     async def create_agent_run(
-        agent_id: str,
+        id: str,
         message: str = Form(...),
         stream: bool = Form(False),
         session_id: Optional[str] = Form(None),
         user_id: Optional[str] = Form(None),
         files: Optional[List[UploadFile]] = File(None),
     ):
-        agent = get_agent_by_id(agent_id, os.agents)
+        agent = get_agent_by_id(id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -513,10 +512,10 @@ def get_base_router(
             return run_response.to_dict()
 
     @router.post(
-        "/agents/{agent_id}/runs/{run_id}/continue",
+        "/agents/{id}/runs/{run_id}/continue",
     )
     async def continue_agent_run(
-        agent_id: str,
+        id: str,
         run_id: str,
         tools: str = Form(...),  # JSON string of tools
         session_id: Optional[str] = Form(None),
@@ -529,7 +528,7 @@ def get_base_router(
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid JSON in tools field")
 
-        agent = get_agent_by_id(agent_id, os.agents)
+        agent = get_agent_by_id(id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -573,11 +572,11 @@ def get_base_router(
             return run_response_obj.to_dict()
 
     @router.delete(
-        "/agents/{agent_id}/sessions/{session_id}",
+        "/agents/{id}/sessions/{session_id}",
         status_code=204,
     )
-    async def delete_agent_session(agent_id: str, session_id: str) -> None:
-        agent = get_agent_by_id(agent_id, os.agents)
+    async def delete_agent_session(id: str, session_id: str) -> None:
+        agent = get_agent_by_id(id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
         if agent.db is None:
@@ -603,27 +602,27 @@ def get_base_router(
         return agents
 
     @router.get(
-        "/agents/{agent_id}/sessions",
+        "/agents/{id}/sessions",
         response_model=PaginatedResponse[SessionSchema],
         status_code=200,
     )
     async def get_agent_sessions(
-        agent_id: str,
+        id: str,
         user_id: Optional[str] = Query(default=None, description="Filter sessions by user ID"),
         limit: Optional[int] = Query(default=20, description="Number of sessions to return"),
         page: Optional[int] = Query(default=1, description="Page number"),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
     ) -> PaginatedResponse[SessionSchema]:
-        agent = get_agent_by_id(agent_id, os.agents)
+        agent = get_agent_by_id(id, os.agents)
         if agent is None:
-            raise HTTPException(status_code=404, detail=f"Agent with id {agent_id} not found")
+            raise HTTPException(status_code=404, detail=f"Agent with id {id} not found")
         if agent.db is None:
             raise HTTPException(status_code=404, detail="Agent has no database. Sessions are unavailable.")
 
         sessions, total_count = agent.db.get_sessions(
             session_type=SessionType.AGENT,
-            component_id=agent_id,
+            component_id=id,
             user_id=user_id,
             limit=limit,
             page=page,
@@ -643,17 +642,17 @@ def get_base_router(
         )
 
     @router.get(
-        "/agents/{agent_id}/sessions/{session_id}",
+        "/agents/{id}/sessions/{session_id}",
         response_model=AgentSessionDetailSchema,
         status_code=200,
     )
     async def get_agent_session_by_id(
-        agent_id: str,
+        id: str,
         session_id: str,
     ) -> AgentSessionDetailSchema:
-        agent = get_agent_by_id(agent_id, os.agents)
+        agent = get_agent_by_id(id, os.agents)
         if agent is None:
-            raise HTTPException(status_code=404, detail=f"Agent with id {agent_id} not found")
+            raise HTTPException(status_code=404, detail=f"Agent with id {id} not found")
 
         if agent.db is None:
             raise HTTPException(status_code=404, detail="Agent has no database. Sessions are unavailable.")
@@ -665,17 +664,17 @@ def get_base_router(
         return AgentSessionDetailSchema.from_session(session)  # type: ignore
 
     @router.get(
-        "/agents/{agent_id}/sessions/{session_id}/runs",
+        "/agents/{id}/sessions/{session_id}/runs",
         response_model=List[RunSchema],
         status_code=200,
     )
     async def get_agent_session_runs(
-        agent_id: str,
+        id: str,
         session_id: str,
     ) -> List[RunSchema]:
-        agent = get_agent_by_id(agent_id, os.agents)
+        agent = get_agent_by_id(id, os.agents)
         if agent is None:
-            raise HTTPException(status_code=404, detail=f"Agent with id {agent_id} not found")
+            raise HTTPException(status_code=404, detail=f"Agent with id {id} not found")
 
         if agent.db is None:
             raise HTTPException(status_code=404, detail="Agent has no database. Runs are unavailable.")
@@ -687,26 +686,26 @@ def get_base_router(
         return [RunSchema.from_dict(run) for run in session["runs"]]  # type: ignore
 
     @router.get(
-        "/agents/{agent_id}",
+        "/agents/{id}",
         response_model=AgentResponse,
     )
-    async def get_agent(agent_id: str):
-        agent = get_agent_by_id(agent_id, os.agents)
+    async def get_agent(id: str):
+        agent = get_agent_by_id(id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
         return AgentResponse.from_agent(agent)
 
     @router.post(
-        "/agents/{agent_id}/sessions/{session_id}/rename",
+        "/agents/{id}/sessions/{session_id}/rename",
         response_model=AgentSessionDetailSchema,
     )
     async def rename_agent_session(
-        agent_id: str,
+        id: str,
         session_id: str,
         session_name: str = Body(embed=True),
     ):
-        agent = get_agent_by_id(agent_id, os.agents)
+        agent = get_agent_by_id(id, os.agents)
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
         if agent.db is None:

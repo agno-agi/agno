@@ -43,7 +43,7 @@ class RunEvent(str, Enum):
 class BaseAgentRunResponseEvent(BaseRunResponseEvent):
     created_at: int = field(default_factory=lambda: int(time()))
     event: str = ""
-    agent_id: str = ""
+    id: str = ""
     agent_name: str = ""
     run_id: Optional[str] = None
     session_id: Optional[str] = None
@@ -240,7 +240,7 @@ class RunResponse:
     model: Optional[str] = None
     model_provider: Optional[str] = None
     run_id: Optional[str] = None
-    agent_id: Optional[str] = None
+    id: Optional[str] = None
     agent_name: Optional[str] = None
     session_id: Optional[str] = None
     team_session_id: Optional[str] = None

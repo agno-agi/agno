@@ -26,7 +26,7 @@ class TeamSession:
     # ID of the workflow that this session is associated with
     workflow_id: Optional[str] = None
 
-    # Team Data: agent_id, name and model
+    # Team Data: id, name and model
     team_data: Optional[Dict[str, Any]] = None
     # Session Data: session_name, session_state, images, videos, audio
     session_data: Optional[Dict[str, Any]] = None
@@ -69,7 +69,7 @@ class TeamSession:
         runs = data.get("runs")
         serialized_runs = []
         for run in runs:
-            if "agent_id" in run:
+            if "id" in run:
                 serialized_runs.append(RunResponse.from_dict(run))
             elif "team_id" in run:
                 serialized_runs.append(TeamRunResponse.from_dict(run))
@@ -107,7 +107,7 @@ class TeamSession:
     def get_messages_from_last_n_runs(
         self,
         session_id: str,
-        agent_id: Optional[str] = None,
+        id: Optional[str] = None,
         team_id: Optional[str] = None,
         last_n: Optional[int] = None,
         skip_role: Optional[str] = None,
@@ -118,7 +118,7 @@ class TeamSession:
         """Returns the messages from the last_n runs, excluding previously tagged history messages.
         Args:
             session_id: The session id to get the messages from.
-            agent_id: The id of the agent to get the messages from.
+            id: The id of the agent to get the messages from.
             team_id: The id of the team to get the messages from.
             last_n: The number of runs to return from the end of the conversation. Defaults to all runs.
             skip_role: Skip messages with this role.
@@ -134,9 +134,9 @@ class TeamSession:
             skip_status = [RunStatus.paused, RunStatus.cancelled, RunStatus.error]
 
         session_runs = self.runs
-        # Filter by agent_id and team_id
-        if agent_id:
-            session_runs = [run for run in session_runs if hasattr(run, "agent_id") and run.agent_id == agent_id]  # type: ignore
+        # Filter by id and team_id
+        if id:
+            session_runs = [run for run in session_runs if hasattr(run, "id") and run.id == id]  # type: ignore
         if team_id:
             session_runs = [run for run in session_runs if hasattr(run, "team_id") and run.team_id == team_id]  # type: ignore
 

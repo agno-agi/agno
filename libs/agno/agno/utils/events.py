@@ -55,7 +55,7 @@ def create_team_run_response_started_event(from_run_response: TeamRunResponse) -
 def create_run_response_started_event(from_run_response: RunResponse) -> RunResponseStartedEvent:
     return RunResponseStartedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,  # type: ignore
+        id=from_run_response.id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
@@ -88,7 +88,7 @@ def create_team_run_response_completed_event(from_run_response: TeamRunResponse)
 def create_run_response_completed_event(from_run_response: RunResponse) -> RunResponseCompletedEvent:
     return RunResponseCompletedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,  # type: ignore
+        id=from_run_response.id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
@@ -110,7 +110,7 @@ def create_run_response_paused_event(
 ) -> RunResponsePausedEvent:
     return RunResponsePausedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,  # type: ignore
+        id=from_run_response.id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
@@ -122,7 +122,7 @@ def create_run_response_paused_event(
 def create_run_response_continued_event(from_run_response: RunResponse) -> RunResponseContinuedEvent:
     return RunResponseContinuedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,  # type: ignore
+        id=from_run_response.id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
@@ -143,7 +143,7 @@ def create_team_run_response_error_event(from_run_response: TeamRunResponse, err
 def create_run_response_error_event(from_run_response: RunResponse, error: str) -> RunResponseErrorEvent:
     return RunResponseErrorEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,  # type: ignore
+        id=from_run_response.id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
@@ -167,7 +167,7 @@ def create_team_run_response_cancelled_event(
 def create_run_response_cancelled_event(from_run_response: RunResponse, reason: str) -> RunResponseCancelledEvent:
     return RunResponseCancelledEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,  # type: ignore
+        id=from_run_response.id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
@@ -178,7 +178,7 @@ def create_run_response_cancelled_event(from_run_response: RunResponse, reason: 
 def create_memory_update_started_event(from_run_response: RunResponse) -> MemoryUpdateStartedEvent:
     return MemoryUpdateStartedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,  # type: ignore
+        id=from_run_response.id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
@@ -198,7 +198,7 @@ def create_team_memory_update_started_event(from_run_response: TeamRunResponse) 
 def create_memory_update_completed_event(from_run_response: RunResponse) -> MemoryUpdateCompletedEvent:
     return MemoryUpdateCompletedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,  # type: ignore
+        id=from_run_response.id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
@@ -218,7 +218,7 @@ def create_team_memory_update_completed_event(from_run_response: TeamRunResponse
 def create_reasoning_started_event(from_run_response: RunResponse) -> ReasoningStartedEvent:
     return ReasoningStartedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,  # type: ignore
+        id=from_run_response.id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
@@ -240,7 +240,7 @@ def create_reasoning_step_event(
 ) -> ReasoningStepEvent:
     return ReasoningStepEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,  # type: ignore
+        id=from_run_response.id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
@@ -270,7 +270,7 @@ def create_reasoning_completed_event(
 ) -> ReasoningCompletedEvent:
     return ReasoningCompletedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,  # type: ignore
+        id=from_run_response.id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
@@ -296,7 +296,7 @@ def create_team_reasoning_completed_event(
 def create_tool_call_started_event(from_run_response: RunResponse, tool: ToolExecution) -> ToolCallStartedEvent:
     return ToolCallStartedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,  # type: ignore
+        id=from_run_response.id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
@@ -322,7 +322,7 @@ def create_tool_call_completed_event(
 ) -> ToolCallCompletedEvent:
     return ToolCallCompletedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,  # type: ignore
+        id=from_run_response.id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
@@ -365,7 +365,7 @@ def create_run_response_content_event(
 
     return RunResponseContentEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,  # type: ignore
+        id=from_run_response.id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
@@ -411,7 +411,7 @@ def create_parser_model_response_started_event(
 ) -> ParserModelResponseStartedEvent:
     return ParserModelResponseStartedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,  # type: ignore
+        id=from_run_response.id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
@@ -423,7 +423,7 @@ def create_parser_model_response_completed_event(
 ) -> ParserModelResponseCompletedEvent:
     return ParserModelResponseCompletedEvent(
         session_id=from_run_response.session_id,
-        agent_id=from_run_response.agent_id,  # type: ignore
+        id=from_run_response.id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,

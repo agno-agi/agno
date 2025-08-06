@@ -21,7 +21,7 @@ db = SingleStoreDb(
 # Setup a basic agent and a basic team
 agent = Agent(
     name="Basic Agent",
-    agent_id="basic-agent",
+    id="basic-agent",
     model=OpenAIChat(id="gpt-4o"),
     db=db,
     enable_user_memories=True,

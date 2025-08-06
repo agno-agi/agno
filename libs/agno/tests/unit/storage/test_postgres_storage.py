@@ -187,7 +187,7 @@ def test_get_all_sessions(agent_storage):
     # Test filtering by agent_id
     mock_session.execute.reset_mock()
     mock_result.fetchall.return_value = [
-        MagicMock(_mapping=session.to_dict()) for session in sessions if session.agent_id == "agent-1"
+        MagicMock(_mapping=session.to_dict()) for session in sessions if session.id == "agent-1"
     ]
     mock_session.execute.return_value = mock_result
 

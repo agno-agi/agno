@@ -4,7 +4,7 @@ from agno.models.openai import OpenAIChat
 from agno.playground import Playground
 
 audio_and_text_agent = Agent(
-    agent_id="audio-text-agent",
+    id="audio-text-agent",
     name="Audio and Text Chat Agent",
     model=OpenAIChat(
         id="gpt-4o-audio-preview",

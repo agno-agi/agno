@@ -11,7 +11,7 @@ image_agent_storage_file: str = "tmp/image_agent.db"
 
 blog_to_podcast_agent = Agent(
     name="Blog to Podcast Agent",
-    agent_id="blog_to_podcast_agent",
+    id="blog_to_podcast_agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[
         ElevenLabsTools(

@@ -110,7 +110,7 @@ def test_insert_agent_session(postgres_db_real: PostgresDb, sample_agent_session
     assert result is not None
     assert isinstance(result, AgentSession)
     assert result.session_id == sample_agent_session.session_id
-    assert result.agent_id == sample_agent_session.agent_id
+    assert result.id == sample_agent_session.id
     assert result.user_id == sample_agent_session.user_id
     assert result.session_data == sample_agent_session.session_data
     assert result.agent_data == sample_agent_session.agent_data
@@ -197,7 +197,7 @@ def test_get_agent_session_by_id(postgres_db_real: PostgresDb, sample_agent_sess
     assert result is not None
     assert isinstance(result, AgentSession)
     assert result.session_id == sample_agent_session.session_id
-    assert result.agent_id == sample_agent_session.agent_id
+    assert result.id == sample_agent_session.id
 
 
 def test_get_team_session_by_id(postgres_db_real: PostgresDb, sample_team_session: TeamSession):

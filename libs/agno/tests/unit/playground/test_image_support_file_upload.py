@@ -43,7 +43,7 @@ def mock_agent():
     """Creates a mock agent with knowledge base disabled."""
     agent = Agent(
         name="Test Agent",
-        agent_id="test-agent",
+        id="test-agent",
         model=OpenAIChat(id="gpt-4o-mini"),
     )
     # Create mock run method
@@ -58,7 +58,7 @@ def mock_agent_with_knowledge():
     """Creates a mock agent with knowledge base enabled."""
     agent = Agent(
         name="Test Agent",
-        agent_id="test-agent",
+        id="test-agent",
         model=OpenAIChat(id="gpt-4o"),
     )
 

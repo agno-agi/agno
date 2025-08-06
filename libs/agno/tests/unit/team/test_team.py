@@ -68,12 +68,12 @@ def test_forward_to_wrong_member(team):
 def test_get_member_id():
     member = Agent(name="Test Agent")
     assert Team(members=[member])._get_member_id(member) == "test-agent"
-    member = Agent(name="Test Agent", agent_id="123")
+    member = Agent(name="Test Agent", id="123")
     assert Team(members=[member])._get_member_id(member) == "123"
-    member = Agent(name="Test Agent", agent_id=str(uuid.uuid4()))
+    member = Agent(name="Test Agent", id=str(uuid.uuid4()))
     assert Team(members=[member])._get_member_id(member) == "test-agent"
-    member = Agent(agent_id=str(uuid.uuid4()))
-    assert Team(members=[member])._get_member_id(member) == member.agent_id
+    member = Agent(id=str(uuid.uuid4()))
+    assert Team(members=[member])._get_member_id(member) == member.id
 
     member = Agent(name="Test Agent")
     inner_team = Team(name="Test Team", members=[member])

@@ -5,7 +5,7 @@ from agno.tools.yfinance import YFinanceTools
 
 finance_agent = Agent(
     name="Finance Agent",
-    agent_id="finance-agent",
+    id="finance-agent",
     model=Gemini(id="gemini-2.0-flash-exp"),
     tools=[YFinanceTools(stock_price=True)],
     debug_mode=True,

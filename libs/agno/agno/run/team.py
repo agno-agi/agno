@@ -56,7 +56,7 @@ class BaseTeamRunResponseEvent(BaseRunResponseEvent):
 
         member_responses_final = []
         for response in member_responses or []:
-            if "agent_id" in response:
+            if "id" in response:
                 run_response_parsed = RunResponse.from_dict(response)
             else:
                 run_response_parsed = TeamRunResponse.from_dict(response)  # type: ignore
@@ -349,7 +349,7 @@ class TeamRunResponse:
         events = data.pop("events", None)
         final_events = []
         for event in events or []:
-            if "agent_id" in event:
+            if "id" in event:
                 # Use the factory from response.py for agent events
                 from agno.run.response import run_response_event_from_dict
 
@@ -366,7 +366,7 @@ class TeamRunResponse:
         parsed_member_responses: List[Union["TeamRunResponse", RunResponse]] = []
         if member_responses:
             for response in member_responses:
-                if "agent_id" in response:
+                if "id" in response:
                     parsed_member_responses.append(RunResponse.from_dict(response))
                 else:
                     parsed_member_responses.append(cls.from_dict(response))

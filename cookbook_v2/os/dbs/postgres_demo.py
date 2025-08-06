@@ -23,7 +23,7 @@ memory = Memory(db=db)
 # Setup a basic agent and a basic team
 agent = Agent(
     name="Basic Agent",
-    agent_id="basic-agent",
+    id="basic-agent",
     model=OpenAIChat(id="gpt-4o"),
     memory=memory,
     enable_user_memories=True,

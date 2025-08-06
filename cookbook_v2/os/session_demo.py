@@ -13,7 +13,7 @@ db = PostgresDb(db_url=db_url)
 basic_agent = Agent(
     db=db,
     enable_user_memories=True,
-    agent_id="basic",
+    id="basic",
 )
 basic_team = Team(
     team_id="basic",
@@ -36,7 +36,7 @@ if __name__ == "__main__":
     Now you can interact with your sessions using the API. Examples:
     - http://localhost:8001/session/{id}/sessions
     - http://localhost:8001/session/{id}/sessions/123
-    - http://localhost:8001/session/{id}/sessions?agent_id=123
+    - http://localhost:8001/session/{id}/sessions?id=123
     - http://localhost:8001/session/{id}/sessions?limit=10&page=0&sort_by=created_at&sort_order=desc
     """
     agent_os.serve(app="session_demo:app", reload=True)

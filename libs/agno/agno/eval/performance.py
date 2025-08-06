@@ -212,7 +212,7 @@ class PerformanceEval:
     top_n_memory_allocations: int = 5
 
     # Agent and Team information
-    agent_id: Optional[str] = None
+    id: Optional[str] = None
     team_id: Optional[str] = None
     model_id: Optional[str] = None
     model_provider: Optional[str] = None
@@ -586,7 +586,7 @@ class PerformanceEval:
                 eval_type=EvalType.PERFORMANCE,
                 name=self.name if self.name is not None else None,
                 evaluated_component_name=self.func.__name__,
-                agent_id=self.agent_id,
+                id=self.id,
                 team_id=self.team_id,
                 model_id=self.model_id,
                 model_provider=self.model_provider,
@@ -714,7 +714,7 @@ class PerformanceEval:
                 eval_type=EvalType.PERFORMANCE,
                 name=self.name if self.name is not None else None,
                 evaluated_component_name=self.func.__name__,
-                agent_id=self.agent_id,
+                id=self.id,
                 team_id=self.team_id,
                 model_id=self.model_id,
                 model_provider=self.model_provider,

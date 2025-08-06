@@ -546,7 +546,7 @@ class Team:
 
         if isinstance(member, Agent):
             member.team_id = self.team_id
-            member.set_agent_id()
+            member.set_id()
         elif isinstance(member, Team):
             if member.team_id is None:
                 member.team_id = str(uuid4())
@@ -2378,8 +2378,8 @@ class Team:
             member_markdown = {}
             if markdown:
                 for member in self.members:
-                    if isinstance(member, Agent) and member.agent_id is not None:
-                        member_markdown[member.agent_id] = True
+                    if isinstance(member, Agent) and member.id is not None:
+                        member_markdown[member.id] = True
                     if isinstance(member, Team) and member.team_id is not None:
                         member_markdown[member.team_id] = True
                 team_markdown = True
@@ -2388,8 +2388,8 @@ class Team:
                 team_markdown = False
 
             for member in self.members:
-                if member.response_model is not None and isinstance(member, Agent) and member.agent_id is not None:
-                    member_markdown[member.agent_id] = False  # type: ignore
+                if member.response_model is not None and isinstance(member, Agent) and member.id is not None:
+                    member_markdown[member.id] = False  # type: ignore
                 if member.response_model is not None and isinstance(member, Team) and member.team_id is not None:
                     member_markdown[member.team_id] = False  # type: ignore
 
@@ -2443,8 +2443,8 @@ class Team:
                         # Add tool calls panel for member if available
                         if hasattr(member_response, "tools") and member_response.tools:
                             member_name = None
-                            if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
-                                member_name = self._get_member_name(member_response.agent_id)
+                            if isinstance(member_response, RunResponse) and member_response.id is not None:
+                                member_name = self._get_member_name(member_response.id)
                             elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
                                 member_name = self._get_member_name(member_response.team_id)
 
@@ -2473,8 +2473,8 @@ class Team:
 
                         show_markdown = False
                         if member_markdown:
-                            if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
-                                show_markdown = member_markdown.get(member_response.agent_id, False)
+                            if isinstance(member_response, RunResponse) and member_response.id is not None:
+                                show_markdown = member_markdown.get(member_response.id, False)
                             elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
                                 show_markdown = member_markdown.get(member_response.team_id, False)
 
@@ -2485,10 +2485,10 @@ class Team:
                         )
 
                         # Create panel for member response
-                        if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
+                        if isinstance(member_response, RunResponse) and member_response.id is not None:
                             member_response_panel = create_panel(
                                 content=member_response_content,
-                                title=f"{self._get_member_name(member_response.agent_id)} Response",
+                                title=f"{self._get_member_name(member_response.id)} Response",
                                 border_style="magenta",
                             )
                         elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
@@ -2729,8 +2729,8 @@ class Team:
                 if hasattr(resp, "member_responses") and resp.member_responses:
                     for member_response in resp.member_responses:
                         member_id = None
-                        if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
-                            member_id = member_response.agent_id
+                        if isinstance(member_response, RunResponse) and member_response.id is not None:
+                            member_id = member_response.id
                         elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
                             member_id = member_response.team_id
 
@@ -2792,8 +2792,8 @@ class Team:
                 for member_response in resp.member_responses if hasattr(resp, "member_responses") else []:
                     member_id = None
                     member_name = "Team Member"
-                    if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
-                        member_id = member_response.agent_id
+                    if isinstance(member_response, RunResponse) and member_response.id is not None:
+                        member_id = member_response.id
                         member_name = self._get_member_name(member_id)
                     elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
                         member_id = member_response.team_id
@@ -2931,14 +2931,14 @@ class Team:
 
             if markdown:
                 for member in self.members:
-                    if isinstance(member, Agent) and member.agent_id is not None:
-                        member_markdown[member.agent_id] = True
+                    if isinstance(member, Agent) and member.id is not None:
+                        member_markdown[member.id] = True
                     if isinstance(member, Team) and member.team_id is not None:
                         member_markdown[member.team_id] = True
 
             for member in self.members:
-                if member.response_model is not None and isinstance(member, Agent) and member.agent_id is not None:
-                    member_markdown[member.agent_id] = False  # type: ignore
+                if member.response_model is not None and isinstance(member, Agent) and member.id is not None:
+                    member_markdown[member.id] = False  # type: ignore
                 if member.response_model is not None and isinstance(member, Team) and member.team_id is not None:
                     member_markdown[member.team_id] = False  # type: ignore
 
@@ -2973,8 +2973,8 @@ class Team:
             # Add member tool calls and responses in correct order
             for i, member_response in enumerate(self.run_response.member_responses if self.run_response else []):
                 member_id = None
-                if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
-                    member_id = member_response.agent_id
+                if isinstance(member_response, RunResponse) and member_response.id is not None:
+                    member_id = member_response.id
                 elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
                     member_id = member_response.team_id
 
@@ -3017,8 +3017,8 @@ class Team:
 
                     # Then add response
                     show_markdown = False
-                    if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
-                        show_markdown = member_markdown.get(member_response.agent_id, False)
+                    if isinstance(member_response, RunResponse) and member_response.id is not None:
+                        show_markdown = member_markdown.get(member_response.id, False)
                     elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
                         show_markdown = member_markdown.get(member_response.team_id, False)
 
@@ -3029,8 +3029,8 @@ class Team:
                     )
 
                     member_name = "Team Member"
-                    if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
-                        member_name = self._get_member_name(member_response.agent_id)
+                    if isinstance(member_response, RunResponse) and member_response.id is not None:
+                        member_name = self._get_member_name(member_response.id)
                     elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
                         member_name = self._get_member_name(member_response.team_id)
 
@@ -3257,8 +3257,8 @@ class Team:
             member_markdown = {}
             if markdown:
                 for member in self.members:
-                    if isinstance(member, Agent) and member.agent_id is not None:
-                        member_markdown[member.agent_id] = True
+                    if isinstance(member, Agent) and member.id is not None:
+                        member_markdown[member.id] = True
                     if isinstance(member, Team) and member.team_id is not None:
                         member_markdown[member.team_id] = True
                 team_markdown = True
@@ -3267,8 +3267,8 @@ class Team:
                 team_markdown = False
 
             for member in self.members:
-                if member.response_model is not None and isinstance(member, Agent) and member.agent_id is not None:
-                    member_markdown[member.agent_id] = False  # type: ignore
+                if member.response_model is not None and isinstance(member, Agent) and member.id is not None:
+                    member_markdown[member.id] = False  # type: ignore
                 if member.response_model is not None and isinstance(member, Team) and member.team_id is not None:
                     member_markdown[member.team_id] = False  # type: ignore
 
@@ -3322,8 +3322,8 @@ class Team:
                         # Add tool calls panel for member if available
                         if hasattr(member_response, "tools") and member_response.tools:
                             member_name = None
-                            if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
-                                member_name = self._get_member_name(member_response.agent_id)
+                            if isinstance(member_response, RunResponse) and member_response.id is not None:
+                                member_name = self._get_member_name(member_response.id)
                             elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
                                 member_name = self._get_member_name(member_response.team_id)
 
@@ -3352,8 +3352,8 @@ class Team:
                                     live_console.update(Group(*panels))
 
                         show_markdown = False
-                        if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
-                            show_markdown = member_markdown.get(member_response.agent_id, False)
+                        if isinstance(member_response, RunResponse) and member_response.id is not None:
+                            show_markdown = member_markdown.get(member_response.id, False)
                         elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
                             show_markdown = member_markdown.get(member_response.team_id, False)
 
@@ -3364,10 +3364,10 @@ class Team:
                         )
 
                         # Create panel for member response
-                        if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
+                        if isinstance(member_response, RunResponse) and member_response.id is not None:
                             member_response_panel = create_panel(
                                 content=member_response_content,
-                                title=f"{self._get_member_name(member_response.agent_id)} Response",
+                                title=f"{self._get_member_name(member_response.id)} Response",
                                 border_style="magenta",
                             )
                         elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
@@ -3603,8 +3603,8 @@ class Team:
                 if hasattr(resp, "member_responses") and resp.member_responses:
                     for member_response in resp.member_responses:
                         member_id = None
-                        if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
-                            member_id = member_response.agent_id
+                        if isinstance(member_response, RunResponse) and member_response.id is not None:
+                            member_id = member_response.id
                         elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
                             member_id = member_response.team_id
 
@@ -3740,14 +3740,14 @@ class Team:
 
             if markdown:
                 for member in self.members:
-                    if isinstance(member, Agent) and member.agent_id is not None:
-                        member_markdown[member.agent_id] = True  # type: ignore
+                    if isinstance(member, Agent) and member.id is not None:
+                        member_markdown[member.id] = True  # type: ignore
                     if isinstance(member, Team) and member.team_id is not None:
                         member_markdown[member.team_id] = True  # type: ignore
 
             for member in self.members:
-                if member.response_model is not None and isinstance(member, Agent) and member.agent_id is not None:
-                    member_markdown[member.agent_id] = False  # type: ignore
+                if member.response_model is not None and isinstance(member, Agent) and member.id is not None:
+                    member_markdown[member.id] = False  # type: ignore
                 if member.response_model is not None and isinstance(member, Team) and member.team_id is not None:
                     member_markdown[member.team_id] = False  # type: ignore
 
@@ -3782,8 +3782,8 @@ class Team:
             # Add member tool calls and responses in correct order
             for i, member_response in enumerate(self.run_response.member_responses if self.run_response else []):
                 member_id = None
-                if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
-                    member_id = member_response.agent_id
+                if isinstance(member_response, RunResponse) and member_response.id is not None:
+                    member_id = member_response.id
                 elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
                     member_id = member_response.team_id
 
@@ -3831,8 +3831,8 @@ class Team:
 
                     # Then add response
                     show_markdown = False
-                    if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
-                        show_markdown = member_markdown.get(member_response.agent_id, False)
+                    if isinstance(member_response, RunResponse) and member_response.id is not None:
+                        show_markdown = member_markdown.get(member_response.id, False)
                     elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
                         show_markdown = member_markdown.get(member_response.team_id, False)
 
@@ -3843,8 +3843,8 @@ class Team:
                     )
 
                     member_name = "Team Member"
-                    if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
-                        member_name = self._get_member_name(member_response.agent_id)
+                    if isinstance(member_response, RunResponse) and member_response.id is not None:
+                        member_name = self._get_member_name(member_response.id)
                     elif isinstance(member_response, TeamRunResponse) and member_response.team_id is not None:
                         member_name = self._get_member_name(member_response.team_id)
 
@@ -3953,7 +3953,7 @@ class Team:
     def _get_member_name(self, entity_id: str) -> str:
         for member in self.members:
             if isinstance(member, Agent):
-                if member.agent_id == entity_id:
+                if member.id == entity_id:
                     return member.name or entity_id
             elif isinstance(member, Team):
                 if member.team_id == entity_id:
@@ -5687,8 +5687,10 @@ class Team:
             session_id=session_id,
             last_n=member_agent.num_history_runs or self.num_history_runs,
             skip_role=self.system_message_role,
-            agent_id=member_agent.agent_id,
-            team_id=member_agent.team_id if member_agent.agent_id is None else None,
+            id=member_agent.id if isinstance(member_agent, Agent) else None,
+            team_id=member_agent.team_id
+            if hasattr(member_agent, "team_id") and not isinstance(member_agent, Agent)
+            else None,
             member_runs=True,
         )
 
@@ -6321,19 +6323,19 @@ class Team:
         """
         Get the ID of a member
 
-        If the member has an agent_id or team_id, use that if it is not a valid UUID.
+        If the member has an id or team_id, use that if it is not a valid UUID.
         Then if the member has a name, convert that to a URL safe string.
         Then if the member has the default UUID ID, use that.
         Otherwise, return None.
         """
-        if isinstance(member, Agent) and member.agent_id is not None and (not is_valid_uuid(member.agent_id)):
-            url_safe_member_id = url_safe_string(member.agent_id)
+        if isinstance(member, Agent) and member.id is not None and (not is_valid_uuid(member.id)):
+            url_safe_member_id = url_safe_string(member.id)
         elif isinstance(member, Team) and member.team_id is not None and (not is_valid_uuid(member.team_id)):
             url_safe_member_id = url_safe_string(member.team_id)
         elif member.name is not None:
             url_safe_member_id = url_safe_string(member.name)
-        elif isinstance(member, Agent) and member.agent_id is not None:
-            url_safe_member_id = member.agent_id
+        elif isinstance(member, Agent) and member.id is not None:
+            url_safe_member_id = member.id
         elif isinstance(member, Team) and member.team_id is not None:
             url_safe_member_id = member.team_id
         else:

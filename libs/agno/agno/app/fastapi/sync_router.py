@@ -317,7 +317,7 @@ def get_sync_router(
         workflow = None
 
         if agent_id and agents:
-            agent = next((agent for agent in agents if agent.agent_id == agent_id), None)
+            agent = next((agent for agent in agents if agent.id == agent_id), None)
             if agent is None:
                 raise HTTPException(status_code=404, detail="Agent not found")
             if not message:

@@ -12,7 +12,7 @@ from agno.eval.reliability import ReliabilityEval
 
 
 class EvalRunInput(BaseModel):
-    agent_id: Optional[str] = None
+    id: Optional[str] = None
     team_id: Optional[str] = None
 
     model_id: Optional[str] = None
@@ -78,7 +78,7 @@ class EvalSchema(BaseModel):
         return cls(
             id=accuracy_eval.eval_id,
             name=accuracy_eval.name,
-            agent_id=accuracy_eval.agent.agent_id if accuracy_eval.agent else None,
+            agent_id=accuracy_eval.agent.id if accuracy_eval.agent else None,
             team_id=accuracy_eval.team.team_id if accuracy_eval.team else None,
             workflow_id=None,
             model_id=accuracy_eval.agent.model.id if accuracy_eval.agent else accuracy_eval.team.model.id,  # type: ignore

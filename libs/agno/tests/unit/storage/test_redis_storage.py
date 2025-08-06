@@ -112,7 +112,7 @@ def test_agent_storage_crud(agent_storage, mock_redis_client):
     read_session = agent_storage.read("test-session")
     assert read_session is not None
     assert read_session.session_id == session.session_id
-    assert read_session.agent_id == session.agent_id
+    assert read_session.id == session.id
     assert read_session.memory == session.memory
 
     # Test get all sessions

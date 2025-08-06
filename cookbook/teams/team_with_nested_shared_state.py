@@ -44,7 +44,7 @@ def remove_all_items(agent: Agent) -> str:
 shopping_list_agent = Agent(
     name="Shopping List Agent",
     role="Manage the shopping list",
-    agent_id="shopping_list_manager",
+    id="shopping_list_manager",
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[add_item, remove_item, remove_all_items],
     instructions=[
@@ -86,7 +86,7 @@ def get_ingredients(agent: Agent) -> str:
 
 recipe_agent = Agent(
     name="Recipe Suggester",
-    agent_id="recipe_suggester",
+    id="recipe_suggester",
     role="Suggest recipes based on available ingredients",
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[get_ingredients],

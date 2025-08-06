@@ -318,7 +318,7 @@ def get_async_router(
             raise HTTPException(status_code=400, detail="One of agent_id, team_id or workflow_id must be provided")
 
         if agent_id and agents:
-            agent = next((agent for agent in agents if agent.agent_id == agent_id), None)
+            agent = next((agent for agent in agents if agent.id == agent_id), None)
             if agent is None:
                 raise HTTPException(status_code=404, detail="Agent not found")
             if not message:

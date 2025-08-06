@@ -11,7 +11,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 
 wikipedia_agent = Agent(
-    agent_id="hacker-news-agent",
+    id="hacker-news-agent",
     name="Hacker News Agent",
     role="Search Hacker News for information",
     model=MistralChat(id="mistral-large-latest"),
@@ -22,7 +22,7 @@ wikipedia_agent = Agent(
 )
 
 website_agent = Agent(
-    agent_id="website-agent",
+    id="website-agent",
     name="Website Agent",
     role="Search the website for information",
     model=OpenAIChat(id="gpt-4o"),
@@ -81,13 +81,13 @@ async def run_team_with_events(prompt: str):
         # Member events
         if run_response_event.event in [RunEvent.tool_call_started]:
             print(f"\nMEMBER EVENT: {run_response_event.event}")
-            print(f"AGENT ID: {run_response_event.agent_id}")
+            print(f"AGENT ID: {run_response_event.id}")
             print(f"TOOL CALL: {run_response_event.tool.tool_name}")
             print(f"TOOL CALL ARGS: {run_response_event.tool.tool_args}")
 
         if run_response_event.event in [RunEvent.tool_call_completed]:
             print(f"\nMEMBER EVENT: {run_response_event.event}")
-            print(f"AGENT ID: {run_response_event.agent_id}")
+            print(f"AGENT ID: {run_response_event.id}")
             print(f"TOOL CALL: {run_response_event.tool.tool_name}")
             print(f"TOOL CALL RESULT: {run_response_event.tool.result}")
 

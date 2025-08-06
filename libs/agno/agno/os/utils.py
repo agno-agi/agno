@@ -37,7 +37,7 @@ def get_session_name(session: Dict[str, Any]) -> str:
 
         # For teams, identify the first Team run and avoid using the first member's run
         if session.get("session_type") == "team":
-            run = runs[0] if not runs[0].get("agent_id") else runs[1]
+            run = runs[0] if not runs[0].get("id") else runs[1]
         else:
             run = runs[0]
 
@@ -118,7 +118,7 @@ def get_agent_by_id(agent_id: str, agents: Optional[List[Agent]] = None) -> Opti
         return None
 
     for agent in agents:
-        if agent.agent_id == agent_id:
+        if agent.id == agent_id:
             return agent
     return None
 

@@ -20,7 +20,7 @@ memory = Memory(db=db)
 # Setup a basic agent and a basic team
 agent = Agent(
     name="Basic Agent",
-    agent_id="basic-agent",
+    id="basic-agent",
     memory=memory,
     enable_user_memories=True,
     enable_session_summaries=True,

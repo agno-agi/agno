@@ -401,7 +401,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
 
         # Log results to the Agno DB if requested
         if self.agent is not None:
-            agent_id = self.agent.agent_id
+            agent_id = self.agent.id
             team_id = None
             model_id = self.agent.model.id if self.agent.model is not None else None
             model_provider = self.agent.model.provider if self.agent.model is not None else None
@@ -419,7 +419,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),
                 eval_type=EvalType.ACCURACY,
-                agent_id=agent_id,
+                id=agent_id,
                 team_id=team_id,
                 model_id=model_id,
                 model_provider=model_provider,
@@ -524,7 +524,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             self.result.print_summary(console)
 
         if self.agent is not None:
-            agent_id = self.agent.agent_id
+            agent_id = self.agent.id
             team_id = None
             model_id = self.agent.model.id if self.agent.model is not None else None
             model_provider = self.agent.model.provider if self.agent.model is not None else None
@@ -543,7 +543,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),
                 eval_type=EvalType.ACCURACY,
-                agent_id=agent_id,
+                id=agent_id,
                 model_id=model_id,
                 model_provider=model_provider,
                 name=self.name if self.name is not None else None,
@@ -616,7 +616,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         # Log results to the Agno DB if requested
         if self.db:
             if self.agent is not None:
-                agent_id = self.agent.agent_id
+                agent_id = self.agent.id
                 team_id = None
                 model_id = self.agent.model.id if self.agent.model is not None else None
                 model_provider = self.agent.model.provider if self.agent.model is not None else None
@@ -640,7 +640,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 run_data=asdict(self.result),
                 eval_type=EvalType.ACCURACY,
                 name=self.name if self.name is not None else None,
-                agent_id=agent_id,
+                id=agent_id,
                 team_id=team_id,
                 model_id=model_id,
                 model_provider=model_provider,
@@ -712,7 +712,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         # Log results to the Agno DB if requested
         if self.db:
             if self.agent is not None:
-                agent_id = self.agent.agent_id
+                agent_id = self.agent.id
                 team_id = None
                 model_id = self.agent.model.id if self.agent.model is not None else None
                 model_provider = self.agent.model.provider if self.agent.model is not None else None
@@ -730,7 +730,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 run_data=asdict(self.result),
                 eval_type=EvalType.ACCURACY,
                 name=self.name if self.name is not None else None,
-                agent_id=agent_id,
+                id=agent_id,
                 team_id=team_id,
                 model_id=model_id,
                 model_provider=model_provider,

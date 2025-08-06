@@ -14,7 +14,7 @@ knowledge = Knowledge(
 
 file_agent = Agent(
     name="File Upload Agent",
-    agent_id="file-upload-agent",
+    id="file-upload-agent",
     role="Answer questions about the uploaded files",
     model=OpenAIChat(id="gpt-4o-mini"),
     storage=PostgresStorage(
@@ -27,7 +27,7 @@ file_agent = Agent(
 
 audio_agent = Agent(
     name="Audio Understanding Agent",
-    agent_id="audio-understanding-agent",
+    id="audio-understanding-agent",
     role="Answer questions about audio files",
     model=OpenAIChat(id="gpt-4o-audio-preview"),
     storage=PostgresStorage(
@@ -41,7 +41,7 @@ audio_agent = Agent(
 video_agent = Agent(
     name="Video Understanding Agent",
     model=Gemini(id="gemini-2.0-flash"),
-    agent_id="video-understanding-agent",
+    id="video-understanding-agent",
     role="Answer questions about video files",
     storage=PostgresStorage(
         table_name="agent_sessions", db_url=db_url, auto_upgrade_schema=True

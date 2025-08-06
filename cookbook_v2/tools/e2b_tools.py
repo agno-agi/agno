@@ -42,7 +42,7 @@ e2b_tools = E2BTools(
 
 agent = Agent(
     name="Code Execution Sandbox",
-    agent_id="e2b-sandbox",
+    id="e2b-sandbox",
     model=OpenAIChat(id="gpt-4o"),
     tools=[e2b_tools],
     markdown=True,

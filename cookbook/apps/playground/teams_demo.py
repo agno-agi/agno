@@ -26,7 +26,7 @@ agent_storage = PostgresStorage(
 
 file_agent = Agent(
     name="File Upload Agent",
-    agent_id="file-upload-agent",
+            id="file-upload-agent",
     role="Answer questions about the uploaded files",
     model=Claude(id="claude-3-7-sonnet-latest"),
     storage=agent_storage,
@@ -42,7 +42,7 @@ file_agent = Agent(
 video_agent = Agent(
     name="Video Understanding Agent",
     model=Gemini(id="gemini-2.0-flash"),
-    agent_id="video-understanding-agent",
+    id="video-understanding-agent",
     role="Answer questions about video files",
     storage=agent_storage,
     memory=memory,
@@ -54,7 +54,7 @@ video_agent = Agent(
 
 audio_agent = Agent(
     name="Audio Understanding Agent",
-    agent_id="audio-understanding-agent",
+    id="audio-understanding-agent",
     role="Answer questions about audio files",
     model=OpenAIChat(id="gpt-4o-audio-preview"),
     storage=agent_storage,
@@ -70,7 +70,7 @@ web_agent = Agent(
     role="Search the web for information",
     model=OpenAIChat(id="gpt-4o"),
     tools=[DuckDuckGoTools()],
-    agent_id="web_agent",
+    id="web_agent",
     instructions=[
         "You are an experienced web researcher and news analyst! 🔍",
     ],
@@ -83,7 +83,7 @@ web_agent = Agent(
 finance_agent = Agent(
     name="Finance Agent",
     role="Get financial data",
-    agent_id="finance_agent",
+    id="finance_agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[
         YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)
@@ -105,7 +105,7 @@ finance_agent = Agent(
 simple_agent = Agent(
     name="Simple Agent",
     role="Simple agent",
-    agent_id="simple_agent",
+    id="simple_agent",
     model=OpenAIChat(id="gpt-4o"),
     instructions=["You are a simple agent"],
     memory=memory,
@@ -116,7 +116,7 @@ simple_agent = Agent(
 research_agent = Agent(
     name="Research Agent",
     role="Research agent",
-    agent_id="research_agent",
+    id="research_agent",
     model=OpenAIChat(id="gpt-4o"),
     instructions=["You are a research agent"],
     tools=[DuckDuckGoTools(), ExaTools()],

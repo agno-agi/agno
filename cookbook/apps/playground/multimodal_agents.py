@@ -21,7 +21,7 @@ image_agent_storage_file: str = "tmp/image_agent.db"
 
 image_agent = Agent(
     name="DALL-E Image Agent",
-    agent_id="image_agent",
+    id="image_agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[DalleTools(model="dall-e-3", size="1792x1024", quality="hd", style="vivid")],
     description="You are an AI agent that can generate images using DALL-E.",
@@ -41,7 +41,7 @@ image_agent = Agent(
 
 ml_gif_agent = Agent(
     name="ModelsLab GIF Agent",
-    agent_id="ml_gif_agent",
+    id="ml_gif_agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[ModelsLabTools(wait_for_completion=True, file_type=FileType.GIF)],
     description="You are an AI agent that can generate gifs using the ModelsLabs API.",
@@ -61,7 +61,7 @@ ml_gif_agent = Agent(
 
 ml_music_agent = Agent(
     name="ModelsLab Music Agent",
-    agent_id="ml_music_agent",
+    id="ml_music_agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[ModelsLabTools(wait_for_completion=True, file_type=FileType.MP3)],
     description="You are an AI agent that can generate music using the ModelsLabs API.",
@@ -88,7 +88,7 @@ ml_music_agent = Agent(
 
 ml_video_agent = Agent(
     name="ModelsLab Video Agent",
-    agent_id="ml_video_agent",
+    id="ml_video_agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[ModelsLabTools(wait_for_completion=True, file_type=FileType.MP4)],
     description="You are an AI agent that can generate videos using the ModelsLabs API.",
@@ -108,7 +108,7 @@ ml_video_agent = Agent(
 
 fal_agent = Agent(
     name="Fal Video Agent",
-    agent_id="fal_agent",
+    id="fal_agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[FalTools("fal-ai/hunyuan-video")],
     description="You are an AI agent that can generate videos using the Fal API.",
@@ -128,7 +128,7 @@ fal_agent = Agent(
 
 gif_agent = Agent(
     name="Gif Generator Agent",
-    agent_id="gif_agent",
+    id="gif_agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[GiphyTools()],
     description="You are an AI agent that can generate gifs using Giphy.",
@@ -148,7 +148,7 @@ gif_agent = Agent(
 
 audio_agent = Agent(
     name="Audio Generator Agent",
-    agent_id="audio_agent",
+    id="audio_agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[
         ElevenLabsTools(
