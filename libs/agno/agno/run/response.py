@@ -73,7 +73,7 @@ class RunResponseContentEvent(BaseAgentRunResponseEvent):
     citations: Optional[Citations] = None
     response_audio: Optional[AudioResponse] = None  # Model audio response
     image: Optional[ImageArtifact] = None  # Image attached to the response
-    metadata: Optional[RunResponseMetaData] = None
+    extra_data: Optional[RunResponseMetaData] = None
 
 
 @dataclass
