@@ -11,10 +11,10 @@ itinerary_planner = Agent(
     tools=[DuckDuckGoTools()],
 )
 
-national_park_expert = Team(
+travel_expert = Team(
     model=OpenAIChat(id="gpt-4.1"),
     members=[itinerary_planner],
     output_model=OpenAIChat(id="o3-mini"),
 )
 
-national_park_expert.print_response("Plan a summer vacation in France")
+travel_expert.print_response("Plan a summer vacation in Paris", stream=True)

@@ -34,6 +34,9 @@ class TeamRunEvent(str, Enum):
     parser_model_response_started = "TeamParserModelResponseStarted"
     parser_model_response_completed = "TeamParserModelResponseCompleted"
 
+    output_model_response_started = "TeamOutputModelResponseStarted"
+    output_model_response_completed = "TeamOutputModelResponseCompleted"
+
 
 @dataclass
 class BaseTeamRunResponseEvent(BaseRunResponseEvent):
@@ -175,6 +178,16 @@ class ParserModelResponseCompletedEvent(BaseTeamRunResponseEvent):
     event: str = TeamRunEvent.parser_model_response_completed.value
 
 
+@dataclass
+class OutputModelResponseStartedEvent(BaseTeamRunResponseEvent):
+    event: str = TeamRunEvent.output_model_response_started.value
+
+
+@dataclass
+class OutputModelResponseCompletedEvent(BaseTeamRunResponseEvent):
+    event: str = TeamRunEvent.output_model_response_completed.value
+
+
 TeamRunResponseEvent = Union[
     RunResponseStartedEvent,
     RunResponseContentEvent,
@@ -190,6 +203,8 @@ TeamRunResponseEvent = Union[
     ToolCallCompletedEvent,
     ParserModelResponseStartedEvent,
     ParserModelResponseCompletedEvent,
+    OutputModelResponseStartedEvent,
+    OutputModelResponseCompletedEvent,
 ]
 
 # Map event string to dataclass for team events
@@ -208,6 +223,8 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.tool_call_completed.value: ToolCallCompletedEvent,
     TeamRunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,
     TeamRunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
+    TeamRunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,
+    TeamRunEvent.output_model_response_completed.value: OutputModelResponseCompletedEvent,
 }
 
 
