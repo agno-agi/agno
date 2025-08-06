@@ -14,9 +14,7 @@ from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import MCPServerConfiguration, format_messages
 
 try:
-    from anthropic import (
-        Anthropic as AnthropicClient,
-    )
+    from anthropic import Anthropic as AnthropicClient
     from anthropic import (
         APIConnectionError,
         APIStatusError,
@@ -33,6 +31,7 @@ try:
         ContentBlockStopEvent,
         # MessageDeltaEvent,  # Currently broken
         MessageStopEvent,
+        Usage,
     )
     from anthropic.types import (
         Message as AnthropicMessage,
@@ -525,18 +524,7 @@ class Claude(Model):
 
         # Add usage metrics
         if response.usage is not None:
-            usage_dict = {
-                "input_tokens": response.usage.input_tokens,
-                "output_tokens": response.usage.output_tokens,
-            }
-
-            if hasattr(response.usage, "cache_creation_input_tokens") and response.usage.cache_creation_input_tokens:
-                usage_dict["cache_write_tokens"] = response.usage.cache_creation_input_tokens
-
-            if hasattr(response.usage, "cache_read_input_tokens") and response.usage.cache_read_input_tokens:
-                usage_dict["cache_read_tokens"] = response.usage.cache_read_input_tokens
-
-            model_response.response_usage = usage_dict
+            model_response.response_usage = response.usage
 
         return model_response
 
@@ -635,3 +623,15 @@ class Claude(Model):
             log_error(f"Error parsing Beta response: {e}")
 
         return model_response
+
+    def _add_provider_specific_metrics_to_assistant_message(
+        self, assistant_message: Message, response_usage: Union[Usage, Dict[str, Any]]
+    ) -> None:
+        """Add Anthropic specific usage metrics fields to the assistant message."""
+        if isinstance(response_usage, Usage):
+            response_usage = response_usage.to_dict()
+
+        if cache_write_tokens := response_usage.get("cache_creation_input_tokens"):
+            assistant_message.metrics.cache_write_tokens = cache_write_tokens
+        if cache_read_tokens := response_usage.get("cache_read_input_tokens"):
+            assistant_message.metrics.cache_read_tokens = cache_read_tokens
