@@ -11,6 +11,7 @@ from agno.os.apps.memory import MemoryApp
 from agno.os.utils import format_team_tools, format_tools, get_run_input, get_session_name
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
+from agno.workflow.v2.workflow import Workflow
 
 
 class InterfaceResponse(BaseModel):
@@ -242,6 +243,17 @@ class WorkflowResponse(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     input_schema: Optional[Dict[str, Any]] = None
+    steps: Optional[List[Dict[str, Any]]] = None
+
+    @classmethod
+    def from_workflow(cls, workflow: Workflow) -> "WorkflowResponse":
+        workflow_dict = workflow.to_dict()
+        return cls(
+            workflow_id=workflow.workflow_id,
+            name=workflow.name,
+            description=workflow.description,
+            steps=workflow_dict.get("steps"),
+        )
 
 
 class WorkflowRunRequest(BaseModel):
@@ -456,7 +468,6 @@ class WorkflowRunSchema(BaseModel):
     content_type: Optional[str]
     status: Optional[str]
     step_results: Optional[list[dict]]
-    step_member_runs: Optional[list[dict]]
     metrics: Optional[dict]
     created_at: Optional[datetime]
 
@@ -472,7 +483,6 @@ class WorkflowRunSchema(BaseModel):
             status=run_response.get("status", ""),
             metrics=run_response.get("workflow_metrics", {}),
             step_results=run_response.get("step_results", []),
-            step_member_runs=run_response.get("step_member_runs", []),
             created_at=datetime.fromtimestamp(run_response["created_at"], tz=timezone.utc)
             if run_response["created_at"]
             else None,

@@ -561,6 +561,7 @@ class WorkflowRunResponse:
             response_audio=response_audio,
             events=events,
             workflow_metrics=workflow_metrics,
+            step_executor_runs=step_executor_runs,
             **data,
         )
 

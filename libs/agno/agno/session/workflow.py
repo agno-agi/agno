@@ -112,6 +112,7 @@ class WorkflowSession:
         # Deserialize runs from dictionaries back to WorkflowRunResponse objects
         runs_data = data.get("runs")
         runs: Optional[List[WorkflowRunResponse]] = None
+
         if runs_data is not None:
             runs = []
             for run_item in runs_data:
