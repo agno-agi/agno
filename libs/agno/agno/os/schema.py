@@ -293,7 +293,6 @@ class AgentSessionDetailSchema(BaseModel):
     @classmethod
     def from_session(cls, session: AgentSession) -> "AgentSessionDetailSchema":
         session_name = get_session_name({**session.to_dict(), "session_type": "agent"})
-
         return cls(
             user_id=session.user_id,
             agent_session_id=session.session_id,
@@ -346,9 +345,37 @@ class TeamSessionDetailSchema(BaseModel):
 
 
 class WorkflowSessionDetailSchema(BaseModel):
+    user_id: Optional[str]
+    workflow_id: Optional[str]
+    workflow_name: Optional[str]
+
+    session_id: str
+    session_name: str
+
+    session_data: Optional[dict]
+    workflow_data: Optional[dict]
+    extra_data: Optional[dict]
+
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
+
     @classmethod
     def from_session(cls, session: WorkflowSession) -> "WorkflowSessionDetailSchema":
-        return cls()
+        session_dict = session.to_dict()
+        session_name = get_session_name({**session_dict, "session_type": "workflow"})
+
+        return cls(
+            session_id=session.session_id,
+            user_id=session.user_id,
+            workflow_id=session.workflow_id,
+            workflow_name=session.workflow_name,
+            session_name=session_name,
+            session_data=session.session_data,
+            workflow_data=session.workflow_data,
+            extra_data=session.extra_data,
+            created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
+            updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
+        )
 
 
 class RunSchema(BaseModel):
@@ -423,22 +450,29 @@ class TeamRunSchema(BaseModel):
 
 class WorkflowRunSchema(BaseModel):
     run_id: str
-    user_id: Optional[str]
     run_input: Optional[str]
-    run_response_format: Optional[str]
-    run_review: Optional[dict]
+    user_id: Optional[str]
+    content: Optional[str]
+    content_type: Optional[str]
+    status: Optional[str]
+    step_results: Optional[list[dict]]
+    step_member_runs: Optional[list[dict]]
     metrics: Optional[dict]
     created_at: Optional[datetime]
 
     @classmethod
     def from_dict(cls, run_response: Dict[str, Any]) -> "WorkflowRunSchema":
+        run_input = get_run_input(run_response, is_workflow_run=True)
         return cls(
             run_id=run_response.get("run_id", ""),
+            run_input=run_input,
             user_id=run_response.get("user_id", ""),
-            run_input="",
-            run_response_format="",
-            run_review=None,
-            metrics=run_response.get("metrics", {}),
+            content=run_response.get("content", ""),
+            content_type=run_response.get("content_type", ""),
+            status=run_response.get("status", ""),
+            metrics=run_response.get("workflow_metrics", {}),
+            step_results=run_response.get("step_results", []),
+            step_member_runs=run_response.get("step_member_runs", []),
             created_at=datetime.fromtimestamp(run_response["created_at"], tz=timezone.utc)
             if run_response["created_at"]
             else None,

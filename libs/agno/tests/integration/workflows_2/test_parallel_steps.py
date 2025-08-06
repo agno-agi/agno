@@ -118,10 +118,10 @@ def test_basic_parallel(workflow_storage):
 
     response = workflow.run(message="test")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 2
+    assert len(response.step_results) == 2
 
     # Check parallel output
-    parallel_output = response.step_responses[0]
+    parallel_output = response.step_results[0]
     assert isinstance(parallel_output, StepOutput)
     assert "Output A" in parallel_output.content
     assert "Output B" in parallel_output.content
@@ -153,7 +153,7 @@ def test_parallel_with_agent(workflow_storage, test_agent):
 
     response = workflow.run(message="test")
     assert isinstance(response, WorkflowRunResponse)
-    parallel_output = response.step_responses[0]
+    parallel_output = response.step_results[0]
     assert isinstance(parallel_output, StepOutput)
     assert "Output A" in parallel_output.content
 
@@ -169,7 +169,7 @@ async def test_async_parallel(workflow_storage):
 
     response = await workflow.arun(message="test")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 2
+    assert len(response.step_results) == 2
 
 
 @pytest.mark.asyncio

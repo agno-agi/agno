@@ -83,10 +83,10 @@ def test_basic_access(workflow_storage):
 
     response = workflow.run(message="test topic")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 3
+    assert len(response.step_results) == 3
 
     # Verify report contains data from previous steps
-    report = response.step_responses[2]
+    report = response.step_results[2]
     assert "Research:" in report.content
     assert "Analysis:" in report.content
     assert "research_step" in report.content
@@ -112,7 +112,7 @@ async def test_async_access(workflow_storage):
 
     response = await workflow.arun(message="test topic")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 3
+    assert len(response.step_results) == 3
     assert "Report:" in response.content
 
 
@@ -141,10 +141,10 @@ def test_parallel_step_access(workflow_storage):
 
     response = workflow.run(message="test data")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 2
+    assert len(response.step_results) == 2
 
     # Verify the aggregator step received parallel data correctly
-    aggregator_response = response.step_responses[1]
+    aggregator_response = response.step_results[1]
     assert "Parallel Aggregation Report:" in aggregator_response.content
     assert "Parallel Data Type: dict" in aggregator_response.content
     assert "Step A: Step A processed: test data" in aggregator_response.content
@@ -165,10 +165,10 @@ async def test_async_parallel_step_access(workflow_storage):
 
     response = await workflow.arun(message="async test data")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 2
+    assert len(response.step_results) == 2
 
     # Verify the aggregator step received parallel data correctly
-    aggregator_response = response.step_responses[1]
+    aggregator_response = response.step_results[1]
     assert "Parallel Aggregation Report:" in aggregator_response.content
     assert "Parallel Data Type: dict" in aggregator_response.content
     assert "Step A: Step A processed: async test data" in aggregator_response.content
@@ -186,9 +186,9 @@ def test_single_parallel_step_access(workflow_storage):
 
     response = workflow.run(message="single test")
     assert isinstance(response, WorkflowRunResponse)
-    assert len(response.step_responses) == 2
+    assert len(response.step_results) == 2
 
     # Verify even single parallel steps return dict structure
-    aggregator_response = response.step_responses[1]
+    aggregator_response = response.step_results[1]
     assert "Parallel Data Type: dict" in aggregator_response.content
     assert "Step A: Step A processed: single test" in aggregator_response.content

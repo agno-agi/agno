@@ -40,7 +40,7 @@ async def test_basic_background_execution(simple_workflow):
             assert result.run_id == response.run_id
             assert result.session_id == response.session_id
             assert result.content is not None
-            assert len(result.step_responses) > 0
+            assert len(result.step_results) > 0
             break
 
         await asyncio.sleep(1)
@@ -78,7 +78,7 @@ async def test_multi_step_background_execution(multi_step_workflow):
         if result.has_completed():
             # Verify completed response
             assert result.status == RunStatus.completed
-            assert len(result.step_responses) == 2  # Two steps
+            assert len(result.step_results) == 2  # Two steps
             assert result.workflow_metrics is not None
             assert result.workflow_metrics.total_steps == 2
             break
@@ -115,7 +115,7 @@ async def test_team_background_execution(team_workflow):
             # Verify completed response
             assert result.status == RunStatus.completed
             assert result.content is not None
-            assert len(result.step_responses) > 0
+            assert len(result.step_results) > 0
             break
 
         await asyncio.sleep(1)
@@ -191,7 +191,7 @@ async def test_condition_background_execution(condition_workflow):
             assert result.status == RunStatus.completed
             assert result.content is not None
             # Should have at least 3 steps: Initial Research + Fact Check + Final Summary
-            assert len(result.step_responses) >= 3
+            assert len(result.step_results) >= 3
             break
 
         await asyncio.sleep(1)
@@ -227,7 +227,7 @@ async def test_parallel_background_execution(parallel_workflow):
             assert result.status == RunStatus.completed
             assert result.content is not None
             # Should have parallel steps + writer step
-            assert len(result.step_responses) >= 2
+            assert len(result.step_results) >= 2
             break
 
         await asyncio.sleep(1)
@@ -263,7 +263,7 @@ async def test_router_background_execution(router_workflow):
             assert result.status == RunStatus.completed
             assert result.content is not None
             # Should have router step + writer step
-            assert len(result.step_responses) >= 2
+            assert len(result.step_results) >= 2
             break
 
         await asyncio.sleep(1)
@@ -297,7 +297,7 @@ async def test_loop_background_execution(loop_workflow):
             assert result.status == RunStatus.completed
             assert result.content is not None
             # Should have loop iterations + content creator step
-            assert len(result.step_responses) >= 2
+            assert len(result.step_results) >= 2
             break
 
         await asyncio.sleep(1)

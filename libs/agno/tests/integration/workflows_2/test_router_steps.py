@@ -204,10 +204,10 @@ def test_basic_routing(workflow_storage):
     )
 
     tech_response = workflow.run(message="tech topic")
-    assert tech_response.step_responses[0][0].content == "Tech content"
+    assert tech_response.step_results[0][0].content == "Tech content"
 
     general_response = workflow.run(message="general topic")
-    assert general_response.step_responses[0][0].content == "General content"
+    assert general_response.step_results[0][0].content == "General content"
 
 
 def test_streaming(workflow_storage):
@@ -259,7 +259,7 @@ def test_agent_routing(workflow_storage, test_agent):
     )
 
     response = workflow.run(message="test")
-    assert response.step_responses[0][0].success
+    assert response.step_results[0][0].success
 
 
 def test_mixed_routing(workflow_storage, test_agent, test_team):
@@ -290,15 +290,15 @@ def test_mixed_routing(workflow_storage, test_agent, test_team):
 
     # Test function route
     function_response = workflow.run(message="test function")
-    assert "Function output" in function_response.step_responses[0][0].content
+    assert "Function output" in function_response.step_results[0][0].content
 
     # Test agent route
     agent_response = workflow.run(message="test agent")
-    assert agent_response.step_responses[0][0].success
+    assert agent_response.step_results[0][0].success
 
     # Test team route
     team_response = workflow.run(message="test team")
-    assert team_response.step_responses[0][0].success
+    assert team_response.step_results[0][0].success
 
 
 def test_multiple_step_routing(workflow_storage):
@@ -326,9 +326,9 @@ def test_multiple_step_routing(workflow_storage):
     )
 
     response = workflow.run(message="test research")
-    assert len(response.step_responses[0]) == 2
-    assert "Research output" in response.step_responses[0][0].content
-    assert "Analysis output" in response.step_responses[0][1].content
+    assert len(response.step_results[0]) == 2
+    assert "Research output" in response.step_results[0][0].content
+    assert "Analysis output" in response.step_results[0][1].content
 
 
 def test_route_steps(workflow_storage):
@@ -359,7 +359,7 @@ def test_route_steps(workflow_storage):
 
     response = workflow.run(message="test research")
 
-    router_results = response.step_responses[0]
+    router_results = response.step_results[0]
 
     # Check that we got results from both steps in the sequence
     assert len(router_results) == 2
