@@ -6411,10 +6411,14 @@ class Agent:
 
     def _generate_response_with_output_model_stream(self, run_response: RunResponse, run_messages: RunMessages):
         """Parse the model response using the output model."""
+        if self.output_model is None:
+            return
+
         messages_for_output_model = self.get_messages_for_output_model(run_messages.messages)
 
         # Remove the last assistant message from the messages list
-        run_response.messages.pop(-1)
+        if run_response.messages is not None:
+            run_response.messages.pop(-1)
 
         model_response = ModelResponse(content="")
 
