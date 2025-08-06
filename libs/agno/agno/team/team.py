@@ -37,7 +37,7 @@ from agno.models.message import Citations, Message, MessageReferences
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
-from agno.run.base import RunResponseExtraData, RunStatus
+from agno.run.base import RunResponseMetaData, RunStatus
 from agno.run.messages import RunMessages
 from agno.run.response import RunEvent, RunResponse, RunResponseEvent
 from agno.run.team import TeamRunEvent, TeamRunResponse, TeamRunResponseEvent, ToolCallCompletedEvent
@@ -240,7 +240,7 @@ class Team:
     # If True, the agent creates/updates user memories at the end of runs
     enable_user_memories: bool = False
     # If True, the agent adds a reference to the user memories in the response
-    add_memory_references: Optional[bool] = None
+    add_memories_to_context: Optional[bool] = None
     # If True, the agent creates/updates session summaries at the end of runs
     enable_session_summaries: bool = False
     # # Session summary model
@@ -248,8 +248,8 @@ class Team:
     # # Session summary prompt
     # session_summary_prompt: Optional[str] = None
     session_summary_manager: Optional[SessionSummaryManager] = None
-    # If True, the agent adds a reference to the session summaries in the response
-    add_session_summary_references: Optional[bool] = None
+    # If True, the team adds session summaries to the context
+    add_session_summary_to_context: Optional[bool] = None
 
     # --- Team History ---
     # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
@@ -258,8 +258,8 @@ class Team:
     num_history_runs: int = 3
 
     # --- Team Storage ---
-    # Extra data stored with this team
-    extra_data: Optional[Dict[str, Any]] = None
+    # Metadata stored with this team
+    metadata: Optional[Dict[str, Any]] = None
 
     # --- Team Reasoning ---
     reasoning: bool = False
@@ -347,13 +347,13 @@ class Team:
         db: Optional[BaseDb] = None,
         enable_agentic_memory: bool = False,
         enable_user_memories: bool = False,
-        add_memory_references: Optional[bool] = None,
+        add_memories_to_context: Optional[bool] = None,
         enable_session_summaries: bool = False,
         session_summary_manager: Optional[SessionSummaryManager] = None,
-        add_session_summary_references: Optional[bool] = None,
+        add_session_summary_to_context: Optional[bool] = None,
         add_history_to_context: bool = False,
         num_history_runs: int = 3,
-        extra_data: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         reasoning: bool = False,
         reasoning_model: Optional[Model] = None,
         reasoning_agent: Optional[Agent] = None,
@@ -430,14 +430,13 @@ class Team:
 
         self.enable_agentic_memory = enable_agentic_memory
         self.enable_user_memories = enable_user_memories
-        self.add_memory_references = add_memory_references
+        self.add_memories_to_context = add_memories_to_context
         self.enable_session_summaries = enable_session_summaries
         self.session_summary_manager = session_summary_manager
-        self.add_session_summary_references = add_session_summary_references
+        self.add_session_summary_to_context = add_session_summary_to_context
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
-
-        self.extra_data = extra_data
+        self.metadata = metadata
 
         self.reasoning = reasoning
         self.reasoning_model = reasoning_model
@@ -582,8 +581,8 @@ class Team:
             if self.memory_manager.db is None:
                 self.memory_manager.db = self.db
 
-        if self.add_memory_references is None:
-            self.add_memory_references = (
+        if self.add_memories_to_context is None:
+            self.add_memories_to_context = (
                 self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None
             )
 
@@ -595,8 +594,8 @@ class Team:
             if self.session_summary_manager.model is None:
                 self.session_summary_manager.model = self.model
 
-        if self.add_session_summary_references is None:
-            self.add_session_summary_references = (
+        if self.add_session_summary_to_context is None:
+            self.add_session_summary_to_context = (
                 self.enable_session_summaries or self.session_summary_manager is not None
             )
 
@@ -1616,13 +1615,13 @@ class Team:
             all_reasoning_steps: List[ReasoningStep] = []
             if (
                 self.run_response
-                and self.run_response.extra_data
-                and hasattr(self.run_response.extra_data, "reasoning_steps")
+                and self.run_response.metadata
+                and hasattr(self.run_response.metadata, "reasoning_steps")
             ):
-                all_reasoning_steps = cast(List[ReasoningStep], self.run_response.extra_data.reasoning_steps)
+                all_reasoning_steps = cast(List[ReasoningStep], self.run_response.metadata.reasoning_steps)
 
             if all_reasoning_steps:
-                self._add_reasoning_metrics_to_extra_data(run_response, reasoning_state["reasoning_time_taken"])
+                self._add_reasoning_metrics_to_metadata(run_response, reasoning_state["reasoning_time_taken"])
                 yield self._handle_event(
                     create_team_reasoning_completed_event(
                         from_run_response=run_response,
@@ -1710,13 +1709,13 @@ class Team:
             all_reasoning_steps: List[ReasoningStep] = []
             if (
                 self.run_response
-                and self.run_response.extra_data
-                and hasattr(self.run_response.extra_data, "reasoning_steps")
+                and self.run_response.metadata
+                and hasattr(self.run_response.metadata, "reasoning_steps")
             ):
-                all_reasoning_steps = cast(List[ReasoningStep], self.run_response.extra_data.reasoning_steps)
+                all_reasoning_steps = cast(List[ReasoningStep], self.run_response.metadata.reasoning_steps)
 
             if all_reasoning_steps:
-                self._add_reasoning_metrics_to_extra_data(run_response, reasoning_state["reasoning_time_taken"])
+                self._add_reasoning_metrics_to_metadata(run_response, reasoning_state["reasoning_time_taken"])
                 yield self._handle_event(
                     create_team_reasoning_completed_event(
                         from_run_response=run_response,
@@ -2423,10 +2422,10 @@ class Team:
             reasoning_steps = []
             if (
                 isinstance(run_response, TeamRunResponse)
-                and run_response.extra_data is not None
-                and run_response.extra_data.reasoning_steps is not None
+                and run_response.metadata is not None
+                and run_response.metadata.reasoning_steps is not None
             ):
-                reasoning_steps = run_response.extra_data.reasoning_steps
+                reasoning_steps = run_response.metadata.reasoning_steps
 
             if len(reasoning_steps) > 0 and show_reasoning:
                 # Create panels for reasoning steps
@@ -2453,10 +2452,10 @@ class Team:
                         reasoning_steps = []
                         if (
                             isinstance(member_response, RunResponse)
-                            and member_response.extra_data is not None
-                            and member_response.extra_data.reasoning_steps is not None
+                            and member_response.metadata is not None
+                            and member_response.metadata.reasoning_steps is not None
                         ):
-                            reasoning_steps.extend(member_response.extra_data.reasoning_steps)
+                            reasoning_steps.extend(member_response.metadata.reasoning_steps)
 
                         if len(reasoning_steps) > 0 and show_reasoning:
                             # Create panels for reasoning steps
@@ -2733,11 +2732,11 @@ class Team:
                         if resp.thinking is not None:
                             _response_thinking += resp.thinking
                     if (
-                        hasattr(resp, "extra_data")
-                        and resp.extra_data is not None
-                        and resp.extra_data.reasoning_steps is not None
+                        hasattr(resp, "metadata")
+                        and resp.metadata is not None
+                        and resp.metadata.reasoning_steps is not None
                     ):
-                        reasoning_steps = resp.extra_data.reasoning_steps
+                        reasoning_steps = resp.metadata.reasoning_steps
 
                     # Collect team tool calls, avoiding duplicates
                     if isinstance(resp, ToolCallCompletedEvent) and resp.tool:
@@ -3029,11 +3028,8 @@ class Team:
 
                     # Add reasoning steps if any
                     reasoning_steps = []
-                    if (
-                        member_response.extra_data is not None
-                        and member_response.extra_data.reasoning_steps is not None
-                    ):
-                        reasoning_steps = member_response.extra_data.reasoning_steps
+                    if member_response.metadata is not None and member_response.metadata.reasoning_steps is not None:
+                        reasoning_steps = member_response.metadata.reasoning_steps
                     if reasoning_steps and show_reasoning:
                         for j, step in enumerate(reasoning_steps, 1):
                             member_reasoning_panel = self._build_reasoning_step_panel(
@@ -3302,10 +3298,10 @@ class Team:
             reasoning_steps = []
             if (
                 isinstance(run_response, TeamRunResponse)
-                and run_response.extra_data is not None
-                and run_response.extra_data.reasoning_steps is not None
+                and run_response.metadata is not None
+                and run_response.metadata.reasoning_steps is not None
             ):
-                reasoning_steps = run_response.extra_data.reasoning_steps
+                reasoning_steps = run_response.metadata.reasoning_steps
 
             if len(reasoning_steps) > 0 and show_reasoning:
                 # Create panels for reasoning steps
@@ -3332,10 +3328,10 @@ class Team:
                         reasoning_steps = []
                         if (
                             isinstance(member_response, RunResponse)
-                            and member_response.extra_data is not None
-                            and member_response.extra_data.reasoning_steps is not None
+                            and member_response.metadata is not None
+                            and member_response.metadata.reasoning_steps is not None
                         ):
-                            reasoning_steps.extend(member_response.extra_data.reasoning_steps)
+                            reasoning_steps.extend(member_response.metadata.reasoning_steps)
 
                         if len(reasoning_steps) > 0 and show_reasoning:
                             # Create panels for reasoning steps
@@ -3607,11 +3603,11 @@ class Team:
                         if resp.thinking is not None:
                             _response_thinking += resp.thinking
                     if (
-                        hasattr(resp, "extra_data")
-                        and resp.extra_data is not None
-                        and resp.extra_data.reasoning_steps is not None
+                        hasattr(resp, "metadata")
+                        and resp.metadata is not None
+                        and resp.metadata.reasoning_steps is not None
                     ):
-                        reasoning_steps = resp.extra_data.reasoning_steps
+                        reasoning_steps = resp.metadata.reasoning_steps
 
                     # Collect team tool calls, avoiding duplicates
                     if isinstance(resp, ToolCallCompletedEvent) and resp.tool:
@@ -3843,11 +3839,8 @@ class Team:
 
                     # Add reasoning steps if any
                     reasoning_steps = []
-                    if (
-                        member_response.extra_data is not None
-                        and member_response.extra_data.reasoning_steps is not None
-                    ):
-                        reasoning_steps = member_response.extra_data.reasoning_steps
+                    if member_response.metadata is not None and member_response.metadata.reasoning_steps is not None:
+                        reasoning_steps = member_response.metadata.reasoning_steps
                     if reasoning_steps and show_reasoning:
                         for j, step in enumerate(reasoning_steps, 1):
                             member_reasoning_panel = self._build_reasoning_step_panel(
@@ -4626,7 +4619,7 @@ class Team:
         created_at: Optional[int] = None,
         from_run_response: Optional[TeamRunResponse] = None,
     ) -> TeamRunResponse:
-        extra_data = None
+        metadata = None
         formatted_tool_calls = None
         if from_run_response:
             content = from_run_response.content
@@ -4637,7 +4630,7 @@ class Team:
             response_audio = from_run_response.response_audio
             model = from_run_response.model
             messages = from_run_response.messages
-            extra_data = from_run_response.extra_data
+            metadata = from_run_response.metadata
             citations = from_run_response.citations
             tools = from_run_response.tools
             formatted_tool_calls = from_run_response.formatted_tool_calls
@@ -4660,7 +4653,7 @@ class Team:
             citations=citations,
             model=model,
             messages=messages,
-            extra_data=extra_data,
+            metadata=metadata,
             status=run_state,
         )
         if formatted_tool_calls:
@@ -5091,7 +5084,7 @@ class Team:
             system_message_content += "</attached_media>\n\n"
 
         # Then add memories to the system prompt
-        if self.add_memory_references:
+        if self.add_memories_to_context:
             _memory_manager_not_set = False
             if not user_id:
                 user_id = "default"
@@ -5132,7 +5125,7 @@ class Team:
                 )
 
         # Then add a summary of the interaction to the system prompt
-        if self.add_session_summary_references and self.team_session.summary is not None:
+        if self.add_session_summary_to_context and self.team_session.summary is not None:
             system_message_content += "Here is a brief summary of your previous interactions:\n\n"
             system_message_content += "<summary_of_previous_interactions>\n"
             system_message_content += self.team_session.summary
@@ -5307,11 +5300,11 @@ class Team:
                         query=message_str, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                     )
                     # Add the references to the run_response
-                    if self.run_response.extra_data is None:
-                        self.run_response.extra_data = RunResponseExtraData()
-                    if self.run_response.extra_data.references is None:
-                        self.run_response.extra_data.references = []
-                    self.run_response.extra_data.references.append(references)
+                    if self.run_response.metadata is None:
+                        self.run_response.metadata = RunResponseMetaData()
+                    if self.run_response.metadata.references is None:
+                        self.run_response.metadata.references = []
+                    self.run_response.metadata.references.append(references)
                 retrieval_timer.stop()
                 log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
             except Exception as e:
@@ -5440,7 +5433,7 @@ class Team:
             self.team_session_state or {},
             self.workflow_session_state or {},
             self.dependencies or {},
-            self.extra_data or {},
+            self.metadata or {},
             {"user_id": user_id} if user_id is not None else {},
         )
         converted_msg = message
@@ -6755,7 +6748,7 @@ class Team:
             team_session_id=self.team_session_id,
             team_data=self._get_team_data(),
             session_data=self.get_team_session_data(),
-            extra_data=self.extra_data,
+            metadata=self.metadata,
             created_at=int(time()),
         )
         return self.team_session
@@ -6934,14 +6927,14 @@ class Team:
                         self.audio = []
                     self.audio.extend([AudioArtifact.model_validate(aud) for aud in audio_from_db])
 
-        # Read extra_data from the database
-        if session.extra_data is not None:
-            # If extra_data is set in the agent, update the database extra_data with the agent's extra_data
-            if self.extra_data is not None:
-                # Updates agent_session.extra_data in place
-                merge_dictionaries(session.extra_data, self.extra_data)
-            # Update the current extra_data with the extra_data from the database which is updated in place
-            self.extra_data = session.extra_data
+        # Read metadata from the database
+        if session.metadata is not None:
+            # If metadata is set in the team, update the database metadata with the team's metadata
+            if self.metadata is not None:
+                # Updates session metadata in place
+                merge_dictionaries(session.metadata, self.metadata)
+            # Update the current metadata with the metadata from the database which is updated in place
+            self.metadata = session.metadata
         log_debug(f"-*- TeamSession loaded: {session.session_id}")
 
     def load_session(self, force: bool = False) -> Optional[str]:
@@ -7185,7 +7178,7 @@ class Team:
             )
 
             # Add the step to the run response
-            self._add_reasoning_step_to_extra_data(run_response, reasoning_step)
+            self._add_reasoning_step_to_metadata(run_response, reasoning_step)
 
             formatted_content = f"## {title}\n{thought}\n"
             if action:
@@ -7222,7 +7215,7 @@ class Team:
             )
 
             # Add the step to the run response
-            self._add_reasoning_step_to_extra_data(run_response, reasoning_step)
+            self._add_reasoning_step_to_metadata(run_response, reasoning_step)
 
             formatted_content = f"## {title}\n"
             if result:
@@ -7247,7 +7240,7 @@ class Team:
                 confidence=None,
             )
             formatted_content = f"## Thinking\n{thought}\n\n"
-            self._add_reasoning_step_to_extra_data(run_response, reasoning_step)
+            self._add_reasoning_step_to_metadata(run_response, reasoning_step)
             self._append_to_reasoning_content(run_response, formatted_content)
             return reasoning_step
 
@@ -7260,27 +7253,27 @@ class Team:
         else:
             run_response.reasoning_content += content  # type: ignore
 
-    def _add_reasoning_step_to_extra_data(self, run_response: TeamRunResponse, reasoning_step: ReasoningStep) -> None:
-        if run_response.extra_data is None:
-            from agno.run.response import RunResponseExtraData
+    def _add_reasoning_step_to_metadata(self, run_response: TeamRunResponse, reasoning_step: ReasoningStep) -> None:
+        if run_response.metadata is None:
+            from agno.run.response import RunResponseMetaData
 
-            run_response.extra_data = RunResponseExtraData()
+            run_response.metadata = RunResponseMetaData()
 
-        if run_response.extra_data.reasoning_steps is None:
-            run_response.extra_data.reasoning_steps = []
+        if run_response.metadata.reasoning_steps is None:
+            run_response.metadata.reasoning_steps = []
 
-        run_response.extra_data.reasoning_steps.append(reasoning_step)
+        run_response.metadata.reasoning_steps.append(reasoning_step)
 
-    def _add_reasoning_metrics_to_extra_data(self, run_response: TeamRunResponse, reasoning_time_taken: float) -> None:
+    def _add_reasoning_metrics_to_metadata(self, run_response: TeamRunResponse, reasoning_time_taken: float) -> None:
         try:
-            if run_response.extra_data is None:
-                from agno.run.response import RunResponseExtraData
+            if run_response.metadata is None:
+                from agno.run.response import RunResponseMetaData
 
-                run_response.extra_data = RunResponseExtraData()
+                run_response.metadata = RunResponseMetaData()
 
             # Initialize reasoning_messages if it doesn't exist
-            if run_response.extra_data.reasoning_messages is None:
-                run_response.extra_data.reasoning_messages = []
+            if run_response.metadata.reasoning_messages is None:
+                run_response.metadata.reasoning_messages = []
 
             metrics_message = Message(
                 role="assistant",
@@ -7289,9 +7282,9 @@ class Team:
             )
 
             # Add the metrics message to the reasoning_messages
-            run_response.extra_data.reasoning_messages.append(metrics_message)
+            run_response.metadata.reasoning_messages.append(metrics_message)
         except Exception as e:
-            log_error(f"Failed to add reasoning metrics to extra_data: {str(e)}")
+            log_error(f"Failed to add reasoning metrics to metadata: {str(e)}")
 
     ###########################################################################
     # Knowledge
@@ -7475,11 +7468,11 @@ class Team:
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
                 # Add the references to the run_response
-                if self.run_response.extra_data is None:
-                    self.run_response.extra_data = RunResponseExtraData()
-                if self.run_response.extra_data.references is None:
-                    self.run_response.extra_data.references = []
-                self.run_response.extra_data.references.append(references)
+                if self.run_response.metadata is None:
+                    self.run_response.metadata = RunResponseMetaData()
+                if self.run_response.metadata.references is None:
+                    self.run_response.metadata.references = []
+                self.run_response.metadata.references.append(references)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 
@@ -7504,11 +7497,11 @@ class Team:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
-                if self.run_response.extra_data is None:
-                    self.run_response.extra_data = RunResponseExtraData()
-                if self.run_response.extra_data.references is None:
-                    self.run_response.extra_data.references = []
-                self.run_response.extra_data.references.append(references)
+                if self.run_response.metadata is None:
+                    self.run_response.metadata = RunResponseMetaData()
+                if self.run_response.metadata.references is None:
+                    self.run_response.metadata.references = []
+                self.run_response.metadata.references.append(references)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 
@@ -7550,11 +7543,11 @@ class Team:
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
                 # Add the references to the run_response
-                if self.run_response.extra_data is None:
-                    self.run_response.extra_data = RunResponseExtraData()
-                if self.run_response.extra_data.references is None:
-                    self.run_response.extra_data.references = []
-                self.run_response.extra_data.references.append(references)
+                if self.run_response.metadata is None:
+                    self.run_response.metadata = RunResponseMetaData()
+                if self.run_response.metadata.references is None:
+                    self.run_response.metadata.references = []
+                self.run_response.metadata.references.append(references)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 
@@ -7582,11 +7575,11 @@ class Team:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
-                if self.run_response.extra_data is None:
-                    self.run_response.extra_data = RunResponseExtraData()
-                if self.run_response.extra_data.references is None:
-                    self.run_response.extra_data.references = []
-                self.run_response.extra_data.references.append(references)
+                if self.run_response.metadata is None:
+                    self.run_response.metadata = RunResponseMetaData()
+                if self.run_response.metadata.references is None:
+                    self.run_response.metadata.references = []
+                self.run_response.metadata.references.append(references)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 
@@ -7682,7 +7675,7 @@ class Team:
             team_session_id=self.team_session_id,
             team_data=self._get_team_data(),
             session_data=self.get_team_session_data(),
-            extra_data=self.extra_data,
+            metadata=self.metadata,
             created_at=int(time()),
         )
 

@@ -131,7 +131,7 @@ class WorkflowCompletedEvent(BaseWorkflowRunResponseEvent):
 
     # Store actual step execution results as StepOutput objects
     step_results: List["StepOutput"] = field(default_factory=list)  # noqa: F821
-    extra_data: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -435,7 +435,7 @@ class WorkflowRunResponse:
     # Workflow metrics aggregated from all steps
     workflow_metrics: Optional["WorkflowMetrics"] = None
 
-    extra_data: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
     created_at: int = field(default_factory=lambda: int(time()))
 
     status: RunStatus = RunStatus.pending
@@ -451,7 +451,7 @@ class WorkflowRunResponse:
             if v is not None
             and k
             not in [
-                "extra_data",
+                "metadata",
                 "images",
                 "videos",
                 "audio",
@@ -466,8 +466,8 @@ class WorkflowRunResponse:
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
 
-        if self.extra_data is not None:
-            _dict["extra_data"] = self.extra_data
+        if self.metadata is not None:
+            _dict["metadata"] = self.metadata
 
         if self.images is not None:
             _dict["images"] = [img.to_dict() for img in self.images]
@@ -536,7 +536,7 @@ class WorkflowRunResponse:
                 else:
                     step_executor_runs.append(RunResponse.from_dict(run_data))
 
-        extra_data = data.pop("extra_data", None)
+        metadata = data.pop("metadata", None)
 
         images = data.pop("images", [])
         images = [ImageArtifact.model_validate(image) for image in images] if images else None
@@ -554,8 +554,7 @@ class WorkflowRunResponse:
 
         return cls(
             step_results=parsed_step_results,
-            step_executor_runs=step_executor_runs,
-            extra_data=extra_data,
+            metadata=metadata,
             images=images,
             videos=videos,
             audio=audio,

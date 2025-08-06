@@ -91,7 +91,7 @@ def test_agent_storage_crud(agent_storage):
         memory={"key": "value"},
         agent_data={"name": "Test Agent"},
         session_data={"state": "active"},
-        extra_data={"custom": "data"},
+        metadata={"custom": "data"},
     )
 
     # Mock the read method to return None initially (for checking if exists)
@@ -134,7 +134,7 @@ def test_workflow_storage_crud(workflow_storage):
         memory={"key": "value"},
         workflow_data={"name": "Test Workflow"},
         session_data={"state": "active"},
-        extra_data={"custom": "data"},
+        metadata={"custom": "data"},
     )
 
     # Mock the read method to return None initially (for checking if exists)
@@ -180,7 +180,7 @@ def test_get_all_sessions(agent_storage):
             "memory": {},
             "agent_data": {},
             "session_data": {},
-            "extra_data": {},
+            "metadata": {},
             "created_at": 1000000,
             "updated_at": None,
         }

@@ -1,6 +1,6 @@
 """
-This example shows how to use the `add_session_summary_references` parameter in the Agent config to
-add references to the session summaries to the Agent.
+This example shows how to use the `add_session_summary_to_context` parameter in the Agent config to
+add session summaries to the Agent context.
 
 Start the postgres db locally on Docker by running: cookbook/scripts/run_pgvector.sh
 
@@ -44,7 +44,7 @@ agent = Agent(
     model=Gemini(id="gemini-2.0-flash-exp"),
     memory=memory,
     storage=PostgresStorage(table_name="agent_sessions", db_url=db_url),
-    add_session_summary_references=True,
+    add_session_summary_to_context=True,
     session_id=session_id,
 )
 
@@ -53,7 +53,7 @@ agent = Agent(
 #     memory=memory,
 #     storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/persistent_memory.db"),
 #     enable_session_summaries=True,
-#     add_session_summary_references=False,
+#     add_session_summary_to_context=False,
 # )
 
 agent.print_response("What are my hobbies?", user_id=user_id)
