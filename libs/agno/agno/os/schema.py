@@ -11,6 +11,7 @@ from agno.os.apps.memory import MemoryApp
 from agno.os.utils import format_team_tools, format_tools, get_run_input, get_session_name
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
+from agno.workflow.v2.workflow import Workflow
 
 
 class InterfaceResponse(BaseModel):
@@ -241,6 +242,17 @@ class WorkflowResponse(BaseModel):
     workflow_id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
+    steps: Optional[List[Dict[str, Any]]] = None
+
+    @classmethod
+    def from_workflow(cls, workflow: Workflow) -> "WorkflowResponse":
+        workflow_dict = workflow.to_dict()
+        return cls(
+            workflow_id=workflow.workflow_id,
+            name=workflow.name,
+            description=workflow.description,
+            steps=workflow_dict.get("steps"),
+        )
 
 
 class WorkflowRunRequest(BaseModel):
