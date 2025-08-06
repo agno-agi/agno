@@ -3,7 +3,7 @@ import os
 import pytest
 
 from agno.agent import Agent
-from agno.knowledge.youtube import YouTubeKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.lancedb import LanceDb
 
 
@@ -21,8 +21,10 @@ def test_youtube_knowledge_base_directory(setup_vector_db):
     """Test loading multiple YouTube videos into the knowledge base."""
     urls = ["https://www.youtube.com/watch?v=NwZ26lxl8wU", "https://www.youtube.com/watch?v=lrg8ZWI7MCg"]
 
-    kb = YouTubeKnowledgeBase(urls=urls, vector_db=setup_vector_db)
-    kb.load(recreate=True)
+    kb = Knowledge(vector_db=setup_vector_db)
+    kb.add_contents(
+        urls=urls,
+    )
 
     assert setup_vector_db.exists()
     assert setup_vector_db.get_count() > 0
@@ -45,11 +47,10 @@ def test_youtube_knowledge_base_directory(setup_vector_db):
 @pytest.mark.skip(reason="They block requests from CI")
 def test_youtube_knowledge_base_single_url(setup_vector_db):
     """Test loading a single YouTube video into the knowledge base."""
-    kb = YouTubeKnowledgeBase(
+    kb = Knowledge(vector_db=setup_vector_db)
+    kb.add_contents(
         urls=["https://www.youtube.com/watch?v=NwZ26lxl8wU"],
-        vector_db=setup_vector_db,
     )
-    kb.load(recreate=True)
 
     assert setup_vector_db.exists()
     assert setup_vector_db.get_count() > 0
@@ -79,8 +80,10 @@ async def test_youtube_knowledge_base_async_directory(setup_vector_db):
     """Test asynchronously loading multiple YouTube videos."""
     urls = ["https://www.youtube.com/watch?v=NwZ26lxl8wU", "https://www.youtube.com/watch?v=lrg8ZWI7MCg"]
 
-    kb = YouTubeKnowledgeBase(urls=urls, vector_db=setup_vector_db)
-    await kb.aload(recreate=True)
+    kb = Knowledge(vector_db=setup_vector_db)
+    kb.add_contents(
+        urls=urls,
+    )
 
     assert await setup_vector_db.async_exists()
     assert await setup_vector_db.async_get_count() > 0
@@ -111,8 +114,10 @@ async def test_youtube_knowledge_base_async_directory(setup_vector_db):
 @pytest.mark.asyncio
 async def test_youtube_knowledge_base_async_single_url(setup_vector_db):
     """Test asynchronously loading a single YouTube video."""
-    kb = YouTubeKnowledgeBase(urls=["https://www.youtube.com/watch?v=lrg8ZWI7MCg"], vector_db=setup_vector_db)
-    await kb.aload(recreate=True)
+    kb = Knowledge(vector_db=setup_vector_db)
+    await kb.async_add_content(
+        url="https://www.youtube.com/watch?v=lrg8ZWI7MCg",
+    )
 
     assert await setup_vector_db.async_exists()
     assert await setup_vector_db.async_get_count() > 0
@@ -139,8 +144,10 @@ async def test_youtube_knowledge_base_async_single_url(setup_vector_db):
 
 def test_youtube_knowledge_base_empty_urls(setup_vector_db):
     """Test loading with empty URL list."""
-    kb = YouTubeKnowledgeBase(urls=[], vector_db=setup_vector_db)
-    kb.load(recreate=True)
+    kb = Knowledge(vector_db=setup_vector_db)
+    kb.add_contents(
+        urls=[],
+    )
 
     assert setup_vector_db.exists()
     assert setup_vector_db.get_count() == 0

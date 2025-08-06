@@ -30,7 +30,7 @@ def _assert_metrics(response: RunResponse):
 
 def test_basic():
     """Test basic functionality with LiteLLM Proxy"""
-    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False)
 
     # Get the response
     response: RunResponse = agent.run("Share a 2 sentence horror story")
@@ -44,7 +44,7 @@ def test_basic():
 
 def test_basic_stream():
     """Test streaming functionality with LiteLLM Proxy"""
-    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -62,7 +62,7 @@ def test_basic_stream():
 @pytest.mark.asyncio
 async def test_async_basic():
     """Test async functionality with LiteLLM"""
-    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -75,7 +75,7 @@ async def test_async_basic():
 @pytest.mark.asyncio
 async def test_async_basic_stream():
     """Test async streaming functionality with LiteLLM"""
-    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False)
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 
@@ -87,11 +87,10 @@ async def test_async_basic_stream():
 def test_with_memory():
     agent = Agent(
         model=LiteLLMOpenAI(id="gpt-4o"),
-        add_history_to_messages=True,
+        add_history_to_context=True,
         num_history_responses=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # First interaction
@@ -120,7 +119,6 @@ def test_response_model():
         model=LiteLLMOpenAI(id="gpt-4o"),
         markdown=True,
         telemetry=False,
-        monitoring=False,
         response_model=MovieScript,
     )
 
@@ -137,9 +135,8 @@ def test_history():
     agent = Agent(
         model=LiteLLMOpenAI(id="gpt-4o"),
         storage=SqliteStorage(table_name="agent_sessions_storage", db_file="tmp/data.db"),
-        add_history_to_messages=True,
+        add_history_to_context=True,
         telemetry=False,
-        monitoring=False,
     )
     agent.run("Hello")
     assert len(agent.run_response.messages) == 2

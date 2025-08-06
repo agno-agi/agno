@@ -30,7 +30,7 @@ USER_MEMORY_SCHEMA = {
     "workflow_id": {"type": "string"},
     "user_id": {"type": "string"},
     "topics": {"type": "json"},
-    "last_updated": {"type": "integer"},
+    "updated_at": {"type": "integer"},
 }
 
 METRICS_SCHEMA = {
@@ -78,6 +78,7 @@ KNOWLEDGE_SCHEMA = {
     "created_at": {"type": "integer"},
     "updated_at": {"type": "integer"},
     "status": {"type": "string"},
+    "status_message": {"type": "string"},
 }
 
 

@@ -13,7 +13,6 @@ def test_tool_use():
         model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[YFinanceTools(cache_results=True)],
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA?")
@@ -29,7 +28,6 @@ def test_tool_use_stream():
         model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[YFinanceTools(cache_results=True)],
         telemetry=False,
-        monitoring=False,
     )
 
     response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
@@ -54,7 +52,6 @@ async def test_async_tool_use():
         model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[YFinanceTools(cache_results=True)],
         telemetry=False,
-        monitoring=False,
     )
 
     response = await agent.arun("What is the current price of TSLA?")
@@ -71,7 +68,6 @@ async def test_async_tool_use_stream():
         model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[YFinanceTools(cache_results=True)],
         telemetry=False,
-        monitoring=False,
     )
 
     response_stream = await agent.arun(
@@ -97,7 +93,6 @@ def test_tool_use_with_content():
         model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[YFinanceTools(cache_results=True)],
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA? What does the ticker stand for?")
@@ -114,7 +109,6 @@ def test_parallel_tool_calls():
         model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[YFinanceTools(cache_results=True)],
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA and AAPL?")
@@ -134,7 +128,6 @@ def test_multiple_tool_calls():
         model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA and what is the latest news about it?")
@@ -161,7 +154,6 @@ def test_tool_call_custom_tool_no_parameters():
         model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[get_the_weather_in_tokyo],
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the weather in Tokyo? Use the tool get_the_weather_in_tokyo")
@@ -189,7 +181,6 @@ def test_tool_call_custom_tool_optional_parameters():
         model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[get_the_weather],
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the weather in Paris?")

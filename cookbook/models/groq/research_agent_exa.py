@@ -53,7 +53,7 @@ agent = Agent(
     - published on {date} in dd/mm/yyyy
     """),
     markdown=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     save_response_to_file=str(tmp.joinpath("{message}.md")),
     # debug_mode=True,
 )

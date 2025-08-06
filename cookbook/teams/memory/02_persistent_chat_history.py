@@ -53,7 +53,7 @@ team = Team(
         "You can search the stock market for information about a particular company's stock.",
         "You can also search the web for wider company information.",
     ],
-    # Set enable_team_history=true to add the previous chat history to the messages sent to the Model.
+    # Set enable_team_history=true to add the previous chat history to the context sent to the Model.
     enable_team_history=True,
     markdown=True,
     show_members_responses=True,

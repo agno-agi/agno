@@ -49,7 +49,7 @@ web_searcher = Agent(
     model=OpenAIChat("gpt-4o"),
     role="Searches the web for information on a topic",
     tools=[DuckDuckGoTools()],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 article_reader = Agent(

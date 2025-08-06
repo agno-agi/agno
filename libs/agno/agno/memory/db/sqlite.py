@@ -137,7 +137,7 @@ class SqliteMemoryDb(MemoryDb):
                             memory_id=row.id,
                             user_id=row.user_id,
                             memory=eval(row.memory),
-                            last_updated=row.updated_at or row.created_at,
+                            updated_at=row.updated_at or row.created_at,
                         )
                     )
         except SQLAlchemyError as e:

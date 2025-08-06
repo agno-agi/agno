@@ -1,6 +1,6 @@
 """
 This example shows how to use the session history to store the conversation history.
-add_history_to_messages flag is used to add the history to the messages.
+add_history_to_context flag is used to add the history to the messages.
 num_history_runs is used to set the number of history runs to add to the messages.
 """
 
@@ -16,7 +16,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     db=db,
     session_id="session_storage",
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_runs=2,
 )
 

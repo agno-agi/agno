@@ -17,6 +17,7 @@ from typing import (
 )
 from uuid import uuid4
 
+from fastapi import WebSocket
 from pydantic import BaseModel
 
 from agno.agent.agent import Agent
@@ -49,6 +50,7 @@ from agno.session.workflow import WorkflowSession
 from agno.team.team import Team
 from agno.utils.log import (
     log_debug,
+    log_error,
     logger,
     set_log_level_to_debug,
     set_log_level_to_info,
@@ -64,6 +66,7 @@ from agno.workflow.v2.types import (
     StepInput,
     StepMetrics,
     StepOutput,
+    WebSocketHandler,
     WorkflowExecutionInput,
     WorkflowMetrics,
 )
@@ -127,7 +130,10 @@ class Workflow:
 
     store_events: bool = False
     events_to_skip: Optional[List[WorkflowRunEvent]] = None
+
     os_id: Optional[str] = None
+
+    websocket_handler: Optional[WebSocketHandler] = None
 
     def __init__(
         self,
@@ -218,12 +224,37 @@ class Workflow:
 
         self._update_workflow_session_state()
 
-    def rename_session(self, session_name: str):
-        """Rename the current session and save to storage"""
+    def _generate_workflow_session_name(self, session_id: str) -> str:
+        """Generate a name for the workflow session"""
 
-        # -*- Read from storage
-        self.read_from_storage()
-        # -*- Rename session
+        if self.session_id is None:
+            return f"Workflow Session - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+
+        workflow_session = self.get_workflow_session()
+        datetime_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        new_session_name = f"Workflow Session-{datetime_str}"
+
+        if self.description:
+            truncated_desc = self.description[:40] + "-" if len(self.description) > 40 else self.description
+            new_session_name = f"{truncated_desc} - {datetime_str}"
+        return new_session_name
+
+    def set_session_name(
+        self, session_id: Optional[str] = None, autogenerate: bool = False, session_name: Optional[str] = None
+    ):
+        """Set the session name and save to storage"""
+        if self.session_id is None and session_id is None:
+            raise Exception("Session ID is not set")
+        session_id = session_id or self.session_id
+
+        if autogenerate:
+            # -*- Generate name for session
+            session_name = self._generate_workflow_session_name(session_id=session_id)
+            log_debug(f"Generated Workflow Session Name: {session_name}")
+        elif session_name is None:
+            raise Exception("Session name is not set")
+
+        self.get_workflow_session()
         self.session_name = session_name
         # -*- Save to storage
         self.write_to_storage()
@@ -236,7 +267,10 @@ class Workflow:
         self.db.delete_session(session_id=session_id)
 
     def _handle_event(
-        self, event: "WorkflowRunResponseEvent", workflow_run_response: WorkflowRunResponse
+        self,
+        event: "WorkflowRunResponseEvent",
+        workflow_run_response: WorkflowRunResponse,
+        websocket_handler: Optional[WebSocketHandler] = None,
     ) -> "WorkflowRunResponseEvent":
         """Handle workflow events for storage - similar to Team._handle_event"""
         if self.store_events:
@@ -257,6 +291,17 @@ class Workflow:
                 workflow_run_response.events = []
 
             workflow_run_response.events.append(event)
+
+        # Broadcast to WebSocket if available (async context only)
+        if websocket_handler:
+            import asyncio
+
+            try:
+                loop = asyncio.get_running_loop()
+                if loop:
+                    asyncio.create_task(websocket_handler.handle_event(event))
+            except RuntimeError:
+                pass
 
         return event
 
@@ -696,7 +741,7 @@ class Workflow:
 
                         else:
                             # Yield other internal events
-                            yield event  # type: ignore
+                            yield self._handle_event(event, workflow_run_response)  # type: ignore
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
                         break
@@ -937,6 +982,7 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         workflow_run_response: WorkflowRunResponse,
         stream_intermediate_steps: bool = False,
+        websocket_handler: Optional[WebSocketHandler] = None,
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunResponseEvent]:
         """Execute a specific pipeline by name with event streaming"""
@@ -949,7 +995,7 @@ class Workflow:
             workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
         )
-        yield self._handle_event(workflow_started_event, workflow_run_response)
+        yield self._handle_event(workflow_started_event, workflow_run_response, websocket_handler=websocket_handler)
 
         if callable(self.steps):
             if iscoroutinefunction(self.steps):  # type: ignore
@@ -1058,11 +1104,11 @@ class Workflow:
                                 yield step_output_event
 
                         elif isinstance(event, WorkflowRunResponseEvent):  # type: ignore
-                            yield self._handle_event(event, workflow_run_response)  # type: ignore
+                            yield self._handle_event(event, workflow_run_response, websocket_handler=websocket_handler)  # type: ignore
 
                         else:
                             # Yield other internal events
-                            yield event  # type: ignore
+                            yield self._handle_event(event, workflow_run_response, websocket_handler=websocket_handler)  # type: ignore
 
                     # Break out of main step loop if early termination was requested
                     if "early_termination" in locals() and early_termination:
@@ -1118,7 +1164,7 @@ class Workflow:
             step_responses=workflow_run_response.step_responses,  # type: ignore[arg-type]
             extra_data=workflow_run_response.extra_data,
         )
-        yield self._handle_event(workflow_completed_event, workflow_run_response)
+        yield self._handle_event(workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler)
 
         # Store the completed workflow response
         self._save_run_to_storage(workflow_run_response)
@@ -1214,6 +1260,96 @@ class Workflow:
         # Create and start asyncio task
         loop = asyncio.get_running_loop()
         loop.create_task(execute_workflow_background())
+
+        # Return SAME object that will be updated by background execution
+        return workflow_run_response
+
+    async def _arun_background_stream(
+        self,
+        message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
+        additional_data: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        audio: Optional[List[Audio]] = None,
+        images: Optional[List[Image]] = None,
+        videos: Optional[List[Video]] = None,
+        stream_intermediate_steps: bool = False,
+        websocket_handler: Optional[WebSocketHandler] = None,
+        **kwargs: Any,
+    ) -> WorkflowRunResponse:
+        """Execute workflow in background with streaming and WebSocket broadcasting"""
+
+        if user_id is not None:
+            self.user_id = user_id
+        if session_id is not None:
+            self.session_id = session_id
+
+        if self.session_id is None:
+            self.session_id = str(uuid4())
+
+        if self.run_id is None:
+            self.run_id = str(uuid4())
+
+        self.initialize_workflow()
+        self.load_session()
+        self._prepare_steps()
+
+        # Create workflow run response with PENDING status
+        workflow_run_response = WorkflowRunResponse(
+            run_id=self.run_id,
+            session_id=self.session_id,
+            workflow_id=self.workflow_id,
+            workflow_name=self.name,
+            created_at=int(datetime.now().timestamp()),
+            status=RunStatus.pending,
+        )
+
+        # Store PENDING response immediately
+        self._save_run_to_storage(workflow_run_response)
+
+        # Prepare execution input
+        inputs = WorkflowExecutionInput(
+            message=message,
+            additional_data=additional_data,
+            audio=audio,  # type: ignore
+            images=images,  # type: ignore
+            videos=videos,  # type: ignore
+        )
+
+        self.update_agents_and_teams_session_info()
+
+        async def execute_workflow_background_stream():
+            """Background execution with streaming and WebSocket broadcasting"""
+            try:
+                # Update status to RUNNING and save
+                workflow_run_response.status = RunStatus.running
+                self._save_run_to_storage(workflow_run_response)
+
+                # Execute with streaming - consume all events (they're auto-broadcast via _handle_event)
+                async for event in self._aexecute_stream(
+                    execution_input=inputs,
+                    workflow_run_response=workflow_run_response,
+                    stream_intermediate_steps=stream_intermediate_steps,
+                    websocket_handler=websocket_handler,
+                    **kwargs,
+                ):
+                    # Events are automatically broadcast by _handle_event
+                    # We just consume them here to drive the execution
+                    pass
+
+                self._save_run_to_storage(workflow_run_response)
+
+                log_debug(f"Background streaming execution completed with status: {workflow_run_response.status}")
+
+            except Exception as e:
+                logger.error(f"Background streaming workflow execution failed: {e}")
+                workflow_run_response.status = RunStatus.error
+                workflow_run_response.content = f"Background streaming execution failed: {str(e)}"
+                self._save_run_to_storage(workflow_run_response)
+
+        # Create and start asyncio task for background streaming execution
+        loop = asyncio.get_running_loop()
+        loop.create_task(execute_workflow_background_stream())
 
         # Return SAME object that will be updated by background execution
         return workflow_run_response
@@ -1360,6 +1496,7 @@ class Workflow:
         stream: Literal[False] = False,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
+        websocket: Optional[WebSocket] = None,
     ) -> WorkflowRunResponse: ...
 
     @overload
@@ -1375,6 +1512,7 @@ class Workflow:
         stream: Literal[True] = True,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
+        websocket: Optional[WebSocket] = None,
     ) -> AsyncIterator[WorkflowRunResponseEvent]: ...
 
     async def arun(
@@ -1389,20 +1527,47 @@ class Workflow:
         stream: bool = False,
         stream_intermediate_steps: Optional[bool] = False,
         background: Optional[bool] = False,
+        websocket: Optional[WebSocket] = None,
         **kwargs: Any,
     ) -> Union[WorkflowRunResponse, AsyncIterator[WorkflowRunResponseEvent]]:
         """Execute the workflow synchronously with optional streaming"""
+
+        websocket_handler = None
+        if websocket:
+            from agno.workflow.v2.types import WebSocketHandler
+
+            websocket_handler = WebSocketHandler(websocket=websocket)
+
         if background:
-            return await self._arun_background(
-                message=message,
-                additional_data=additional_data,
-                user_id=user_id,
-                session_id=session_id,
-                audio=audio,
-                images=images,
-                videos=videos,
-                **kwargs,
-            )
+            if stream and websocket:
+                # Background + Streaming + WebSocket = Real-time events
+                return await self._arun_background_stream(
+                    message=message,
+                    additional_data=additional_data,
+                    user_id=user_id,
+                    session_id=session_id,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    stream_intermediate_steps=stream_intermediate_steps or False,
+                    websocket_handler=websocket_handler,
+                    **kwargs,
+                )
+            elif stream and not websocket:
+                # Background + Streaming but no WebSocket = Not supported
+                raise ValueError("Background streaming execution requires a WebSocket for real-time events")
+            else:
+                # Background + Non-streaming = Polling (existing)
+                return await self._arun_background(
+                    message=message,
+                    additional_data=additional_data,
+                    user_id=user_id,
+                    session_id=session_id,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    **kwargs,
+                )
 
         self._set_debug()
 
@@ -1467,10 +1632,13 @@ class Workflow:
                 execution_input=inputs,
                 workflow_run_response=workflow_run_response,
                 stream_intermediate_steps=stream_intermediate_steps,
+                websocket=websocket,
                 **kwargs,
             )
         else:
-            return await self._aexecute(execution_input=inputs, workflow_run_response=workflow_run_response, **kwargs)
+            return await self._aexecute(
+                execution_input=inputs, workflow_run_response=workflow_run_response, websocket=websocket, **kwargs
+            )
 
     def _prepare_steps(self):
         """Prepare the steps for execution"""

@@ -24,7 +24,7 @@ from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router
 from agno.os.settings import AgnoAPISettings
 from agno.team.team import Team
-from agno.utils.log import log_debug, log_info, log_warning
+from agno.utils.log import log_debug, log_warning
 from agno.workflow.v2.workflow import Workflow
 
 
@@ -42,7 +42,6 @@ class AgentOS:
         apps: Optional[List[BaseApp]] = None,
         settings: Optional[AgnoAPISettings] = None,
         fastapi_app: Optional[FastAPI] = None,
-        monitoring: bool = True,
     ):
         if not agents and not workflows and not teams:
             raise ValueError("Either agents, teams or workflows must be provided.")
@@ -58,7 +57,6 @@ class AgentOS:
         self.apps = apps or []
 
         self.os_id: Optional[str] = os_id
-        self.monitoring = monitoring
         self.description = description
 
         self.interfaces_loaded: List[Tuple[str, str]] = []
@@ -124,22 +122,22 @@ class AgentOS:
             if entity.db:
                 # Memory app
                 if _add_unique_component("memory", f"{entity.db.memory_table_name}"):
-                    discovered_apps.append(MemoryApp(db=entity.db))
+                    discovered_apps.append(MemoryApp(db=entity.db, display_name=entity.db.memory_table_name))
 
                 # Session app
                 if entity.db.session_table_name:
                     if _add_unique_component("session", f"{entity.db.session_table_name}"):
-                        discovered_apps.append(SessionApp(db=entity.db))
+                        discovered_apps.append(SessionApp(db=entity.db, display_name=entity.db.session_table_name))
 
                 # Metrics app
                 if entity.db.metrics_table_name:
                     if _add_unique_component("metrics", f"{entity.db.metrics_table_name}"):
-                        discovered_apps.append(MetricsApp(db=entity.db))
+                        discovered_apps.append(MetricsApp(db=entity.db, display_name=entity.db.metrics_table_name))
 
                 # Eval app
                 if entity.db.eval_table_name:
                     if _add_unique_component("eval", f"{entity.db.eval_table_name}"):
-                        discovered_apps.append(EvalApp(db=entity.db))
+                        discovered_apps.append(EvalApp(db=entity.db, display_name=entity.db.eval_table_name))
 
             # Knowledge app
             if entity.knowledge:
@@ -149,7 +147,9 @@ class AgentOS:
 
                 db = entity.knowledge.contents_db
                 if _add_unique_component("knowledge", f"{db.knowledge_table_name}") and entity.knowledge:
-                    discovered_apps.append(KnowledgeApp(knowledge=entity.knowledge))
+                    discovered_apps.append(
+                        KnowledgeApp(knowledge=entity.knowledge, display_name=db.knowledge_table_name)
+                    )
 
             return discovered_apps
 
@@ -170,8 +170,7 @@ class AgentOS:
 
         # Log discovered apps
         if discovered_apps:
-            for app in discovered_apps:
-                log_debug(f"{app.type.title()} App added to AgentOS")
+            log_debug(f"Apps added to AgentOS: {[app.display_name for app in discovered_apps]}")
 
         return discovered_apps
 
@@ -181,14 +180,6 @@ class AgentOS:
             self.os_id = str(uuid4())
 
         return self.os_id
-
-    def _set_monitoring(self) -> None:
-        """Override monitoring and telemetry settings based on environment variables."""
-
-        # Only override if the environment variable is set
-        monitor_env = getenv("AGNO_MONITOR")
-        if monitor_env is not None:
-            self.monitoring = monitor_env.lower() == "true"
 
     def get_app(self) -> FastAPI:
         if not self.fastapi_app:
@@ -271,53 +262,27 @@ class AgentOS:
     ):
         import uvicorn
 
-        full_host = host
+        if getenv("AGNO_API_RUNTIME", "").lower() == "stg":
+            public_endpoint = "https://os-stg.agno.com/"
+        else:
+            public_endpoint = "https://os.agno.com/"
 
-        log_info(f"Starting AgentOS on {full_host}:{port}")
+        # Create a terminal panel to announce OS initialization and provide useful info
+        from rich.align import Align
+        from rich.console import Group
 
-        self.host_url = f"{full_host}:{port}"
+        public_endpoint = Align.center(f"[bold cyan]{public_endpoint}[/bold cyan]")
+        connection_endpoint = f"\n\n[bold dark_orange]Running on:[/bold dark_orange] http://{host}:{port}"
 
-        # Create a panel with the Home and interface URLs
-        panels = []
-        encoded_endpoint = f"http://{full_host}:{port}/home"
-        panels.append(
+        console.print(
             Panel(
-                f"[bold green]Home URL:[/bold green] {encoded_endpoint}",
-                title="Home",
+                Group(public_endpoint, connection_endpoint),
+                title="AgentOS",
                 expand=False,
-                border_style="green",
-                box=box.HEAVY,
+                border_style="dark_orange",
+                box=box.DOUBLE_EDGE,
                 padding=(2, 2),
             )
         )
-        for interface_type, interface_prefix in self.interfaces_loaded:
-            if interface_type == "whatsapp":
-                encoded_endpoint = f"{full_host}:{port}{interface_prefix}"
-                panels.append(
-                    Panel(
-                        f"[bold cyan]Whatsapp URL:[/bold cyan] {encoded_endpoint}",
-                        title="Whatsapp",
-                        expand=False,
-                        border_style="cyan",
-                        box=box.HEAVY,
-                        padding=(2, 2),
-                    )
-                )
-            elif interface_type == "slack":
-                encoded_endpoint = f"{full_host}:{port}{interface_prefix}"
-                panels.append(
-                    Panel(
-                        f"[bold purple]Slack URL:[/bold purple] {encoded_endpoint}",
-                        title="Slack",
-                        expand=False,
-                        border_style="purple",
-                        box=box.HEAVY,
-                        padding=(2, 2),
-                    )
-                )
-
-        # Print the panel
-        for panel in panels:
-            console.print(panel)
 
         uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)

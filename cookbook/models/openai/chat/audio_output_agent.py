@@ -10,7 +10,7 @@ agent = Agent(
         modalities=["text", "audio"],
         audio={"voice": "sage", "format": "wav"},
     ),
-    add_history_to_messages=True,
+    add_history_to_context=True,
     markdown=True,
 )
 agent.print_response("Tell me a 5 second scary story")

@@ -16,9 +16,9 @@ coding_agent = Agent(
     model=Ollama(id="hhao/qwen2.5-coder-tools:32b"),
     reasoning=True,
     markdown=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     description="You are a coding agent",
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     storage=SqliteStorage(
         table_name="coding_agent",
         db_file=local_agent_storage_file,

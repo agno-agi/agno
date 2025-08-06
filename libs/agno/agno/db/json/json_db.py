@@ -427,6 +427,7 @@ class JsonDb(BaseDb):
         """Get all memory topics from the JSON file."""
         try:
             memories = self._read_json_file(self.memory_table_name)
+
             topics = set()
             for memory in memories:
                 memory_topics = memory.get("topics", [])
@@ -532,9 +533,9 @@ class JsonDb(BaseDb):
                     if user_id not in user_stats:
                         user_stats[user_id] = {"user_id": user_id, "total_memories": 0, "last_memory_updated_at": 0}
                     user_stats[user_id]["total_memories"] += 1
-                    last_updated = memory.get("last_updated", 0)
-                    if last_updated > user_stats[user_id]["last_memory_updated_at"]:
-                        user_stats[user_id]["last_memory_updated_at"] = last_updated
+                    updated_at = memory.get("updated_at", 0)
+                    if updated_at > user_stats[user_id]["last_memory_updated_at"]:
+                        user_stats[user_id]["last_memory_updated_at"] = updated_at
 
             stats_list = list(user_stats.values())
             stats_list.sort(key=lambda x: x["last_memory_updated_at"], reverse=True)
@@ -565,7 +566,7 @@ class JsonDb(BaseDb):
                 memory.memory_id = str(uuid4())
 
             memory_dict = memory.to_dict() if hasattr(memory, "to_dict") else memory.__dict__
-            memory_dict["last_updated"] = int(time.time())
+            memory_dict["updated_at"] = int(time.time())
 
             # Find existing memory to update
             memory_updated = False

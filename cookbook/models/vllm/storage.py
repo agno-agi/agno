@@ -11,7 +11,7 @@ agent = Agent(
     model=vLLM(id="Qwen/Qwen2.5-7B-Instruct"),
     storage=PostgresStorage(table_name="agent_sessions", db_url=DB_URL),
     tools=[DuckDuckGoTools()],
-    add_history_to_messages=True,
+    add_history_to_context=True,
 )
 
 agent.print_response("How many people live in Canada?")

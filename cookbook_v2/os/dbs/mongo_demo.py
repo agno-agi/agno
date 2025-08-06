@@ -28,9 +28,9 @@ basic_agent = Agent(
     memory=memory,
     enable_user_memories=True,
     enable_session_summaries=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_runs=3,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 basic_team = Team(

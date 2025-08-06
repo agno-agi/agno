@@ -1,5 +1,6 @@
 from agno.agent import Agent
-from agno.knowledge.pdf import PDFKnowledgeBase, PDFReader
+from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.reader.pdf_reader import PDFReader
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -8,16 +9,17 @@ from agno.tools.slack import SlackTools
 from agno.tools.yfinance import YFinanceTools
 from agno.vectordb.pgvector.pgvector import PgVector
 
-knowledge_base = PDFKnowledgeBase(
-    path="cookbook/teams/coordinate/data",
+knowledge = Knowledge(
     vector_db=PgVector(
         table_name="autonomous_startup_team",
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
     ),
-    reader=PDFReader(chunk=True),
 )
 
-knowledge_base.load(recreate=False)
+knowledge.add_content(
+    path="cookbook/teams/coordinate/data",
+    reader=PDFReader(chunk=True),
+)
 
 support_channel = "testing"
 sales_channel = "sales"
@@ -28,7 +30,7 @@ legal_compliance_agent = Agent(
     role="Legal Compliance",
     model=OpenAIChat("gpt-4o"),
     tools=[ExaTools()],
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     instructions=[
         "You are the Legal Compliance Agent of a startup, responsible for ensuring legal and regulatory compliance.",
         "Key Responsibilities:",
@@ -41,7 +43,7 @@ legal_compliance_agent = Agent(
         "7. Review marketing materials for legal compliance",
         "8. Advise on employment law and HR policies",
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -49,7 +51,7 @@ product_manager_agent = Agent(
     name="Product Manager Agent",
     role="Product Manager",
     model=OpenAIChat("gpt-4o"),
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     instructions=[
         "You are the Product Manager of a startup, responsible for product strategy and execution.",
         "Key Responsibilities:",
@@ -63,7 +65,7 @@ product_manager_agent = Agent(
         "8. Lead product launches and go-to-market strategies",
         "9. Balance user needs with business objectives",
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
     tools=[],
 )
@@ -73,7 +75,7 @@ market_research_agent = Agent(
     role="Market Research",
     model=OpenAIChat("gpt-4o"),
     tools=[DuckDuckGoTools(), ExaTools()],
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     instructions=[
         "You are the Market Research Agent of a startup, responsible for market intelligence and analysis.",
         "Key Responsibilities:",
@@ -86,7 +88,7 @@ market_research_agent = Agent(
         "7. Create detailed market research reports",
         "8. Provide data-driven insights for decision making",
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -95,7 +97,7 @@ sales_agent = Agent(
     role="Sales",
     model=OpenAIChat("gpt-4o"),
     tools=[SlackTools()],
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     instructions=[
         "You are the Sales & Partnerships Agent of a startup, responsible for driving revenue growth and strategic partnerships.",
         "Key Responsibilities:",
@@ -113,7 +115,7 @@ sales_agent = Agent(
         "4. Maintain clear documentation of all discussions and agreements",
         "5. Ensure proper handoff to relevant team members when needed",
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -122,7 +124,7 @@ financial_analyst_agent = Agent(
     name="Financial Analyst Agent",
     role="Financial Analyst",
     model=OpenAIChat("gpt-4o"),
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     tools=[YFinanceTools()],
     instructions=[
         "You are the Financial Analyst of a startup, responsible for financial planning and analysis.",
@@ -137,7 +139,7 @@ financial_analyst_agent = Agent(
         "8. Track key financial metrics and KPIs",
         "9. Provide financial insights for strategic decisions",
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -145,14 +147,14 @@ customer_support_agent = Agent(
     name="Customer Support Agent",
     role="Customer Support",
     model=OpenAIChat("gpt-4o"),
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     tools=[SlackTools()],
     instructions=[
         "You are the Customer Support Agent of a startup, responsible for handling customer inquiries and maintaining customer satisfaction.",
         f"When a user reports an issue or issue or the question you cannot answer, always send it to the #{support_channel} Slack channel with all relevant details.",
         "Always maintain a professional and helpful demeanor while ensuring proper routing of issues to the right channels.",
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -204,7 +206,7 @@ autonomous_startup_team = Team(
         customer_support_agent,
         sales_agent,
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
     debug_mode=True,
     show_members_responses=True,

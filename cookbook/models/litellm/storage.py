@@ -16,7 +16,7 @@ agent = Agent(
     model=LiteLLM(id="gpt-4o"),
     storage=storage,
     tools=[DuckDuckGoTools()],
-    add_history_to_messages=True,
+    add_history_to_context=True,
 )
 
 agent.print_response("How many people live in Canada?")

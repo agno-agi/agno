@@ -1,8 +1,17 @@
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
 from agno.knowledge.reader import Reader
 from agno.knowledge.remote_content.remote_content import RemoteContent
+
+
+class ContentStatus(str, Enum):
+    """Enumeration of possible content processing statuses."""
+
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 
 @dataclass
@@ -18,18 +27,18 @@ class Content:
     description: Optional[str] = None
     path: Optional[str] = None
     url: Optional[str] = None
-    file_data: Optional[Union[str, FileData]] = None
+    file_data: Optional[FileData] = None
     metadata: Optional[Dict[str, Any]] = None
     topics: Optional[List[str]] = None
-    file_type: Optional[str] = None
     remote_content: Optional[RemoteContent] = None
     reader: Optional[Reader] = None
     size: Optional[int] = None
-    status: Optional[str] = None
+    file_type: Optional[str] = None
+    content_hash: Optional[str] = None
+    status: Optional[ContentStatus] = None
     status_message: Optional[str] = None
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
-    content_hash: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Content":
@@ -42,13 +51,13 @@ class Content:
             file_data=data.get("file_data"),
             metadata=data.get("metadata"),
             topics=data.get("topics"),
-            file_type=data.get("file_type"),
-            config=data.get("config"),
+            remote_content=data.get("remote_content"),
             reader=data.get("reader"),
             size=data.get("size"),
+            file_type=data.get("file_type"),
+            content_hash=data.get("content_hash"),
             status=data.get("status"),
             status_message=data.get("status_message"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
-            content_hash=data.get("content_hash"),
         )

@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.db.base import SessionType
+from agno.os.apps.memory import MemoryApp
 from agno.os.utils import format_team_tools, format_tools, get_run_input, get_session_name
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
@@ -91,9 +92,9 @@ class AgentResponse(BaseModel):
     knowledge_table: Optional[str] = None
 
     @classmethod
-    def from_agent(self, agent: Agent) -> "AgentResponse":
+    def from_agent(cls, agent: Agent, memory_app: Optional[MemoryApp] = None) -> "AgentResponse":
         agent_tools = agent.get_tools(session_id=str(uuid4()), async_mode=True)
-        formatted_tools = format_tools(agent_tools)
+        formatted_tools = format_tools(agent_tools) if agent_tools else None
 
         model_name = agent.model.name or agent.model.__class__.__name__ if agent.model else None
         model_provider = agent.model.provider or agent.model.__class__.__name__ if agent.model else ""
@@ -108,11 +109,13 @@ class AgentResponse(BaseModel):
         else:
             model_provider = ""
 
-        memory_dict: Optional[Dict[str, Any]] = None
+        memory_info: Optional[Dict[str, Any]] = None
         if agent.memory_manager is not None:
-            memory_dict = {"name": "Memory"}
+            memory_app_name = memory_app.display_name if memory_app else "Memory"
+            memory_info = {"app_name": memory_app_name, "app_url": memory_app.router_prefix if memory_app else None}
+
             if agent.memory_manager.model is not None:
-                memory_dict["model"] = ModelResponse(
+                memory_info["model"] = ModelResponse(
                     name=agent.memory_manager.model.name,
                     model=agent.memory_manager.model.id,
                     provider=agent.memory_manager.model.provider,
@@ -126,14 +129,14 @@ class AgentResponse(BaseModel):
             agent_id=agent.agent_id,
             name=agent.name,
             description=agent.description,
-            instructions=agent.instructions,
+            instructions=str(agent.instructions) if agent.instructions else None,
             model=ModelResponse(
                 name=model_name,
                 model=model_id,
                 provider=model_provider,
             ),
             tools=formatted_tools,
-            memory=memory_dict,
+            memory=memory_info,
             knowledge={"name": agent.knowledge.__class__.__name__} if agent.knowledge else None,
             session_table=session_table,
             memory_table=memory_table,
@@ -148,11 +151,10 @@ class TeamResponse(BaseModel):
     mode: Optional[str] = None
     model: Optional[ModelResponse] = None
     tools: Optional[List[Dict[str, Any]]] = None
-    success_criteria: Optional[str] = None
     instructions: Optional[Union[List[str], str]] = None
     members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = None
     expected_output: Optional[str] = None
-    context: Optional[str] = None
+    dependencies: Optional[str] = None
     enable_agentic_context: Optional[bool] = None
     memory: Optional[Dict[str, Any]] = None
     knowledge: Optional[Dict[str, Any]] = None
@@ -162,7 +164,10 @@ class TeamResponse(BaseModel):
     knowledge_table: Optional[str] = None
 
     @classmethod
-    def from_team(self, team: Team) -> "TeamResponse":
+    def from_team(cls, team: Team, memory_app: Optional[MemoryApp] = None) -> "TeamResponse":
+        if team.model is None:
+            raise ValueError("Team model is required")
+
         team.determine_tools_for_model(
             model=team.model,
             session_id=str(uuid4()),
@@ -184,11 +189,12 @@ class TeamResponse(BaseModel):
         else:
             model_provider = ""
 
-        memory_dict: Optional[Dict[str, Any]] = None
+        memory_info: Optional[Dict[str, Any]] = None
         if team.memory_manager is not None:
-            memory_dict = {"name": "Memory"}
+            memory_app_name = memory_app.display_name if memory_app else "Memory"
+            memory_info = {"app_name": memory_app_name, "app_url": memory_app.router_prefix if memory_app else None}
             if team.memory_manager.model is not None:
-                memory_dict["model"] = ModelResponse(
+                memory_info["model"] = ModelResponse(
                     name=team.memory_manager.model.name,
                     model=team.memory_manager.model.id,
                     provider=team.memory_manager.model.provider,
@@ -208,15 +214,14 @@ class TeamResponse(BaseModel):
                 model=team.model.id if team.model else None,
                 provider=team.model.provider or team.model.__class__.__name__ if team.model else None,
             ),
-            success_criteria=team.success_criteria,
             instructions=team_instructions,
             description=team.description,
             tools=formatted_tools,
             expected_output=team.expected_output,
-            context=json.dumps(team.context) if isinstance(team.context, dict) else team.context,
+            dependencies=json.dumps(team.dependencies) if isinstance(team.dependencies, dict) else team.dependencies,
             enable_agentic_context=team.enable_agentic_context,
             mode=team.mode,
-            memory=memory_dict,
+            memory=memory_info,
             knowledge={"name": team.knowledge.__class__.__name__} if team.knowledge else None,
             session_table=session_table,
             memory_table=memory_table,
@@ -273,14 +278,11 @@ class DeleteSessionRequest(BaseModel):
 class AgentSessionDetailSchema(BaseModel):
     user_id: Optional[str]
     agent_session_id: str
-    workspace_id: Optional[str]
     session_id: str
     session_name: str
     session_summary: Optional[dict]
     agent_id: Optional[str]
     agent_data: Optional[dict]
-    agent_sessions: list
-    response_latency_avg: Optional[float]
     total_tokens: Optional[int]
     metrics: Optional[dict]
     chat_history: Optional[List[dict]]
@@ -294,14 +296,11 @@ class AgentSessionDetailSchema(BaseModel):
         return cls(
             user_id=session.user_id,
             agent_session_id=session.session_id,
-            workspace_id=None,
             session_id=session.session_id,
             session_name=session_name,
             session_summary=session.summary.to_dict() if session.summary else None,
             agent_id=session.agent_id if session.agent_id else None,
             agent_data=session.agent_data,
-            agent_sessions=[],
-            response_latency_avg=0,
             total_tokens=session.session_data.get("session_metrics", {}).get("total_tokens")
             if session.session_data
             else None,
@@ -354,13 +353,11 @@ class WorkflowSessionDetailSchema(BaseModel):
 class RunSchema(BaseModel):
     run_id: str
     agent_session_id: Optional[str]
-    workspace_id: Optional[str]
     user_id: Optional[str]
     run_input: Optional[str]
     content: Optional[str]
     run_response_format: Optional[str]
     reasoning_content: Optional[str]
-    run_review: Optional[dict]
     metrics: Optional[dict]
     messages: Optional[List[dict]]
     tools: Optional[List[dict]]
@@ -374,9 +371,7 @@ class RunSchema(BaseModel):
         return cls(
             run_id=run_dict.get("run_id", ""),
             agent_session_id=run_dict.get("session_id", ""),
-            workspace_id=None,
-            user_id=None,
-            run_review=None,
+            user_id=run_dict.get("user_id", ""),
             run_input=run_input,
             content=run_dict.get("content", ""),
             run_response_format=run_response_format,
@@ -427,7 +422,6 @@ class TeamRunSchema(BaseModel):
 
 class WorkflowRunSchema(BaseModel):
     run_id: str
-    workspace_id: Optional[str]
     user_id: Optional[str]
     run_input: Optional[str]
     run_response_format: Optional[str]
@@ -439,8 +433,7 @@ class WorkflowRunSchema(BaseModel):
     def from_dict(cls, run_response: Dict[str, Any]) -> "WorkflowRunSchema":
         return cls(
             run_id=run_response.get("run_id", ""),
-            workspace_id=None,
-            user_id=None,
+            user_id=run_response.get("user_id", ""),
             run_input="",
             run_response_format="",
             run_review=None,

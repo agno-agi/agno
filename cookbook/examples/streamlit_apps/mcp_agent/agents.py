@@ -5,7 +5,7 @@ from typing import List, Optional
 from agno.agent import Agent
 from agno.db.agent.sqlite import SqliteAgentStorage
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.url import UrlKnowledge
+from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.groq import Groq
@@ -31,14 +31,17 @@ agent_storage = SqliteAgentStorage(
 
 # ************* Agent Knowledge *************
 # Store MCP Documentation in a knowledge base
-agent_knowledge = UrlKnowledge(
-    urls=["https://modelcontextprotocol.io/llms-full.txt"],
+agent_knowledge = Knowledge(
     vector_db=LanceDb(
         uri=str(tmp_dir.joinpath("mcp_documentation")),
         table_name="mcp_documentation",
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
+)
+
+agent_knowledge.add_content(
+    url="https://modelcontextprotocol.io/llms-full.txt",
 )
 # *************************************
 
@@ -129,10 +132,10 @@ def get_mcp_agent(
         read_chat_history=True,
         read_tool_call_history=True,
         # Append previous conversation responses into the new messages for context.
-        add_history_to_messages=True,
+        add_history_to_context=True,
         num_history_responses=num_history_responses,
-        add_datetime_to_instructions=True,
-        add_name_to_instructions=True,
+        add_datetime_to_context=True,
+        add_name_to_context=True,
         debug_mode=debug_mode,
         # Respond in markdown format
         markdown=True,

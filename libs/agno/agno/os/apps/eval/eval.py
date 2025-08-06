@@ -20,8 +20,8 @@ class EvalApp(BaseApp):
 
     router: APIRouter
 
-    def __init__(self, db: BaseDb, name: Optional[str] = None):
-        self.name = name or "Eval App"
+    def __init__(self, db: BaseDb, display_name: Optional[str] = None):
+        self.display_name = display_name
         self.db = db
 
     def get_router(  # type: ignore[override]
@@ -32,8 +32,8 @@ class EvalApp(BaseApp):
         settings: AgnoAPISettings = AgnoAPISettings(),
         **kwargs,
     ) -> APIRouter:
-        if not self.name:
-            self.name = f"Eval App {index}"
+        if not self.display_name:
+            self.display_name = f"Eval App {index}"
 
         self.router_prefix = f"/eval/{index}"
 

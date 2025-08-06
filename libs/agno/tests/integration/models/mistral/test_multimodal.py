@@ -4,7 +4,7 @@ from agno.models.mistral import MistralChat
 
 
 def test_image_input():
-    agent = Agent(model=MistralChat(id="pixtral-12b-2409"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=MistralChat(id="pixtral-12b-2409"), markdown=True, telemetry=False)
 
     response = agent.run(
         "Tell me about this image.",

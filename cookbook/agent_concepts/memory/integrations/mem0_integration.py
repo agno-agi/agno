@@ -22,8 +22,8 @@ client.add(messages, user_id=user_id)
 
 agent = Agent(
     model=OpenAIChat(),
-    context={"memory": client.get_all(user_id=user_id)},
-    add_context=True,
+    dependencies={"memory": client.get_all(user_id=user_id)},
+    add_dependencies_to_context=True,
 )
 run: RunResponse = agent.run("What do you know about me?")
 

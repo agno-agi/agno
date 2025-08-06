@@ -31,7 +31,7 @@ agent = Agent(
     ],
     knowledge=knowledge,
     tools=[ReasoningTools(add_instructions=True)],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 

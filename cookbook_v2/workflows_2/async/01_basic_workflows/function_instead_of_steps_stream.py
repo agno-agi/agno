@@ -32,7 +32,7 @@ async def custom_execution_function(
 
     # Run the Hackernews agent to gather research content
     research_content = ""
-    async for response in await hackernews_agent.arun(
+    async for response in hackernews_agent.arun(
         execution_input.message, stream=True, stream_intermediate_steps=True
     ):
         if hasattr(response, "content") and response.content:
@@ -41,22 +41,22 @@ async def custom_execution_function(
     # Create intelligent planning prompt
     planning_prompt = f"""
         STRATEGIC CONTENT PLANNING REQUEST:
-        
+
         Core Topic: {execution_input.message}
-        
+
         Research Results: {research_content[:500]}
-        
+
         Planning Requirements:
         1. Create a comprehensive content strategy based on the research
         2. Leverage the research findings effectively
         3. Identify content formats and channels
         4. Provide timeline and priority recommendations
         5. Include engagement and distribution strategies
-        
+
         Please create a detailed, actionable content plan.
     """
 
-    async for response in await content_planner.arun(
+    async for response in content_planner.arun(
         planning_prompt, stream=True, stream_intermediate_steps=True
     ):
         yield response

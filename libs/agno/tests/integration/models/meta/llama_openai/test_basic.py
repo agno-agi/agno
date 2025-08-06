@@ -18,9 +18,7 @@ def _assert_metrics(response: RunResponse):
 
 
 def test_basic():
-    agent = Agent(
-        model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"), markdown=True, telemetry=False, monitoring=False
-    )
+    agent = Agent(model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"), markdown=True, telemetry=False)
 
     response: RunResponse = agent.run("Share a 2 sentence horror story")
 
@@ -32,9 +30,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(
-        model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"), markdown=True, telemetry=False, monitoring=False
-    )
+    agent = Agent(model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"), markdown=True, telemetry=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -51,9 +47,7 @@ def test_basic_stream():
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(
-        model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"), markdown=True, telemetry=False, monitoring=False
-    )
+    agent = Agent(model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"), markdown=True, telemetry=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -65,9 +59,7 @@ async def test_async_basic():
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    agent = Agent(
-        model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"), markdown=True, telemetry=False, monitoring=False
-    )
+    agent = Agent(model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"), markdown=True, telemetry=False)
 
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 
@@ -80,11 +72,10 @@ async def test_async_basic_stream():
 def test_with_memory():
     agent = Agent(
         model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
-        add_history_to_messages=True,
+        add_history_to_context=True,
         num_history_runs=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # First interaction
@@ -114,7 +105,6 @@ def test_structured_output():
         model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         response_model=MovieScript,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -137,7 +127,6 @@ def test_json_response_mode():
         response_model=MovieScript,
         use_json_mode=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -153,9 +142,8 @@ def test_history():
     agent = Agent(
         model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db", auto_upgrade_schema=True),
-        add_history_to_messages=True,
+        add_history_to_context=True,
         telemetry=False,
-        monitoring=False,
     )
     agent.run("Hello")
     assert len(agent.run_response.messages) == 2

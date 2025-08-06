@@ -37,7 +37,7 @@ USER_MEMORY_TABLE_SCHEMA = {
     "workflow_id": {"type": String, "nullable": True},
     "user_id": {"type": String, "nullable": True, "index": True},
     "topics": {"type": JSON, "nullable": True},
-    "last_updated": {"type": BigInteger, "nullable": True, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True, "index": True},
 }
 
 EVAL_TABLE_SCHEMA = {
@@ -64,10 +64,10 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "size": {"type": BigInteger, "nullable": True},
     "linked_to": {"type": String, "nullable": True},
     "access_count": {"type": BigInteger, "nullable": True},
-    "created_at": {"type": BigInteger, "nullable": True},
-    "updated_at": {"type": BigInteger, "nullable": True},
     "status": {"type": String, "nullable": True},
     "status_message": {"type": String, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
 }
 
 METRICS_TABLE_SCHEMA = {

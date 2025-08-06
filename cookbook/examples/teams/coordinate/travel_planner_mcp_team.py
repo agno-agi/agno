@@ -4,7 +4,7 @@ This example demonstrates how to use the MCP protocol to coordinate a team of ag
 Prerequisites:
 - Google Maps:
     - Set the environment variable `GOOGLE_MAPS_API_KEY` with your Google Maps API key.
-    You can obtain the API key from the Google Cloud Console:
+    You can obtain the API token from the Google Cloud Console:
     https://console.cloud.google.com/projectselector2/google/maps-apis/credentials
 
     - You also need to activate the Address Validation API for your .
@@ -12,7 +12,7 @@ Prerequisites:
 
 - Apify:
     - Set the environment variable `APIFY_TOKEN` with your Apify API token.
-    You can obtain the API key from the Apify Console:
+    You can obtain the API token from the Apify Console:
     https://console.apify.com/settings/integrations
 
 """
@@ -94,7 +94,7 @@ async def run_team():
             instructions=dedent("""\
                 You are an agent that can find Airbnb listings for a given location.\
             """),
-            add_datetime_to_instructions=True,
+            add_datetime_to_context=True,
         )
 
         maps_agent = Agent(
@@ -107,7 +107,7 @@ async def run_team():
                 and provides directions in travel destinations. Help plan travel
                 routes and find interesting places to visit for a given location and date.\
             """),
-            add_datetime_to_instructions=True,
+            add_datetime_to_context=True,
         )
 
         web_search_agent = Agent(
@@ -119,7 +119,7 @@ async def run_team():
                 You are an agent that can search the web for information.
                 Search for information about a given location.\
             """),
-            add_datetime_to_instructions=True,
+            add_datetime_to_context=True,
         )
 
         weather_search_agent = Agent(
@@ -131,7 +131,7 @@ async def run_team():
                 You are an agent that can search the web for information.
                 Search for the weather forecast for a given location and date.\
             """),
-            add_datetime_to_instructions=True,
+            add_datetime_to_context=True,
         )
 
         # Create and run the team
@@ -155,7 +155,7 @@ async def run_team():
             markdown=True,
             debug_mode=True,
             show_members_responses=True,
-            add_datetime_to_instructions=True,
+            add_datetime_to_context=True,
         )
 
         # Execute the team's task

@@ -20,7 +20,7 @@ USER_MEMORY_COLLECTION_SCHEMA = [
     {"key": "team_id"},
     {"key": "workflow_id"},
     {"key": "topics"},
-    {"key": "last_updated"},
+    {"key": "updated_at"},
 ]
 
 EVAL_COLLECTION_SCHEMA = [
@@ -37,8 +37,14 @@ EVAL_COLLECTION_SCHEMA = [
 KNOWLEDGE_COLLECTION_SCHEMA = [
     {"key": "id", "unique": True},
     {"key": "name"},
+    {"key": "description"},
     {"key": "type"},
     {"key": "status"},
+    {"key": "status_message"},
+    {"key": "metadata"},
+    {"key": "size"},
+    {"key": "linked_to"},
+    {"key": "access_count"},
     {"key": "created_at"},
     {"key": "updated_at"},
 ]

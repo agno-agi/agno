@@ -5,6 +5,8 @@ from fastapi import HTTPException, UploadFile
 from agno.agent.agent import Agent
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
+from agno.os.apps.base import BaseApp
+from agno.os.apps.memory import MemoryApp
 from agno.team.team import Team
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
@@ -138,4 +140,19 @@ def get_workflow_by_id(workflow_id: str, workflows: Optional[List[Workflow]] = N
     for workflow in workflows:
         if workflow.workflow_id == workflow_id:
             return workflow
+    return None
+
+
+def get_component_memory_app(
+    component: Union[Agent, Team], os_apps: Optional[List[BaseApp]] = None
+) -> Optional[MemoryApp]:
+    """Given an Agent or Team and a list of OS apps, return the memory app used by the component"""
+    if not os_apps or not component.enable_user_memories:
+        return None
+
+    # Find the memory app that has the same database as the component
+    for os_app in os_apps:
+        if isinstance(os_app, MemoryApp) and os_app.db == component.db:
+            return os_app
+
     return None

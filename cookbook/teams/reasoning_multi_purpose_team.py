@@ -18,7 +18,7 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.url import UrlKnowledge
+from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic import Claude
 from agno.models.openai.chat import OpenAIChat
 from agno.team.team import Team
@@ -51,7 +51,7 @@ reddit_researcher = Agent(
     role="Research a topic on Reddit",
     model=Claude(id="claude-3-5-sonnet-latest"),
     tools=[DuckDuckGoTools(cache_results=True)],
-    add_name_to_instructions=True,
+    add_name_to_context=True,
     instructions=dedent("""
     You are a Reddit researcher.
     You will be given a topic to research on Reddit.
@@ -122,8 +122,7 @@ calculator_agent = Agent(
     ],
 )
 
-agno_assist_knowledge = UrlKnowledge(
-    urls=["https://docs.agno.com/llms-full.txt"],
+agno_assist_knowledge = Knowledge(
     vector_db=LanceDb(
         uri="tmp/lancedb",
         table_name="agno_assist_knowledge",
@@ -131,6 +130,8 @@ agno_assist_knowledge = UrlKnowledge(
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
 )
+# Add content to the knowledge
+agno_assist_knowledge.add_content(url="https://docs.agno.com/llms-full.txt")
 agno_assist = Agent(
     name="Agno Assist",
     role="You help answer questions about the Agno framework.",
@@ -141,8 +142,8 @@ agno_assist = Agent(
             knowledge=agno_assist_knowledge, add_instructions=True, add_few_shot=True
         ),
     ],
-    add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_history_to_context=True,
+    add_datetime_to_context=True,
 )
 
 github_agent = Agent(

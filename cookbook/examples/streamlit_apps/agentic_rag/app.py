@@ -199,7 +199,7 @@ def main():
                     docs = []
             else:
                 scraper = WebsiteReader(max_links=2, max_depth=1)
-                docs: List[Document] = scraper.read(input_url)
+                docs: List[Document] = scraper.read(url=input_url)
 
             if docs:
                 agentic_rag_agent.knowledge.load_documents(docs, upsert=True)

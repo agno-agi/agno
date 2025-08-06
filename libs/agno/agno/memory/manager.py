@@ -153,7 +153,7 @@ class MemoryManager:
         self,
         memory: UserMemory,
         user_id: Optional[str] = None,
-    ) -> str:
+    ) -> Optional[str]:
         """Add a user memory for a given user id
         Args:
             memory (UserMemory): The memory to add
@@ -171,12 +171,13 @@ class MemoryManager:
                 user_id = "default"
             memory.user_id = user_id
 
-            if not memory.last_updated:
-                memory.last_updated = datetime.now()
+            if not memory.updated_at:
+                memory.updated_at = datetime.now()
 
             if self.db:
                 self._upsert_db_memory(memory=memory)
             return memory_id
+
         else:
             log_warning("Memory Db not provided.")
             return None
@@ -199,8 +200,8 @@ class MemoryManager:
             if user_id is None:
                 user_id = "default"
 
-            if not memory.last_updated:
-                memory.last_updated = datetime.now()
+            if not memory.updated_at:
+                memory.updated_at = datetime.now()
 
             memory.memory_id = memory_id
             memory.user_id = user_id
@@ -603,13 +604,13 @@ class MemoryManager:
 
         memories_list = memories.get(user_id, [])
 
-        # Sort memories by last_updated timestamp if available
+        # Sort memories by updated_at timestamp if available
         if memories_list:
-            # Sort memories by last_updated timestamp (newest first)
-            # If last_updated is None, place at the beginning of the list
+            # Sort memories by updated_at timestamp (newest first)
+            # If updated_at is None, place at the beginning of the list
             sorted_memories_list = sorted(
                 memories_list,
-                key=lambda memory: memory.last_updated or datetime.min,
+                key=lambda memory: memory.updated_at or datetime.min,
             )
         else:
             sorted_memories_list = []
@@ -633,13 +634,13 @@ class MemoryManager:
             memories = {}
 
         memories_list = memories.get(user_id, [])
-        # Sort memories by last_updated timestamp if available
+        # Sort memories by updated_at timestamp if available
         if memories_list:
-            # Sort memories by last_updated timestamp (oldest first)
-            # If last_updated is None, place at the end of the list
+            # Sort memories by updated_at timestamp (oldest first)
+            # If updated_at is None, place at the end of the list
             sorted_memories_list = sorted(
                 memories_list,
-                key=lambda memory: memory.last_updated or datetime.max,
+                key=lambda memory: memory.updated_at or datetime.max,
             )
 
         else:

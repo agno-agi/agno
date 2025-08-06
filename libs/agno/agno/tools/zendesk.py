@@ -35,7 +35,7 @@ class ZendeskTools(Toolkit):
         company_name (str): The company name to form the base URL for API requests.
         """
         self.username = username or getenv("ZENDESK_USERNAME")
-        self.password = password or getenv("ZENDESK_PW")
+        self.password = password or getenv("ZENDESK_PASSWORD")
         self.company_name = company_name or getenv("ZENDESK_COMPANY_NAME")
 
         if not self.username or not self.password or not self.company_name:

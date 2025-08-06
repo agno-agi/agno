@@ -47,7 +47,7 @@ team = Team(
     ],
     response_model=StockAnalysis,
     memory=memory,
-    # Set enable_team_history=true to add the previous chat history to the messages sent to the Model.
+    # Set enable_team_history=true to add the previous chat history to the context sent to the Model.
     enable_team_history=True,
     markdown=True,
     show_members_responses=True,

@@ -111,7 +111,7 @@ agno_assist = Agent(
     - Tool integration
     - Model support and configuration
     - Best practices and common patterns"""),
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     knowledge=agent_knowledge,
     storage=agent_storage,
     tools=[
@@ -131,7 +131,7 @@ agno_assist = Agent(
     # 1. Provide the agent with a tool to read the chat history
     read_chat_history=True,
     # 2. Automatically add the chat history to the messages sent to the model
-    add_history_to_messages=True,
+    add_history_to_context=True,
     # Number of historical responses to add to the messages.
     num_history_responses=3,
     markdown=True,

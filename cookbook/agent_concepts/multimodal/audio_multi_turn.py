@@ -8,7 +8,7 @@ agent = Agent(
         modalities=["text", "audio"],
         audio={"voice": "sage", "format": "wav"},
     ),
-    add_history_to_messages=True,
+    add_history_to_context=True,
 )
 
 agent.run("Is a golden retriever a good family dog?")

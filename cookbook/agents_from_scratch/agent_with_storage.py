@@ -88,7 +88,6 @@ agent_with_storage = Agent(
     - Best practices and common patterns"""),
     knowledge=agent_knowledge,
     storage=agent_storage,
-    
     # To provide the agent with the chat history
     # We can either:
     # 1. Provide the agent with a tool to read the chat history
@@ -97,7 +96,7 @@ agent_with_storage = Agent(
     # 1. Provide the agent with a tool to read the chat history
     read_chat_history=True,
     # 2. Automatically add the chat history to the messages sent to the model
-    add_history_to_messages=True,
+    add_history_to_context=True,
     # Number of historical runs to add to the messages.
     num_history_responses=3,
     markdown=True,

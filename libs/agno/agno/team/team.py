@@ -150,9 +150,9 @@ class Team:
     markdown: bool = False
     # If True, add the current datetime to the instructions to give the team a sense of time
     # This allows for relative times like "tomorrow" to be used in the prompt
-    add_datetime_to_instructions: bool = False
+    add_datetime_to_context: bool = False
     # If True, add the current location to the instructions to give the team a sense of location
-    add_location_to_instructions: bool = False
+    add_location_to_context: bool = False
     # If True, add the tools available to team members to the system message
     add_member_tools_to_system_message: bool = True
 
@@ -168,15 +168,11 @@ class Team:
     # Memory manager to use for this agent
     memory_manager: Optional[MemoryManager] = None
 
-    # --- Success criteria ---
-    # Define the success criteria for the team
-    success_criteria: Optional[str] = None
-
-    # --- User provided context ---
-    # User provided context
-    context: Optional[Dict[str, Any]] = None
-    # If True, add the context to the user prompt
-    add_context: bool = False
+    # --- User provided dependencies ---
+    # User provided dependencies
+    dependencies: Optional[Dict[str, Any]] = None
+    # If True, add the dependencies to the user prompt
+    add_dependencies_to_context: bool = False
 
     # --- Agent Knowledge ---
     knowledge: Optional[Knowledge] = None
@@ -256,8 +252,8 @@ class Team:
     add_session_summary_to_context: Optional[bool] = None
 
     # --- Team History ---
-    # add_history_to_messages=true adds messages from the chat history to the messages list sent to the Model.
-    add_history_to_messages: bool = False
+    # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
+    add_history_to_context: bool = False
     # Number of historical runs to include in the messages
     num_history_runs: int = 3
 
@@ -287,15 +283,16 @@ class Team:
 
     # Optional app ID. Indicates this team is part of an app.
     os_id: Optional[str] = None
-    # --- Debug & Monitoring ---
+
+    # --- Debug ---
     # Enable debug logs
     debug_mode: bool = False
     # Debug level: 1 = basic, 2 = detailed
     debug_level: Literal[1, 2] = 1
     # Enable member logs - Sets the debug_mode for team and members
     show_members_responses: bool = False
-    # monitoring=True logs Team information to agno.com for monitoring
-    monitoring: bool = False
+
+    # --- Telemetry ---
     # telemetry=True logs minimal telemetry for analytics
     # This helps us improve the Teams implementation and provide better support
     telemetry: bool = True
@@ -319,15 +316,14 @@ class Team:
         instructions: Optional[Union[str, List[str], Callable]] = None,
         expected_output: Optional[str] = None,
         additional_context: Optional[str] = None,
-        success_criteria: Optional[str] = None,
         markdown: bool = False,
-        add_datetime_to_instructions: bool = False,
-        add_location_to_instructions: bool = False,
+        add_datetime_to_context: bool = False,
+        add_location_to_context: bool = False,
         add_member_tools_to_system_message: bool = True,
         system_message: Optional[Union[str, Callable, Message]] = None,
         system_message_role: str = "system",
-        context: Optional[Dict[str, Any]] = None,
-        add_context: bool = False,
+        dependencies: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: bool = False,
         knowledge: Optional[Knowledge] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_references: bool = False,
@@ -371,7 +367,6 @@ class Team:
         debug_mode: bool = False,
         debug_level: Literal[1, 2] = 1,
         show_members_responses: bool = False,
-        monitoring: bool = False,
         telemetry: bool = True,
     ):
         self.members = members
@@ -398,15 +393,14 @@ class Team:
         self.expected_output = expected_output
         self.additional_context = additional_context
         self.markdown = markdown
-        self.add_datetime_to_instructions = add_datetime_to_instructions
-        self.add_location_to_instructions = add_location_to_instructions
+        self.add_datetime_to_context = add_datetime_to_context
+        self.add_location_to_context = add_location_to_context
         self.add_member_tools_to_system_message = add_member_tools_to_system_message
         self.system_message = system_message
         self.system_message_role = system_message_role
-        self.success_criteria = success_criteria
 
-        self.context = context
-        self.add_context = add_context
+        self.dependencies = dependencies
+        self.add_dependencies_to_context = add_dependencies_to_context
 
         self.knowledge = knowledge
         self.knowledge_filters = knowledge_filters
@@ -442,7 +436,6 @@ class Team:
         self.add_session_summary_to_context = add_session_summary_to_context
         self.add_history_to_messages = add_history_to_messages
         self.num_history_runs = num_history_runs
-
         self.extra_data = extra_data
 
         self.reasoning = reasoning
@@ -470,7 +463,6 @@ class Team:
         self.debug_level = debug_level
         self.show_members_responses = show_members_responses
 
-        self.monitoring = monitoring
         self.telemetry = telemetry
 
         # --- Params not to be set by user ---
@@ -518,18 +510,6 @@ class Team:
             set_log_level_to_debug(source_type="team", level=self.debug_level)
         else:
             set_log_level_to_info(source_type="team")
-
-    def _set_monitoring(self) -> None:
-        """Override monitoring and telemetry settings based on environment variables."""
-
-        # Only override if the environment variable is set
-        monitor_env = getenv("AGNO_MONITOR")
-        if monitor_env is not None:
-            self.monitoring = monitor_env.lower() == "true"
-
-        telemetry_env = getenv("AGNO_TELEMETRY")
-        if telemetry_env is not None:
-            self.telemetry = telemetry_env.lower() == "true"
 
     def set_telemetry(self) -> None:
         """Override telemetry settings based on environment variables."""
@@ -638,14 +618,76 @@ class Team:
         self.run_messages = None
         self.run_response = None
 
+    def _initialize_session_state(self, user_id: Optional[str] = None, session_id: Optional[str] = None) -> None:
+        self.session_state = self.session_state or {}
+
+        if user_id is not None:
+            self.session_state["current_user_id"] = user_id
+            if self.team_session_state is not None:
+                self.team_session_state["current_user_id"] = user_id
+            if self.workflow_session_state is not None:
+                self.workflow_session_state["current_user_id"] = user_id
+
+        if session_id is not None:
+            self.session_state["current_session_id"] = session_id
+            if self.team_session_state is not None:
+                self.team_session_state["current_session_id"] = session_id
+            if self.workflow_session_state is not None:
+                self.workflow_session_state["current_user_id"] = user_id
+
+    def _reset_session_state(self) -> None:
+        """Reset the session state for the agent."""
+        if self.team_session_state is not None:
+            self.team_session_state.pop("current_session_id", None)
+            self.team_session_state.pop("current_user_id", None)
+        if self.session_state is not None:
+            self.session_state.pop("current_session_id", None)
+            self.session_state.pop("current_user_id", None)
+
+    def _initialize_session(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[str, Optional[str]]:
+        """Initialize the session for the agent."""
+
+        self._reset_run_state()
+
+        # Determine the session_id
+        if session_id is not None and session_id != "":
+            # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
+            # Only reset session state if the session_id is different from the current session_id
+            if self.session_id is not None and session_id != self.session_id:
+                self._reset_session()
+
+            self.session_id = session_id
+        else:
+            if not (self.session_id is None or self.session_id == ""):
+                session_id = self.session_id
+            else:
+                # Generate a new session_id and store it in the agent
+                self.session_id = session_id = str(uuid4())
+
+        # Use the default user_id when necessary
+        if user_id is not None and user_id != "":
+            user_id = user_id
+        else:
+            user_id = self.user_id
+
+        # Determine the session_state
+        if session_state is not None:
+            self.session_state = session_state
+
+        self._initialize_session_state(user_id=user_id, session_id=session_id)
+
+        return session_id, user_id
+
     def initialize_team(self, session_id: Optional[str] = None) -> None:
         self._set_default_model()
 
         # Set debug mode
         self._set_debug()
-
-        # Set monitoring and telemetry
-        self._set_monitoring()
 
         # Set the team ID if not set
         self._set_team_id()
@@ -798,71 +840,6 @@ class Team:
 
         log_debug(f"Team Run End: {self.run_id}", center=True, symbol="*")
 
-    def _initialize_session_state(self, user_id: Optional[str] = None, session_id: Optional[str] = None) -> None:
-        self.session_state = self.session_state or {}
-
-        if user_id is not None:
-            self.session_state["current_user_id"] = user_id
-            if self.team_session_state is not None:
-                self.team_session_state["current_user_id"] = user_id
-            if self.workflow_session_state is not None:
-                self.workflow_session_state["current_user_id"] = user_id
-
-        if session_id is not None:
-            self.session_state["current_session_id"] = session_id
-            if self.team_session_state is not None:
-                self.team_session_state["current_session_id"] = session_id
-            if self.workflow_session_state is not None:
-                self.workflow_session_state["current_user_id"] = user_id
-
-    def _reset_session_state(self) -> None:
-        """Reset the session state for the agent."""
-        if self.team_session_state is not None:
-            self.team_session_state.pop("current_session_id", None)
-            self.team_session_state.pop("current_user_id", None)
-        if self.session_state is not None:
-            self.session_state.pop("current_session_id", None)
-            self.session_state.pop("current_user_id", None)
-
-    def _initialize_session(
-        self,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        session_state: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[str, Optional[str]]:
-        """Initialize the session for the agent."""
-
-        self._reset_run_state()
-
-        # Determine the session_id
-        if session_id is not None and session_id != "":
-            # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
-            # Only reset session state if the session_id is different from the current session_id
-            if self.session_id is not None and session_id != self.session_id:
-                self._reset_session()
-
-            self.session_id = session_id
-        else:
-            if not (self.session_id is None or self.session_id == ""):
-                session_id = self.session_id
-            else:
-                # Generate a new session_id and store it in the agent
-                self.session_id = session_id = str(uuid4())
-
-        # Use the default user_id when necessary
-        if user_id is not None and user_id != "":
-            user_id = user_id
-        else:
-            user_id = self.user_id
-
-        # Determine the session_state
-        if session_state is not None:
-            self.session_state = session_state
-
-        self._initialize_session_state(user_id=user_id, session_id=session_id)
-
-        return session_id, user_id
-
     @overload
     def run(
         self,
@@ -972,8 +949,8 @@ class Team:
             raise ValueError("Team session is not a TeamSession")
 
         # Read existing session from storage
-        if self.context is not None:
-            self._resolve_run_context()
+        if self.dependencies is not None:
+            self._resolve_run_dependencies()
 
         # Configure the model for runs
         self._set_default_model()
@@ -1278,7 +1255,7 @@ class Team:
     ) -> TeamRunResponse: ...
 
     @overload
-    async def arun(
+    def arun(
         self,
         message: Union[str, List, Dict, Message, BaseModel],
         *,
@@ -1296,7 +1273,7 @@ class Team:
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunResponseEvent, TeamRunResponseEvent]]: ...
 
-    async def arun(
+    def arun(
         self,
         message: Union[str, List, Dict, Message, BaseModel],
         *,
@@ -1356,8 +1333,8 @@ class Team:
         self.get_team_session(session_id=session_id, user_id=user_id)
 
         # Read existing session from storage
-        if self.context is not None:
-            self._resolve_run_context()
+        if self.dependencies is not None:
+            self._resolve_run_dependencies()
 
         # Configure the model for runs
         self._set_default_model()
@@ -1456,7 +1433,7 @@ class Team:
                     )
                     return response_iterator
                 else:
-                    return await self._arun(
+                    return self._arun(
                         run_response=self.run_response,
                         run_messages=run_messages,
                         session_id=session_id,
@@ -1468,7 +1445,9 @@ class Team:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 last_exception = e
                 if attempt < num_attempts - 1:
-                    await asyncio.sleep(2**attempt)
+                    import time
+
+                    time.sleep(2**attempt)
             except (KeyboardInterrupt, RunCancelledException):
                 if stream:
                     return async_generator_wrapper(
@@ -4665,13 +4644,13 @@ class Team:
             rr.created_at = created_at
         return rr
 
-    def _resolve_run_context(self) -> None:
+    def _resolve_run_dependencies(self) -> None:
         from inspect import signature
 
-        log_debug("Resolving context")
-        if self.context is not None:
-            if isinstance(self.context, dict):
-                for ctx_key, ctx_value in self.context.items():
+        log_debug("Resolving dependencies")
+        if self.dependencies is not None:
+            if isinstance(self.dependencies, dict):
+                for ctx_key, ctx_value in self.dependencies.items():
                     if callable(ctx_value):
                         try:
                             sig = signature(ctx_value)
@@ -4680,13 +4659,13 @@ class Team:
                             else:
                                 resolved_ctx_value = ctx_value()
                             if resolved_ctx_value is not None:
-                                self.context[ctx_key] = resolved_ctx_value
+                                self.dependencies[ctx_key] = resolved_ctx_value
                         except Exception as e:
-                            log_warning(f"Failed to resolve context for {ctx_key}: {e}")
+                            log_warning(f"Failed to resolve dependencies for {ctx_key}: {e}")
                     else:
-                        self.context[ctx_key] = ctx_value
+                        self.dependencies[ctx_key] = ctx_value
             else:
-                log_warning("Context is not a dict")
+                log_warning("Dependencies is not a dict")
 
     def determine_tools_for_model(
         self,
@@ -4970,13 +4949,13 @@ class Team:
         if self.markdown and self.response_model is None:
             additional_information.append("Use markdown to format your answers.")
         # 1.3.2 Add the current datetime
-        if self.add_datetime_to_instructions:
+        if self.add_datetime_to_context:
             from datetime import datetime
 
             additional_information.append(f"The current time is {datetime.now()}")
 
         # 1.3.3 Add the current location
-        if self.add_location_to_instructions:
+        if self.add_location_to_context:
             from agno.utils.location import get_location
 
             location = get_location()
@@ -5065,13 +5044,6 @@ class Team:
 
         if self.name is not None:
             system_message_content += f"Your name is: {self.name}\n\n"
-
-        if self.success_criteria:
-            system_message_content += "Your task is successful when the following criteria is met:\n"
-            system_message_content += "<success_criteria>\n"
-            system_message_content += f"{self.success_criteria}\n"
-            system_message_content += "</success_criteria>\n"
-            system_message_content += "Stop the team run when the success_criteria is met.\n\n"
 
         # Attached media
         if audio is not None or images is not None or videos is not None or files is not None:
@@ -5225,7 +5197,7 @@ class Team:
             run_messages.messages.append(system_message)
 
         # 2. Add history to run_messages
-        if self.add_history_to_messages:
+        if self.add_history_to_context:
             from copy import deepcopy
 
             history = self.team_session.get_messages_from_last_n_runs(
@@ -5342,9 +5314,9 @@ class Team:
                 user_message_content += self._convert_documents_to_string(references.references) + "\n"
                 user_message_content += "</references>"
             # Add context to user message
-            if self.add_context and self.context is not None:
+            if self.add_dependencies_to_context and self.dependencies is not None:
                 user_message_content += "\n\n<context>\n"
-                user_message_content += self._convert_context_to_string(self.context) + "\n"
+                user_message_content += self._convert_dependencies_to_string(self.dependencies) + "\n"
                 user_message_content += "</context>"
 
             return Message(
@@ -5436,7 +5408,7 @@ class Team:
             self.session_state or {},
             self.team_session_state or {},
             self.workflow_session_state or {},
-            self.context or {},
+            self.dependencies or {},
             self.extra_data or {},
             {"user_id": user_id} if user_id is not None else {},
         )
@@ -5456,7 +5428,7 @@ class Team:
             log_warning(f"Template substitution failed: {e}")
             return message
 
-    def _convert_context_to_string(self, context: Dict[str, Any]) -> str:
+    def _convert_dependencies_to_string(self, context: Dict[str, Any]) -> str:
         """Convert the context dictionary to a string representation.
 
         Args:
@@ -5781,7 +5753,7 @@ class Team:
 
                 # Add history for the member if enabled
                 history = None
-                if member_agent.add_history_to_messages:
+                if member_agent.add_history_to_context:
                     history = self._get_history_for_member_agent(member_agent, session_id)
                     if history:
                         history.append(Message(role="user", content=member_agent_task))
@@ -5904,7 +5876,7 @@ class Team:
 
                 # Add history for the member if enabled
                 history = None
-                if member_agent.add_history_to_messages:
+                if member_agent.add_history_to_context:
                     history = self._get_history_for_member_agent(member_agent, session_id)
                     if history:
                         history.append(Message(role="user", content=member_agent_task))
@@ -6068,7 +6040,7 @@ class Team:
             )
 
             # 4. Add history for the member if enabled
-            if member_agent.add_history_to_messages:
+            if member_agent.add_history_to_context:
                 history = self._get_history_for_member_agent(member_agent, session_id)
                 if history:
                     history.append(Message(role="user", content=member_agent_task))
@@ -6214,7 +6186,7 @@ class Team:
             )
 
             # 4. Add history for the member if enabled
-            if member_agent.add_history_to_messages:
+            if member_agent.add_history_to_context:
                 history = self._get_history_for_member_agent(member_agent, session_id)
                 if history:
                     history.append(Message(role="user", content=member_agent_task))
@@ -6227,7 +6199,7 @@ class Team:
                 member_agent.enable_agentic_knowledge_filters = self.enable_agentic_knowledge_filters
 
             if stream:
-                member_agent_run_response_stream = await member_agent.arun(
+                member_agent_run_response_stream = member_agent.arun(
                     message=member_agent_task if history is None else None,
                     user_id=user_id,
                     # All members have the same session_id
@@ -6454,7 +6426,7 @@ class Team:
             member_agent_task = message.get_content_string()
 
             # Add history for the member if enabled
-            if member_agent.add_history_to_messages:
+            if member_agent.add_history_to_context:
                 history = self._get_history_for_member_agent(member_agent, session_id)
                 if history:
                     history.append(Message(role="user", content=member_agent_task))
@@ -6594,7 +6566,7 @@ class Team:
             member_agent_task = message.get_content_string()
 
             # Add history for the member if enabled
-            if member_agent.add_history_to_messages:
+            if member_agent.add_history_to_context:
                 history = self._get_history_for_member_agent(member_agent, session_id)
                 if history:
                     history.append(Message(role="user", content=member_agent_task))
@@ -6609,7 +6581,7 @@ class Team:
 
             # 2. Get the response from the member agent
             if stream:
-                member_agent_run_response_stream = await member_agent.arun(
+                member_agent_run_response_stream = member_agent.arun(
                     message=member_agent_task if history is None else None,
                     user_id=user_id,
                     # All members have the same session_id
@@ -6766,18 +6738,64 @@ class Team:
             self.db.upsert_session(session=session)
         return self.team_session
 
-    def rename_session(self, session_name: str, session_id: Optional[str] = None) -> Optional[TeamSession]:
-        """Rename the current session and save to storage"""
-        if self.session_id is None and session_id is None:
-            raise ValueError("Session ID is not initialized")
+    def _generate_team_session_name(self, session_id: str) -> str:
+        """Generate a name for the team session"""
 
+        if self.model is None:
+            raise Exception("Model not set")
+
+        gen_session_name_prompt = "Team Conversation\n"
+
+        # Get team session messages for generating the name
+        if self.team_session is not None:
+            messages_for_generating_session_name = self.get_messages_for_session()
+        else:
+            messages_for_generating_session_name = []
+
+        for message in messages_for_generating_session_name:
+            gen_session_name_prompt += f"{message.role.upper()}: {message.content}\n"
+
+        gen_session_name_prompt += "\n\nTeam Session Name: "
+
+        system_message = Message(
+            role=self.system_message_role,
+            content="Please provide a suitable name for this conversation in maximum 5 words. "
+            "Remember, do not exceed 5 words.",
+        )
+        user_message = Message(role="user", content=gen_session_name_prompt)
+        generate_name_messages = [system_message, user_message]
+        generated_name = self.model.response(messages=generate_name_messages)
+        content = generated_name.content
+        if content is None:
+            log_error("Generated name is None. Trying again.")
+            return self._generate_team_session_name(session_id=session_id)
+        if len(content.split()) > 15:
+            log_error("Generated name is too long. Trying again.")
+            return self._generate_team_session_name(session_id=session_id)
+        return content.replace('"', "").strip()
+
+    def set_session_name(
+        self, session_id: Optional[str] = None, autogenerate: bool = False, session_name: Optional[str] = None
+    ) -> Optional[TeamSession]:
+        """Set the session name and save to storage"""
+        if self.session_id is None and session_id is None:
+            raise Exception("Session ID is not set")
         session_id = session_id or self.session_id
 
-        # -*- Read from storage
+        if autogenerate:
+            # -*- Generate name for session
+            session_name = self._generate_team_session_name(session_id=session_id)
+            log_debug(f"Generated Team Session Name: {session_name}")
+        elif session_name is None:
+            raise Exception("Session name is not set")
+
+        # Read from storage
         self.get_team_session(session_id=session_id)  # type: ignore
+
         # -*- Rename session
         self.session_name = session_name
-        # -*- Save to storage
+
+        # Save to storage
         return self.save_session(session_id=session_id, user_id=self.user_id)  # type: ignore
 
     def delete_session(self, session_id: str) -> None:
@@ -7568,15 +7586,6 @@ class Team:
             "functions": functions,
             "metrics": self.run_response.metrics,  # type: ignore
         }
-
-        if self.monitoring:
-            run_data.update(
-                {
-                    "run_input": self.run_input,
-                    "run_response": self.run_response.to_dict(),  # type: ignore
-                    "run_response_format": run_response_format,
-                }
-            )
 
         return run_data
 

@@ -647,7 +647,7 @@ class Step:
                             self._convert_video_artifacts_to_videos(step_input.videos) if step_input.videos else None
                         )
                         audios = self._convert_audio_artifacts_to_audio(step_input.audio) if step_input.audio else None
-                        response_stream = await self.active_executor.arun(  # type: ignore
+                        response_stream = self.active_executor.arun(  # type: ignore
                             message=message,
                             images=images,
                             videos=videos,

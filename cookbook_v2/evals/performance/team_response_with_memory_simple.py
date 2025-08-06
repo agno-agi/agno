@@ -52,7 +52,7 @@ weather_agent = Agent(
     tools=[get_weather],
     memory=memory,
     storage=agent_storage,
-    add_history_to_messages=True,
+    add_history_to_context=True,
 )
 
 team = Team(
@@ -63,7 +63,7 @@ team = Team(
     storage=team_storage,
     markdown=True,
     enable_user_memories=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
 )
 
 

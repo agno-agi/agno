@@ -23,8 +23,8 @@ agno_assist = Agent(
     instructions="Search your knowledge before answering the question.",
     knowledge=knowledge,
     storage=SqliteStorage(table_name="agno_assist_sessions", db_file="tmp/agents.db"),
-    add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_history_to_context=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 

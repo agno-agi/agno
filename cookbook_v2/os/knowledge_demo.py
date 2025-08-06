@@ -28,7 +28,7 @@ basic_agent = Agent(
     name="Basic Agent",
     model=OpenAIChat(id="gpt-4o"),
     knowledge=knowledge,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
     db=contents_db,
 )

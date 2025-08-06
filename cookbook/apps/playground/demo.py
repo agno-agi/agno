@@ -38,9 +38,9 @@ simple_agent = Agent(
     ),
     memory=memory,
     enable_user_memories=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_responses=5,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -59,9 +59,9 @@ web_agent = Agent(
     ),
     memory=memory,
     enable_user_memories=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_responses=5,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -84,9 +84,9 @@ finance_agent = Agent(
     ),
     memory=memory,
     enable_user_memories=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_responses=5,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -103,8 +103,8 @@ image_agent = Agent(
     memory=memory,
     markdown=True,
     enable_user_memories=True,
-    add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_history_to_context=True,
+    add_datetime_to_context=True,
     storage=SqliteStorage(
         table_name="image_agent",
         db_file=image_agent_storage_file,
@@ -160,8 +160,8 @@ research_agent = Agent(
         db_file=agent_storage_file,
         auto_upgrade_schema=True,
     ),
-    add_history_to_messages=True,
-    add_datetime_to_instructions=True,
+    add_history_to_context=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 
@@ -179,9 +179,9 @@ youtube_agent = Agent(
     ],
     memory=memory,
     enable_user_memories=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_responses=5,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     storage=SqliteStorage(
         table_name="youtube_agent", db_file=agent_storage_file, auto_upgrade_schema=True
     ),

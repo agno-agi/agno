@@ -1,8 +1,19 @@
 import json
-from typing import TYPE_CHECKING, AsyncGenerator, List, Optional, cast
+from typing import TYPE_CHECKING, AsyncGenerator, Dict, List, Optional, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.agent.agent import Agent
@@ -50,6 +61,58 @@ if TYPE_CHECKING:
     from agno.os.app import AgentOS
 
 
+from agno.os.utils import get_component_memory_app
+
+
+class WebSocketManager:
+    """Manages WebSocket connections for workflow runs"""
+
+    active_connections: Dict[str, WebSocket]  # {run_id: websocket}
+
+    def __init__(
+        self,
+        active_connections: Optional[Dict[str, WebSocket]] = None,
+    ):
+        # Store active connections: {run_id: websocket}
+        self.active_connections: Dict[str, WebSocket] = active_connections or {}
+
+    async def connect(self, websocket: WebSocket):
+        """Accept WebSocket connection"""
+        await websocket.accept()
+        logger.debug(f"WebSocket connected")
+
+        # Send connection confirmation
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "event": "connected",
+                    "message": "Connected to workflow events",
+                }
+            )
+        )
+
+    async def register_workflow_websocket(self, run_id: str, websocket: WebSocket):
+        """Register a workflow run with its WebSocket connection"""
+        self.active_connections[run_id] = websocket
+        logger.debug(f"Registered WebSocket for run_id: {run_id}")
+
+    async def disconnect_by_run_id(self, run_id: str):
+        """Remove WebSocket connection by run_id"""
+        if run_id in self.active_connections:
+            del self.active_connections[run_id]
+            logger.debug(f"WebSocket disconnected for run_id: {run_id}")
+
+    async def get_websocket_for_run(self, run_id: str) -> Optional[WebSocket]:
+        """Get WebSocket connection for a workflow run"""
+        return self.active_connections.get(run_id)
+
+
+# Global manager instance
+websocket_manager = WebSocketManager(
+    active_connections={},
+)
+
+
 async def agent_response_streamer(
     agent: Agent,
     message: str,
@@ -61,7 +124,7 @@ async def agent_response_streamer(
     files: Optional[List[FileMedia]] = None,
 ) -> AsyncGenerator:
     try:
-        run_response = await agent.arun(
+        run_response = agent.arun(
             message,
             session_id=session_id,
             user_id=user_id,
@@ -92,7 +155,7 @@ async def agent_continue_response_streamer(
     user_id: Optional[str] = None,
 ) -> AsyncGenerator:
     try:
-        continue_response = await agent.acontinue_run(
+        continue_response = agent.acontinue_run(
             run_id=run_id,
             updated_tools=updated_tools,
             session_id=session_id,
@@ -125,7 +188,7 @@ async def team_response_streamer(
 ) -> AsyncGenerator:
     """Run the given team asynchronously and yield its response"""
     try:
-        run_response = await team.arun(
+        run_response = team.arun(
             message,
             session_id=session_id,
             user_id=user_id,
@@ -147,6 +210,44 @@ async def team_response_streamer(
         )
         yield error_response.to_json()
         return
+
+
+async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os: "AgentOS"):
+    """Handle workflow execution directly via WebSocket"""
+    try:
+        workflow_id = message.get("workflow_id")
+        session_id = message.get("session_id")
+        user_message = message.get("message", "")
+        user_id = message.get("user_id")
+
+        if not workflow_id:
+            await websocket.send_text(json.dumps({"event": "error", "error": "workflow_id is required"}))
+            return
+
+        # Get workflow from OS
+        workflow = get_workflow_by_id(workflow_id, os.workflows)
+        if not workflow:
+            await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
+            return
+
+        # Generate session_id if not provided
+        if not session_id:
+            session_id = str(uuid4())
+
+        # Execute workflow in background with streaming
+        await workflow.arun(
+            message=user_message,
+            session_id=session_id,
+            user_id=user_id,
+            stream=True,
+            stream_intermediate_steps=True,
+            background=True,
+            websocket=websocket,
+        )
+
+    except Exception as e:
+        logger.error(f"Error executing workflow via WebSocket: {e}")
+        await websocket.send_text(json.dumps({"event": "error", "error": str(e)}))
 
 
 async def workflow_response_streamer(
@@ -196,27 +297,52 @@ def get_base_router(
     async def config() -> ConfigResponse:
         apps_response = AppsResponse(
             session=[
-                ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
+                ManagerResponse(
+                    type=app.type,
+                    name=app.display_name or "Sessions app",
+                    version=app.version,
+                    route=app.router_prefix,
+                )
                 for app in os.apps
                 if app.type == "session"
             ],
             knowledge=[
-                ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
+                ManagerResponse(
+                    type=app.type,
+                    name=app.display_name or "Knowledge app",
+                    version=app.version,
+                    route=app.router_prefix,
+                )
                 for app in os.apps
                 if app.type == "knowledge"
             ],
             memory=[
-                ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
+                ManagerResponse(
+                    type=app.type,
+                    name=app.display_name or "Memory app",
+                    version=app.version,
+                    route=app.router_prefix,
+                )
                 for app in os.apps
                 if app.type == "memory"
             ],
             eval=[
-                ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
+                ManagerResponse(
+                    type=app.type,
+                    name=app.display_name or "Evals app",
+                    version=app.version,
+                    route=app.router_prefix,
+                )
                 for app in os.apps
                 if app.type == "eval"
             ],
             metrics=[
-                ManagerResponse(type=app.type, name=app.name, version=app.version, route=app.router_prefix)
+                ManagerResponse(
+                    type=app.type,
+                    name=app.display_name or "Metrics app",
+                    version=app.version,
+                    route=app.router_prefix,
+                )
                 for app in os.apps
                 if app.type == "metrics"
             ],
@@ -465,10 +591,16 @@ def get_base_router(
         response_model_exclude_none=True,
     )
     async def get_agents():
+        """Return the list of all Agents present in the contextual OS"""
         if os.agents is None:
             return []
 
-        return [AgentResponse.from_agent(agent) for agent in os.agents]
+        agents = []
+        for agent in os.agents:
+            agent_memory_app = get_component_memory_app(component=agent, os_apps=os.apps)
+            agents.append(AgentResponse.from_agent(agent=agent, memory_app=agent_memory_app))
+
+        return agents
 
     @router.get(
         "/agents/{agent_id}/sessions",
@@ -609,11 +741,6 @@ def get_base_router(
             logger.debug("Creating new session")
             session_id = str(uuid4())
 
-        if monitor:
-            team.monitoring = True
-        else:
-            team.monitoring = False
-
         base64_images: List[Image] = []
         base64_audios: List[Audio] = []
         base64_videos: List[Video] = []
@@ -713,10 +840,16 @@ def get_base_router(
         response_model_exclude_none=True,
     )
     async def get_teams():
+        """Return the list of all Teams present in the contextual OS"""
         if os.teams is None:
             return []
 
-        return [TeamResponse.from_team(team) for team in os.teams]
+        teams = []
+        for team in os.teams:
+            team_memory_app = get_component_memory_app(component=team, os_apps=os.apps)
+            teams.append(TeamResponse.from_team(team=team, memory_app=team_memory_app))
+
+        return teams
 
     @router.get(
         "/teams/{team_id}/sessions",
@@ -842,6 +975,36 @@ def get_base_router(
         return TeamSessionDetailSchema.from_session(session)  # type: ignore
 
     # -- Workflow routes ---
+
+    @router.websocket("/workflows/ws")
+    async def workflow_websocket_endpoint(websocket: WebSocket):
+        """WebSocket endpoint for receiving real-time workflow events"""
+        await websocket_manager.connect(websocket)
+
+        try:
+            while True:
+                data = await websocket.receive_text()
+                message = json.loads(data)
+                action = message.get("action")
+
+                if action == "ping":
+                    await websocket.send_text(json.dumps({"event": "pong"}))
+
+                elif action == "start-workflow":
+                    # Handle workflow execution directly via WebSocket
+                    await handle_workflow_via_websocket(websocket, message, os)
+
+        except WebSocketDisconnect:
+            # Clean up any run_ids associated with this websocket
+            runs_to_remove = [run_id for run_id, ws in websocket_manager.active_connections.items() if ws == websocket]
+            for run_id in runs_to_remove:
+                await websocket_manager.disconnect_by_run_id(run_id)
+        except Exception as e:
+            logger.error(f"WebSocket error: {e}")
+            # Clean up any run_ids associated with this websocket
+            runs_to_remove = [run_id for run_id, ws in websocket_manager.active_connections.items() if ws == websocket]
+            for run_id in runs_to_remove:
+                await websocket_manager.disconnect_by_run_id(run_id)
 
     @router.get(
         "/workflows",

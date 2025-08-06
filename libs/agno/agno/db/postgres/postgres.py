@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
-from sqlalchemy import Index, UniqueConstraint
+from sqlalchemy import Index, String, UniqueConstraint
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.postgres.schemas import get_table_schema_definition
@@ -24,7 +24,7 @@ from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
-    from sqlalchemy import and_, func, update
+    from sqlalchemy import func, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -37,9 +37,9 @@ except ImportError:
 class PostgresDb(BaseDb):
     def __init__(
         self,
+        db_url: Optional[str] = None,
         db_engine: Optional[Engine] = None,
         db_schema: Optional[str] = None,
-        db_url: Optional[str] = None,
         session_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
@@ -248,6 +248,7 @@ class PostgresDb(BaseDb):
             raise
 
     # -- Session methods --
+
     def delete_session(self, session_id: str) -> bool:
         """
         Delete a session from the database.
@@ -590,7 +591,6 @@ class PostgresDb(BaseDb):
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.TEAM.value,
                         team_id=session_dict.get("team_id"),
-                        team_session_id=session_dict.get("team_session_id"),
                         user_id=session_dict.get("user_id"),
                         runs=session_dict.get("runs"),
                         team_data=session_dict.get("team_data"),
@@ -604,7 +604,6 @@ class PostgresDb(BaseDb):
                         index_elements=["session_id"],
                         set_=dict(
                             team_id=session_dict.get("team_id"),
-                            team_session_id=session_dict.get("team_session_id"),
                             user_id=session_dict.get("user_id"),
                             team_data=session_dict.get("team_data"),
                             session_data=session_dict.get("session_data"),
@@ -731,7 +730,8 @@ class PostgresDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 stmt = select(func.json_array_elements_text(table.c.topics))
                 result = sess.execute(stmt).fetchall()
-                return [record[0] for record in result]
+
+                return list(set([record[0] for record in result]))
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
@@ -824,8 +824,8 @@ class PostgresDb(BaseDb):
                 if team_id is not None:
                     stmt = stmt.where(table.c.team_id == team_id)
                 if topics is not None:
-                    topic_conditions = [text(f"topics::text LIKE '%\"{topic}\"%'") for topic in topics]
-                    stmt = stmt.where(and_(*topic_conditions))
+                    for topic in topics:
+                        stmt = stmt.where(func.cast(table.c.topics, String).like(f'%"{topic}"%'))
                 if search_content is not None:
                     stmt = stmt.where(func.cast(table.c.memory, postgresql.TEXT).ilike(f"%{search_content}%"))
 
@@ -903,11 +903,11 @@ class PostgresDb(BaseDb):
                     select(
                         table.c.user_id,
                         func.count(table.c.memory_id).label("total_memories"),
-                        func.max(table.c.last_updated).label("last_memory_updated_at"),
+                        func.max(table.c.updated_at).label("last_memory_updated_at"),
                     )
                     .where(table.c.user_id.is_not(None))
                     .group_by(table.c.user_id)
-                    .order_by(func.max(table.c.last_updated).desc())
+                    .order_by(func.max(table.c.updated_at).desc())
                 )
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
@@ -968,7 +968,7 @@ class PostgresDb(BaseDb):
                     agent_id=memory.agent_id,
                     team_id=memory.team_id,
                     topics=memory.topics,
-                    last_updated=int(time.time()),
+                    updated_at=int(time.time()),
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["memory_id"],
@@ -978,7 +978,7 @@ class PostgresDb(BaseDb):
                         input=memory.input,
                         agent_id=memory.agent_id,
                         team_id=memory.team_id,
-                        last_updated=int(time.time()),
+                        updated_at=int(time.time()),
                     ),
                 ).returning(table)
 
@@ -1033,6 +1033,7 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess:
                 result = sess.execute(stmt).fetchall()
+
                 return [record._mapping for record in result]
 
         except Exception as e:
@@ -1065,6 +1066,7 @@ class PostgresDb(BaseDb):
 
         # 2. No metrics records. Return the date of the first recorded session.
         first_session, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
+
         first_session_date = first_session[0]["created_at"] if first_session else None  # type: ignore[index]
 
         # 3. No metrics records and no sessions records. Return None.
@@ -1086,6 +1088,7 @@ class PostgresDb(BaseDb):
             table = self._get_table(table_type="metrics")
 
             starting_date = self._get_metrics_calculation_starting_date(table)
+
             if starting_date is None:
                 log_info("No session data found. Won't calculate metrics.")
                 return None
@@ -1095,14 +1098,19 @@ class PostgresDb(BaseDb):
                 log_info("Metrics already calculated for all relevant dates.")
                 return None
 
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             sessions = self._get_all_sessions_for_metrics_calculation(
                 start_timestamp=start_timestamp, end_timestamp=end_timestamp
             )
+
             all_sessions_data = fetch_all_sessions_data(
                 sessions=sessions, dates_to_process=dates_to_process, start_timestamp=start_timestamp
             )
@@ -1122,6 +1130,7 @@ class PostgresDb(BaseDb):
                     continue
 
                 metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
+
                 metrics_records.append(metrics_record)
 
             if metrics_records:
@@ -1572,3 +1581,60 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_error(f"Error upserting eval run name {eval_run_id}: {e}")
             return None
+
+    # -- Migrations --
+
+    def migrate_table_from_v1_to_v2(self, v1_db_schema: str, v1_table_name: str, v1_table_type: str):
+        """Migrate all content in the given table to the right v2 table"""
+
+        from agno.db.migrations.v1_to_v2 import (
+            get_all_table_content,
+            parse_agent_sessions,
+            parse_memories,
+            parse_team_sessions,
+            parse_workflow_sessions,
+        )
+
+        # Get all content from the old table
+        old_content: list[dict[str, Any]] = get_all_table_content(
+            db=self,
+            db_schema=v1_db_schema,
+            table_name=v1_table_name,
+        )
+        if not old_content:
+            log_info(f"No content to migrate from table {v1_table_name}")
+            return
+
+        # Parse the content into the new format
+        memories = []
+        if v1_table_type == "agent_sessions":
+            sessions = parse_agent_sessions(old_content)
+        elif v1_table_type == "team_sessions":
+            sessions = parse_team_sessions(old_content)
+        elif v1_table_type == "workflow_sessions":
+            sessions = parse_workflow_sessions(old_content)
+        elif v1_table_type == "memories":
+            memories = parse_memories(old_content)
+        else:
+            raise ValueError(f"Invalid table type: {v1_table_type}")
+
+        # Insert the new content into the new table
+        if v1_table_type == "agent_sessions":
+            for session in sessions:
+                self.upsert_session(session)
+            log_info(f"Migrated {len(sessions)} Agent sessions to table: {self.session_table}")
+
+        elif v1_table_type == "team_sessions":
+            for session in sessions:
+                self.upsert_session(session)
+            log_info(f"Migrated {len(sessions)} Team sessions to table: {self.session_table}")
+
+        elif v1_table_type == "workflow_sessions":
+            for session in sessions:
+                self.upsert_session(session)
+            log_info(f"Migrated {len(sessions)} Workflow sessions to table: {self.session_table}")
+
+        elif v1_table_type == "memories":
+            for memory in memories:
+                self.upsert_user_memory(memory)
+            log_info(f"Migrated {len(memories)} memories to table: {self.memory_table}")

@@ -431,7 +431,7 @@ async def test_team_memory_with_multiple_members(agent_storage, team_storage, me
         storage=agent_storage,
         memory=memory,
         enable_user_memories=True,
-        add_history_to_messages=True,
+        add_history_to_context=True,
     )
 
     agent2 = Agent(
@@ -442,7 +442,7 @@ async def test_team_memory_with_multiple_members(agent_storage, team_storage, me
         storage=agent_storage,
         memory=memory,
         enable_user_memories=True,
-        add_history_to_messages=True,
+        add_history_to_context=True,
     )
 
     agent3 = Agent(
@@ -453,7 +453,7 @@ async def test_team_memory_with_multiple_members(agent_storage, team_storage, me
         storage=agent_storage,
         memory=memory,
         enable_user_memories=True,
-        add_history_to_messages=True,
+        add_history_to_context=True,
     )
 
     team = Team(
@@ -464,7 +464,7 @@ async def test_team_memory_with_multiple_members(agent_storage, team_storage, me
         storage=team_storage,
         memory=memory,
         enable_user_memories=True,
-        add_history_to_messages=True,
+        add_history_to_context=True,
         instructions="Route financial questions to the Financial Advisor, health-related questions to the Health Coach, and meeting/scheduling requests to the Meeting Coordinator. Remember user preferences and past interactions to provide personalized assistance.",
     )
 

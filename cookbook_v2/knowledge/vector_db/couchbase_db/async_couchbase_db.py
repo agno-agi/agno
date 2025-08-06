@@ -1,4 +1,4 @@
-    """
+"""
 Couchbase Vector DB Example
 ==========================
 
@@ -168,6 +168,7 @@ knowledge_base = Knowledge(
 
 # Create and use the agent
 agent = Agent(knowledge=knowledge_base)
+
 
 async def run_agent():
     await knowledge_base.async_add_content(

@@ -48,7 +48,7 @@ def create_agent(user: str = "user"):
         model=OpenAIChat(id="gpt-4o"),
         storage=agent_storage,
         # Add chat history to messages
-        add_history_to_messages=True,
+        add_history_to_context=True,
         num_history_responses=3,
         markdown=True,
     )

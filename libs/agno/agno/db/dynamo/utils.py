@@ -69,9 +69,9 @@ def serialize_knowledge_row(knowledge: KnowledgeRow) -> Dict[str, Any]:
             "id": knowledge.id,
             "name": knowledge.name,
             "description": knowledge.description,
-            "user_id": getattr(knowledge, "user_id", None),
             "type": getattr(knowledge, "type", None),
             "status": getattr(knowledge, "status", None),
+            "status_message": getattr(knowledge, "status_message", None),
             "metadata": getattr(knowledge, "metadata", None),
             "size": getattr(knowledge, "size", None),
             "linked_to": getattr(knowledge, "linked_to", None),
@@ -89,6 +89,13 @@ def deserialize_knowledge_row(item: Dict[str, Any]) -> KnowledgeRow:
         id=data["id"],
         name=data["name"],
         description=data["description"],
+        metadata=data.get("metadata"),
+        type=data.get("type"),
+        size=data.get("size"),
+        linked_to=data.get("linked_to"),
+        access_count=data.get("access_count"),
+        status=data.get("status"),
+        status_message=data.get("status_message"),
         created_at=data.get("created_at"),
         updated_at=data.get("updated_at"),
     )
@@ -409,7 +416,9 @@ def fetch_all_sessions_data(
         date_to_process.isoformat(): {"agent": [], "team": [], "workflow": []} for date_to_process in dates_to_process
     }
     for session in sessions:
-        session_date = date.fromtimestamp(session.get("created_at", start_timestamp)).isoformat()
+        session_date = (
+            datetime.fromtimestamp(session.get("created_at", start_timestamp), tz=timezone.utc).date().isoformat()
+        )
         if session_date in all_sessions_data:
             all_sessions_data[session_date][session["session_type"]].append(session)
     return all_sessions_data

@@ -11,7 +11,7 @@ agent = Agent(
     model=LMStudio(id="qwen2.5-7b-instruct-1m"),
     storage=PostgresAgentStorage(table_name="agent_sessions", db_url=db_url),
     tools=[DuckDuckGoTools()],
-    add_history_to_messages=True,
+    add_history_to_context=True,
 )
 agent.print_response("How many people live in Canada?")
 agent.print_response("What is their national anthem called?")

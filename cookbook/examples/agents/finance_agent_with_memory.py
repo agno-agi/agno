@@ -43,10 +43,10 @@ finance_agent_with_memory = Agent(
     # enable_user_memories=True,
     storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_data.db"),
     # Add messages from the last 3 runs to the messages
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_runs=3,
     # Add the current datetime to the instructions
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     # Use markdown formatting
     markdown=True,
     instructions=dedent("""\

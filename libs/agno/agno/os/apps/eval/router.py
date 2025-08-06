@@ -129,6 +129,22 @@ def attach_routes(
             team = get_team_by_id(team_id=eval_run_input.team_id, teams=teams)
             if not team:
                 raise HTTPException(status_code=404, detail=f"Team with id '{eval_run_input.team_id}' not found")
+
+            default_model = None
+            if (
+                hasattr(team, "model")
+                and team.model is not None
+                and eval_run_input.model_id is not None
+                and eval_run_input.model_provider is not None
+            ):
+                default_model = deepcopy(team.model)
+                if eval_run_input.model_id != team.model.id or eval_run_input.model_provider != team.model.provider:
+                    model = get_model(
+                        model_id=eval_run_input.model_id.lower(),
+                        model_provider=eval_run_input.model_provider.lower(),
+                    )
+                    team.model = model
+
             agent = None
 
         else:
