@@ -2856,7 +2856,7 @@ class Team:
                     if self.response_model is not None:
                         team_markdown = False
 
-                if isinstance(resp, tuple(get_args(TeamRunResponseEvent))) and resp.team_id==self.team_id:
+                if isinstance(resp, tuple(get_args(TeamRunResponseEvent))) and resp.team_id == self.team_id:
                     if resp.event == TeamRunEvent.run_response_content:
                         if isinstance(resp.content, str):
                             _response_content += resp.content
@@ -2887,7 +2887,12 @@ class Team:
                             team_tool_calls.append(tool)
 
                 # Collect member tool calls, avoiding duplicates
-                if self.show_tool_calls and hasattr(resp, "member_responses") and resp.member_responses and self.show_members_responses:
+                if (
+                    self.show_tool_calls
+                    and hasattr(resp, "member_responses")
+                    and resp.member_responses
+                    and self.show_members_responses
+                ):
                     for member_response in resp.member_responses:
                         member_id = None
                         if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
@@ -3725,7 +3730,7 @@ class Team:
                     if self.response_model is not None:
                         team_markdown = False
 
-                if isinstance(resp, tuple(get_args(TeamRunResponseEvent))) and resp.team_id==self.team_id:
+                if isinstance(resp, tuple(get_args(TeamRunResponseEvent))) and resp.team_id == self.team_id:
                     if resp.event == TeamRunEvent.run_response_content:
                         if isinstance(resp.content, str):
                             _response_content += resp.content
@@ -3756,7 +3761,12 @@ class Team:
                             team_tool_calls.append(tool)
 
                 # Collect member tool calls, avoiding duplicates
-                if self.show_tool_calls and hasattr(resp, "member_responses") and resp.member_responses and self.show_members_responses:
+                if (
+                    self.show_tool_calls
+                    and hasattr(resp, "member_responses")
+                    and resp.member_responses
+                    and self.show_members_responses
+                ):
                     for member_response in resp.member_responses:
                         member_id = None
                         if isinstance(member_response, RunResponse) and member_response.agent_id is not None:
@@ -3955,7 +3965,9 @@ class Team:
                                     if call not in added_calls:
                                         added_calls.add(call)
                                         # Wrap the call text to fit within the panel
-                                        wrapped_call = textwrap.fill(f"• {call}", width=panel_width, subsequent_indent="  ")
+                                        wrapped_call = textwrap.fill(
+                                            f"• {call}", width=panel_width, subsequent_indent="  "
+                                        )
                                         lines.append(wrapped_call)
 
                                 tool_calls_text = "\n\n".join(lines)
