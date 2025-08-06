@@ -3211,6 +3211,12 @@ class Agent:
                     model_response.thinking = (model_response.thinking or "") + model_response_event.thinking
                     run_response.thinking = model_response.thinking
 
+                if model_response_event.reasoning_content is not None:
+                    model_response.reasoning_content = (
+                        model_response.reasoning_content or ""
+                    ) + model_response_event.reasoning_content
+                    run_response.reasoning_content = model_response.reasoning_content
+
                 if model_response_event.redacted_thinking is not None:
                     model_response.redacted_thinking = (
                         model_response.redacted_thinking or ""
@@ -3236,6 +3242,7 @@ class Agent:
                 elif (
                     model_response_event.content is not None
                     or model_response_event.thinking is not None
+                    or model_response_event.reasoning_content is not None
                     or model_response_event.redacted_thinking is not None
                     or model_response_event.citations is not None
                 ):
@@ -3244,6 +3251,7 @@ class Agent:
                             from_run_response=run_response,
                             content=model_response_event.content,
                             thinking=model_response_event.thinking,
+                            reasoning_content=model_response_event.reasoning_content,
                             redacted_thinking=model_response_event.redacted_thinking,
                             citations=model_response_event.citations,
                         ),
@@ -7050,6 +7058,7 @@ class Agent:
         if stream:
             _response_content: str = ""
             _response_thinking: str = ""
+            _response_reasoning_content: str = ""
             response_content_batch: Union[str, JSON, Markdown] = ""
             reasoning_steps: List[ReasoningStep] = []
 
@@ -7116,6 +7125,8 @@ class Agent:
                                         log_warning(f"Failed to convert response to JSON: {e}")
                             if hasattr(resp, "thinking") and resp.thinking is not None:
                                 _response_thinking += resp.thinking
+                            if hasattr(resp, "reasoning_content") and resp.reasoning_content is not None:
+                                _response_reasoning_content += resp.reasoning_content
                         if (
                             hasattr(resp, "extra_data")
                             and resp.extra_data is not None
@@ -7184,6 +7195,18 @@ class Agent:
                             border_style="green",
                         )
                         panels.append(thinking_panel)
+                    if render:
+                        live_log.update(Group(*panels))
+
+                    if len(_response_reasoning_content) > 0:
+                        render = True
+                        # Create panel for reasoning content
+                        reasoning_panel = create_panel(
+                            content=Text(_response_reasoning_content),
+                            title=f"Reasoning ({response_timer.elapsed:.1f}s)",
+                            border_style="green",
+                        )
+                        panels.append(reasoning_panel)
                     if render:
                         live_log.update(Group(*panels))
 
@@ -7499,6 +7522,7 @@ class Agent:
         if stream:
             _response_content: str = ""
             _response_thinking: str = ""
+            _response_reasoning_content: str = ""
             reasoning_steps: List[ReasoningStep] = []
             response_content_batch: Union[str, JSON, Markdown] = ""
 
@@ -7566,6 +7590,8 @@ class Agent:
                                     log_warning(f"Failed to convert response to JSON: {e}")
                             if resp.thinking is not None:
                                 _response_thinking += resp.thinking
+                            if hasattr(resp, "reasoning_content") and resp.reasoning_content is not None:
+                                _response_reasoning_content += resp.reasoning_content
 
                         if (
                             hasattr(resp, "extra_data")
@@ -7636,6 +7662,18 @@ class Agent:
                             border_style="green",
                         )
                         panels.append(thinking_panel)
+                    if render:
+                        live_log.update(Group(*panels))
+
+                    if len(_response_reasoning_content) > 0:
+                        render = True
+                        # Create panel for reasoning content
+                        reasoning_panel = create_panel(
+                            content=Text(_response_reasoning_content),
+                            title=f"Reasoning ({response_timer.elapsed:.1f}s)",
+                            border_style="green",
+                        )
+                        panels.append(reasoning_panel)
                     if render:
                         live_log.update(Group(*panels))
 
