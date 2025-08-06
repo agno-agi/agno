@@ -455,7 +455,6 @@ class WorkflowRunSchema(BaseModel):
     content_type: Optional[str]
     status: Optional[str]
     step_results: Optional[list[dict]]
-    step_member_runs: Optional[list[dict]]
     metrics: Optional[dict]
     created_at: Optional[datetime]
 
@@ -471,7 +470,6 @@ class WorkflowRunSchema(BaseModel):
             status=run_response.get("status", ""),
             metrics=run_response.get("workflow_metrics", {}),
             step_results=run_response.get("step_results", []),
-            step_member_runs=run_response.get("step_member_runs", []),
             created_at=datetime.fromtimestamp(run_response["created_at"], tz=timezone.utc)
             if run_response["created_at"]
             else None,

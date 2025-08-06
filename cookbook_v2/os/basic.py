@@ -67,5 +67,4 @@ if __name__ == "__main__":
     http://localhost:7777/config
 
     """
-    workflow_run = basic_workflow.run("Hello")
     agent_os.serve(app="basic:app", reload=True)
