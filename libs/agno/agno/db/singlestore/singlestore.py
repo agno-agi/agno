@@ -637,7 +637,7 @@ class SingleStoreDb(BaseDb):
                         agent_data=session_dict.get("agent_data"),
                         session_data=session_dict.get("session_data"),
                         summary=session_dict.get("summary"),
-                        extra_data=session_dict.get("extra_data"),
+                        metadata=session_dict.get("metadata"),
                         created_at=session_dict.get("created_at"),
                         updated_at=session_dict.get("created_at"),
                     )
@@ -648,7 +648,7 @@ class SingleStoreDb(BaseDb):
                         agent_data=stmt.inserted.agent_data,
                         session_data=stmt.inserted.session_data,
                         summary=stmt.inserted.summary,
-                        extra_data=stmt.inserted.extra_data,
+                        metadata=stmt.inserted.metadata,
                         runs=stmt.inserted.runs,
                         updated_at=int(time.time()),
                     )
@@ -682,7 +682,7 @@ class SingleStoreDb(BaseDb):
                         team_data=session_dict.get("team_data"),
                         session_data=session_dict.get("session_data"),
                         summary=session_dict.get("summary"),
-                        extra_data=session_dict.get("extra_data"),
+                        metadata=session_dict.get("metadata"),
                         created_at=session_dict.get("created_at"),
                         updated_at=session_dict.get("created_at"),
                     )
@@ -693,7 +693,7 @@ class SingleStoreDb(BaseDb):
                         team_data=stmt.inserted.team_data,
                         session_data=stmt.inserted.session_data,
                         summary=stmt.inserted.summary,
-                        extra_data=stmt.inserted.extra_data,
+                        metadata=stmt.inserted.metadata,
                         runs=stmt.inserted.runs,
                         updated_at=int(time.time()),
                     )
@@ -726,7 +726,7 @@ class SingleStoreDb(BaseDb):
                         workflow_data=session_dict.get("workflow_data"),
                         session_data=session_dict.get("session_data"),
                         summary=session_dict.get("summary"),
-                        extra_data=session_dict.get("extra_data"),
+                        metadata=session_dict.get("metadata"),
                         created_at=session_dict.get("created_at"),
                         updated_at=session_dict.get("created_at"),
                     )
@@ -736,7 +736,7 @@ class SingleStoreDb(BaseDb):
                         workflow_data=stmt.inserted.workflow_data,
                         session_data=stmt.inserted.session_data,
                         summary=stmt.inserted.summary,
-                        extra_data=stmt.inserted.extra_data,
+                        metadata=stmt.inserted.metadata,
                         runs=stmt.inserted.runs,
                         updated_at=int(time.time()),
                     )

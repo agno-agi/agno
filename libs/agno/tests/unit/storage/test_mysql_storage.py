@@ -90,7 +90,7 @@ def test_agent_storage_crud(agent_storage):
         memory={"key": "value"},
         agent_data={"name": "Test Agent"},
         session_data={"state": "active"},
-        extra_data={"custom": "data"},
+        metadata={"custom": "data"},
         team_session_id="team-123",
     )
 
@@ -132,7 +132,7 @@ def test_team_storage_crud(team_storage):
         memory={"key": "value"},
         team_data={"name": "Test Team"},
         session_data={"state": "active"},
-        extra_data={"custom": "data"},
+        metadata={"custom": "data"},
         team_session_id="team-session-123",
     )
 
@@ -174,7 +174,7 @@ def test_workflow_storage_crud(workflow_storage):
         memory={"key": "value"},
         workflow_data={"name": "Test Workflow"},
         session_data={"state": "active"},
-        extra_data={"custom": "data"},
+        metadata={"custom": "data"},
     )
 
     # Mock the read method for initial check

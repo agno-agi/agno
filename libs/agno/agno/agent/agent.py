@@ -37,7 +37,7 @@ from agno.models.message import Citations, Message, MessageReferences
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
-from agno.run.base import RunResponseExtraData, RunStatus
+from agno.run.base import RunResponseMetaData, RunStatus
 from agno.run.messages import RunMessages
 from agno.run.response import (
     RunEvent,
@@ -117,8 +117,8 @@ class Agent:
     num_history_sessions: Optional[int] = None
     # If True, the agent creates/updates session summaries at the end of runs
     enable_session_summaries: bool = False
-    # If True, the agent adds a reference to the session summaries in the response
-    add_session_summary_references: Optional[bool] = None
+    # If True, the agent adds session summaries to the context
+    add_session_summary_to_context: Optional[bool] = None
     # Session summary manager
     session_summary_manager: Optional[SessionSummaryManager] = None
     # If True, cache the session in memory
@@ -138,9 +138,9 @@ class Agent:
     # If True, the agent creates/updates user memories at the end of runs
     enable_user_memories: bool = False
     # If True, the agent adds a reference to the user memories in the response
-    add_memory_references: Optional[bool] = None
-    # Extra data stored with this agent
-    extra_data: Optional[Dict[str, Any]] = None
+    add_memories_to_context: Optional[bool] = None
+    # Metadata stored with this agent
+    metadata: Optional[Dict[str, Any]] = None
 
     # --- Database ---
     # Database to use for this agent
@@ -343,9 +343,9 @@ class Agent:
         memory_manager: Optional[MemoryManager] = None,
         enable_agentic_memory: bool = False,
         enable_user_memories: bool = False,
-        add_memory_references: Optional[bool] = None,
+        add_memories_to_context: Optional[bool] = None,
         enable_session_summaries: bool = False,
-        add_session_summary_references: Optional[bool] = None,
+        add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_history_to_context: bool = False,
         num_history_runs: int = 3,
@@ -355,7 +355,7 @@ class Agent:
         add_references: bool = False,
         retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
-        extra_data: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -427,11 +427,11 @@ class Agent:
         self.memory_manager = memory_manager
         self.enable_agentic_memory = enable_agentic_memory
         self.enable_user_memories = enable_user_memories
-        self.add_memory_references = add_memory_references
+        self.add_memories_to_context = add_memories_to_context
 
         self.session_summary_manager = session_summary_manager
         self.enable_session_summaries = enable_session_summaries
-        self.add_session_summary_references = add_session_summary_references
+        self.add_session_summary_to_context = add_session_summary_to_context
 
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
@@ -443,7 +443,7 @@ class Agent:
         self.retriever = retriever
         self.references_format = references_format
 
-        self.extra_data = extra_data
+        self.metadata = metadata
 
         self.tools = tools
         self.tool_call_limit = tool_call_limit
@@ -582,8 +582,8 @@ class Agent:
             if self.memory_manager.db is None:
                 self.memory_manager.db = self.db
 
-        if self.add_memory_references is None:
-            self.add_memory_references = (
+        if self.add_memories_to_context is None:
+            self.add_memories_to_context = (
                 self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None
             )
 
@@ -595,8 +595,8 @@ class Agent:
             if self.session_summary_manager.model is None:
                 self.session_summary_manager.model = self.model
 
-        if self.add_session_summary_references is None:
-            self.add_session_summary_references = (
+        if self.add_session_summary_to_context is None:
+            self.add_session_summary_to_context = (
                 self.enable_session_summaries or self.session_summary_manager is not None
             )
 
@@ -2799,11 +2799,11 @@ class Agent:
         # Determine reasoning completed
         if stream_intermediate_steps and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
-            if run_response and run_response.extra_data and hasattr(run_response.extra_data, "reasoning_steps"):
-                all_reasoning_steps = cast(List[ReasoningStep], run_response.extra_data.reasoning_steps)
+            if run_response and run_response.metadata and hasattr(run_response.metadata, "reasoning_steps"):
+                all_reasoning_steps = cast(List[ReasoningStep], run_response.metadata.reasoning_steps)
 
             if all_reasoning_steps:
-                self._add_reasoning_metrics_to_extra_data(reasoning_state["reasoning_time_taken"])
+                self._add_reasoning_metrics_to_metadata(reasoning_state["reasoning_time_taken"])
                 yield self._handle_event(
                     create_reasoning_completed_event(
                         from_run_response=run_response,
@@ -2868,11 +2868,11 @@ class Agent:
 
         if stream_intermediate_steps and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
-            if run_response and run_response.extra_data and hasattr(run_response.extra_data, "reasoning_steps"):
-                all_reasoning_steps = cast(List[ReasoningStep], run_response.extra_data.reasoning_steps)
+            if run_response and run_response.metadata and hasattr(run_response.metadata, "reasoning_steps"):
+                all_reasoning_steps = cast(List[ReasoningStep], run_response.metadata.reasoning_steps)
 
             if all_reasoning_steps:
-                self._add_reasoning_metrics_to_extra_data(reasoning_state["reasoning_time_taken"])
+                self._add_reasoning_metrics_to_metadata(reasoning_state["reasoning_time_taken"])
                 yield self._handle_event(
                     create_reasoning_completed_event(
                         from_run_response=run_response,
@@ -3133,12 +3133,12 @@ class Agent:
         videos = None
         model = None
         messages = None
-        extra_data = None
+        metadata = None
 
         if run_response:
             model = run_response.model
             messages = run_response.messages
-            extra_data = run_response.extra_data
+            metadata = run_response.metadata
             if not content:
                 content = run_response.content
                 content_type = run_response.content_type
@@ -3173,8 +3173,8 @@ class Agent:
             rr.created_at = created_at
         if messages is not None:
             rr.messages = messages
-        if extra_data is not None:
-            rr.extra_data = extra_data
+        if metadata is not None:
+            rr.metadata = metadata
         if model is not None:
             rr.model = model
         return rr
@@ -3791,14 +3791,14 @@ class Agent:
                         self.audio = []
                     self.audio.extend([AudioArtifact.model_validate(aud) for aud in audio_from_db])
 
-        # Read extra_data from the database
-        if session.extra_data is not None:
-            # If extra_data is set in the agent, update the database extra_data with the agent's extra_data
-            if self.extra_data is not None:
-                # Updates agent_session.extra_data in place
-                merge_dictionaries(session.extra_data, self.extra_data)
-            # Update the current extra_data with the extra_data from the database which is updated in place
-            self.extra_data = session.extra_data
+        # Read metadata from the database
+        if session.metadata is not None:
+            # If metadata is set in the agent, update the database metadata with the agent's metadata
+            if self.metadata is not None:
+                # Updates agent's session metadata in place
+                merge_dictionaries(session.metadata, self.metadata)
+            # Update the current metadata with the metadata from the database which is updated in place
+            self.metadata = session.metadata
 
         log_debug(f"-*- AgentSession loaded: {session.session_id}")
 
@@ -3844,7 +3844,7 @@ class Agent:
             team_session_id=self.team_session_id,
             agent_data=self.get_agent_data(),
             session_data=self.get_agent_session_data(),
-            extra_data=self.extra_data,
+            metadata=self.metadata,
             created_at=int(time()),
         )
         return self.agent_session
@@ -3939,7 +3939,7 @@ class Agent:
             self.team_session_state or {},
             self.workflow_session_state or {},
             self.dependencies or {},
-            self.extra_data or {},
+            self.metadata or {},
             {"user_id": self.user_id} if self.user_id is not None else {},
         )
         converted_msg = msg
@@ -4120,7 +4120,7 @@ class Agent:
         if self.additional_context is not None:
             system_message_content += f"{self.additional_context}\n"
         # 3.3.9 Then add memories to the system prompt
-        if self.add_memory_references:
+        if self.add_memories_to_context:
             _memory_manager_not_set = False
             if not user_id:
                 user_id = "default"
@@ -4162,7 +4162,7 @@ class Agent:
 
         # 3.3.11 Then add a summary of the interaction to the system prompt
         if (
-            self.add_session_summary_references
+            self.add_session_summary_to_context
             and self.agent_session is not None
             and self.agent_session.summary is not None
         ):
@@ -4243,11 +4243,11 @@ class Agent:
                         query=message_str, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                     )
                     # Add the references to the run_response
-                    if self.run_response.extra_data is None:
-                        self.run_response.extra_data = RunResponseExtraData()
-                    if self.run_response.extra_data.references is None:
-                        self.run_response.extra_data.references = []
-                    self.run_response.extra_data.references.append(references)
+                    if self.run_response.metadata is None:
+                        self.run_response.metadata = RunResponseMetaData()
+                    if self.run_response.metadata.references is None:
+                        self.run_response.metadata.references = []
+                    self.run_response.metadata.references.append(references)
                 retrieval_timer.stop()
                 log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
             except Exception as e:
@@ -4434,15 +4434,15 @@ class Agent:
             # Add the extra messages to the run_response
             if len(messages_to_add_to_run_response) > 0:
                 log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
-                if self.run_response.extra_data is None:
-                    self.run_response.extra_data = RunResponseExtraData(
+                if self.run_response.metadata is None:
+                    self.run_response.metadata = RunResponseMetaData(
                         additional_messages=messages_to_add_to_run_response
                     )
                 else:
-                    if self.run_response.extra_data.additional_messages is None:
-                        self.run_response.extra_data.additional_messages = messages_to_add_to_run_response
+                    if self.run_response.metadata.additional_messages is None:
+                        self.run_response.metadata.additional_messages = messages_to_add_to_run_response
                     else:
-                        self.run_response.extra_data.additional_messages.extend(messages_to_add_to_run_response)
+                        self.run_response.metadata.additional_messages.extend(messages_to_add_to_run_response)
 
         # 3. Add history to run_messages
         if self.add_history_to_context and self.agent_session is not None:
@@ -4919,22 +4919,22 @@ class Agent:
         self, reasoning_steps: List[ReasoningStep], reasoning_agent_messages: List[Message]
     ) -> None:
         self.run_response = cast(RunResponse, self.run_response)
-        if self.run_response.extra_data is None:
-            self.run_response.extra_data = RunResponseExtraData()
+        if self.run_response.metadata is None:
+            self.run_response.metadata = RunResponseMetaData()
 
-        extra_data = self.run_response.extra_data
+        metadata = self.run_response.metadata
 
         # Update reasoning_steps
-        if extra_data.reasoning_steps is None:
-            extra_data.reasoning_steps = reasoning_steps
+        if metadata.reasoning_steps is None:
+            metadata.reasoning_steps = reasoning_steps
         else:
-            extra_data.reasoning_steps.extend(reasoning_steps)
+            metadata.reasoning_steps.extend(reasoning_steps)
 
         # Update reasoning_messages
-        if extra_data.reasoning_messages is None:
-            extra_data.reasoning_messages = reasoning_agent_messages
+        if metadata.reasoning_messages is None:
+            metadata.reasoning_messages = reasoning_agent_messages
         else:
-            extra_data.reasoning_messages.extend(reasoning_agent_messages)
+            metadata.reasoning_messages.extend(reasoning_agent_messages)
 
         # Create and store reasoning_content
         reasoning_content = ""
@@ -5881,11 +5881,11 @@ class Agent:
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
                 # Add the references to the run_response
-                if self.run_response.extra_data is None:
-                    self.run_response.extra_data = RunResponseExtraData()
-                if self.run_response.extra_data.references is None:
-                    self.run_response.extra_data.references = []
-                self.run_response.extra_data.references.append(references)
+                if self.run_response.metadata is None:
+                    self.run_response.metadata = RunResponseMetaData()
+                if self.run_response.metadata.references is None:
+                    self.run_response.metadata.references = []
+                self.run_response.metadata.references.append(references)
             retrieval_timer.stop()
             from agno.utils.log import log_debug
 
@@ -5912,11 +5912,11 @@ class Agent:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
-                if self.run_response.extra_data is None:
-                    self.run_response.extra_data = RunResponseExtraData()
-                if self.run_response.extra_data.references is None:
-                    self.run_response.extra_data.references = []
-                self.run_response.extra_data.references.append(references)
+                if self.run_response.metadata is None:
+                    self.run_response.metadata = RunResponseMetaData()
+                if self.run_response.metadata.references is None:
+                    self.run_response.metadata.references = []
+                self.run_response.metadata.references.append(references)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 
@@ -5958,11 +5958,11 @@ class Agent:
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
                 # Add the references to the run_response
-                if self.run_response.extra_data is None:
-                    self.run_response.extra_data = RunResponseExtraData()
-                if self.run_response.extra_data.references is None:
-                    self.run_response.extra_data.references = []
-                self.run_response.extra_data.references.append(references)
+                if self.run_response.metadata is None:
+                    self.run_response.metadata = RunResponseMetaData()
+                if self.run_response.metadata.references is None:
+                    self.run_response.metadata.references = []
+                self.run_response.metadata.references.append(references)
             retrieval_timer.stop()
             from agno.utils.log import log_debug
 
@@ -5992,11 +5992,11 @@ class Agent:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
-                if self.run_response.extra_data is None:
-                    self.run_response.extra_data = RunResponseExtraData()
-                if self.run_response.extra_data.references is None:
-                    self.run_response.extra_data.references = []
-                self.run_response.extra_data.references.append(references)
+                if self.run_response.metadata is None:
+                    self.run_response.metadata = RunResponseMetaData()
+                if self.run_response.metadata.references is None:
+                    self.run_response.metadata.references = []
+                self.run_response.metadata.references.append(references)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 
@@ -6182,11 +6182,11 @@ class Agent:
                             if hasattr(resp, "thinking") and resp.thinking is not None:
                                 _response_thinking += resp.thinking
                         if (
-                            hasattr(resp, "extra_data")
-                            and resp.extra_data is not None
-                            and resp.extra_data.reasoning_steps is not None
+                            hasattr(resp, "metadata")
+                            and resp.metadata is not None
+                            and resp.metadata.reasoning_steps is not None
                         ):
-                            reasoning_steps = resp.extra_data.reasoning_steps
+                            reasoning_steps = resp.metadata.reasoning_steps
 
                     response_content_stream: str = _response_content
                     # Escape special tags before markdown conversion
@@ -6385,10 +6385,10 @@ class Agent:
 
                 if (
                     isinstance(run_response, RunResponse)
-                    and run_response.extra_data is not None
-                    and run_response.extra_data.reasoning_steps is not None
+                    and run_response.metadata is not None
+                    and run_response.metadata.reasoning_steps is not None
                 ):
-                    reasoning_steps = run_response.extra_data.reasoning_steps
+                    reasoning_steps = run_response.metadata.reasoning_steps
 
                 if len(reasoning_steps) > 0 and show_reasoning:
                     # Create panels for reasoning steps
@@ -6630,11 +6630,11 @@ class Agent:
                                 _response_thinking += resp.thinking
 
                         if (
-                            hasattr(resp, "extra_data")
-                            and resp.extra_data is not None
-                            and resp.extra_data.reasoning_steps is not None
+                            hasattr(resp, "metadata")
+                            and resp.metadata is not None
+                            and resp.metadata.reasoning_steps is not None
                         ):
-                            reasoning_steps = resp.extra_data.reasoning_steps
+                            reasoning_steps = resp.metadata.reasoning_steps
 
                     response_content_stream: str = _response_content
                     # Escape special tags before markdown conversion
@@ -6833,10 +6833,10 @@ class Agent:
                 reasoning_steps = []
                 if (
                     isinstance(run_response, RunResponse)
-                    and run_response.extra_data is not None
-                    and run_response.extra_data.reasoning_steps is not None
+                    and run_response.metadata is not None
+                    and run_response.metadata.reasoning_steps is not None
                 ):
-                    reasoning_steps = run_response.extra_data.reasoning_steps
+                    reasoning_steps = run_response.metadata.reasoning_steps
 
                 if len(reasoning_steps) > 0 and show_reasoning:
                     # Create panels for reasoning steps
@@ -6986,7 +6986,7 @@ class Agent:
             )
 
             # Add the step to the run response
-            self._add_reasoning_step_to_extra_data(reasoning_step)
+            self._add_reasoning_step_to_metadata(reasoning_step)
 
             formatted_content = f"## {title}\n{thought}\n"
             if action:
@@ -7023,7 +7023,7 @@ class Agent:
             )
 
             # Add the step to the run response
-            self._add_reasoning_step_to_extra_data(reasoning_step)
+            self._add_reasoning_step_to_metadata(reasoning_step)
 
             formatted_content = f"## {title}\n"
             if result:
@@ -7048,7 +7048,7 @@ class Agent:
                 confidence=None,
             )
             formatted_content = f"## Thinking\n{thought}\n\n"
-            self._add_reasoning_step_to_extra_data(reasoning_step)
+            self._add_reasoning_step_to_metadata(reasoning_step)
             self._append_to_reasoning_content(formatted_content)
             return reasoning_step
 
@@ -7061,29 +7061,29 @@ class Agent:
         else:
             self.run_response.reasoning_content += content  # type: ignore
 
-    def _add_reasoning_step_to_extra_data(self, reasoning_step: ReasoningStep) -> None:
+    def _add_reasoning_step_to_metadata(self, reasoning_step: ReasoningStep) -> None:
         if hasattr(self, "run_response") and self.run_response is not None:
-            if self.run_response.extra_data is None:
-                from agno.run.response import RunResponseExtraData
+            if self.run_response.metadata is None:
+                from agno.run.response import RunResponseMetaData
 
-                self.run_response.extra_data = RunResponseExtraData()
+                self.run_response.metadata = RunResponseMetaData()
 
-            if self.run_response.extra_data.reasoning_steps is None:
-                self.run_response.extra_data.reasoning_steps = []
+            if self.run_response.metadata.reasoning_steps is None:
+                self.run_response.metadata.reasoning_steps = []
 
-            self.run_response.extra_data.reasoning_steps.append(reasoning_step)
+            self.run_response.metadata.reasoning_steps.append(reasoning_step)
 
-    def _add_reasoning_metrics_to_extra_data(self, reasoning_time_taken: float) -> None:
+    def _add_reasoning_metrics_to_metadata(self, reasoning_time_taken: float) -> None:
         try:
             if hasattr(self, "run_response") and self.run_response is not None:
-                if self.run_response.extra_data is None:
-                    from agno.run.response import RunResponseExtraData
+                if self.run_response.metadata is None:
+                    from agno.run.response import RunResponseMetaData
 
-                    self.run_response.extra_data = RunResponseExtraData()
+                    self.run_response.metadata = RunResponseMetaData()
 
                 # Initialize reasoning_messages if it doesn't exist
-                if self.run_response.extra_data.reasoning_messages is None:
-                    self.run_response.extra_data.reasoning_messages = []
+                if self.run_response.metadata.reasoning_messages is None:
+                    self.run_response.metadata.reasoning_messages = []
 
                 metrics_message = Message(
                     role="assistant",
@@ -7092,13 +7092,13 @@ class Agent:
                 )
 
                 # Add the metrics message to the reasoning_messages
-                self.run_response.extra_data.reasoning_messages.append(metrics_message)
+                self.run_response.metadata.reasoning_messages.append(metrics_message)
 
         except Exception as e:
             # Log the error but don't crash
             from agno.utils.log import log_error
 
-            log_error(f"Failed to add reasoning metrics to extra_data: {str(e)}")
+            log_error(f"Failed to add reasoning metrics to metadata: {str(e)}")
 
     def _get_effective_filters(self, knowledge_filters: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """

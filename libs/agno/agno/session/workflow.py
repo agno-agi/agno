@@ -29,8 +29,8 @@ class WorkflowSession:
     session_data: Optional[Dict[str, Any]] = None
     # Workflow configuration and metadata
     workflow_data: Optional[Dict[str, Any]] = None
-    # Extra Data stored with this workflow session
-    extra_data: Optional[Dict[str, Any]] = None
+    # Metadata stored with this workflow session
+    metadata: Optional[Dict[str, Any]] = None
 
     # The unix timestamp when this session was created
     created_at: Optional[int] = None
@@ -41,13 +41,13 @@ class WorkflowSession:
         if self.runs is None:
             self.runs = []
 
-        # Ensure session_data, workflow_data, and extra_data are dictionaries, not None
+        # Ensure session_data, workflow_data, and metadata are dictionaries, not None
         if self.session_data is None:
             self.session_data = {}
         if self.workflow_data is None:
             self.workflow_data = {}
-        if self.extra_data is None:
-            self.extra_data = {}
+        if self.metadata is None:
+            self.metadata = {}
 
         # Set timestamps if they're not already set
         current_time = int(time.time())
@@ -97,7 +97,7 @@ class WorkflowSession:
             "runs": runs_data,
             "session_data": self.session_data,
             "workflow_data": self.workflow_data,
-            "extra_data": self.extra_data,
+            "metadata": self.metadata,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -132,7 +132,7 @@ class WorkflowSession:
             runs=runs,
             session_data=data.get("session_data"),
             workflow_data=data.get("workflow_data"),
-            extra_data=data.get("extra_data"),
+            metadata=data.get("metadata"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
         )
