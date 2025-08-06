@@ -252,12 +252,8 @@ class Cohere(Model):
         if response_message.tool_calls is not None:
             model_response.tool_calls = [t.model_dump() for t in response_message.tool_calls]
 
-        if response.usage is not None and response.usage.tokens is not None:
-            model_response.response_usage = {
-                "input_tokens": int(response.usage.tokens.input_tokens) or 0,  # type: ignore
-                "output_tokens": int(response.usage.tokens.output_tokens) or 0,  # type: ignore
-                "total_tokens": int(response.usage.tokens.input_tokens + response.usage.tokens.output_tokens) or 0,  # type: ignore
-            }
+        if response.usage is not None:
+            model_response.response_usage = response.usage
 
         return model_response
 
@@ -289,7 +285,7 @@ class Cohere(Model):
             and response.delta.message.content is not None
         ):
             # Update metrics
-            assistant_message.metrics.completion_tokens += 1
+            assistant_message.metrics.output_tokens += 1
             if not assistant_message.metrics.time_to_first_token:
                 assistant_message.metrics.set_time_to_first_token()
 

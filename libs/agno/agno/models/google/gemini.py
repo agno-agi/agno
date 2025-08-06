@@ -901,3 +901,13 @@ class Gemini(Model):
         setattr(new_instance, "client", None)
 
         return new_instance
+
+    def _add_provider_specific_metrics_to_assistant_message(
+        self, assistant_message: Message, response_usage: Any
+    ) -> None:
+        """Add Google Gemini specific usage metrics fields to the assistant message."""
+        if not isinstance(response_usage, dict):
+            response_usage = response_usage.to_dict()
+
+        if input_tokens := response_usage.get("prompt_tokens"):
+            assistant_message.metrics.input_tokens = input_tokens

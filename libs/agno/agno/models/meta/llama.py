@@ -370,22 +370,8 @@ class Llama(Model):
                 log_warning(f"Error processing tool calls: {e}")
 
         # Add metrics from the metrics list
-        if hasattr(response, "metrics") and response.metrics is not None:
-            usage_data = {}
-            metric_map = {
-                "num_prompt_tokens": "input_tokens",
-                "num_completion_tokens": "output_tokens",
-                "num_total_tokens": "total_tokens",
-            }
-
-            for metric in response.metrics:
-                key = metric_map.get(metric.metric)
-                if key:
-                    value = int(metric.value)
-                    usage_data[key] = value
-
-                if usage_data:
-                    model_response.response_usage = usage_data
+        if hasattr(response, "metrics"):
+            model_response.response_usage = response.metrics
 
         return model_response
 
@@ -408,20 +394,7 @@ class Llama(Model):
 
             # Capture metrics event
             if delta.event_type == "metrics" and delta.metrics is not None:
-                usage_data = {}
-                metric_map = {
-                    "num_prompt_tokens": "input_tokens",
-                    "num_completion_tokens": "output_tokens",
-                    "num_total_tokens": "total_tokens",
-                }
-
-                for metric in delta.metrics:
-                    key = metric_map.get(metric.metric)
-                    if key:
-                        usage_data[key] = int(metric.value)
-
-                if usage_data:
-                    model_response.response_usage = usage_data
+                model_response.response_usage = delta.metrics
 
             if isinstance(delta.delta, EventDeltaTextDelta):
                 model_response.content = delta.delta.text
@@ -431,3 +404,20 @@ class Llama(Model):
                 model_response.tool_calls = delta.delta  # type: ignore
 
         return model_response
+
+    def _add_provider_specific_metrics_to_assistant_message(
+        self, assistant_message: Message, response_usage: Any
+    ) -> None:
+        """Add Llama specific usage metrics fields to the assistant message."""
+        if response_usage is None:
+            return
+
+        if not isinstance(response_usage, dict):
+            response_usage = response_usage.to_dict()
+
+        if input_tokens := response_usage.get("num_prompt_tokens"):
+            assistant_message.metrics.input_tokens = input_tokens
+        if output_tokens := response_usage.get("num_completion_tokens"):
+            assistant_message.metrics.output_tokens = output_tokens
+        if total_tokens := response_usage.get("num_total_tokens"):
+            assistant_message.metrics.total_tokens = total_tokens

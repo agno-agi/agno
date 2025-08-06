@@ -333,11 +333,7 @@ class AzureAIFoundry(Model):
 
             # Add usage metrics if present
             if response.usage is not None:
-                model_response.response_usage = {
-                    "input_tokens": response.usage.prompt_tokens or 0,
-                    "output_tokens": response.usage.completion_tokens or 0,
-                    "total_tokens": response.usage.total_tokens or 0,
-                }
+                model_response.response_usage = response.usage
 
         except Exception as e:
             log_error(f"Error parsing Azure AI response: {e}")
@@ -415,3 +411,15 @@ class AzureAIFoundry(Model):
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
         return model_response
+
+    def _add_provider_specific_metrics_to_assistant_message(
+        self, assistant_message: Message, response_usage: Any
+    ) -> None:
+        """Add Azure AI Foundry specific usage metrics fields to the assistant message."""
+        if not isinstance(response_usage, dict):
+            response_usage = response_usage.to_dict()
+
+        if input_tokens := response_usage.get("prompt_tokens"):
+            assistant_message.metrics.input_tokens = input_tokens
+        if output_tokens := response_usage.get("completion_tokens"):
+            assistant_message.metrics.output_tokens = output_tokens

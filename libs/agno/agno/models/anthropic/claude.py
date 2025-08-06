@@ -29,6 +29,7 @@ try:
         ContentBlockDeltaEvent,
         ContentBlockStartEvent,
         ContentBlockStopEvent,
+        MessageDeltaUsage,
         # MessageDeltaEvent,  # Currently broken
         MessageStopEvent,
         Usage,
@@ -597,19 +598,8 @@ class Claude(Model):
                             DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
                         )
 
-        if hasattr(response, "usage") and response.usage is not None:
-            usage_dict = {
-                "input_tokens": response.usage.input_tokens or 0,
-                "output_tokens": response.usage.output_tokens or 0,
-            }
-
-            if hasattr(response.usage, "cache_creation_input_tokens") and response.usage.cache_creation_input_tokens:
-                usage_dict["cache_write_tokens"] = response.usage.cache_creation_input_tokens
-
-            if hasattr(response.usage, "cache_read_input_tokens") and response.usage.cache_read_input_tokens:
-                usage_dict["cache_read_tokens"] = response.usage.cache_read_input_tokens
-
-            model_response.response_usage = usage_dict
+        if hasattr(response, "usage") and response.usage is not None:  # type: ignore
+            model_response.response_usage = response.usage  # type: ignore
 
         # Capture the Beta response
         try:
@@ -625,10 +615,10 @@ class Claude(Model):
         return model_response
 
     def _add_provider_specific_metrics_to_assistant_message(
-        self, assistant_message: Message, response_usage: Union[Usage, Dict[str, Any]]
+        self, assistant_message: Message, response_usage: Union[Usage, MessageDeltaUsage, Dict[str, Any]]
     ) -> None:
         """Add Anthropic specific usage metrics fields to the assistant message."""
-        if isinstance(response_usage, Usage):
+        if isinstance(response_usage, Usage) or isinstance(response_usage, MessageDeltaUsage):
             response_usage = response_usage.to_dict()
 
         if cache_write_tokens := response_usage.get("cache_creation_input_tokens"):

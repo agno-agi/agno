@@ -419,6 +419,7 @@ class HuggingFace(Model):
                 model_response.content = response_delta_message.content
             if response_delta_message.tool_calls is not None and len(response_delta_message.tool_calls) > 0:
                 model_response.tool_calls = [response_delta_message.tool_calls]  # type: ignore
+
         if response_delta.usage is not None:
             model_response.response_usage = response_delta.usage
 

@@ -536,11 +536,7 @@ class AwsBedrock(Model):
             model_response.content = content
 
         if "usage" in response:
-            model_response.response_usage = {
-                "input_tokens": response["usage"]["inputTokens"],
-                "output_tokens": response["usage"]["outputTokens"],
-                "total_tokens": response["usage"]["totalTokens"],
-            }
+            model_response.response_usage = response["usage"]
 
         return model_response
 
@@ -801,3 +797,15 @@ class AwsBedrock(Model):
                 }
 
         return model_response
+
+    def _add_provider_specific_metrics_to_assistant_message(
+        self, assistant_message: Message, response_usage: Dict[str, Any]
+    ) -> None:
+        """Add Bedrock specific usage metrics fields to the assistant message."""
+
+        if total_tokens := response_usage.get("totalTokens"):
+            assistant_message.metrics.total_tokens = total_tokens
+        if input_tokens := response_usage.get("inputTokens"):
+            assistant_message.metrics.input_tokens = input_tokens
+        if output_tokens := response_usage.get("outputTokens"):
+            assistant_message.metrics.output_tokens = output_tokens

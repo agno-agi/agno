@@ -437,17 +437,8 @@ class Groq(Model):
 
         # Add usage metrics if present
         if response.usage is not None:
-            model_response.response_usage = {
-                "input_tokens": response.usage.prompt_tokens,
-                "output_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens,
-                "additional_metrics": {
-                    "completion_time": response.usage.completion_time,
-                    "prompt_time": response.usage.prompt_time,
-                    "queue_time": response.usage.queue_time,
-                    "total_time": response.usage.total_time,
-                },
-            }
+            model_response.response_usage = response.usage
+
         return model_response
 
     def parse_provider_response_delta(self, response: ChatCompletionChunk) -> ModelResponse:
@@ -476,16 +467,32 @@ class Groq(Model):
 
         # Add usage metrics if present
         if response.x_groq is not None and response.x_groq.usage is not None:
-            model_response.response_usage = {
-                "input_tokens": response.x_groq.usage.prompt_tokens,
-                "output_tokens": response.x_groq.usage.completion_tokens,
-                "total_tokens": response.x_groq.usage.total_tokens,
-                "additional_metrics": {
-                    "completion_time": response.x_groq.usage.completion_time,
-                    "prompt_time": response.x_groq.usage.prompt_time,
-                    "queue_time": response.x_groq.usage.queue_time,
-                    "total_time": response.x_groq.usage.total_time,
-                },
-            }
+            model_response.response_usage = response.x_groq.usage
 
         return model_response
+
+    def _add_provider_specific_metrics_to_assistant_message(
+        self, assistant_message: Message, response_usage: Any
+    ) -> None:
+        """Add Groq specific usage metrics fields to the assistant message."""
+        if not isinstance(response_usage, dict):
+            response_usage = response_usage.to_dict()
+
+        if input_tokens := response_usage.get("prompt_tokens"):
+            assistant_message.metrics.input_tokens = input_tokens
+        if output_tokens := response_usage.get("completion_tokens"):
+            assistant_message.metrics.output_tokens = output_tokens
+
+        # Additional time metrics offered by Groq
+        if completion_time := response_usage.get("completion_time"):
+            assistant_message.metrics.additional_metrics = assistant_message.metrics.additional_metrics or {}
+            assistant_message.metrics.additional_metrics["completion_time"] = completion_time
+        if prompt_time := response_usage.get("prompt_time"):
+            assistant_message.metrics.additional_metrics = assistant_message.metrics.additional_metrics or {}
+            assistant_message.metrics.additional_metrics["prompt_time"] = prompt_time
+        if queue_time := response_usage.get("queue_time"):
+            assistant_message.metrics.additional_metrics = assistant_message.metrics.additional_metrics or {}
+            assistant_message.metrics.additional_metrics["queue_time"] = queue_time
+        if total_time := response_usage.get("total_time"):
+            assistant_message.metrics.additional_metrics = assistant_message.metrics.additional_metrics or {}
+            assistant_message.metrics.additional_metrics["total_time"] = total_time

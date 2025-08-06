@@ -380,11 +380,7 @@ class Cerebras(Model):
 
         # Add usage metrics
         if response.usage:
-            model_response.response_usage = {
-                "input_tokens": response.usage.prompt_tokens,
-                "output_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens,
-            }
+            model_response.response_usage = response.usage
 
         return model_response
 
@@ -426,10 +422,19 @@ class Cerebras(Model):
 
         # Add usage metrics
         if response_delta.usage:
-            model_response.response_usage = {
-                "input_tokens": response_delta.usage.prompt_tokens,
-                "output_tokens": response_delta.usage.completion_tokens,
-                "total_tokens": response_delta.usage.total_tokens,
-            }
+            model_response.response_usage = response_delta.usage
 
         return model_response
+
+    def _add_provider_specific_metrics_to_assistant_message(
+        self, assistant_message: Message, response_usage: Any
+    ) -> None:
+        """Add Cerebras specific usage metrics fields to the assistant message."""
+
+        if not isinstance(response_usage, dict):
+            response_usage = response_usage.to_dict()
+
+        if input_tokens := response_usage.get("prompt_tokens"):
+            assistant_message.metrics.input_tokens = input_tokens
+        if output_tokens := response_usage.get("completion_tokens"):
+            assistant_message.metrics.output_tokens = output_tokens
