@@ -300,6 +300,7 @@ class Step:
                 session_id=workflow_run_response.session_id or "",
                 step_name=self.name,
                 step_index=step_index,
+                step_id=self.step_id,
             )
 
         # Execute with retries and streaming
@@ -383,6 +384,7 @@ class Step:
                                 "workflow_run_id": workflow_run_response.run_id if workflow_run_response else None,
                                 "step_id": self.step_id,
                                 "step_name": self.name,
+                                "step_index": step_index,
                             },
                         )
 
@@ -594,6 +596,7 @@ class Step:
                 session_id=workflow_run_response.session_id or "",
                 step_name=self.name,
                 step_index=step_index,
+                step_id=self.step_id,
             )
 
         # Execute with retries and streaming
@@ -695,6 +698,7 @@ class Step:
                                 "workflow_run_id": workflow_run_response.run_id if workflow_run_response else None,
                                 "step_id": self.step_id,
                                 "step_name": self.name,
+                                "step_index": step_index,
                             },
                         )
 
@@ -727,6 +731,7 @@ class Step:
                         session_id=workflow_run_response.session_id or "",
                         step_name=self.name,
                         step_index=step_index,
+                        step_id=self.step_id,
                         content=final_response.content,
                         step_response=final_response,
                     )

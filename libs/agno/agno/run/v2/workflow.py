@@ -160,6 +160,7 @@ class StepStartedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.step_started.value
     step_name: Optional[str] = None
+    step_id: Optional[str] = None
     step_index: Optional[Union[int, tuple]] = None
 
 
@@ -169,6 +170,7 @@ class StepCompletedEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.step_completed.value
     step_name: Optional[str] = None
+    step_id: Optional[str] = None
     step_index: Optional[Union[int, tuple]] = None
 
     content: Optional[Any] = None
@@ -190,6 +192,7 @@ class StepErrorEvent(BaseWorkflowRunResponseEvent):
 
     event: str = WorkflowRunEvent.step_error.value
     step_name: Optional[str] = None
+    step_id: Optional[str] = None
     step_index: Optional[Union[int, tuple]] = None
     error: Optional[str] = None
 

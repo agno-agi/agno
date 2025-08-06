@@ -2247,6 +2247,7 @@ class Team:
             event.workflow_run_id = workflow_context.get("workflow_run_id")
             event.step_id = workflow_context.get("step_id")
             event.step_name = workflow_context.get("step_name")
+            event.step_index = workflow_context.get("step_index")
 
         # We only store events that are not run_response_content events
         events_to_skip = [event.value for event in self.events_to_skip] if self.events_to_skip else []
