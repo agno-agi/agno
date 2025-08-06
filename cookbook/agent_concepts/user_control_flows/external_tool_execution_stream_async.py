@@ -54,7 +54,7 @@ async def main():
                     # We have to set the result on the tool execution object so that the agent can continue
                     tool.result = result
             run_response = await agent.acontinue_run(
-                run_response=run_response, stream=True
+                stream=True
             )
             async for resp in run_response:
                 print(resp.content, end="")
