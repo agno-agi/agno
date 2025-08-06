@@ -1,8 +1,7 @@
 from agno.knowledge.chunking.recursive import RecursiveChunking
 from agno.knowledge.reader.url_reader import URLReader
 
-# reader = URLReader(chunking_strategy=RecursiveChunking(chunk_size=1000))
-reader = URLReader(chunk=False)
+reader = URLReader(chunking_strategy=RecursiveChunking(chunk_size=1000))
 
 
 try:
@@ -12,7 +11,7 @@ try:
     if documents:
         for doc in documents:
             print(doc.name)
-            # print(doc.content)
+            print(doc.content)
             print(f"Content length: {len(doc.content)}")
             print("-" * 80)
     else:

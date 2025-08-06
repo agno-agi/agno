@@ -1,16 +1,11 @@
-from hashlib import md5
 from typing import Any, Dict, List, Optional
-
+import asyncio
 
 from agno.knowledge.document import Document
-from agno.knowledge.embedder import Embedder
-from agno.reranker.base import Reranker
+
 from agno.utils.log import log_debug, log_info, log_warning, log_error
 from agno.vectordb.base import VectorDb
-from agno.vectordb.distance import Distance
-from agno.vectordb.search import SearchType
 import httpx
-from fastapi import UploadFile
 
 DEFAULT_SERVER_URL = "http://localhost:9621"
 
@@ -89,22 +84,57 @@ class LightRag(VectorDb):
         pass
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
-        """Search for documents matching the query"""
-        return []
+        print("Hitting search")
+        return asyncio.run(self.async_search(query, max_results=limit, filters=filters))
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self, query: str, limit: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
-        """Async search for documents matching the query"""
-        return []
+        print("Hitting async search")
+        """Override the async_search method from AgentKnowledge to query the LightRAG server."""
+
+        mode: str = "hybrid"  # Default mode, can be "local", "global", or "hybrid"
+        try:
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{self.server_url}/query",
+                    json={"query": query, "mode": "hybrid"},
+                    headers=self._get_headers(),
+                )
+
+                response.raise_for_status()
+                result = response.json()
+
+                return self._format_lightrag_response(result, query, mode)
+
+        except httpx.RequestError as e:
+            log_error(f"HTTP Request Error: {type(e).__name__}: {str(e)}")
+            return None
+        except httpx.HTTPStatusError as e:
+            log_error(f"HTTP Status Error: {e.response.status_code} - {e.response.text}")
+            return None
+        except Exception as e:
+            log_error(f"Unexpected error during LightRAG server search: {type(e).__name__}: {str(e)}")
+            import traceback
+            log_error(f"Full traceback: {traceback.format_exc()}")
+            return None
 
     def drop(self) -> None:
         """Drop the vector database"""
-        pass
+        asyncio.run(self.async_drop())
 
     async def async_drop(self) -> None:
         """Async drop the vector database"""
-        pass
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            await client.delete(f"{self.server_url}/documents", headers=self._get_headers())
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            await client.post(
+                f"{self.server_url}/documents/clear_cache",
+                json={"modes": ["default", "naive"]},
+                headers=self._get_headers(),
+            )
 
     def exists(self) -> bool:
         """Check if the vector database exists"""
@@ -265,5 +295,83 @@ class LightRag(VectorDb):
         return True
     
 
+    async def lightrag_retriever(
+        self,
+        query: str,
+    ) -> Optional[List[Dict[str, Any]]]:
+        """
+        Custom retriever function to search the LightRAG server for relevant documents.
 
-    
+        Args:
+            query: The search query string
+            num_documents: Number of documents to retrieve (currently unused by LightRAG)
+            mode: Query mode - "local", "global", or "hybrid"
+            lightrag_server_url: URL of the LightRAG server
+
+        Returns:
+            List of retrieved documents or None if search fails
+        """
+
+        mode: str = "hybrid",  # Default mode, can be "local", "global", or "hybrid"
+
+        try:
+            import httpx
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    f"{self.server_url}/query",
+                    json={"query": query, "mode": "hybrid"},
+                    headers=self._get_headers(),
+                )
+
+                response.raise_for_status()
+                result = response.json()
+
+                return self._format_lightrag_response(result, query, mode)
+
+        except httpx.RequestError as e:
+            log_error(f"HTTP Request Error: {type(e).__name__}: {str(e)}")
+            return None
+        except httpx.HTTPStatusError as e:
+            log_error(f"HTTP Status Error: {e.response.status_code} - {e.response.text}")
+            return None
+        except Exception as e:
+            log_error(f"Unexpected error during LightRAG server search: {type(e).__name__}: {str(e)}")
+            import traceback
+
+            log_error(f"Full traceback: {traceback.format_exc()}")
+            return None
+
+
+    def _format_lightrag_response(self, result: Any, query: str, mode: str) -> List[Document]:
+        print("Hitting format lightrag response")
+        """Format LightRAG server response to expected document format."""
+        # LightRAG server returns a dict with 'response' key, but we expect a list of documents
+        # Convert the response to the expected format
+        if isinstance(result, dict) and "response" in result:
+            # Wrap the response in a Document object
+            return [Document(
+                content=result["response"], 
+                meta_data={"source": "lightrag", "query": query, "mode": mode}
+            )]
+        elif isinstance(result, list):
+            # Convert list items to Document objects
+            documents = []
+            for item in result:
+                if isinstance(item, dict) and "content" in item:
+                    documents.append(Document(
+                        content=item["content"],
+                        meta_data=item.get("metadata", {"source": "lightrag", "query": query, "mode": mode})
+                    ))
+                else:
+                    documents.append(Document(
+                        content=str(item),
+                        meta_data={"source": "lightrag", "query": query, "mode": mode}
+                    ))
+            return documents
+        else:
+            # If it's a string or other format, wrap it in a Document
+            return [Document(
+                content=str(result), 
+                meta_data={"source": "lightrag", "query": query, "mode": mode}
+            )]

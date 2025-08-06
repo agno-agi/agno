@@ -1,15 +1,15 @@
 from agno.knowledge.reader.website_reader import WebsiteReader
 
-reader = WebsiteReader(max_depth=3, max_links=10, chunk=False)
+reader = WebsiteReader(max_depth=3, max_links=10)
 
 
 try:
     print("Starting read...")
-    documents = reader.read("https://docs.agno.com/workflows/introduction")
+    documents = reader.read("https://docs.agno.com/introduction")
     if documents:
         for doc in documents:
             print(doc.name)
-            # print(doc.content)
+            print(doc.content)
             print(f"Content length: {len(doc.content)}")
             print("-" * 80)
     else:

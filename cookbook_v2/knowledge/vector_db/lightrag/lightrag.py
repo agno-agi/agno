@@ -13,11 +13,11 @@ vector_db = LightRag(
 
 
 
-# knowledge = Knowledge(
-#     name="My Pinecone Knowledge Base",
-#     description="This is a knowledge base that uses a Pinecone Vector DB",
-#     vector_db=vector_db,
-# )
+knowledge = Knowledge(
+    name="My Pinecone Knowledge Base",
+    description="This is a knowledge base that uses a Pinecone Vector DB",
+    vector_db=vector_db,
+)
 
 
 # knowledge.add_content(
@@ -26,17 +26,20 @@ vector_db = LightRag(
 #     metadata={"doc_type": "recipe_book"},
 # )
 
-result = asyncio.run(vector_db._insert_text("This is my source", "Hello, world!"))
-print(result)
+# result = asyncio.run(vector_db._insert_text("This is my source", "Hello, world!"))
+# print(result)
 
-# agent = Agent(
-#     knowledge=knowledge,
-#     search_knowledge=True,
-#     read_chat_history=True,
-# )
+agent = Agent(
+    knowledge=knowledge,
+    search_knowledge=True,
+    read_chat_history=False,
+    # retriever=vector_db.lightrag_retriever,
+)
 
-# agent.print_response("How do I make pad thai?", markdown=True)
 
+asyncio.run(agent.aprint_response("What skills does Jordan Mitchell have?", markdown=True))
+
+asyncio.run(vector_db.async_drop())
 # vector_db.delete_by_name("Recipes")
 # # or
 # vector_db.delete_by_metadata({"doc_type": "recipe_book"})
