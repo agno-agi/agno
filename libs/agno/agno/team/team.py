@@ -4,7 +4,6 @@ from collections import ChainMap, defaultdict, deque
 from dataclasses import asdict, dataclass, replace
 from os import getenv
 from textwrap import dedent
-from token import OP
 from typing import (
     Any,
     AsyncIterator,
