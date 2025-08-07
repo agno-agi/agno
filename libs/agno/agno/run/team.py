@@ -17,6 +17,7 @@ class TeamRunEvent(str, Enum):
 
     run_started = "TeamRunStarted"
     run_response_content = "TeamRunResponseContent"
+    run_intermediate_response_content = "TeamRunIntermediateResponseContent"
     run_completed = "TeamRunCompleted"
     run_error = "TeamRunError"
     run_cancelled = "TeamRunCancelled"
@@ -92,6 +93,13 @@ class RunResponseContentEvent(BaseTeamRunResponseEvent):
     response_audio: Optional[AudioResponse] = None  # Model audio response
     image: Optional[ImageArtifact] = None  # Image attached to the response
     extra_data: Optional[RunResponseExtraData] = None
+
+
+@dataclass
+class IntermediateRunResponseContentEvent(BaseTeamRunResponseEvent):
+    event: str = TeamRunEvent.run_intermediate_response_content.value
+    content: Optional[Any] = None
+    content_type: str = "str"
 
 
 @dataclass
@@ -191,6 +199,7 @@ class OutputModelResponseCompletedEvent(BaseTeamRunResponseEvent):
 TeamRunResponseEvent = Union[
     RunResponseStartedEvent,
     RunResponseContentEvent,
+    IntermediateRunResponseContentEvent,
     RunResponseCompletedEvent,
     RunResponseErrorEvent,
     RunResponseCancelledEvent,
@@ -211,6 +220,7 @@ TeamRunResponseEvent = Union[
 TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.run_started.value: RunResponseStartedEvent,
     TeamRunEvent.run_response_content.value: RunResponseContentEvent,
+    TeamRunEvent.run_intermediate_response_content.value: IntermediateRunResponseContentEvent,
     TeamRunEvent.run_completed.value: RunResponseCompletedEvent,
     TeamRunEvent.run_error.value: RunResponseErrorEvent,
     TeamRunEvent.run_cancelled.value: RunResponseCancelledEvent,
