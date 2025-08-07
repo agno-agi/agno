@@ -718,10 +718,6 @@ class OpenAIChat(Model):
         """
         model_response = ModelResponse()
 
-        # TODO: should not happen? -> from ainvoke_stream
-        if isinstance(response_delta, ModelResponse):
-            return response_delta
-
         if response_delta.choices and len(response_delta.choices) > 0:
             choice_delta: ChoiceDelta = response_delta.choices[0].delta
 
