@@ -2740,8 +2740,12 @@ class Agent:
 
     def set_session_metrics(self, run_messages: RunMessages) -> None:
         """Calculate metrics for the contextual session"""
+
+        # If the session metrics are not set yet, set them to the first run metrics
         if self.session_metrics is None:
             self.session_metrics = self.calculate_run_metrics(run_messages.messages)
+
+        # If the session metrics are set, add the new run metrics to them
         else:
             self.session_metrics += self.calculate_run_metrics(run_messages.messages)
 

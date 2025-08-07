@@ -4116,8 +4116,11 @@ class Team:
     def set_session_metrics(self, run_messages: RunMessages) -> None:
         """Calculate session metrics"""
 
+        # If the session metrics are not set yet, set them to the first run metrics
         if self.session_metrics is None:
             self.session_metrics = self.calculate_metrics(run_messages.messages, for_session=True)  # type: ignore
+
+        # If the session metrics are set, add the new run metrics to them
         else:
             self.session_metrics += self.calculate_metrics(run_messages.messages, for_session=True)  # type: ignore
 
