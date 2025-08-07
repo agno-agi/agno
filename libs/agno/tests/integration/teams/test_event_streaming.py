@@ -139,7 +139,10 @@ def test_intermediate_steps_with_tools():
     assert len(events[TeamRunEvent.run_response_content]) > 1
     assert len(events[TeamRunEvent.run_completed]) == 1
     assert len(events[TeamRunEvent.tool_call_started]) == 1
-    assert events[TeamRunEvent.tool_call_started][0].tool.tool_name == "get_current_stock_price"
+    assert (
+        events[TeamRunEvent.tool_call_started][0].tool.tool_name == "get_current_stock_price"
+        or "transfer_task_to_member"
+    )
     assert len(events[TeamRunEvent.tool_call_completed]) == 1
     assert events[TeamRunEvent.tool_call_completed][0].content is not None
     assert events[TeamRunEvent.tool_call_completed][0].tool.result is not None

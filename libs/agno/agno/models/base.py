@@ -1025,6 +1025,10 @@ class Model(ABC):
             stream_data.response_thinking += model_response_delta.thinking
             should_yield = True
 
+        if model_response_delta.reasoning_content is not None:
+            stream_data.response_thinking += model_response_delta.reasoning_content
+            should_yield = True
+
         if model_response_delta.redacted_thinking is not None:
             stream_data.response_redacted_thinking += model_response_delta.redacted_thinking
             should_yield = True

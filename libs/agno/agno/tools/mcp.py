@@ -33,7 +33,25 @@ def _prepare_command(command: str) -> list[str]:
         raise ValueError("MCP command can't be empty")
 
     # Only allow specific executables
-    ALLOWED_COMMANDS = {"python", "python3", "node", "npm", "npx"}
+    ALLOWED_COMMANDS = {
+        # Python
+        "python",
+        "python3",
+        "uv",
+        "uvx",
+        "pipx",
+        # Node
+        "node",
+        "npm",
+        "npx",
+        "yarn",
+        "pnpm",
+        "bun",
+        # Other runtimes
+        "deno",
+        "java",
+        "ruby",
+    }
 
     executable = parts[0].split("/")[-1]
     if executable not in ALLOWED_COMMANDS:
