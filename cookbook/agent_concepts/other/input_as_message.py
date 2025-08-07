@@ -1,6 +1,19 @@
-from agno.agent import Agent, Message
+from agno.agent import Agent
+from agno.models.message import Message
+from agno.team import Team
 
-Agent().print_response(
+# Create a research team
+team = Team(
+    name="Research Team",
+    members=[
+        Agent(name="Sarah", role="Data Researcher", instructions="Focus on gathering and analyzing data"),
+        Agent(name="Mike", role="Technical Writer", instructions="Create clear, concise summaries"),
+    ],
+    stream=True,
+    markdown=True,
+)
+
+team.print_response(
     Message(
         role="user",
         content=[
