@@ -5257,15 +5257,16 @@ class Team:
             # Add the extra messages to the run_response
             if len(messages_to_add_to_run_response) > 0:
                 log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
-                if self.run_response.extra_data is None:
-                    self.run_response.extra_data = RunResponseExtraData(
-                        additional_messages=messages_to_add_to_run_response
-                    )
-                else:
-                    if self.run_response.extra_data.additional_messages is None:
-                        self.run_response.extra_data.additional_messages = messages_to_add_to_run_response
+                if self.run_response is not None:
+                    if self.run_response.metadata is None:
+                        self.run_response.metadata = RunResponseMetaData(
+                            additional_messages=messages_to_add_to_run_response
+                        )
                     else:
-                        self.run_response.extra_data.additional_messages.extend(messages_to_add_to_run_response)
+                        if self.run_response.metadata.additional_messages is None:
+                            self.run_response.metadata.additional_messages = messages_to_add_to_run_response
+                        else:
+                            self.run_response.metadata.additional_messages.extend(messages_to_add_to_run_response)
 
         # 3. Add history to run_messages
         if self.add_history_to_context:

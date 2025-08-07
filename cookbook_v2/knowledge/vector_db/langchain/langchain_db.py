@@ -5,11 +5,13 @@ pip install langchain langchain-community langchain-openai langchain-chroma agno
 import pathlib
 
 from agno.agent import Agent
-from agno.knowledge.langchain import LangChainKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
+from agno.vectordb.langchaindb import LangChainVectorDb
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import TextLoader
 from langchain_openai import OpenAIEmbeddings
+from PIL.Image import v
 
 # Define the directory where the Chroma database is located
 chroma_db_dir = pathlib.Path("./chroma_db")
@@ -35,11 +37,11 @@ db = Chroma(embedding_function=OpenAIEmbeddings(), persist_directory=str(chroma_
 # Create a retriever from the vector store
 retriever = db.as_retriever()
 
-# Create a knowledge base from the vector store
-knowledge_base = LangChainKnowledgeBase(retriever=retriever)
+# Create a knowledge instance
+knowledge = Knowledge(vector_db=LangChainVectorDb(retriever=retriever))
 
 # Create an agent with the knowledge base
-agent = Agent(knowledge=knowledge_base)
+agent = Agent(knowledge=knowledge)
 
 # Use the agent to ask a question and print a response.
 agent.print_response("What did the president say?", markdown=True)

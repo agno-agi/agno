@@ -1,42 +1,46 @@
-import os
-
 from agno.agent import Agent
 from agno.db.json import JsonDb
-from agno.db.postgres.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.vectordb.lightrag import LightRag
 from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 
-vector_db = PgVector(
-    table_name="vectors",
-    # Can inspect database via psql e.g. "psql -h localhost -p 5432 -U ai -d ai"
-    db_url=db_url,
+vector_db = PgVector(table_name="vectors", db_url=db_url)
+secondary_vector_db = PgVector(table_name="more_vectors", db_url=db_url)
+contents_db = JsonDb(db_path="./agno_json_data", knowledge_table="main_knowledge")
+secondary_contents_db = JsonDb(
+    db_path="./agno_json_data_2", knowledge_table="secondary_knowledge"
 )
 
-vector_db = LightRag(
-    api_key=os.getenv("LIGHTRAG_API_KEY"),
-)
-
-# contents_db = JsonDb(db_path="./agno_json_data")
-contents_db = PostgresDb(db_url=db_url)
-
-# Create knowledge base
-knowledge = Knowledge(
-    name="My Knowledge Base",
+# Create knowledge bases
+knowledge_base = Knowledge(
+    name="Main Knowledge Base",
     description="A simple knowledge base",
     contents_db=contents_db,
     vector_db=vector_db,
 )
+second_knowledge_base = Knowledge(
+    name="Secondary Knowledge Base",
+    description="A secondary knowledge base",
+    contents_db=secondary_contents_db,
+    vector_db=secondary_vector_db,
+)
 
-basic_agent = Agent(
-    name="Basic Agent",
+main_agent = Agent(
+    name="Main Agent",
     model=OpenAIChat(id="gpt-4o"),
-    knowledge=knowledge,
+    knowledge=knowledge_base,
+    add_datetime_to_context=True,
+    markdown=True,
+    db=contents_db,
+)
+secondary_agent = Agent(
+    name="Secondary Agent",
+    model=OpenAIChat(id="gpt-4o"),
+    knowledge=second_knowledge_base,
     add_datetime_to_context=True,
     markdown=True,
     db=contents_db,
@@ -45,7 +49,7 @@ basic_agent = Agent(
 agent_os = AgentOS(
     description="Example app for basic agent with knowledge capabilities",
     os_id="knowledge-demo",
-    agents=[basic_agent],
+    agents=[main_agent, secondary_agent],
 )
 app = agent_os.get_app()
 
