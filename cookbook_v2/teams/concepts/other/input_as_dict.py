@@ -1,3 +1,4 @@
+
 from agno.agent import Agent
 from agno.models.message import Message
 from agno.team import Team
@@ -14,9 +15,9 @@ team = Team(
 )
 
 team.print_response(
-    Message(
-        role="user",
-        content=[
+    {
+        "role": "user",
+        "content": [
             {"type": "text", "text": "What's in this image?"},
             {
                 "type": "image_url",
@@ -25,7 +26,7 @@ team.print_response(
                 },
             },
         ],
-    ),
+    },
     stream=True,
     markdown=True,
 )

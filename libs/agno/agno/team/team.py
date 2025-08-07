@@ -871,6 +871,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> TeamRunResponse: ...
@@ -890,6 +891,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Iterator[Union[RunResponseEvent, TeamRunResponseEvent]]: ...
@@ -908,6 +910,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Union[TeamRunResponse, Iterator[Union[RunResponseEvent, TeamRunResponseEvent]]]:
@@ -1030,6 +1033,8 @@ class Team:
                     self.run_input = message.to_dict()
                 else:
                     self.run_input = message
+            elif messages is not None:
+                self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
 
             # Run the team
             try:
@@ -1043,6 +1048,7 @@ class Team:
                         images=images,
                         videos=videos,
                         files=files,
+                        messages=messages,
                         knowledge_filters=effective_filters,
                         **kwargs,
                     )
@@ -1055,6 +1061,7 @@ class Team:
                         images=images,
                         videos=videos,
                         files=files,
+                        messages=messages,
                         knowledge_filters=effective_filters,
                         **kwargs,
                     )
@@ -1273,6 +1280,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> TeamRunResponse: ...
@@ -1292,6 +1300,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunResponseEvent, TeamRunResponseEvent]]: ...
@@ -1310,6 +1319,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Union[TeamRunResponse, AsyncIterator[Union[RunResponseEvent, TeamRunResponseEvent]]]:
@@ -1418,6 +1428,8 @@ class Team:
                     self.run_input = message.to_dict()
                 else:
                     self.run_input = message
+            elif messages is not None:
+                self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
 
             # Run the team
             try:
@@ -1432,6 +1444,7 @@ class Team:
                         images=images,
                         videos=videos,
                         files=files,
+                        messages=messages,
                         knowledge_filters=effective_filters,
                         **kwargs,
                     )
@@ -1444,6 +1457,7 @@ class Team:
                         images=images,
                         videos=videos,
                         files=files,
+                        messages=messages,
                         knowledge_filters=effective_filters,
                         **kwargs,
                     )
@@ -1970,7 +1984,10 @@ class Team:
                 log_warning("Something went wrong. Member run response content is not a string")
 
     def _update_memory(
-        self, run_messages: RunMessages, user_id: Optional[str] = None
+        self,
+        run_messages: RunMessages,
+        user_id: Optional[str] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
     ) -> Iterator[TeamRunResponseEvent]:
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -2023,7 +2040,10 @@ class Team:
                     )
 
     async def _aupdate_memory(
-        self, run_messages: RunMessages, user_id: Optional[str] = None
+        self,
+        run_messages: RunMessages,
+        user_id: Optional[str] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
     ) -> AsyncIterator[TeamRunResponseEvent]:
         self.run_response = cast(TeamRunResponse, self.run_response)
         tasks = []
@@ -2291,6 +2311,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
         markdown: Optional[bool] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
@@ -2318,6 +2339,7 @@ class Team:
                 images=images,
                 videos=videos,
                 files=files,
+                messages=messages,
                 markdown=markdown,
                 stream_intermediate_steps=stream_intermediate_steps,
                 knowledge_filters=knowledge_filters,
@@ -2338,6 +2360,7 @@ class Team:
                 images=images,
                 videos=videos,
                 files=files,
+                messages=messages,
                 markdown=markdown,
                 knowledge_filters=knowledge_filters,
                 **kwargs,
@@ -2358,6 +2381,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
         markdown: bool = False,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
@@ -2403,6 +2427,7 @@ class Team:
                 audio=audio,
                 videos=videos,
                 files=files,
+                messages=messages,
                 stream=False,
                 session_id=session_id,
                 session_state=session_state,
@@ -2646,6 +2671,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
         markdown: bool = False,
         stream_intermediate_steps: bool = False,  # type: ignore
         knowledge_filters: Optional[Dict[str, Any]] = None,
@@ -2708,6 +2734,7 @@ class Team:
                 images=images,
                 videos=videos,
                 files=files,
+                messages=messages,
                 stream=True,
                 stream_intermediate_steps=stream_intermediate_steps,
                 session_id=session_id,
@@ -3167,6 +3194,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
         markdown: Optional[bool] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
@@ -3194,6 +3222,7 @@ class Team:
                 images=images,
                 videos=videos,
                 files=files,
+                messages=messages,
                 markdown=markdown,
                 stream_intermediate_steps=stream_intermediate_steps,
                 knowledge_filters=knowledge_filters,
@@ -3214,6 +3243,7 @@ class Team:
                 images=images,
                 videos=videos,
                 files=files,
+                messages=messages,
                 markdown=markdown,
                 knowledge_filters=knowledge_filters,
                 **kwargs,
@@ -3234,6 +3264,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
         markdown: bool = False,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
@@ -3279,6 +3310,7 @@ class Team:
                 audio=audio,
                 videos=videos,
                 files=files,
+                messages=messages,
                 stream=False,
                 session_id=session_id,
                 session_state=session_state,
@@ -3520,8 +3552,10 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
         markdown: bool = False,
         stream_intermediate_steps: bool = False,  # type: ignore
+        knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> None:
         import textwrap
@@ -3584,11 +3618,13 @@ class Team:
                 images=images,
                 videos=videos,
                 files=files,
+                messages=messages,
                 stream=True,
                 stream_intermediate_steps=stream_intermediate_steps,
                 session_id=session_id,
                 session_state=session_state,
                 user_id=user_id,
+                knowledge_filters=knowledge_filters,
                 **kwargs,
             )
             team_markdown = None
@@ -5209,6 +5245,7 @@ class Team:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        messages: Optional[Sequence[Union[Dict, Message]]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> RunMessages:
@@ -5222,6 +5259,7 @@ class Team:
         2. Add extra messages to run_messages
         3. Add history to run_messages
         4. Add user message to run_messages
+        5. Add messages to run_messages if provided
 
         """
         # Initialize the RunMessages object
@@ -5309,6 +5347,24 @@ class Team:
         if user_message is not None:
             run_messages.user_message = user_message
             run_messages.messages.append(user_message)
+
+        # 5. Add messages to run_messages if provided
+        if messages is not None and len(messages) > 0:
+            for _m in messages:
+                if isinstance(_m, Message):
+                    run_messages.messages.append(_m)
+                    if run_messages.extra_messages is None:
+                        run_messages.extra_messages = []
+                    run_messages.extra_messages.append(_m)
+                elif isinstance(_m, dict):
+                    try:
+                        _m_parsed = Message.model_validate(_m)
+                        run_messages.messages.append(_m_parsed)
+                        if run_messages.extra_messages is None:
+                            run_messages.extra_messages = []
+                        run_messages.extra_messages.append(_m_parsed)
+                    except Exception as e:
+                        log_warning(f"Failed to validate message: {e}")
 
         return run_messages
 
