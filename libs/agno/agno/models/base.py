@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from agno.exceptions import AgentRunException
 from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations, Message
-from agno.models.metrics import MessageMetrics
+from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run.response import RunResponseContentEvent, RunResponseEvent
 from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
@@ -186,12 +186,14 @@ class Model(ABC):
         """
         pass
 
+    # TODO: remove all these
     def _add_provider_specific_metrics_to_assistant_message(
         self, assistant_message: Message, response_usage: Any
     ) -> None:
         """Handle metrics fields specific to the contextual provider e.g. OpenAI"""
         pass
 
+    # TODO: make sure this is not used
     def _add_metrics_to_assistant_message(self, assistant_message: Message, response_usage: Any) -> None:
         """
         Add usage metrics from the model provider to the assistant message.
@@ -200,56 +202,7 @@ class Model(ABC):
             assistant_message: Message to update with metrics
             response_usage: Usage data from model provider
         """
-
-        if isinstance(response_usage, dict):
-            if "input_tokens" in response_usage and response_usage.get("input_tokens") is not None:
-                assistant_message.metrics.input_tokens = response_usage.get("input_tokens", 0)
-            if "output_tokens" in response_usage and response_usage.get("output_tokens") is not None:
-                assistant_message.metrics.output_tokens = response_usage.get("output_tokens", 0)
-            if "cached_tokens" in response_usage and response_usage.get("cache_read_tokens") is not None:
-                assistant_message.metrics.cache_read_tokens = response_usage.get("cache_read_tokens", 0)
-            if "cache_read_tokens" in response_usage and response_usage.get("cache_read_tokens") is not None:
-                assistant_message.metrics.cache_read_tokens = response_usage.get("cache_read_tokens", 0)
-            if "cache_write_tokens" in response_usage and response_usage.get("cache_write_tokens") is not None:
-                assistant_message.metrics.cache_write_tokens = response_usage.get("cache_write_tokens", 0)
-            if "total_tokens" in response_usage and response_usage.get("total_tokens") is not None:
-                assistant_message.metrics.total_tokens = response_usage.get("total_tokens", 0)
-            else:
-                assistant_message.metrics.total_tokens = (
-                    assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
-                )
-        else:
-            if hasattr(response_usage, "input_tokens") and response_usage.input_tokens:
-                assistant_message.metrics.input_tokens = response_usage.input_tokens
-            if hasattr(response_usage, "output_tokens") and response_usage.output_tokens:
-                assistant_message.metrics.output_tokens = response_usage.output_tokens
-            if hasattr(response_usage, "total_tokens") and response_usage.total_tokens is not None:
-                assistant_message.metrics.total_tokens = response_usage.total_tokens
-            if hasattr(response_usage, "cache_read_tokens") and response_usage.cache_read_tokens is not None:
-                assistant_message.metrics.cache_read_tokens = response_usage.cache_read_tokens
-            if hasattr(response_usage, "cache_write_tokens") and response_usage.cache_write_tokens is not None:
-                assistant_message.metrics.cache_write_tokens = response_usage.cache_write_tokens
-
-        # Set the main token metrics fields to 0 if not set
-        if not assistant_message.metrics.total_tokens:
-            if assistant_message.metrics.input_tokens is None:
-                assistant_message.metrics.input_tokens = 0
-            if assistant_message.metrics.output_tokens is None:
-                assistant_message.metrics.output_tokens = 0
-            assistant_message.metrics.total_tokens = (
-                assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
-            )
-
-        assistant_message.metrics.audio_total_tokens = (
-            assistant_message.metrics.audio_input_tokens + assistant_message.metrics.audio_output_tokens
-        )
-
-        # Handle additional metrics if present
-        if isinstance(response_usage, dict) and "additional_metrics" in response_usage:
-            assistant_message.metrics.additional_metrics = response_usage["additional_metrics"]
-
-        # Provider-specific fields are handled inside each Model implementation
-        self._add_provider_specific_metrics_to_assistant_message(assistant_message, response_usage)
+        pass
 
     def response(
         self,
@@ -283,6 +236,9 @@ class Model(ABC):
                 tools=tools,
                 tool_choice=tool_choice or self._tool_choice,
             )
+
+            # Populate the assistant message
+            self._populate_assistant_message(assistant_message=assistant_message, provider_response=model_response)
 
             # Add assistant message to messages
             messages.append(assistant_message)
@@ -1074,7 +1030,7 @@ class Model(ABC):
         """Create a function call result message."""
         kwargs = {}
         if timer is not None:
-            kwargs["metrics"] = MessageMetrics(duration=timer.elapsed)
+            kwargs["metrics"] = Metrics(duration=timer.elapsed)
         return Message(
             role=self.tool_message_role,
             content=output if success else function_call.error,

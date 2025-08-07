@@ -10,6 +10,7 @@ from agno.exceptions import ModelProviderError
 from agno.media import AudioResponse
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
@@ -18,6 +19,7 @@ try:
     from openai import APIConnectionError, APIStatusError, RateLimitError
     from openai import AsyncOpenAI as AsyncOpenAIClient
     from openai import OpenAI as OpenAIClient
+    from openai.types import CompletionUsage
     from openai.types.chat import ChatCompletionAudio
     from openai.types.chat.chat_completion import ChatCompletion
     from openai.types.chat.chat_completion_chunk import (
@@ -25,7 +27,6 @@ try:
         ChoiceDelta,
         ChoiceDeltaToolCall,
     )
-    from openai.types.completion_usage import CompletionUsage
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
@@ -340,15 +341,12 @@ class OpenAIChat(Model):
             )
             assistant_message.metrics.stop_timer()
 
-            # Parse provider response
-            provider_response: ModelResponse = self.parse_provider_response(response, response_format=response_format)
+            # Parse the response into an Agno ModelResponse object
+            provider_response: ModelResponse = self._parse_response(response, response_format=response_format)
 
             # Add parsed data to model response
             if provider_response.parsed is not None:
                 response.parsed = provider_response.parsed
-
-            # Populate the assistant message
-            self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
 
             return provider_response
 
@@ -420,7 +418,7 @@ class OpenAIChat(Model):
             assistant_message.metrics.stop_timer()
 
             # Parse provider response
-            provider_response: ModelResponse = self.parse_provider_response(response, response_format=response_format)
+            provider_response: ModelResponse = self._parse_response(response, response_format=response_format)
 
             # Add parsed data to model response
             if provider_response.parsed is not None:
@@ -484,17 +482,19 @@ class OpenAIChat(Model):
             messages (List[Message]): A list of messages to send to the model.
 
         Returns:
-            Iterator[ChatCompletionChunk]: An iterator of chat completion chunks.
+            Iterator[ModelResponse]: An iterator of model responses.
         """
 
         try:
-            yield from self.get_client().chat.completions.create(
+            for chunk in self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
-            )  # type: ignore
+            ):
+                yield self._parse_response_delta(chunk)
+
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")
             error_message = e.response.json().get("error", {})
@@ -539,7 +539,7 @@ class OpenAIChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> AsyncIterator[ChatCompletionChunk]:
+    ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming chat completion request to the OpenAI API.
 
@@ -547,7 +547,7 @@ class OpenAIChat(Model):
             messages (List[Message]): A list of messages to send to the model.
 
         Returns:
-            Any: An asynchronous iterator of chat completion chunks.
+            Any: An asynchronous iterator of model responses.
         """
 
         try:
@@ -559,7 +559,8 @@ class OpenAIChat(Model):
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
             async for chunk in async_stream:
-                yield chunk
+                yield self._parse_response_delta(chunk)
+
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")
             error_message = e.response.json().get("error", {})
@@ -639,7 +640,7 @@ class OpenAIChat(Model):
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
 
-    def parse_provider_response(
+    def _parse_response(
         self,
         response: ChatCompletion,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -649,9 +650,9 @@ class OpenAIChat(Model):
         """
         model_response = ModelResponse()
 
-        if hasattr(response, "error") and response.error:
+        if hasattr(response, "error") and response.error:  # type: ignore
             raise ModelProviderError(
-                message=response.error.get("message", "Unknown model error"),
+                message=response.error.get("message", "Unknown model error"),  # type: ignore
                 model_name=self.name,
                 model_id=self.id,
             )
@@ -700,15 +701,15 @@ class OpenAIChat(Model):
             except Exception as e:
                 log_warning(f"Error processing audio: {e}")
 
-        if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:
-            model_response.reasoning_content = response_message.reasoning_content
+        if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:  # type: ignore
+            model_response.reasoning_content = response_message.reasoning_content  # type: ignore
 
         if response.usage is not None:
-            model_response.response_usage = response.usage
+            model_response.response_usage = self._get_metrics(response.usage)
 
         return model_response
 
-    def parse_provider_response_delta(self, response_delta: ChatCompletionChunk) -> ModelResponse:
+    def _parse_response_delta(self, response_delta: ChatCompletionChunk) -> ModelResponse:
         """
         Parse the OpenAI streaming response into a ModelResponse.
 
@@ -757,42 +758,35 @@ class OpenAIChat(Model):
 
         # Add usage metrics if present
         if response_delta.usage is not None:
-            model_response.response_usage = response_delta.usage
+            model_response.response_usage = self._get_metrics(response_delta.usage)
 
         return model_response
 
-    def _add_provider_specific_metrics_to_assistant_message(
-        self, assistant_message: Message, response_usage: Union[CompletionUsage, dict]
-    ) -> None:
+    def _get_metrics(self, response_usage: CompletionUsage) -> Metrics:
         """
-        Add OpenAI specific usage metrics fields to the assistant message.
+        Parse the given OpenAI-specific usage into an Agno Metrics object.
 
         Args:
-            assistant_message: Message to update with metrics
             response_usage: Usage data from OpenAI
+
+        Returns:
+            Metrics: Parsed metrics data
         """
 
-        if isinstance(response_usage, CompletionUsage):
-            response_usage = response_usage.to_dict()
+        metrics = Metrics()
+
+        metrics.input_tokens = response_usage.prompt_tokens or 0
+        metrics.output_tokens = response_usage.completion_tokens or 0
+        metrics.total_tokens = response_usage.total_tokens or 0
 
         # Add the prompt_tokens_details field
-        if prompt_token_details := response_usage.get("prompt_tokens_details"):
-            if audio_total_tokens := prompt_token_details.get("audio_total_tokens"):
-                assistant_message.metrics.provider_metrics = assistant_message.metrics.provider_metrics or {}
-                assistant_message.metrics.provider_metrics["prompt_tokens_details"] = prompt_token_details
-                assistant_message.metrics.audio_input_tokens = audio_total_tokens
-            if cache_read_tokens := prompt_token_details.get("cached_tokens"):
-                assistant_message.metrics.provider_metrics = assistant_message.metrics.provider_metrics or {}
-                assistant_message.metrics.provider_metrics["prompt_tokens_details"] = prompt_token_details
-                assistant_message.metrics.cache_read_tokens = cache_read_tokens
+        if prompt_token_details := response_usage.prompt_tokens_details:
+            metrics.audio_input_tokens = prompt_token_details.audio_tokens or 0
+            metrics.cache_read_tokens = prompt_token_details.cached_tokens or 0
 
         # Add the completion_tokens_details field
-        if completion_tokens_details := response_usage.get("completion_tokens_details"):
-            if audio_total_tokens := completion_tokens_details.get("audio_total_tokens"):
-                assistant_message.metrics.provider_metrics = assistant_message.metrics.provider_metrics or {}
-                assistant_message.metrics.provider_metrics["completion_tokens_details"] = completion_tokens_details
-                assistant_message.metrics.audio_output_tokens = audio_total_tokens
-            if reasoning_tokens := completion_tokens_details.get("reasoning_tokens"):
-                assistant_message.metrics.provider_metrics = assistant_message.metrics.provider_metrics or {}
-                assistant_message.metrics.provider_metrics["completion_tokens_details"] = completion_tokens_details
-                assistant_message.metrics.reasoning_tokens = reasoning_tokens
+        if completion_tokens_details := response_usage.completion_tokens_details:
+            metrics.audio_output_tokens = completion_tokens_details.audio_tokens or 0
+            metrics.reasoning_tokens = completion_tokens_details.reasoning_tokens or 0
+
+        return metrics
