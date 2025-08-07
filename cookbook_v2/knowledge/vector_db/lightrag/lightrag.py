@@ -35,7 +35,6 @@ knowledge.add_content(
 )
 
 
-
 agent = Agent(
     knowledge=knowledge,
     search_knowledge=True,
@@ -48,6 +47,7 @@ asyncio.run(
 )
 
 asyncio.run(
-    agent.aprint_response("In what year did Manchester United change their name?", markdown=True)
+    agent.aprint_response(
+        "In what year did Manchester United change their name?", markdown=True
+    )
 )
-

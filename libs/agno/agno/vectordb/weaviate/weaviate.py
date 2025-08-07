@@ -722,7 +722,7 @@ class Weaviate(VectorDb):
         try:
             collection = self.get_client().collections.get(self.collection)
 
-            result = collection.data.delete_many(where=Filter.by_property("name").equal(name))
+            collection.data.delete_many(where=Filter.by_property("name").equal(name))
 
             log_info(f"Deleted documents with name '{name}' from collection '{self.collection}'.")
             return True
@@ -742,7 +742,7 @@ class Weaviate(VectorDb):
                 log_info(f"No valid filter could be built for metadata: {metadata}")
                 return False
 
-            result = collection.data.delete_many(where=filter_expr)
+            collection.data.delete_many(where=filter_expr)
 
             log_info(f"Deleted documents with metadata '{metadata}' from collection '{self.collection}'.")
             return True
@@ -756,7 +756,7 @@ class Weaviate(VectorDb):
         try:
             collection = self.get_client().collections.get(self.collection)
 
-            result = collection.data.delete_many(where=Filter.by_property("content_id").equal(content_id))
+            collection.data.delete_many(where=Filter.by_property("content_id").equal(content_id))
 
             log_info(f"Deleted documents with content_id '{content_id}' from collection '{self.collection}'.")
             return True

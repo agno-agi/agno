@@ -478,7 +478,7 @@ class Knowledge:
         file_extension = url_path.suffix.lower()
         try:
             if content.url.endswith("llms-full.txt") or content.url.endswith("llms.txt"):
-                log_info(f"Detected llms, using url reader")
+                log_info("Detected llms, using url reader")
                 reader = content.reader or self.url_reader
                 read_documents = reader.read(url=content.url, name=content.name)
 
@@ -560,8 +560,7 @@ class Knowledge:
 
         if content.upload_file and self.vector_db.__class__.__name__ == "LightRag":
             self._process_lightrag_content(content, KnowledgeContentOrigin.CONTENT)
-            return 
-
+            return
 
         content.content_hash = self._build_content_hash(content)
         if self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
@@ -1058,7 +1057,6 @@ class Knowledge:
 
         elif content_type == KnowledgeContentOrigin.CONTENT:
             log_info(f"Uploading file to LightRAG: {content.upload_file.filename}")
-            
 
             # Use the already-read content from file_data instead of the closed upload_file
             if content.file_data and content.file_data.content:
@@ -1097,8 +1095,6 @@ class Knowledge:
             else:
                 log_warning(f"No documents found for LightRAG upload: {content.name}")
                 return
-            
-
 
     def search(
         self, query: str, max_results: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
