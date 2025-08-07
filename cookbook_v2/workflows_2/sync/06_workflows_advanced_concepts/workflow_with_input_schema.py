@@ -8,8 +8,11 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.workflow import Workflow
-from lancedb import db
 from pydantic import BaseModel, Field
+
+
+class DifferentModel(BaseModel):
+    name: str
 
 
 class ResearchTopic(BaseModel):
@@ -73,6 +76,7 @@ if __name__ == "__main__":
             db_file="tmp/workflow_v2.db",
         ),
         steps=[research_step, content_planning_step],
+        input_schema=ResearchTopic,
     )
 
     print("=== Example: Research with Structured Topic ===")
@@ -85,9 +89,41 @@ if __name__ == "__main__":
             "AI Ethics",
         ],
         target_audience="Tech professionals and business leaders",
-        sources_required=8,
     )
+
+    # 1. Should work properly, as its in sync with input schema
     content_creation_workflow.print_response(
         message=research_topic,
         markdown=True,
     )
+
+    # 2. Should fail, as some fields present in input schema are missing here
+    # content_creation_workflow.print_response(
+    #     message=ResearchTopic(
+    #         topic="AI trends in 2024",
+    #         focus_areas=[
+    #             "Machine Learning",
+    #             "Natural Language Processing",
+    #             "Computer Vision",
+    #             "AI Ethics",
+    #         ],
+    #     ),
+    #     markdown=True,
+    # )
+
+    # 3. Should fail, as its not in sync with input schema, diff pydantic model provided
+    # content_creation_workflow.print_response(
+    #     message=DifferentModel(name="test"),
+    #     markdown=True,
+    # )
+
+    # 4. Pass a valid dict that matches ResearchTopic
+    # content_creation_workflow.print_response(
+    #     message={
+    #         "topic": "AI trends in 2024",
+    #         "focus_areas": ["Machine Learning", "Computer Vision"],
+    #         "target_audience": "Tech professionals",
+    #         "sources_required": 8
+    #     },
+    #     markdown=True,
+    # )

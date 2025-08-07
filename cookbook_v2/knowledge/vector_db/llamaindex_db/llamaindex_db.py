@@ -7,7 +7,8 @@ from shutil import rmtree
 
 import httpx
 from agno.agent import Agent
-from agno.knowledge.llamaindex import LlamaIndexKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
+from agno.vectordb.llamaindex import LlamaIndexVectorDb
 from llama_index.core import (
     SimpleDirectoryReader,
     StorageContext,
@@ -44,12 +45,12 @@ index = VectorStoreIndex(nodes=nodes, storage_context=storage_context)
 
 retriever = VectorIndexRetriever(index)
 
-# Create a knowledge base from the vector store
-knowledge_base = LlamaIndexKnowledgeBase(retriever=retriever)
+# Create a knowledge instance from the vector store
+knowledge = Knowledge(vector_db=LlamaIndexVectorDb(retriever=retriever))
 
-# Create an agent with the knowledge base
+# Create an agent with the knowledge instance
 agent = Agent(
-    knowledge=knowledge_base,
+    knowledge=knowledge,
     search_knowledge=True,
     debug_mode=True,
 )

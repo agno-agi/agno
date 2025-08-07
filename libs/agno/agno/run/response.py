@@ -49,6 +49,12 @@ class BaseAgentRunResponseEvent(BaseRunResponseEvent):
     session_id: Optional[str] = None
     team_session_id: Optional[str] = None
 
+    # Step context for workflow execution
+    workflow_id: Optional[str] = None
+    workflow_run_id: Optional[str] = None
+    step_id: Optional[str] = None
+    step_name: Optional[str] = None
+
     # For backwards compatibility
     content: Optional[Any] = None
 

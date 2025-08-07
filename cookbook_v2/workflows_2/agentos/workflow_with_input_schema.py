@@ -1,14 +1,16 @@
-from typing import List, Optional
+from typing import List
 
-from agno.agent import Agent
+from agno.agent.agent import Agent
+
+# Import the workflows
 from agno.db.sqlite import SqliteDb
-from agno.models.openai import OpenAIChat
-from agno.team import Team
+from agno.models.openai.chat import OpenAIChat
+from agno.os import AgentOS
+from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.workflow import Workflow
-from lancedb import db
 from pydantic import BaseModel, Field
 
 
@@ -63,31 +65,24 @@ content_planning_step = Step(
     agent=content_planner,
 )
 
-# Create and use workflow
-if __name__ == "__main__":
-    content_creation_workflow = Workflow(
-        name="Content Creation Workflow",
-        description="Automated content creation from blog posts to social media",
-        db=SqliteDb(
-            session_table="workflow_session",
-            db_file="tmp/workflow_v2.db",
-        ),
-        steps=[research_step, content_planning_step],
-    )
+content_creation_workflow = Workflow(
+    name="Content Creation Workflow",
+    description="Automated content creation from blog posts to social media",
+    db=SqliteDb(
+        session_table="workflow_session",
+        db_file="tmp/workflow_v2.db",
+    ),
+    steps=[research_step, content_planning_step],
+    input_schema=ResearchTopic,
+)
 
-    print("=== Example: Research with Structured Topic ===")
-    research_topic = ResearchTopic(
-        topic="AI trends in 2024",
-        focus_areas=[
-            "Machine Learning",
-            "Natural Language Processing",
-            "Computer Vision",
-            "AI Ethics",
-        ],
-        target_audience="Tech professionals and business leaders",
-        sources_required=8,
-    )
-    content_creation_workflow.print_response(
-        message=research_topic,
-        markdown=True,
-    )
+# Initialize the Playground with the workflows
+agent_os = AgentOS(
+    description="Example app for basic agent with playground capabilities",
+    os_id="basic-app",
+    workflows=[content_creation_workflow],
+)
+app = agent_os.get_app()
+
+if __name__ == "__main__":
+    agent_os.serve(app="test:app", reload=True)

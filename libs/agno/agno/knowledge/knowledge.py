@@ -3,6 +3,7 @@ import hashlib
 import io
 import time
 from dataclasses import dataclass
+from enum import Enum
 from functools import cached_property
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union, overload
@@ -18,6 +19,13 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb import VectorDb
 
 ContentDict = Dict[str, Union[str, Dict[str, str]]]
+
+
+class KnowledgeContentOrigin(Enum):
+    PATH = "path"
+    URL = "url"
+    TOPIC = "topic"
+    CONTENT = "content"
 
 
 @dataclass
@@ -339,11 +347,18 @@ class Knowledge:
     ):
         log_info(f"Adding content from path, {content.id}, {content.name}, {content.path}, {content.description}")
         path = Path(content.path)
+
         if path.is_file():
             if self._should_include_file(str(path), include, exclude):
                 log_info(f"Adding file {path} due to include/exclude filters")
 
                 self._add_to_contents_db(content)
+
+                # Handle LightRAG special case - read file and upload directly
+                if self.vector_db.__class__.__name__ == "LightRag":
+                    self._process_lightrag_content(content, KnowledgeContentOrigin.PATH)
+                    return
+
                 content.content_hash = self._build_content_hash(content)
                 if self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
                     log_info(f"Content {content.content_hash} already exists, skipping")
@@ -430,6 +445,10 @@ class Knowledge:
 
         self._add_to_contents_db(content)
 
+        if self.vector_db.__class__.__name__ == "LightRag":
+            self._process_lightrag_content(content, KnowledgeContentOrigin.URL)
+            return
+
         content.content_hash = self._build_content_hash(content)
         if self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
             log_info(f"Content {content.content_hash} already exists, skipping")
@@ -459,7 +478,7 @@ class Knowledge:
         file_extension = url_path.suffix.lower()
         try:
             if content.url.endswith("llms-full.txt") or content.url.endswith("llms.txt"):
-                log_info(f"Detected llms, using url reader")
+                log_info("Detected llms, using url reader")
                 reader = content.reader or self.url_reader
                 read_documents = reader.read(url=content.url, name=content.name)
 
@@ -538,6 +557,10 @@ class Knowledge:
 
         log_info(f"Adding content from {content.name}")
         self._add_to_contents_db(content)
+
+        if content.upload_file and self.vector_db.__class__.__name__ == "LightRag":
+            self._process_lightrag_content(content, KnowledgeContentOrigin.CONTENT)
+            return
 
         content.content_hash = self._build_content_hash(content)
         if self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
@@ -654,6 +677,10 @@ class Knowledge:
                 topics=[topic],
             )
             self._add_to_contents_db(content)
+
+            if self.vector_db.__class__.__name__ == "LightRag":
+                self._process_lightrag_content(content, KnowledgeContentOrigin.TOPIC)
+                return
 
             content.content_hash = self._build_content_hash(content)
             if self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
@@ -860,7 +887,7 @@ class Knowledge:
         if content.url:
             self._load_from_url(content, upsert, skip_if_exists)
 
-        if content.file_data:
+        if content.file_data or content.upload_file:
             self._load_from_content(content, upsert, skip_if_exists)
 
         if content.topics:
@@ -951,6 +978,8 @@ class Knowledge:
                 content_row.status = content.status
             if content.status_message is not None:
                 content_row.status_message = content.status_message if content.status_message else ""
+            if content.external_id is not None:
+                content_row.external_id = content.external_id
 
             content_row.updated_at = int(time.time())
             self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
@@ -959,6 +988,113 @@ class Knowledge:
 
         else:
             log_warning(f"Contents DB not found for knowledge base: {self.name}")
+
+    def _process_lightrag_content(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
+        if content_type == KnowledgeContentOrigin.PATH:
+            if content.file_data is None:
+                log_warning("No file data provided")
+
+            path = Path(content.path)
+
+            log_info(f"Uploading file to LightRAG from path: {path}")
+            try:
+                # Read the file content from path
+                with open(path, "rb") as f:
+                    file_content = f.read()
+
+                # Get file type from extension or content.file_type
+                file_type = content.file_type or path.suffix
+
+                result = asyncio.run(
+                    self.vector_db.insert_file_bytes(
+                        file_content=file_content,
+                        filename=path.name,  # Use the original filename with extension
+                        content_type=file_type,
+                        send_metadata=True,  # Enable metadata so server knows the file type
+                    )
+                )
+                content.external_id = result
+                content.status = ContentStatus.COMPLETED
+                self._update_content(content)
+                return
+
+            except Exception as e:
+                log_error(f"Error uploading file to LightRAG: {e}")
+                content.status = ContentStatus.FAILED
+                content.status_message = f"Could not upload to LightRAG: {str(e)}"
+                self._update_content(content)
+                return
+
+        elif content_type == KnowledgeContentOrigin.URL:
+            log_info(f"Uploading file to LightRAG from URL: {content.url}")
+            try:
+                reader = self.url_reader
+                reader.chunk = False
+                read_documents = reader.read(url=content.url, name=content.name)
+
+                print("READ DOCUMENTS: ", len(read_documents))
+                for read_document in read_documents:
+                    read_document.content_id = content.id
+
+                result = asyncio.run(
+                    self.vector_db.insert_text(
+                        file_source=content.url,
+                        text=read_documents[0].content,
+                    )
+                )
+
+                content.external_id = result
+                content.status = ContentStatus.COMPLETED
+                self._update_content(content)
+                return
+
+            except Exception as e:
+                log_error(f"Error uploading file to LightRAG: {e}")
+                content.status = ContentStatus.FAILED
+                content.status_message = f"Could not upload to LightRAG: {str(e)}"
+                self._update_content(content)
+                return
+
+        elif content_type == KnowledgeContentOrigin.CONTENT:
+            log_info(f"Uploading file to LightRAG: {content.upload_file.filename}")
+
+            # Use the already-read content from file_data instead of the closed upload_file
+            if content.file_data and content.file_data.content:
+                result = asyncio.run(
+                    self.vector_db.insert_file_bytes(
+                        file_content=content.file_data.content,
+                        filename=content.upload_file.filename,
+                        content_type=content.file_data.type,
+                        send_metadata=True,  # Enable metadata so server knows the file type
+                    )
+                )
+                content.external_id = result
+                content.status = ContentStatus.COMPLETED
+                self._update_content(content)
+            else:
+                log_warning(f"No file data available for LightRAG upload: {content.name}")
+            return
+
+        elif content_type == KnowledgeContentOrigin.TOPIC:
+            log_info(f"Uploading file to LightRAG: {content.name}")
+
+            read_documents = content.reader.read(content.topics)
+            if len(read_documents) > 0:
+                print("READ DOCUMENTS: ", len(read_documents))
+                print("READ DOCUMENTS: ", read_documents[0])
+                result = asyncio.run(
+                    self.vector_db.insert_text(
+                        file_source=content.topics[0],
+                        text=read_documents[0].content,
+                    )
+                )
+                content.external_id = result
+                content.status = ContentStatus.COMPLETED
+                self._update_content(content)
+                return
+            else:
+                log_warning(f"No documents found for LightRAG upload: {content.name}")
+                return
 
     def search(
         self, query: str, max_results: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
@@ -1093,6 +1229,7 @@ class Knowledge:
             status_message=content_row.status_message,
             created_at=content_row.created_at,
             updated_at=content_row.updated_at if content_row.updated_at else content_row.created_at,
+            external_id=content_row.external_id,
         )
         return content
 
@@ -1123,6 +1260,7 @@ class Knowledge:
                 status_message=content_row.status_message,
                 created_at=content_row.created_at,
                 updated_at=content_row.updated_at if content_row.updated_at else content_row.created_at,
+                external_id=content_row.external_id,
             )
             result.append(content)
         return result, count
@@ -1150,11 +1288,19 @@ class Knowledge:
         return status, content_row.status_message
 
     def remove_content_by_id(self, content_id: str):
+        if self.vector_db is not None:
+            if self.vector_db.__class__.__name__ == "LightRag":
+                # For LightRAG, get the content first to find the external_id
+                content = self.get_content_by_id(content_id)
+                if content and content.external_id:
+                    self.vector_db.delete_by_external_id(content.external_id)
+                else:
+                    log_warning(f"No external_id found for content {content_id}, cannot delete from LightRAG")
+            else:
+                self.vector_db.delete_by_content_id(content_id)
+
         if self.contents_db is not None:
             self.contents_db.delete_knowledge_content(content_id)
-
-        if self.vector_db is not None:
-            self.vector_db.delete_by_content_id(content_id)
 
     def remove_all_content(self):
         contents, _ = self.get_content()

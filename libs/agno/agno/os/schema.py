@@ -8,7 +8,13 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.os.apps.memory import MemoryApp
-from agno.os.utils import format_team_tools, format_tools, get_run_input, get_session_name
+from agno.os.utils import (
+    format_team_tools,
+    format_tools,
+    get_run_input,
+    get_session_name,
+    get_workflow_input_schema_dict,
+)
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
 from agno.workflow.v2.workflow import Workflow
@@ -242,6 +248,7 @@ class WorkflowResponse(BaseModel):
     workflow_id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
+    input_schema: Optional[Dict[str, Any]] = None
     steps: Optional[List[Dict[str, Any]]] = None
 
     @classmethod
@@ -252,6 +259,7 @@ class WorkflowResponse(BaseModel):
             name=workflow.name,
             description=workflow.description,
             steps=workflow_dict.get("steps"),
+            input_schema=get_workflow_input_schema_dict(workflow),
         )
 
 
@@ -463,6 +471,7 @@ class WorkflowRunSchema(BaseModel):
     content_type: Optional[str]
     status: Optional[str]
     step_results: Optional[list[dict]]
+    step_executor_runs: Optional[list[dict]]
     metrics: Optional[dict]
     created_at: Optional[datetime]
 
@@ -478,6 +487,7 @@ class WorkflowRunSchema(BaseModel):
             status=run_response.get("status", ""),
             metrics=run_response.get("workflow_metrics", {}),
             step_results=run_response.get("step_results", []),
+            step_executor_runs=run_response.get("step_executor_runs", []),
             created_at=datetime.fromtimestamp(run_response["created_at"], tz=timezone.utc)
             if run_response["created_at"]
             else None,

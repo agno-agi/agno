@@ -153,6 +153,8 @@ class Team:
     add_datetime_to_context: bool = False
     # If True, add the current location to the instructions to give the team a sense of location
     add_location_to_context: bool = False
+    # If True, add the team name to the instructions
+    add_name_to_context: bool = False
     # If True, add the tools available to team members to the system message
     add_member_tools_to_system_message: bool = True
 
@@ -160,6 +162,12 @@ class Team:
     system_message: Optional[Union[str, Callable, Message]] = None
     # Role for the system message
     system_message_role: str = "system"
+
+    # --- Extra Messages ---
+    # A list of extra messages added after the system message and before the user message.
+    # Use these for few-shot learning or to provide additional context to the Model.
+    # Note: these are not retained in memory, they are added directly to the messages sent to the model.
+    additional_messages: Optional[List[Union[Dict, Message]]] = None
 
     # --- Database ---
     # Database to use for this agent
@@ -319,9 +327,11 @@ class Team:
         markdown: bool = False,
         add_datetime_to_context: bool = False,
         add_location_to_context: bool = False,
+        add_name_to_context: bool = False,
         add_member_tools_to_system_message: bool = True,
         system_message: Optional[Union[str, Callable, Message]] = None,
         system_message_role: str = "system",
+        additional_messages: Optional[List[Union[Dict, Message]]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
         knowledge: Optional[Knowledge] = None,
@@ -395,9 +405,11 @@ class Team:
         self.markdown = markdown
         self.add_datetime_to_context = add_datetime_to_context
         self.add_location_to_context = add_location_to_context
+        self.add_name_to_context = add_name_to_context
         self.add_member_tools_to_system_message = add_member_tools_to_system_message
         self.system_message = system_message
         self.system_message_role = system_message_role
+        self.additional_messages = additional_messages
 
         self.dependencies = dependencies
         self.add_dependencies_to_context = add_dependencies_to_context
@@ -786,6 +798,7 @@ class Team:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
+        workflow_context: Optional[Dict] = None,
     ) -> Iterator[Union[TeamRunResponseEvent, RunResponseEvent]]:
         """Run the Team and return the response iterator.
 
@@ -805,7 +818,9 @@ class Team:
 
         # Start the Run by yielding a RunStarted event
         if stream_intermediate_steps:
-            yield self._handle_event(create_team_run_response_started_event(run_response), run_response)
+            yield self._handle_event(
+                create_team_run_response_started_event(run_response), run_response, workflow_context
+            )
 
         # 2. Get a response from the model
         yield from self._handle_model_response_stream(
@@ -830,6 +845,7 @@ class Team:
                     from_run_response=run_response,
                 ),
                 run_response,
+                workflow_context,
             )
 
         # 5. Calculate session metrics
@@ -905,6 +921,9 @@ class Team:
         # Initialize Team
         self.initialize_team(session_id=session_id)
 
+        # Extract workflow context from kwargs if present
+        workflow_context = kwargs.pop("workflow_context", None)
+
         # Initialize Knowledge Filters
         effective_filters = knowledge_filters
 
@@ -970,6 +989,7 @@ class Team:
             videos=videos,
             audio=audio,
             files=files,
+            workflow_context=workflow_context,
         )
 
         # Create a run_id for this specific run
@@ -1050,6 +1070,7 @@ class Team:
                         session_id=session_id,
                         user_id=user_id,
                         response_format=response_format,
+                        workflow_context=workflow_context,
                     )
 
                     return response_iterator
@@ -1107,6 +1128,7 @@ class Team:
         session_id: str,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        workflow_context: Optional[Dict] = None,
     ) -> TeamRunResponse:
         """Run the Team and return the response.
 
@@ -1173,6 +1195,7 @@ class Team:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
+        workflow_context: Optional[Dict] = None,
     ) -> AsyncIterator[Union[TeamRunResponseEvent, RunResponseEvent]]:
         """Run the Team and return the response.
 
@@ -1191,7 +1214,7 @@ class Team:
         # Start the Run by yielding a RunStarted event
         if stream_intermediate_steps:
             yield self._handle_event(
-                create_team_run_response_started_event(from_run_response=run_response), run_response
+                create_team_run_response_started_event(from_run_response=run_response), run_response, workflow_context
             )
 
         # 2. Get a response from the model
@@ -1221,7 +1244,7 @@ class Team:
 
         if stream_intermediate_steps:
             yield self._handle_event(
-                create_team_run_response_completed_event(from_run_response=run_response), run_response
+                create_team_run_response_completed_event(from_run_response=run_response), run_response, workflow_context
             )
 
         # 5. Calculate session metrics
@@ -1298,6 +1321,9 @@ class Team:
 
         # Initialize Team
         self.initialize_team(session_id=session_id)
+
+        # Extract workflow context from kwargs if present
+        workflow_context = kwargs.pop("workflow_context", None)
 
         effective_filters = knowledge_filters
 
@@ -1430,6 +1456,7 @@ class Team:
                         user_id=user_id,
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
+                        workflow_context=workflow_context,
                     )
                     return response_iterator
                 else:
@@ -2221,7 +2248,19 @@ class Team:
             else:
                 log_warning("A response model is required to parse the response with a parser model")
 
-    def _handle_event(self, event: Union[RunResponseEvent, TeamRunResponseEvent], run_response: TeamRunResponse):
+    def _handle_event(
+        self,
+        event: Union[RunResponseEvent, TeamRunResponseEvent],
+        run_response: TeamRunResponse,
+        workflow_context: Optional[Dict] = None,
+    ):
+        if workflow_context:
+            event.workflow_id = workflow_context.get("workflow_id")
+            event.workflow_run_id = workflow_context.get("workflow_run_id")
+            event.step_id = workflow_context.get("step_id")
+            event.step_name = workflow_context.get("step_name")
+            event.step_index = workflow_context.get("step_index")
+
         # We only store events that are not run_response_content events
         events_to_skip = [event.value for event in self.events_to_skip] if self.events_to_skip else []
         if self.store_events and event.event not in events_to_skip:
@@ -4680,6 +4719,7 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         audio: Optional[Sequence[Audio]] = None,
         files: Optional[Sequence[File]] = None,
+        workflow_context: Optional[Dict] = None,
     ) -> None:
         # Prepare tools
         _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
@@ -4737,6 +4777,7 @@ class Team:
                 audio=audio,  # type: ignore
                 files=files,  # type: ignore
                 knowledge_filters=knowledge_filters,
+                workflow_context=workflow_context,
             )
             _tools.append(forward_task_func)
             if self.get_member_information_tool:
@@ -4755,6 +4796,7 @@ class Team:
                     audio=audio,  # type: ignore
                     files=files,  # type: ignore
                     knowledge_filters=knowledge_filters,
+                    workflow_context=workflow_context,
                 )
             )
             if self.get_member_information_tool:
@@ -4771,6 +4813,7 @@ class Team:
                 videos=videos,  # type: ignore
                 audio=audio,  # type: ignore
                 files=files,  # type: ignore
+                workflow_context=workflow_context,
             )
             _tools.append(run_member_agents_func)
 
@@ -4967,6 +5010,10 @@ class Team:
                 if location_str:
                     additional_information.append(f"Your approximate location is: {location_str}.")
 
+        # 1.3.4 Add team name if provided
+        if self.name is not None and self.add_name_to_context:
+            additional_information.append(f"Your name is: {self.name}.")
+
         if self.knowledge is not None and self.enable_agentic_knowledge_filters:
             valid_filters = getattr(self.knowledge, "valid_metadata_filters", None)
             if valid_filters:
@@ -5042,9 +5089,6 @@ class Team:
             system_message_content += "It is important that you update the shared context as often as possible.\n"
             system_message_content += "To update the shared context, use the `set_shared_context` tool.\n"
             system_message_content += "</shared_context>\n\n"
-
-        if self.name is not None:
-            system_message_content += f"Your name is: {self.name}\n\n"
 
         # Attached media
         if audio is not None or images is not None or videos is not None or files is not None:
@@ -5182,8 +5226,9 @@ class Team:
 
         To build the RunMessages object:
         1. Add system message to run_messages
-        2. Add history to run_messages
-        3. Add user message to run_messages
+        2. Add extra messages to run_messages
+        3. Add history to run_messages
+        4. Add user message to run_messages
 
         """
         # Initialize the RunMessages object
@@ -5197,7 +5242,40 @@ class Team:
             run_messages.system_message = system_message
             run_messages.messages.append(system_message)
 
-        # 2. Add history to run_messages
+        # 2. Add extra messages to run_messages if provided
+        if self.additional_messages is not None:
+            messages_to_add_to_run_response: List[Message] = []
+            if run_messages.extra_messages is None:
+                run_messages.extra_messages = []
+
+            for _m in self.additional_messages:
+                if isinstance(_m, Message):
+                    messages_to_add_to_run_response.append(_m)
+                    run_messages.messages.append(_m)
+                    run_messages.extra_messages.append(_m)
+                elif isinstance(_m, dict):
+                    try:
+                        _m_parsed = Message.model_validate(_m)
+                        messages_to_add_to_run_response.append(_m_parsed)
+                        run_messages.messages.append(_m_parsed)
+                        run_messages.extra_messages.append(_m_parsed)
+                    except Exception as e:
+                        log_warning(f"Failed to validate message: {e}")
+            # Add the extra messages to the run_response
+            if len(messages_to_add_to_run_response) > 0:
+                log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
+                if self.run_response is not None:
+                    if self.run_response.metadata is None:
+                        self.run_response.metadata = RunResponseMetaData(
+                            additional_messages=messages_to_add_to_run_response
+                        )
+                    else:
+                        if self.run_response.metadata.additional_messages is None:
+                            self.run_response.metadata.additional_messages = messages_to_add_to_run_response
+                        else:
+                            self.run_response.metadata.additional_messages.extend(messages_to_add_to_run_response)
+
+        # 3. Add history to run_messages
         if self.add_history_to_context:
             from copy import deepcopy
 
@@ -5222,7 +5300,7 @@ class Team:
                 # Extend the messages with the history
                 run_messages.messages += history_copy
 
-        # 3. Add user message to run_messages
+        # 4. Add user message to run_messages
         user_message = self._get_user_message(
             message,
             user_id=user_id,
@@ -5713,6 +5791,7 @@ class Team:
         videos: Optional[List[Video]] = None,
         audio: Optional[List[Audio]] = None,
         files: Optional[List[File]] = None,
+        workflow_context: Optional[Dict] = None,
     ) -> Function:
         if not images:
             images = []
@@ -5772,6 +5851,7 @@ class Team:
                         files=files,
                         stream=True,
                         stream_intermediate_steps=stream_intermediate_steps,
+                        workflow_context=workflow_context,
                     )
                     for member_agent_run_response_chunk in member_agent_run_response_stream:
                         check_if_run_cancelled(member_agent_run_response_chunk)
@@ -5994,6 +6074,7 @@ class Team:
         audio: Optional[List[Audio]] = None,
         files: Optional[List[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        workflow_context: Optional[Dict] = None,
     ) -> Function:
         if not images:
             images = []
@@ -6066,6 +6147,7 @@ class Team:
                     files=files,
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    workflow_context=workflow_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
@@ -6212,6 +6294,7 @@ class Team:
                     files=files,
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    workflow_context=workflow_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
@@ -6380,6 +6463,7 @@ class Team:
         audio: Optional[Sequence[Audio]] = None,
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        workflow_context: Optional[Dict] = None,
     ) -> Function:
         if not images:
             images = []
@@ -6454,6 +6538,7 @@ class Team:
                     files=files,
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    workflow_context=workflow_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
@@ -6594,6 +6679,7 @@ class Team:
                     files=files,
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
+                    workflow_context=workflow_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,

@@ -1,6 +1,7 @@
 import inspect
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
+from uuid import uuid4
 
 from pydantic import BaseModel
 
@@ -90,6 +91,10 @@ class Step:
         self.timeout_seconds = timeout_seconds
         self.skip_on_failure = skip_on_failure
         self.strict_input_validation = strict_input_validation
+        self.step_id = step_id
+
+        if step_id is None:
+            self.step_id = str(uuid4())
 
         # Set the active executor
         self._set_active_executor()
@@ -295,6 +300,7 @@ class Step:
                 session_id=workflow_run_response.session_id or "",
                 step_name=self.name,
                 step_index=step_index,
+                step_id=self.step_id,
             )
 
         # Execute with retries and streaming
@@ -372,6 +378,14 @@ class Step:
                             user_id=user_id,
                             stream=True,
                             stream_intermediate_steps=stream_intermediate_steps,
+                            # Pass workflow context directly via kwargs
+                            workflow_context={
+                                "workflow_id": workflow_run_response.workflow_id if workflow_run_response else None,
+                                "workflow_run_id": workflow_run_response.run_id if workflow_run_response else None,
+                                "step_id": self.step_id,
+                                "step_name": self.name,
+                                "step_index": step_index,
+                            },
                         )
 
                         if store_executor_responses:
@@ -582,6 +596,7 @@ class Step:
                 session_id=workflow_run_response.session_id or "",
                 step_name=self.name,
                 step_index=step_index,
+                step_id=self.step_id,
             )
 
         # Execute with retries and streaming
@@ -677,6 +692,14 @@ class Step:
                             user_id=user_id,
                             stream=True,
                             stream_intermediate_steps=stream_intermediate_steps,
+                            # Pass workflow context directly via kwargs
+                            workflow_context={
+                                "workflow_id": workflow_run_response.workflow_id if workflow_run_response else None,
+                                "workflow_run_id": workflow_run_response.run_id if workflow_run_response else None,
+                                "step_id": self.step_id,
+                                "step_name": self.name,
+                                "step_index": step_index,
+                            },
                         )
 
                         if store_executor_responses:
@@ -708,6 +731,7 @@ class Step:
                         session_id=workflow_run_response.session_id or "",
                         step_name=self.name,
                         step_index=step_index,
+                        step_id=self.step_id,
                         content=final_response.content,
                         step_response=final_response,
                     )

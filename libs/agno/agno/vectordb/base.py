@@ -62,15 +62,6 @@ class VectorDb(ABC):
     ) -> List[Document]:
         raise NotImplementedError
 
-    def vector_search(self, query: str, limit: int = 5) -> List[Document]:
-        raise NotImplementedError
-
-    def keyword_search(self, query: str, limit: int = 5) -> List[Document]:
-        raise NotImplementedError
-
-    def hybrid_search(self, query: str, limit: int = 5) -> List[Document]:
-        raise NotImplementedError
-
     @abstractmethod
     def drop(self) -> None:
         raise NotImplementedError
