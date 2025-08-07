@@ -14,7 +14,7 @@ research_team = Team(
 )
 
 research_team.print_response(
-    messages=[
+    [
         Message(
             role="user",
             content="I'm preparing a presentation for my company about renewable energy adoption.",

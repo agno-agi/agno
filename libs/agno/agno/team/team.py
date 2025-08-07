@@ -859,7 +859,7 @@ class Team:
     @overload
     def run(
         self,
-        message: Union[str, List, Dict, Message, BaseModel],
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         *,
         stream: Literal[False] = False,
         stream_intermediate_steps: Optional[bool] = None,
@@ -879,7 +879,7 @@ class Team:
     @overload
     def run(
         self,
-        message: Union[str, List, Dict, Message, BaseModel],
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         *,
         stream: Literal[True] = True,
         stream_intermediate_steps: Optional[bool] = None,
@@ -898,7 +898,7 @@ class Team:
 
     def run(
         self,
-        message: Union[str, List, Dict, Message, BaseModel],
+        message: Optional[Union[str, List, Dict, Message, BaseModel]] = None,
         *,
         stream: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
@@ -1987,7 +1987,6 @@ class Team:
         self,
         run_messages: RunMessages,
         user_id: Optional[str] = None,
-        messages: Optional[Sequence[Union[Dict, Message]]] = None,
     ) -> Iterator[TeamRunResponseEvent]:
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -2043,7 +2042,6 @@ class Team:
         self,
         run_messages: RunMessages,
         user_id: Optional[str] = None,
-        messages: Optional[Sequence[Union[Dict, Message]]] = None,
     ) -> AsyncIterator[TeamRunResponseEvent]:
         self.run_response = cast(TeamRunResponse, self.run_response)
         tasks = []
@@ -5332,17 +5330,36 @@ class Team:
                 run_messages.messages += history_copy
 
         # 4. Add user message to run_messages
-        user_message = self._get_user_message(
-            message,
-            user_id=user_id,
-            audio=audio,
-            images=images,
-            videos=videos,
-            files=files,
-            knowledge_filters=knowledge_filters,
-            **kwargs,
-        )
-
+        user_message: Optional[Message] = None
+        # 4.1 Build user message if message is None, str or list and messages is None
+        if message is None or isinstance(message, str) or isinstance(message, list) and messages is None:
+            user_message = self._get_user_message(
+                message,
+                user_id=user_id,
+                audio=audio,
+                images=images,
+                videos=videos,
+                files=files,
+                knowledge_filters=knowledge_filters,
+                **kwargs,
+            )
+        # 4.2 If message is provided as a Message, use it directly
+        elif isinstance(message, Message):
+            user_message = message
+        # 4.3 If message is provided as a dict, try to validate it as a Message
+        elif isinstance(message, dict):
+            try:
+                user_message = Message.model_validate(message)
+            except Exception as e:
+                log_warning(f"Failed to validate message: {e}")
+        # 4.4 If message is provided as a BaseModel, convert it to a Message
+        elif isinstance(message, BaseModel):
+            try:
+                # Create a user message with the BaseModel content
+                content = message.model_dump_json(indent=2, exclude_none=True)
+                user_message = Message(role="user", content=content)
+            except Exception as e:
+                log_warning(f"Failed to convert BaseModel to message: {e}")
         # Add user message to run_messages
         if user_message is not None:
             run_messages.user_message = user_message
@@ -5415,20 +5432,25 @@ class Team:
                 log_warning(f"Failed to get references: {e}")
 
         # Build user message if message is None, str or list
-        user_message_content: str = ""
         if isinstance(message, str) or isinstance(message, list):
+            # For lists, pass them directly as content like the agent does
+            if isinstance(message, list):
+                return Message(
+                    role="user",
+                    content=message,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    **kwargs,
+                )
+
+            # For strings, build the content with state, references, and context
+            user_message_content: str = ""
             if self.add_state_in_messages:
-                if isinstance(message, str):
-                    user_message_content = self._format_message_with_state_variables(message, user_id=user_id)
-                elif isinstance(message, list):
-                    user_message_content = "\n".join(
-                        [self._format_message_with_state_variables(msg, user_id=user_id) for msg in message]
-                    )
+                user_message_content = self._format_message_with_state_variables(message, user_id=user_id)
             else:
-                if isinstance(message, str):
-                    user_message_content = message
-                else:
-                    user_message_content = "\n".join(message)
+                user_message_content = message
 
             # Add references to user message
             if (
