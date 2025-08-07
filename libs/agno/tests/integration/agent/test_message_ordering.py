@@ -2,14 +2,12 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 
 
-def test_message_ordering():
+def test_message_ordering_run():
     """Test that historical messages come before current user message"""
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         user_id="test_user",
         session_id="test_session",
-        add_history_to_messages=False,  # Manual message handling
-        create_default_system_message=False,  # No system message for simplicity
         telemetry=False,
         monitoring=False,
     )
@@ -21,13 +19,13 @@ def test_message_ordering():
     current_message = "and if I add 7 to that result?"
 
     # Get run messages
-    run_messages = agent.get_run_messages(
+    response = agent.run(
         message=current_message, session_id="test_session", user_id="test_user", messages=historical_messages
     )
 
     # Verify correct chronological order
-    messages = run_messages.messages
-    assert len(messages) == 3
+    messages = response.messages
+    assert len(messages) == 4
 
     # Historical messages should come first
     assert messages[0].role == "user"
@@ -39,18 +37,14 @@ def test_message_ordering():
     assert messages[2].role == "user"
     assert messages[2].content == "and if I add 7 to that result?"
 
-    # Verify user_message is set correctly
-    assert run_messages.user_message is not None
-    assert run_messages.user_message.content == current_message
+    assert messages[3].role == "assistant"
 
 
-def test_message_ordering_with_storage(agent_storage):
+def test_message_ordering(agent_storage):
     """Test message ordering with storage"""
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         storage=agent_storage,
-        add_history_to_messages=False,  # Manual message handling
-        create_default_system_message=False,
         telemetry=False,
         monitoring=False,
     )
@@ -94,8 +88,6 @@ def test_message_ordering_edge_cases():
     """Test edge cases for message ordering"""
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        add_history_to_messages=False,
-        create_default_system_message=False,
         telemetry=False,
         monitoring=False,
     )
@@ -120,8 +112,7 @@ def test_message_ordering_with_system_message():
     """Test message ordering when system message is present"""
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        add_history_to_messages=False,
-        system_message="You are a helpful math assistant.",
+        description="You are a helpful math assistant.",
         telemetry=False,
         monitoring=False,
     )
