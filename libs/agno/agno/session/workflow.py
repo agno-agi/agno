@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional
 
-from agno.run.v2.workflow import WorkflowRunResponse
+from agno.run.workflow import WorkflowRunResponse
 from agno.utils.log import logger
 
 

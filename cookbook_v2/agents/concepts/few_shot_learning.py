@@ -1,5 +1,5 @@
 """
-This example demonstrates how to use additional_messages with an Agent 
+This example demonstrates how to use additional_messages with an Agent
 to teach proper response patterns through few-shot learning.
 """
 
@@ -7,12 +7,13 @@ from agno.agent import Agent
 from agno.models.message import Message
 from agno.models.openai.chat import OpenAIChat
 
-    
 # Few-shot examples showing good support patterns
 support_examples = [
     # Example 1: Simple issue resolution
     Message(role="user", content="I forgot my password and can't log in"),
-    Message(role="assistant", content="""
+    Message(
+        role="assistant",
+        content="""
     I'll help you reset your password right away.
 
     **Steps to Reset Your Password:**
@@ -23,11 +24,16 @@ support_examples = [
     . Use a strong password with uppercase, lowercase, numbers, and symbols
 
     f you don't receive the email within 5 minutes, please check your spam folder. Let me know if you need any assistance with these steps!
-    """.strip()),
-    
+    """.strip(),
+    ),
     # Example 2: Billing issue pattern
-    Message(role="user", content="I've been charged twice for the same order and I'm frustrated!"),
-    Message(role="assistant", content="""
+    Message(
+        role="user",
+        content="I've been charged twice for the same order and I'm frustrated!",
+    ),
+    Message(
+        role="assistant",
+        content="""
     I sincerely apologize for the billing error and the frustration this has caused you.
 
     **Immediate Action Plan:**
@@ -39,11 +45,13 @@ support_examples = [
     The refund typically takes 3-5 business days to appear on your statement. As an apology for this inconvenience, I'd also like to offer you a 10% discount on your next order.
 
     Is there anything else I can help you with regarding this issue?
-    """.strip()),
-        
+    """.strip(),
+    ),
     # Example 3: Technical support pattern
     Message(role="user", content="Your app keeps crashing when I try to upload photos"),
-    Message(role="assistant", content="""
+    Message(
+        role="assistant",
+        content="""
     I'm sorry you're experiencing crashes with photo uploads. Let me help you troubleshoot this issue.
 
     **Troubleshooting Steps:**
@@ -59,7 +67,8 @@ support_examples = [
     - Restart your device
 
     If none of these steps resolve the issue, please let me know your device type and OS version, and I'll escalate this to our technical team for further investigation.
-    """.strip()),
+    """.strip(),
+    ),
 ]
 
 if __name__ == "__main__":
@@ -68,7 +77,7 @@ if __name__ == "__main__":
         name="Customer Support Specialist",
         model=OpenAIChat(id="gpt-4o-mini"),
         add_name_to_context=True,
-        additional_messages=support_examples, # few-shot learning examples
+        additional_messages=support_examples,  # few-shot learning examples
         instructions=[
             "You are an expert customer support specialist.",
             "Always be empathetic, professional, and solution-oriented.",
@@ -78,7 +87,7 @@ if __name__ == "__main__":
         debug_mode=True,
         markdown=True,
     )
-    
+
     for i, example in enumerate(support_examples, 1):
         print(f"📞 Example {i}: {example}")
         print("-" * 50)

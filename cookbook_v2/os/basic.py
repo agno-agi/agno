@@ -7,8 +7,8 @@ from agno.os import AgentOS
 from agno.os.interfaces.slack import Slack
 from agno.os.interfaces.whatsapp import Whatsapp
 from agno.team import Team
-from agno.workflow.v2.step import Step
-from agno.workflow.v2.workflow import Workflow
+from agno.workflow.step import Step
+from agno.workflow.workflow import Workflow
 
 # Setup the database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")

@@ -352,8 +352,6 @@ class Knowledge:
             if self._should_include_file(str(path), include, exclude):
                 log_info(f"Adding file {path} due to include/exclude filters")
 
-                self._add_to_contents_db(content)
-
                 # Handle LightRAG special case - read file and upload directly
                 if self.vector_db.__class__.__name__ == "LightRag":
                     self._process_lightrag_content(content, KnowledgeContentOrigin.PATH)
@@ -362,9 +360,9 @@ class Knowledge:
                 content.content_hash = self._build_content_hash(content)
                 if self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
                     log_info(f"Content {content.content_hash} already exists, skipping")
-                    content.status = ContentStatus.COMPLETED
-                    self._update_content(content)
                     return
+
+                self._add_to_contents_db(content)
 
                 if content.reader:
                     read_documents = content.reader.read(path, name=content.name or path.name)
@@ -443,8 +441,6 @@ class Knowledge:
         log_info(f"Adding content from URL {content.name}")
         content.file_type = "url"
 
-        self._add_to_contents_db(content)
-
         if self.vector_db.__class__.__name__ == "LightRag":
             self._process_lightrag_content(content, KnowledgeContentOrigin.URL)
             return
@@ -452,10 +448,8 @@ class Knowledge:
         content.content_hash = self._build_content_hash(content)
         if self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
             log_info(f"Content {content.content_hash} already exists, skipping")
-            content.status = ContentStatus.COMPLETED
-            self._update_content(content)
-
             return
+        self._add_to_contents_db(content)
 
         # Validate URL
         try:
@@ -556,7 +550,6 @@ class Knowledge:
         content.name = name
 
         log_info(f"Adding content from {content.name}")
-        self._add_to_contents_db(content)
 
         if content.upload_file and self.vector_db.__class__.__name__ == "LightRag":
             self._process_lightrag_content(content, KnowledgeContentOrigin.CONTENT)
@@ -565,9 +558,9 @@ class Knowledge:
         content.content_hash = self._build_content_hash(content)
         if self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
             log_info(f"Content {content.content_hash} already exists, skipping")
-            content.status = ContentStatus.COMPLETED
-            self._update_content(content)
+
             return
+        self._add_to_contents_db(content)
 
         completed = True
         read_documents = []
@@ -676,7 +669,6 @@ class Knowledge:
                 ),
                 topics=[topic],
             )
-            self._add_to_contents_db(content)
 
             if self.vector_db.__class__.__name__ == "LightRag":
                 self._process_lightrag_content(content, KnowledgeContentOrigin.TOPIC)
@@ -687,6 +679,7 @@ class Knowledge:
                 log_info(f"Content {content.content_hash} already exists, skipping")
                 continue
 
+            self._add_to_contents_db(content)
             read_documents = content.reader.read(topic)
             if len(read_documents) > 0:
                 for read_document in read_documents:
