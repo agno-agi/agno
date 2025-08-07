@@ -1110,16 +1110,21 @@ class Team:
                 response_format=response_format,
                 stream_intermediate_steps=stream_intermediate_steps,
             ):
-                from agno.run.team import RunResponseContentEvent
+                from agno.run.team import IntermediateRunResponseContentEvent, RunResponseContentEvent
 
                 if isinstance(event, RunResponseContentEvent):
                     if stream_intermediate_steps:
-                        yield event
+                        yield IntermediateRunResponseContentEvent(
+                            content=event.content,
+                            content_type=event.content_type,
+                        )
                 else:
                     yield event
 
             yield from self._generate_response_with_output_model_stream(
-                run_response=run_response, run_messages=run_messages
+                run_response=run_response,
+                run_messages=run_messages,
+                stream_intermediate_steps=stream_intermediate_steps,
             )
 
         # If a parser model is provided, structure the response separately
@@ -1519,19 +1524,28 @@ class Team:
             ):
                 yield event
         else:
-            from agno.run.team import RunResponseContentEvent
+            async for event in self._ahandle_model_response_stream(
+                run_response=run_response,
+                run_messages=run_messages,
+                response_format=response_format,
+                stream_intermediate_steps=stream_intermediate_steps,
+            ):
+                from agno.run.team import IntermediateRunResponseContentEvent, RunResponseContentEvent
+
+                if isinstance(event, RunResponseContentEvent):
+                    if stream_intermediate_steps:
+                        yield IntermediateRunResponseContentEvent(
+                            content=event.content,
+                            content_type=event.content_type,
+                        )
+                else:
+                    yield event
 
             async for event in self._agenerate_response_with_output_model_stream(
                 run_response=run_response,
                 run_messages=run_messages,
                 stream_intermediate_steps=stream_intermediate_steps,
             ):
-                if isinstance(event, RunResponseContentEvent):
-                    if stream_intermediate_steps:
-                        yield event
-                else:
-                    yield event
-
                 yield event
 
         # If a parser model is provided, structure the response separately
@@ -2446,10 +2460,9 @@ class Team:
         model_response.content = output_model_response.content
 
     def _generate_response_with_output_model_stream(
-        self, run_response: TeamRunResponse, run_messages: RunMessages, stream_intermediate_steps: bool = True
+        self, run_response: TeamRunResponse, run_messages: RunMessages, stream_intermediate_steps: bool = False
     ):
         """Parse the model response using the output model stream."""
-
         from agno.utils.events import (
             create_team_output_model_response_completed_event,
             create_team_output_model_response_started_event,
@@ -2497,7 +2510,7 @@ class Team:
         model_response.content = output_model_response.content
 
     async def _agenerate_response_with_output_model_stream(
-        self, run_response: TeamRunResponse, run_messages: RunMessages, stream_intermediate_steps: bool = True
+        self, run_response: TeamRunResponse, run_messages: RunMessages, stream_intermediate_steps: bool = False
     ):
         """Parse the model response using the output model stream."""
         from agno.utils.events import (
@@ -2514,9 +2527,7 @@ class Team:
         messages_for_output_model = self.get_messages_for_output_model(run_messages.messages)
         model_response = ModelResponse(content="")
 
-        model_response_stream = self.output_model.aresponse_stream(messages=messages_for_output_model)
-
-        async for model_response_event in model_response_stream:
+        async for model_response_event in self.output_model.aresponse_stream(messages=messages_for_output_model):
             for event in self._handle_model_response_chunk(
                 run_response=run_response,
                 full_model_response=model_response,

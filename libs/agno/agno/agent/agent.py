@@ -893,7 +893,7 @@ class Agent:
             ):
                 yield event
         else:
-            from agno.utils.events import RunResponseContentEvent
+            from agno.run.response import IntermediateRunResponseContentEvent, RunResponseContentEvent
 
             for event in self._handle_model_response_stream(
                 run_response=run_response,
@@ -903,7 +903,10 @@ class Agent:
             ):
                 if isinstance(event, RunResponseContentEvent):
                     if stream_intermediate_steps:
-                        yield event
+                        yield IntermediateRunResponseContentEvent(
+                            content=event.content,
+                            content_type=event.content_type,
+                        )
                 else:
                     yield event
 
@@ -1331,7 +1334,7 @@ class Agent:
             ):
                 yield event
         else:
-            from agno.utils.events import RunResponseContentEvent
+            from agno.run.response import IntermediateRunResponseContentEvent, RunResponseContentEvent
 
             async for event in self._ahandle_model_response_stream(
                 run_response=run_response,
@@ -1341,7 +1344,10 @@ class Agent:
             ):
                 if isinstance(event, RunResponseContentEvent):
                     if stream_intermediate_steps:
-                        yield event
+                        yield IntermediateRunResponseContentEvent(
+                            content=event.content,
+                            content_type=event.content_type,
+                        )
                 else:
                     yield event
 
