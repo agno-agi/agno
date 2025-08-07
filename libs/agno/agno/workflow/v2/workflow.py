@@ -73,6 +73,7 @@ from agno.workflow.v2.types import (
 
 STEP_TYPE_MAPPING = {
     Step: "Step",
+    Steps: "Steps",
     Loop: "Loop",
     Parallel: "Parallel",
     Condition: "Condition",

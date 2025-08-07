@@ -168,6 +168,8 @@ class Condition:
         log_debug(f"Condition {self.name} met, executing {len(self.steps)} steps")
         all_results: List[StepOutput] = []
         current_step_input = step_input
+        if not current_step_input.parent_step_type:
+            current_step_input.parent_step_type = "Condition"
         condition_step_outputs = {}
 
         for i, step in enumerate(self.steps):
@@ -273,6 +275,8 @@ class Condition:
         log_debug(f"Condition {self.name} met, executing {len(self.steps)} steps")
         all_results = []
         current_step_input = step_input
+        if not current_step_input.parent_step_type:
+            current_step_input.parent_step_type = "Condition"
         condition_step_outputs = {}
 
         for i, step in enumerate(self.steps):
@@ -386,6 +390,8 @@ class Condition:
         # Chain steps sequentially like Loop does
         all_results: List[StepOutput] = []
         current_step_input = step_input
+        if not current_step_input.parent_step_type:
+            current_step_input.parent_step_type = "Condition"
         condition_step_outputs = {}
 
         for i, step in enumerate(self.steps):
@@ -491,6 +497,8 @@ class Condition:
         # Chain steps sequentially like Loop does
         all_results = []
         current_step_input = step_input
+        if not current_step_input.parent_step_type:
+            current_step_input.parent_step_type = "Condition"
         condition_step_outputs = {}
 
         for i, step in enumerate(self.steps):

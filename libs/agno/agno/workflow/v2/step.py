@@ -258,7 +258,7 @@ class Step:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
                 # Create StepOutput from response
-                step_output = self._process_step_output(response)  # type: ignore
+                step_output = self._process_step_output(response, step_input)  # type: ignore
 
                 return step_output
 
@@ -301,6 +301,7 @@ class Step:
                 step_name=self.name,
                 step_index=step_index,
                 step_id=self.step_id,
+                step_type=self._get_step_type(step_input),
             )
 
         # Execute with retries and streaming
@@ -393,7 +394,7 @@ class Step:
 
                         for event in response_stream:
                             yield event  # type: ignore[misc]
-                        final_response = self._process_step_output(self.active_executor.run_response)  # type: ignore
+                        final_response = self._process_step_output(self.active_executor.run_response, step_input)  # type: ignore
 
                     else:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
@@ -420,6 +421,7 @@ class Step:
                         step_index=step_index,
                         content=final_response.content,
                         step_response=final_response,
+                        step_type=self._get_step_type(step_input),
                     )
 
                 return
@@ -554,7 +556,7 @@ class Step:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
                 # Create StepOutput from response
-                step_output = self._process_step_output(response)  # type: ignore
+                step_output = self._process_step_output(response, step_input)  # type: ignore
 
                 return step_output
 
@@ -597,6 +599,7 @@ class Step:
                 step_name=self.name,
                 step_index=step_index,
                 step_id=self.step_id,
+                step_type=self._get_step_type(step_input),
             )
 
         # Execute with retries and streaming
@@ -708,7 +711,7 @@ class Step:
                         async for event in response_stream:
                             log_debug(f"Received async event from agent: {type(event).__name__}")
                             yield event  # type: ignore[misc]
-                        final_response = self._process_step_output(self.active_executor.run_response)  # type: ignore
+                        final_response = self._process_step_output(self.active_executor.run_response, step_input)  # type: ignore
                     else:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
@@ -734,6 +737,7 @@ class Step:
                         step_id=self.step_id,
                         content=final_response.content,
                         step_response=final_response,
+                        step_type=self._get_step_type(step_input),
                     )
                 return
 
@@ -783,13 +787,19 @@ class Step:
         # If no previous step outputs, return the original message unchanged
         return message
 
-    def _process_step_output(self, response: Union[RunResponse, TeamRunResponse, StepOutput]) -> StepOutput:
+    def _get_step_type(self, step_input: StepInput) -> str:
+        if step_input.parent_step_type:
+            return step_input.parent_step_type
+        return "Step"
+
+    def _process_step_output(self, response: Union[RunResponse, TeamRunResponse, StepOutput], step_input: StepInput) -> StepOutput:
         """Create StepOutput from execution response"""
         if isinstance(response, StepOutput):
             response.step_name = self.name or "unnamed_step"
             response.step_id = self.step_id
             response.executor_type = self._executor_type
             response.executor_name = self.executor_name
+            response.step_type = self._get_step_type(step_input)
             return response
 
         # Extract media from response
@@ -804,6 +814,7 @@ class Step:
             step_name=self.name or "unnamed_step",
             step_id=self.step_id,
             executor_type=self._executor_type,
+            step_type=self._get_step_type(step_input),
             executor_name=self.executor_name,
             content=response.content,
             step_run_id=getattr(response, "run_id", None),

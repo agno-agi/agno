@@ -145,6 +145,8 @@ class Loop:
             # Execute all steps in this iteration - mirroring workflow logic
             iteration_results: List[StepOutput] = []
             current_step_input = step_input
+            if not current_step_input.parent_step_type:
+                current_step_input.parent_step_type = "Loop"
             loop_step_outputs = {}  # Track outputs within this loop iteration
 
             for i, step in enumerate(self.steps):
@@ -255,6 +257,8 @@ class Loop:
             # Execute all steps in this iteration - mirroring workflow logic
             iteration_results = []
             current_step_input = step_input
+            if not current_step_input.parent_step_type:
+                current_step_input.parent_step_type = "Loop"
             loop_step_outputs = {}
 
             for i, step in enumerate(self.steps):
@@ -391,6 +395,8 @@ class Loop:
             # Execute all steps in this iteration - mirroring workflow logic
             iteration_results: List[StepOutput] = []
             current_step_input = step_input
+            if not current_step_input.parent_step_type:
+                current_step_input.parent_step_type = "Loop"
             loop_step_outputs = {}  # Track outputs within this loop iteration
 
             for i, step in enumerate(self.steps):
@@ -504,6 +510,8 @@ class Loop:
             # Execute all steps in this iteration - mirroring workflow logic
             iteration_results = []
             current_step_input = step_input
+            if not current_step_input.parent_step_type:
+                current_step_input.parent_step_type = "Loop"
             loop_step_outputs = {}  # Track outputs within this loop iteration
 
             for i, step in enumerate(self.steps):
