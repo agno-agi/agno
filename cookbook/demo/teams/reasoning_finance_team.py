@@ -81,7 +81,6 @@ def get_reasoning_finance_team():
         mode="coordinate",
         team_id="reasoning_finance_team",
         model=Claude(id="claude-sonnet-4-20250514"),
-        output_model=OpenAIChat(id="gpt-4o"),
         members=[
             web_agent,
             finance_agent,
