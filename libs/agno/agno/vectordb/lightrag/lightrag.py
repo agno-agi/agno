@@ -90,8 +90,6 @@ class LightRag(VectorDb):
     async def async_search(
         self, query: str, limit: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
-        print("Hitting async search")
-        """Override the async_search method from AgentKnowledge to query the LightRAG server."""
 
         mode: str = "hybrid"  # Default mode, can be "local", "global", or "hybrid"
         try:
@@ -333,7 +331,7 @@ class LightRag(VectorDb):
             return None
 
     def _format_lightrag_response(self, result: Any, query: str, mode: str) -> List[Document]:
-        print("Hitting format lightrag response")
+
         """Format LightRAG server response to expected document format."""
         # LightRAG server returns a dict with 'response' key, but we expect a list of documents
         # Convert the response to the expected format
