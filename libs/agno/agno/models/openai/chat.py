@@ -334,6 +334,7 @@ class OpenAIChat(Model):
             ModelResponse: The chat completion response from the API.
         """
         try:
+            assistant_message.metrics.start_timer()
             provider_response = self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
@@ -406,6 +407,7 @@ class OpenAIChat(Model):
             ModelResponse: The chat completion response from the API.
         """
         try:
+            assistant_message.metrics.start_timer()
             response = await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
@@ -479,6 +481,8 @@ class OpenAIChat(Model):
         """
 
         try:
+            assistant_message.metrics.start_timer()
+
             for chunk in self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
@@ -487,6 +491,8 @@ class OpenAIChat(Model):
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             ):
                 yield self._parse_provider_response_delta(chunk)
+
+            assistant_message.metrics.stop_timer()
 
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")
@@ -529,6 +535,7 @@ class OpenAIChat(Model):
     async def ainvoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -544,6 +551,8 @@ class OpenAIChat(Model):
         """
 
         try:
+            assistant_message.metrics.start_timer()
+
             async_stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
@@ -553,6 +562,8 @@ class OpenAIChat(Model):
             )
             async for chunk in async_stream:
                 yield self._parse_provider_response_delta(chunk)
+
+            assistant_message.metrics.stop_timer()
 
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")

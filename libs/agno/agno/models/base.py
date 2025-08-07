@@ -219,9 +219,6 @@ class Model(ABC):
                 tool_choice=tool_choice or self._tool_choice,
             )
 
-            # Populate the assistant message
-            self._populate_assistant_message(assistant_message=assistant_message, provider_response=model_response)
-
             # Add assistant message to messages
             messages.append(assistant_message)
 
@@ -427,7 +424,6 @@ class Model(ABC):
             Tuple[Message, bool]: (assistant_message, should_continue)
         """
         # Generate response
-        assistant_message.metrics.start_timer()
         provider_response = self.invoke(
             assistant_message=assistant_message,
             messages=messages,
@@ -435,6 +431,9 @@ class Model(ABC):
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
         )
+
+        # Populate the assistant message
+        self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
 
         # Update model response with assistant message content and audio
         if assistant_message.content is not None:
@@ -473,7 +472,6 @@ class Model(ABC):
             Tuple[Message, bool]: (assistant_message, should_continue)
         """
         # Generate response
-        assistant_message.metrics.start_timer()
         provider_response = await self.ainvoke(
             messages=messages,
             response_format=response_format,
@@ -563,7 +561,7 @@ class Model(ABC):
 
         # Add usage metrics if provided
         if provider_response.response_usage is not None:
-            assistant_message.metrics = provider_response.response_usage
+            assistant_message.metrics += provider_response.response_usage
 
         return assistant_message
 
@@ -579,7 +577,7 @@ class Model(ABC):
         """
         Process a streaming response from the model.
         """
-        assistant_message.metrics.start_timer()
+
         for response_delta in self.invoke_stream(
             messages=messages,
             response_format=response_format,
@@ -591,7 +589,6 @@ class Model(ABC):
                 assistant_message=assistant_message,
                 model_response_delta=response_delta,
             )
-        assistant_message.metrics.stop_timer()
 
     def response_stream(
         self,
@@ -727,9 +724,9 @@ class Model(ABC):
         """
         Process a streaming response from the model.
         """
-        assistant_message.metrics.start_timer()
         async for response_delta in self.ainvoke_stream(
             messages=messages,
+            assistant_message=assistant_message,
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
@@ -740,7 +737,9 @@ class Model(ABC):
                 model_response_delta=response_delta,
             ):
                 yield model_response
-        assistant_message.metrics.stop_timer()
+
+        # Populate the assistant message
+        self._populate_assistant_message(assistant_message=assistant_message, provider_response=model_response)
 
     async def aresponse_stream(
         self,
