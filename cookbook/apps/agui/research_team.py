@@ -28,7 +28,7 @@ research_team = Team(
     """,
     show_members_responses=True,
     get_member_information_tool=True,
-    add_member_tools_to_system_message=True,
+    add_member_tools_to_context=True,
 )
 
 agui_app = AGUIApp(

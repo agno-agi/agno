@@ -155,8 +155,8 @@ class Team:
     add_location_to_context: bool = False
     # If True, add the team name to the instructions
     add_name_to_context: bool = False
-    # If True, add the tools available to team members to the system message
-    add_member_tools_to_system_message: bool = True
+    # If True, add the tools available to team members to the context
+    add_member_tools_to_context: bool = True
 
     # Provide the system message as a string or function
     system_message: Optional[Union[str, Callable, Message]] = None
@@ -328,7 +328,7 @@ class Team:
         add_datetime_to_context: bool = False,
         add_location_to_context: bool = False,
         add_name_to_context: bool = False,
-        add_member_tools_to_system_message: bool = True,
+        add_member_tools_to_context: bool = True,
         system_message: Optional[Union[str, Callable, Message]] = None,
         system_message_role: str = "system",
         additional_messages: Optional[List[Union[Dict, Message]]] = None,
@@ -406,7 +406,7 @@ class Team:
         self.add_datetime_to_context = add_datetime_to_context
         self.add_location_to_context = add_location_to_context
         self.add_name_to_context = add_name_to_context
-        self.add_member_tools_to_system_message = add_member_tools_to_system_message
+        self.add_member_tools_to_context = add_member_tools_to_context
         self.system_message = system_message
         self.system_message_role = system_message_role
         self.additional_messages = additional_messages
@@ -4908,7 +4908,7 @@ class Team:
                     system_message_content += f"{indent * ' '}   - Name: {member.name}\n"
                 if member.role is not None:
                     system_message_content += f"{indent * ' '}   - Role: {member.role}\n"
-                if member.tools is not None and self.add_member_tools_to_system_message:
+                if member.tools is not None and self.add_member_tools_to_context:
                     system_message_content += f"{indent * ' '}   - Member tools:\n"
                     for _tool in member.tools:
                         if isinstance(_tool, Toolkit):
