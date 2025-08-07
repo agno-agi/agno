@@ -3453,9 +3453,14 @@ class Workflow:
             "workflow_id": self.workflow_id,
             "description": self.description,
             "steps": [
+                # TODO: this should be encapsulated in step.to_dict() - for all step classes
                 {
                     "name": s.name if hasattr(s, "name") else s.__name__,
                     "description": s.description if hasattr(s, "description") else "User-defined callable step",
+                    # TODO: The step should have a type field
+                    "type": STEP_TYPE_MAPPING[type(s)],  # type: ignore
+                    "agent": s.agent if hasattr(s, "agent") else None,  # type: ignore
+                    "team": s.team if hasattr(s, "team") else None,  # type: ignore
                 }
                 for s in steps_list
             ],

@@ -250,15 +250,26 @@ class WorkflowResponse(BaseModel):
     description: Optional[str] = None
     input_schema: Optional[Dict[str, Any]] = None
     steps: Optional[List[Dict[str, Any]]] = None
+    agent: Optional[AgentResponse] = None
+    team: Optional[TeamResponse] = None
 
     @classmethod
     def from_workflow(cls, workflow: Workflow) -> "WorkflowResponse":
         workflow_dict = workflow.to_dict()
+        steps = workflow_dict.get("steps")
+
+        if steps:
+            for step in steps:
+                if step.get("agent"):
+                    step["agent"] = AgentResponse.from_agent(step["agent"])
+                if step.get("team"):
+                    step["team"] = TeamResponse.from_team(step["team"])
+
         return cls(
             workflow_id=workflow.workflow_id,
             name=workflow.name,
             description=workflow.description,
-            steps=workflow_dict.get("steps"),
+            steps=steps,
             input_schema=get_workflow_input_schema_dict(workflow),
         )
 
