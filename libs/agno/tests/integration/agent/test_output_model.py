@@ -116,7 +116,7 @@ async def test_openai_with_claude_output_model_stream_async():
         monitoring=False,
     )
 
-    response = await agent.arun("Tell me about Yosemite National Park.", stream=True)       
+    response = await agent.arun("Tell me about Yosemite National Park.", stream=True)
     intermediate_run_response: bool = False
     run_response: bool = False
 

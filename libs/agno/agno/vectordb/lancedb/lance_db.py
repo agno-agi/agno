@@ -1,5 +1,6 @@
 import json
 from hashlib import md5
+from os import getenv
 from typing import Any, Dict, List, Optional
 
 try:
@@ -74,9 +75,12 @@ class LanceDb(VectorDb):
         # Distance metric
         self.distance: Distance = distance
 
+        # Remote LanceDB connection details
+        self.api_key: Optional[str] = api_key
+
         # LanceDB connection details
         self.uri: lancedb.URI = uri
-        self.connection: lancedb.LanceDBConnection = connection or lancedb.connect(uri=self.uri, api_key=api_key)
+        self.connection: lancedb.DBConnection = connection or lancedb.connect(uri=self.uri, api_key=api_key)
         self.table: Optional[lancedb.db.LanceTable] = table
 
         self.async_connection: Optional[lancedb.AsyncConnection] = async_connection
@@ -168,7 +172,11 @@ class LanceDb(VectorDb):
         schema = self._base_schema()
 
         log_info(f"Creating table: {self.table_name}")
-        tbl = self.connection.create_table(self.table_name, schema=schema, mode="overwrite", exist_ok=True)  # type: ignore
+        if self.api_key or getenv("LANCEDB_API_KEY"):
+            log_info("API key found, creating table in remote LanceDB")
+            tbl = self.connection.create_table(name=self.table_name, schema=schema, mode="overwrite")  # type: ignore
+        else:
+            tbl = self.connection.create_table(name=self.table_name, schema=schema, mode="overwrite", exist_ok=True)  # type: ignore
         return tbl  # type: ignore
 
     def doc_exists(self, document: Document) -> bool:
