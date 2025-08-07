@@ -580,6 +580,7 @@ class Model(ABC):
 
         for response_delta in self.invoke_stream(
             messages=messages,
+            assistant_message=assistant_message,
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,

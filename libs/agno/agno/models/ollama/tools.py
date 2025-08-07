@@ -237,7 +237,11 @@ class OllamaTools(Ollama):
         tool_call_data = ToolCall()
 
         async for response_delta in self.ainvoke_stream(
-            messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+            messages=messages,
+            assistant_message=assistant_message,
+            response_format=response_format,
+            tools=tools,
+            tool_choice=tool_choice,
         ):
             model_response_delta = self.parse_provider_response_delta(response_delta, tool_call_data)
             if model_response_delta:
