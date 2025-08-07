@@ -39,10 +39,10 @@ class AWSLambdaTools(Toolkit):
     def invoke_function(self, function_name: str, payload: str = "{}") -> str:
         """
         Invoke a specific AWS Lambda function with an optional JSON payload.
-        
-        Parameters:
-        - function_name (str): The name of the Lambda function to invoke.
-        - payload (str): The JSON payload to send to the function. Defaults to "{}".
+
+        Args:
+            function_name (str): The name of the Lambda function to invoke.
+            payload (str): The JSON payload to send to the function. Defaults to "{}".
         """
         try:
             response = self.client.invoke(FunctionName=function_name, Payload=payload)
