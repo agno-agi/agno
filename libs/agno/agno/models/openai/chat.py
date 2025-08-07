@@ -424,9 +424,6 @@ class OpenAIChat(Model):
             if provider_response.parsed is not None:
                 response.parsed = provider_response.parsed
 
-            # Populate the assistant message
-            self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
-
             return provider_response
 
         except RateLimitError as e:
@@ -720,6 +717,11 @@ class OpenAIChat(Model):
             ModelResponse: Parsed response data
         """
         model_response = ModelResponse()
+
+        # TODO: should not happen? -> from ainvoke_stream
+        if isinstance(response_delta, ModelResponse):
+            return response_delta
+
         if response_delta.choices and len(response_delta.choices) > 0:
             choice_delta: ChoiceDelta = response_delta.choices[0].delta
 

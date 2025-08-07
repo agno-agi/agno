@@ -492,20 +492,13 @@ class Model(ABC):
         """
         # Generate response
         assistant_message.metrics.start_timer()
-        response = await self.ainvoke(
+        provider_response = await self.ainvoke(
             messages=messages,
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
+            assistant_message=assistant_message,
         )
-        assistant_message.metrics.stop_timer()
-
-        # Parse provider response
-        provider_response: ModelResponse = self.parse_provider_response(response, response_format=response_format)
-
-        # Add parsed data to model response
-        if provider_response.parsed is not None:
-            model_response.parsed = provider_response.parsed
 
         # Populate the assistant message
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
@@ -588,10 +581,7 @@ class Model(ABC):
 
         # Add usage metrics if provided
         if provider_response.response_usage is not None:
-            self._add_metrics_to_assistant_message(
-                assistant_message=assistant_message,
-                response_usage=provider_response.response_usage,
-            )
+            assistant_message.metrics = provider_response.response_usage
 
         return assistant_message
 
@@ -614,9 +604,10 @@ class Model(ABC):
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
         ):
-            model_response_delta = self._parse_provider_response_delta(response_delta)
             yield from self._populate_stream_data_and_assistant_message(
-                stream_data=stream_data, assistant_message=assistant_message, model_response_delta=model_response_delta
+                stream_data=stream_data,
+                assistant_message=assistant_message,
+                model_response_delta=response_delta,
             )
         assistant_message.metrics.stop_timer()
 
@@ -761,9 +752,10 @@ class Model(ABC):
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
         ):  # type: ignore
-            model_response_delta = self._parse_provider_response_delta(response_delta)
             for model_response in self._populate_stream_data_and_assistant_message(
-                stream_data=stream_data, assistant_message=assistant_message, model_response_delta=model_response_delta
+                stream_data=stream_data,
+                assistant_message=assistant_message,
+                model_response_delta=response_delta,
             ):
                 yield model_response
         assistant_message.metrics.stop_timer()
