@@ -39,7 +39,7 @@ class TeamRunEvent(str, Enum):
 class BaseTeamRunResponseEvent(BaseRunResponseEvent):
     created_at: int = field(default_factory=lambda: int(time()))
     event: str = ""
-    team_id: str = ""
+    id: str = ""
     team_name: str = ""
     run_id: Optional[str] = None
     session_id: Optional[str] = None
@@ -242,7 +242,7 @@ class TeamRunResponse:
     member_responses: List[Union["TeamRunResponse", RunResponse]] = field(default_factory=list)
 
     run_id: Optional[str] = None
-    team_id: Optional[str] = None
+    id: Optional[str] = None
     team_name: Optional[str] = None
     session_id: Optional[str] = None
     # If the team is a member of a team, this will be the session id of the parent team
@@ -354,7 +354,7 @@ class TeamRunResponse:
         events = data.pop("events", None)
         final_events = []
         for event in events or []:
-            if "id" in event:
+            if "agent_name" in event:
                 # Use the factory from response.py for agent events
                 from agno.run.response import run_response_event_from_dict
 
@@ -371,7 +371,7 @@ class TeamRunResponse:
         parsed_member_responses: List[Union["TeamRunResponse", RunResponse]] = []
         if member_responses:
             for response in member_responses:
-                if "id" in response:
+                if "agent_name" in response:
                     parsed_member_responses.append(RunResponse.from_dict(response))
                 else:
                     parsed_member_responses.append(cls.from_dict(response))

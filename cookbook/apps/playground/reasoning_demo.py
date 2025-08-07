@@ -201,7 +201,7 @@ reasoning_finance_team = Team(
     tools=[ReasoningTools(add_instructions=True)],
     # uncomment it to use knowledge tools
     # tools=[knowledge_tools],
-    team_id="reasoning_finance_team",
+    id="reasoning_finance_team",
     debug_mode=True,
     instructions=[
         "Only output the final answer, no other text.",

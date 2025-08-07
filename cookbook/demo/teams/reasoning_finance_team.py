@@ -79,7 +79,7 @@ def get_reasoning_finance_team():
     return Team(
         name="Reasoning Finance Team",
         mode="coordinate",
-        team_id="reasoning_finance_team",
+        id="reasoning_finance_team",
         model=Claude(id="claude-sonnet-4-20250514"),
         members=[
             web_agent,

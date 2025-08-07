@@ -79,7 +79,7 @@ class EvalSchema(BaseModel):
             id=accuracy_eval.eval_id,
             name=accuracy_eval.name,
             agent_id=accuracy_eval.agent.id if accuracy_eval.agent else None,
-            team_id=accuracy_eval.team.team_id if accuracy_eval.team else None,
+            team_id=accuracy_eval.team.id if accuracy_eval.team else None,
             workflow_id=None,
             model_id=accuracy_eval.agent.model.id if accuracy_eval.agent else accuracy_eval.team.model.id,  # type: ignore
             model_provider=model_provider,

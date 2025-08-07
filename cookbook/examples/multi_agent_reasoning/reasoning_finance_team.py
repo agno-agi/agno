@@ -84,7 +84,7 @@ finance_agent = Agent(
 reasoning_finance_team = Team(
     name="Reasoning Finance Team",
     mode="coordinate",
-    team_id="reasoning_finance_team",
+    id="reasoning_finance_team",
     model=Claude(id="claude-sonnet-4-20250514"),
     members=[web_agent, finance_agent],
     tools=[ReasoningTools(add_instructions=True)],

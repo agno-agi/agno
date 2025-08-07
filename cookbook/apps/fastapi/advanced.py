@@ -103,7 +103,7 @@ research_team = Team(
     members=[research_agent, simple_agent],
     model=OpenAIChat(id="gpt-4o"),
     mode="coordinate",
-    team_id="research-team",
+    id="research-team",
         A comprehensive research report with clear sections and data-driven insights.
     """),
     instructions=[

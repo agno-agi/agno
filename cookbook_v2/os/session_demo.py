@@ -16,7 +16,7 @@ basic_agent = Agent(
     id="basic",
 )
 basic_team = Team(
-    team_id="basic",
+    id="basic",
     members=[basic_agent],
     db=db,
     enable_user_memories=True,

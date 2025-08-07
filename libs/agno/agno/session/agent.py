@@ -20,7 +20,7 @@ class AgentSession:
     team_session_id: Optional[str] = None
 
     # ID of the agent that this session is associated with
-    id: Optional[str] = None
+    agent_id: Optional[str] = None
     # ID of the team that this session is associated with
     team_id: Optional[str] = None
     # # ID of the user interacting with this agent

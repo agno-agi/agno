@@ -129,7 +129,7 @@ research_team = Team(
     members=[research_agent, simple_agent],
     model=OpenAIChat(id="gpt-4o"),
     mode="coordinate",
-    team_id="research_team",
+    id="research_team",
     instructions=[
         "You are the lead researcher of a research team! 🔍",
     ],
@@ -152,7 +152,7 @@ multimodal_team = Team(
     members=[file_agent, audio_agent, video_agent],
     model=OpenAIChat(id="gpt-4o"),
     mode="route",
-    team_id="multimodal_team",
+    id="multimodal_team",
     instructions=[
         "You are the lead editor of a prestigious financial news desk! 📰",
     ],
@@ -178,7 +178,7 @@ financial_news_team = Team(
     ],
     model=OpenAIChat(id="gpt-4o"),
     mode="route",
-    team_id="financial_news_team",
+    id="financial_news_team",
     instructions=[
         "You are the lead editor of a prestigious financial news desk! 📰",
         "If you are given a file send it to the file agent.",

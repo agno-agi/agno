@@ -25,7 +25,7 @@ agent = Agent(
 )
 
 team = Team(
-    team_id="basic-team",
+    id="basic-team",
     name="JSON Demo Team",
     model=OpenAIChat(id="gpt-4o"),
     db=db,

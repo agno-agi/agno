@@ -24,7 +24,7 @@ basic_agent = Agent(
     markdown=True,
 )
 basic_team = Team(
-    team_id="basic-team",
+    id="basic-team",
     name="Team Agent",
     model=OpenAIChat(id="gpt-4o"),
     db=db,

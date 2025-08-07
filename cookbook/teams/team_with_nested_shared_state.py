@@ -58,7 +58,7 @@ shopping_list_agent = Agent(
 # Shopping management team - new layer for handling all shopping list modifications
 shopping_mgmt_team = Team(
     name="Shopping Management Team",
-    team_id="shopping_management",
+    id="shopping_management",
     mode="coordinate",
     model=OpenAIChat(id="gpt-4o-mini"),
     members=[shopping_list_agent],
@@ -117,7 +117,7 @@ def list_items(team: Team) -> str:
 # Create meal planning subteam
 meal_planning_team = Team(
     name="Meal Planning Team",
-    team_id="meal_planning",
+    id="meal_planning",
     mode="coordinate",
     model=OpenAIChat(id="gpt-4o-mini"),
     members=[recipe_agent],
@@ -170,7 +170,7 @@ shopping_team = Team(
     team_session_state={"shopping_list": []},
     tools=[list_items, add_chore],
     session_state={"chores": []},
-    team_id="shopping_list_team",
+    id="shopping_list_team",
     members=[
         shopping_mgmt_team,
         meal_planning_team,

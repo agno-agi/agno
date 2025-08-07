@@ -408,7 +408,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             evaluated_component_name = self.agent.name
         elif self.team is not None:
             agent_id = None
-            team_id = self.team.team_id
+            team_id = self.team.id
             model_id = self.team.model.id if self.team.model is not None else None
             model_provider = self.team.model.provider if self.team.model is not None else None
             evaluated_component_name = self.team.name
@@ -531,7 +531,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             evaluated_component_name = self.agent.name
         elif self.team is not None:
             agent_id = None
-            team_id = self.team.team_id
+            team_id = self.team.id
             model_id = self.team.model.id if self.team.model is not None else None
             model_provider = self.team.model.provider if self.team.model is not None else None
             evaluated_component_name = self.team.name
@@ -623,7 +623,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 evaluated_component_name = self.agent.name
             elif self.team is not None:
                 agent_id = None
-                team_id = self.team.team_id
+                team_id = self.team.id
                 model_id = self.team.model.id if self.team.model is not None else None
                 model_provider = self.team.model.provider if self.team.model is not None else None
                 evaluated_component_name = self.team.name
@@ -719,7 +719,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 evaluated_component_name = self.agent.name
             elif self.team is not None:
                 agent_id = None
-                team_id = self.team.team_id
+                team_id = self.team.id
                 model_id = self.team.model.id if self.team.model is not None else None
                 model_provider = self.team.model.provider if self.team.model is not None else None
                 evaluated_component_name = self.team.name

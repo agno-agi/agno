@@ -120,7 +120,7 @@ def test_create_eval_run_team(postgres_db_real: PostgresDb, sample_eval_run_team
 
     # Verify all fields are set correctly
     assert result.run_id == sample_eval_run_team.run_id
-    assert result.team_id == sample_eval_run_team.team_id
+    assert result.team_id == sample_eval_run_team.id
     assert result.eval_type == sample_eval_run_team.eval_type
     assert result.eval_data == sample_eval_run_team.eval_data
 

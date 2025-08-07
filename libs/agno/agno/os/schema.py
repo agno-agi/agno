@@ -214,7 +214,7 @@ class TeamResponse(BaseModel):
         team_instructions = team.instructions() if isinstance(team.instructions, Callable) else team.instructions
 
         return TeamResponse(
-            team_id=team.team_id,
+            team_id=team.id,
             name=team.name,
             model=ModelResponse(
                 name=team.model.name or team.model.__class__.__name__ if team.model else None,
@@ -255,7 +255,7 @@ class WorkflowResponse(BaseModel):
     def from_workflow(cls, workflow: Workflow) -> "WorkflowResponse":
         workflow_dict = workflow.to_dict()
         return cls(
-            workflow_id=workflow.workflow_id,
+            workflow_id=workflow.id,
             name=workflow.name,
             description=workflow.description,
             steps=workflow_dict.get("steps"),

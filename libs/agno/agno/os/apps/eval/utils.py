@@ -81,7 +81,7 @@ async def run_performance_eval(
         num_iterations=eval_run_input.num_iterations or 10,
         warmup_runs=eval_run_input.warmup_runs,
         id=agent.id if agent else None,
-        team_id=team.team_id if team else None,
+        team_id=team.id if team else None,
         model_id=model_id,
         model_provider=model_provider,
     )
@@ -93,7 +93,7 @@ async def run_performance_eval(
         performance_eval=performance_eval,
         result=result,
         id=agent.id if agent else None,
-        team_id=team.team_id if team else None,
+        team_id=team.id if team else None,
         model_id=model_id,
         model_provider=model_provider,
     )
