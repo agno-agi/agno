@@ -765,8 +765,17 @@ class Step:
             if raw_response and isinstance(raw_response, (RunResponse, TeamRunResponse)):
                 if workflow_run_response.step_executor_runs is None:
                     workflow_run_response.step_executor_runs = []
-                # Add to step_executor_runs
+
+                # Add the main response (team or agent)
                 workflow_run_response.step_executor_runs.append(raw_response)
+
+                if isinstance(raw_response, TeamRunResponse) and hasattr(self.active_executor, "team_session"):
+                    team_session = self.active_executor.team_session
+                    if team_session and team_session.runs:
+                        for run in team_session.runs:
+                            # Only add member runs
+                            if isinstance(run, RunResponse) and run.run_id != raw_response.run_id:
+                                workflow_run_response.step_executor_runs.append(run)
 
     def _prepare_message(
         self,

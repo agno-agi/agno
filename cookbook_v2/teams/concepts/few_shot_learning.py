@@ -4,17 +4,19 @@ to teach a customer support team proper response patterns.
 """
 
 import asyncio
+
 from agno.agent import Agent
 from agno.models.message import Message
 from agno.models.openai.chat import OpenAIChat
 from agno.team import Team
 
-    
 # Few-shot examples showing good support patterns
 support_examples = [
     # Example 1: Simple issue resolution
     Message(role="user", content="I forgot my password and can't log in"),
-    Message(role="assistant", content="""
+    Message(
+        role="assistant",
+        content="""
     I'll help you reset your password right away.
     
     **Transferring to Support Specialist**: Please assist this customer with password reset:
@@ -24,11 +26,16 @@ support_examples = [
     - Provide tips for creating a secure password
     
     Expected outcome: Customer successfully logs in with new password.
-    """.strip()),
-    
+    """.strip(),
+    ),
     # Example 2: Escalation pattern
-    Message(role="user", content="I've been charged twice for the same order and your chat bot couldn't help!"),
-    Message(role="assistant", content="""
+    Message(
+        role="user",
+        content="I've been charged twice for the same order and your chat bot couldn't help!",
+    ),
+    Message(
+        role="assistant",
+        content="""
         I sincerely apologize for the billing issue and the frustration with our chat system.
 
         **Transferring to Escalation Manager**: Priority billing issue requiring immediate attention:
@@ -38,12 +45,13 @@ support_examples = [
         - Needs immediate resolution and possible compensation
 
         Expected outcome: Billing corrected, customer satisfaction restored, and follow-up to prevent recurrence.
-        """.strip()
+        """.strip(),
     ),
-        
     # Example 3: Proactive support
     Message(role="user", content="Your app keeps crashing when I try to upload photos"),
-    Message(role="assistant", content="""
+    Message(
+        role="assistant",
+        content="""
     I'm sorry you're experiencing crashes with photo uploads. Let me get this resolved for you. 
 
     **Transferring to Support Specialist**: Technical issue with photo upload feature:
@@ -53,8 +61,9 @@ support_examples = [
     - Escalate to technical team if it's a known bug    
 
     Expected outcome: Upload feature working properly or clear timeline for fix provided.
-        """.strip()),
-    ]
+        """.strip(),
+    ),
+]
 
 if __name__ == "__main__":
     # Support Agent
@@ -67,8 +76,8 @@ if __name__ == "__main__":
             "Always be polite, professional, and solution-oriented.",
         ],
     )
-    
-    # Escalation Agent  
+
+    # Escalation Agent
     escalation_agent = Agent(
         name="Escalation Manager",
         role="Handle complex issues",
@@ -95,13 +104,13 @@ if __name__ == "__main__":
         debug_mode=True,
         markdown=True,
     )
-    
+
     scenarios = [
         "I can't find my order confirmation email",
-        "The product I received is damaged", 
+        "The product I received is damaged",
         "I want to cancel my subscription but the website won't let me",
     ]
-    
+
     for i, scenario in enumerate(scenarios, 1):
         print(f"📞 Scenario {i}: {scenario}")
         print("-" * 50)
