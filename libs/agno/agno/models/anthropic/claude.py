@@ -242,12 +242,14 @@ class Claude(Model):
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
             if self.mcp_servers is not None:
+                assistant_message.metrics.start_timer()
                 provider_response = self.get_client().beta.messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
                     **self.get_request_params(),
                 )
             else:
+                assistant_message.metrics.start_timer()
                 provider_response = self.get_client().messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
@@ -303,17 +305,21 @@ class Claude(Model):
 
         try:
             if self.mcp_servers is not None:
+                assistant_message.metrics.start_timer()
                 stream = self.get_client().beta.messages.stream(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
                     **request_kwargs,
                 )
             else:
+                assistant_message.metrics.start_timer()
                 stream = self.get_client().messages.stream(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
                     **request_kwargs,
                 )
+
+            assistant_message.metrics.stop_timer()
 
             with stream as stream_manager:
                 for chunk in stream_manager:
@@ -350,12 +356,14 @@ class Claude(Model):
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
             if self.mcp_servers is not None:
+                assistant_message.metrics.start_timer()
                 provider_response = await self.get_async_client().beta.messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
                     **self.get_request_params(),
                 )
             else:
+                assistant_message.metrics.start_timer()
                 provider_response = await self.get_async_client().messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
@@ -387,6 +395,7 @@ class Claude(Model):
     async def ainvoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -407,6 +416,7 @@ class Claude(Model):
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
             if self.mcp_servers is not None:
+                assistant_message.metrics.start_timer()
                 async with self.get_async_client().beta.messages.stream(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
@@ -415,6 +425,7 @@ class Claude(Model):
                     async for chunk in stream:
                         yield self._parse_provider_response_delta(chunk)
             else:
+                assistant_message.metrics.start_timer()
                 async with self.get_async_client().messages.stream(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
@@ -422,6 +433,8 @@ class Claude(Model):
                 ) as stream:
                     async for chunk in stream:  # type: ignore
                         yield self._parse_provider_response_delta(chunk)
+
+            assistant_message.metrics.stop_timer()
 
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
@@ -651,8 +664,11 @@ class Claude(Model):
         metrics.cache_write_tokens = response_usage.cache_creation_input_tokens or 0
 
         # Anthropic-specific additional fields
-        metrics.additional_metrics = {"server_tool_use": response_usage.server_tool_use}
+        if response_usage.server_tool_use:
+            metrics.additional_metrics = {"server_tool_use": response_usage.server_tool_use}
         if isinstance(response_usage, Usage):
-            metrics.additional_metrics["service_tier"] = response_usage.service_tier
+            if response_usage.service_tier:
+                metrics.additional_metrics = metrics.additional_metrics or {}
+                metrics.additional_metrics["service_tier"] = response_usage.service_tier
 
         return metrics
