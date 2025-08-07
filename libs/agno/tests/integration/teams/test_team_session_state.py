@@ -1,4 +1,5 @@
 import uuid
+
 import pytest
 
 from agno.models.openai.chat import OpenAIChat
@@ -154,18 +155,19 @@ def test_session_state_db_precedence(route_team, team_storage):
     # Simulate a session in storage with a specific session_state
     db_state = {"db_key": "db_value", "shared_key": "db"}
     team_storage.upsert(
-        session=type("TeamSession", (), {
-            "session_id": session_id_1,
-            "session_data": {
-                "session_state": db_state.copy(),
-                "session_name": "db_session"
+        session=type(
+            "TeamSession",
+            (),
+            {
+                "session_id": session_id_1,
+                "session_data": {"session_state": db_state.copy(), "session_name": "db_session"},
+                "team_session_id": str(uuid.uuid4()),
+                "team_id": str(uuid.uuid4()),
+                "user_id": None,
+                "team_data": None,
+                "extra_data": None,
             },
-            "team_session_id": str(uuid.uuid4()),
-            "team_id": str(uuid.uuid4()),
-            "user_id": None,
-            "team_data": None,
-            "extra_data": None,
-        })()
+        )()
     )
 
     # Set agent's in-memory session_state to something different
