@@ -71,6 +71,14 @@ from agno.workflow.v2.types import (
     WorkflowMetrics,
 )
 
+STEP_TYPE_MAPPING = {
+    Step: "Step",
+    Loop: "Loop",
+    Parallel: "Parallel",
+    Condition: "Condition",
+    Router: "Router",
+}
+
 WorkflowSteps = Union[
     Callable[
         ["Workflow", WorkflowExecutionInput],
@@ -1740,19 +1748,26 @@ class Workflow:
     def get_workflow_session(self) -> WorkflowSession:
         """Get a WorkflowSession object for storage"""
         workflow_data = {}
+
         if self.steps and not callable(self.steps):
-            workflow_data["steps"] = [
-                {
+            steps_dict = []
+            for step in self.steps:  # type: ignore
+                step_type = STEP_TYPE_MAPPING[type(step)]
+                step_dict = {
                     "name": step.name if hasattr(step, "name") else step.__name__,
                     "description": step.description if hasattr(step, "description") else "User-defined callable step",
+                    "type": step_type,
                 }
-                for step in self.steps  # type: ignore
-            ]
+                steps_dict.append(step_dict)
+
+            workflow_data["steps"] = steps_dict
+
         elif callable(self.steps):
             workflow_data["steps"] = [
                 {
                     "name": "Custom Function",
                     "description": "User-defined callable workflow",
+                    "type": "Callable",
                 }
             ]
 
