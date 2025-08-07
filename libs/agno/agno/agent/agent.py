@@ -1028,15 +1028,14 @@ class Agent:
         for attempt in range(num_attempts):
             try:
                 # Set run_input
-                if message is not None:
-                    if isinstance(message, str):
-                        self.run_input = message
-                    elif isinstance(message, Message):
-                        self.run_input = message.to_dict()
-                    else:
-                        self.run_input = message
-                elif messages is not None:
+                if messages is not None:
                     self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
+                if message is not None:
+                    formatted_message = message.to_dict() if isinstance(message, Message) else message
+                    if self.run_input is not None:
+                        self.run_input.append(formatted_message)
+                    else:
+                        self.run_input = formatted_message
 
                 # Prepare run messages
                 run_messages: RunMessages = self.get_run_messages(
@@ -1430,15 +1429,14 @@ class Agent:
         for attempt in range(num_attempts):
             try:
                 # Set run_input
-                if message is not None:
-                    if isinstance(message, str):
-                        self.run_input = message
-                    elif isinstance(message, Message):
-                        self.run_input = message.to_dict()
-                    else:
-                        self.run_input = message
-                elif messages is not None:
+                if messages is not None:
                     self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
+                if message is not None:
+                    formatted_message = message.to_dict() if isinstance(message, Message) else message
+                    if self.run_input is not None:
+                        self.run_input.append(formatted_message)
+                    else:
+                        self.run_input = formatted_message
 
                 # Prepare run messages
                 run_messages: RunMessages = self.get_run_messages(

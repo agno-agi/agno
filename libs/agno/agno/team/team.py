@@ -1026,15 +1026,14 @@ class Team:
             log_debug(f"Mode: '{self.mode}'", center=True)
 
             # Set run_input
-            if message is not None:
-                if isinstance(message, str):
-                    self.run_input = message
-                elif isinstance(message, Message):
-                    self.run_input = message.to_dict()
-                else:
-                    self.run_input = message
-            elif messages is not None:
+            if messages is not None:
                 self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
+            if message is not None:
+                formatted_message = message.to_dict() if isinstance(message, Message) else message
+                if self.run_input is not None:
+                    self.run_input.append(formatted_message)
+                else:
+                    self.run_input = formatted_message
 
             # Run the team
             try:
@@ -1420,16 +1419,16 @@ class Team:
             log_debug(f"Team Run Start: {self.run_id}", center=True)
             log_debug(f"Mode: '{self.mode}'", center=True)
 
-            # Set run_input
-            if message is not None:
-                if isinstance(message, str):
-                    self.run_input = message
-                elif isinstance(message, Message):
-                    self.run_input = message.to_dict()
-                else:
-                    self.run_input = message
-            elif messages is not None:
+            # Set run_input - use both message and messages if provided (using two ifs as Dirk suggested)
+            self.run_input = None
+            if messages is not None:
                 self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
+            if message is not None:
+                formatted_message = message.to_dict() if isinstance(message, Message) else message
+                if self.run_input is not None:
+                    self.run_input.append(formatted_message)
+                else:
+                    self.run_input = formatted_message
 
             # Run the team
             try:
@@ -5256,8 +5255,8 @@ class Team:
         1. Add system message to run_messages
         2. Add extra messages to run_messages
         3. Add history to run_messages
-        4. Add user message to run_messages
-        5. Add messages to run_messages if provided
+        4. Add messages to run_messages if provided (messages parameter first)
+        5. Add user message to run_messages (message parameter second)
 
         """
         # Initialize the RunMessages object
@@ -5329,43 +5328,7 @@ class Team:
                 # Extend the messages with the history
                 run_messages.messages += history_copy
 
-        # 4. Add user message to run_messages
-        user_message: Optional[Message] = None
-        # 4.1 Build user message if message is None, str or list and messages is None
-        if message is None or isinstance(message, str) or isinstance(message, list) and messages is None:
-            user_message = self._get_user_message(
-                message,
-                user_id=user_id,
-                audio=audio,
-                images=images,
-                videos=videos,
-                files=files,
-                knowledge_filters=knowledge_filters,
-                **kwargs,
-            )
-        # 4.2 If message is provided as a Message, use it directly
-        elif isinstance(message, Message):
-            user_message = message
-        # 4.3 If message is provided as a dict, try to validate it as a Message
-        elif isinstance(message, dict):
-            try:
-                user_message = Message.model_validate(message)
-            except Exception as e:
-                log_warning(f"Failed to validate message: {e}")
-        # 4.4 If message is provided as a BaseModel, convert it to a Message
-        elif isinstance(message, BaseModel):
-            try:
-                # Create a user message with the BaseModel content
-                content = message.model_dump_json(indent=2, exclude_none=True)
-                user_message = Message(role="user", content=content)
-            except Exception as e:
-                log_warning(f"Failed to convert BaseModel to message: {e}")
-        # Add user message to run_messages
-        if user_message is not None:
-            run_messages.user_message = user_message
-            run_messages.messages.append(user_message)
-
-        # 5. Add messages to run_messages if provided
+        # 4. Add messages to run_messages
         if messages is not None and len(messages) > 0:
             for _m in messages:
                 if isinstance(_m, Message):
@@ -5382,6 +5345,42 @@ class Team:
                         run_messages.extra_messages.append(_m_parsed)
                     except Exception as e:
                         log_warning(f"Failed to validate message: {e}")
+
+        # 5. Add user message to run_messages (message second as per Dirk's requirement)
+        user_message: Optional[Message] = None
+        # 5.1 Build user message if message is None, str or list
+        if message is None or isinstance(message, str) or isinstance(message, list):
+            user_message = self._get_user_message(
+                message,
+                user_id=user_id,
+                audio=audio,
+                images=images,
+                videos=videos,
+                files=files,
+                knowledge_filters=knowledge_filters,
+                **kwargs,
+            )
+        # 5.2 If message is provided as a Message, use it directly
+        elif isinstance(message, Message):
+            user_message = message
+        # 5.3 If message is provided as a dict, try to validate it as a Message
+        elif isinstance(message, dict):
+            try:
+                user_message = Message.model_validate(message)
+            except Exception as e:
+                log_warning(f"Failed to validate message: {e}")
+        # 5.4 If message is provided as a BaseModel, convert it to a Message
+        elif isinstance(message, BaseModel):
+            try:
+                # Create a user message with the BaseModel content
+                content = message.model_dump_json(indent=2, exclude_none=True)
+                user_message = Message(role="user", content=content)
+            except Exception as e:
+                log_warning(f"Failed to convert BaseModel to message: {e}")
+        # Add user message to run_messages
+        if user_message is not None:
+            run_messages.user_message = user_message
+            run_messages.messages.append(user_message)
 
         return run_messages
 
