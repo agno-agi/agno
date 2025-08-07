@@ -16,6 +16,12 @@ class PDFConfig(TypedDict, total=False):
     metadata: Optional[Dict[str, Any]]
 
 
+class PDFConfig(TypedDict, total=False):
+    path: str
+    password: Optional[str]
+    metadata: Optional[Dict[str, Any]]
+
+
 class PDFKnowledgeBase(AgentKnowledge):
     path: Optional[Union[str, Path, List[PDFConfig]]] = None
     formats: List[str] = [".pdf"]
