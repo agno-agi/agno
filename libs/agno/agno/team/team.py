@@ -188,7 +188,8 @@ class Team:
     knowledge_filters: Optional[Dict[str, Any]] = None
     # Let the agent choose the knowledge filters
     enable_agentic_knowledge_filters: Optional[bool] = False
-
+    # Add a tool that allows the Team to update Knowledge.
+    update_knowledge: bool = False
     # If True, add references to the user prompt
     add_knowledge_to_context: bool = False
     # Retrieval function to get references
@@ -338,6 +339,7 @@ class Team:
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_knowledge_to_context: bool = False,
         enable_agentic_knowledge_filters: Optional[bool] = False,
+        update_knowledge: bool = False,
         knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
         enable_agentic_context: bool = False,
@@ -417,6 +419,7 @@ class Team:
         self.knowledge = knowledge
         self.knowledge_filters = knowledge_filters
         self.enable_agentic_knowledge_filters = enable_agentic_knowledge_filters
+        self.update_knowledge = update_knowledge
         self.add_knowledge_to_context = add_knowledge_to_context
         self.knowledge_retriever = knowledge_retriever
         self.references_format = references_format
@@ -4795,6 +4798,9 @@ class Team:
                         self.search_knowledge_base_function(knowledge_filters=knowledge_filters, async_mode=async_mode)
                     )
 
+        if self.knowledge is not None and self.update_knowledge:
+            _tools.append(self.add_to_knowledge)
+
         if self.mode == "route":
             user_message = self._get_user_message(
                 message, audio=audio, images=images, videos=videos, files=files, user_id=user_id
@@ -7435,6 +7441,24 @@ class Team:
     ###########################################################################
     # Knowledge
     ###########################################################################
+
+    def add_to_knowledge(self, query: str, result: str) -> str:
+        """Use this function to add information to the knowledge base for future use.
+
+        Args:
+            query: The query to add.
+            result: The result of the query.
+
+        Returns:
+            str: A string indicating the status of the addition.
+        """
+        document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
+        document_content = json.dumps({"query": query, "result": result})
+        log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
+        from agno.knowledge.reader.text_reader import TextReader
+
+        asyncio.run(self.knowledge.add_content(name=document_name, text_content=document_content, reader=TextReader()))
+        return "Successfully added to knowledge base"
 
     def get_relevant_docs_from_knowledge(
         self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs

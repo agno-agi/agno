@@ -13,3 +13,9 @@ class Embedder:
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         raise NotImplementedError
+
+    async def async_get_embedding(self, text: str) -> List[float]:
+        raise NotImplementedError
+
+    async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
+        raise NotImplementedError

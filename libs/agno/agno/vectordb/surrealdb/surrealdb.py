@@ -11,8 +11,8 @@ except ImportError as e:
     msg = "The `surrealdb` package is not installed. Please install it via `pip install surrealdb`."
     raise ImportError(msg) from e
 
-from agno.document import Document
-from agno.embedder import Embedder
+from agno.knowledge.document import Document
+from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_info
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
@@ -98,7 +98,7 @@ class SurrealDb(VectorDb):
         """
         # Embedder for embedding the document contents
         if embedder is None:
-            from agno.embedder.openai import OpenAIEmbedder
+            from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
             log_info("Embedder not provided, using OpenAIEmbedder as default.")

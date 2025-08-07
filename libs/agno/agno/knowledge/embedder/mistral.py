@@ -9,7 +9,8 @@ try:
     from mistralai import Mistral
     from mistralai.models.embeddingresponse import EmbeddingResponse
 except ImportError:
-    raise ImportError("`mistralai` not installed")
+    logger.error("`mistralai` not installed")
+    raise
 
 
 @dataclass
@@ -72,6 +73,62 @@ class MistralEmbedder(Embedder):
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Dict[str, Any]]:
         try:
             response: EmbeddingResponse = self._response(text=text)
+            embedding: List[float] = (
+                response.data[0].embedding if (response.data and response.data[0].embedding) else []
+            )
+            usage: Dict[str, Any] = response.usage.model_dump() if response.usage else {}
+            return embedding, usage
+        except Exception as e:
+            logger.warning(f"Error getting embedding and usage: {e}")
+            return [], {}
+
+    async def async_get_embedding(self, text: str) -> List[float]:
+        """Async version of get_embedding."""
+        try:
+            # Check if the client has an async version of embeddings.create
+            if hasattr(self.client.embeddings, "create_async"):
+                response: EmbeddingResponse = await self.client.embeddings.create_async(
+                    inputs=text, model=self.id, **self.request_params if self.request_params else {}
+                )
+            else:
+                # Fallback to running sync method in thread executor
+                import asyncio
+
+                loop = asyncio.get_running_loop()
+                response: EmbeddingResponse = await loop.run_in_executor(
+                    None,
+                    lambda: self.client.embeddings.create(
+                        inputs=text, model=self.id, **self.request_params if self.request_params else {}
+                    ),
+                )
+
+            if response.data and response.data[0].embedding:
+                return response.data[0].embedding
+            return []
+        except Exception as e:
+            logger.warning(f"Error getting embedding: {e}")
+            return []
+
+    async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Dict[str, Any]]:
+        """Async version of get_embedding_and_usage."""
+        try:
+            # Check if the client has an async version of embeddings.create
+            if hasattr(self.client.embeddings, "create_async"):
+                response: EmbeddingResponse = await self.client.embeddings.create_async(
+                    inputs=text, model=self.id, **self.request_params if self.request_params else {}
+                )
+            else:
+                # Fallback to running sync method in thread executor
+                import asyncio
+
+                loop = asyncio.get_running_loop()
+                response: EmbeddingResponse = await loop.run_in_executor(
+                    None,
+                    lambda: self.client.embeddings.create(
+                        inputs=text, model=self.id, **self.request_params if self.request_params else {}
+                    ),
+                )
+
             embedding: List[float] = (
                 response.data[0].embedding if (response.data and response.data[0].embedding) else []
             )

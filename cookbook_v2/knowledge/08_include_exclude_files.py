@@ -3,6 +3,8 @@
 1. Run: `python cookbook/agent_concepts/knowledge/08_include_exclude_files.py` to run the cookbook
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
@@ -17,14 +19,16 @@ knowledge = Knowledge(
 )
 
 # Add from local file to the knowledge base
-knowledge.add_content(
-    name="CV",
-    path="cookbook_v2/knowledge/data/filters",
-    metadata={"user_tag": "Engineering Candidates"},
-    # Only include PDF files
-    include=["*.pdf"],
-    # Don't include files that match this pattern
-    exclude=["*cv_5*"],
+asyncio.run(
+    knowledge.add_content(
+        name="CV",
+        path="cookbook_v2/knowledge/data/filters",
+        metadata={"user_tag": "Engineering Candidates"},
+        # Only include PDF files
+        include=["*.pdf"],
+        # Don't include files that match this pattern
+        exclude=["*cv_5*"],
+    )
 )
 
 agent = Agent(

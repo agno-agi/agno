@@ -317,7 +317,7 @@ class PineconeDb(VectorDb):
 
         # Process each batch in parallel
         async def process_batch(batch_docs):
-            return await asyncio.to_thread(self._prepare_vectors, batch_docs)
+            return await self._prepare_vectors(batch_docs)
 
         # Run all batches in parallel
         batch_vectors = await asyncio.gather(*[process_batch(batch) for batch in batches])
@@ -332,11 +332,13 @@ class PineconeDb(VectorDb):
 
         log_debug(f"Finished async upsert of {len(documents)} documents")
 
-    def _prepare_vectors(self, documents: List[Document]) -> List[Dict[str, Any]]:
+    async def _prepare_vectors(self, documents: List[Document]) -> List[Dict[str, Any]]:
         """Prepare vectors for upsert."""
         vectors = []
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
+
         for doc in documents:
-            doc.embed(embedder=self.embedder)
             doc.meta_data["text"] = doc.content
             # Include name and content_id in metadata
             metadata = doc.meta_data.copy()

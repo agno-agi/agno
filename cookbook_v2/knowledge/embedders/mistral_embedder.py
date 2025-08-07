@@ -1,3 +1,5 @@
+import asyncio
+
 from agno.knowledge.embedder.mistral import MistralEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
@@ -18,4 +20,10 @@ knowledge = Knowledge(
         embedder=MistralEmbedder(),
     ),
     max_results=2,
+)
+
+asyncio.run(
+    knowledge.add_content(
+        path="cookbook_v2/knowledge/data/filters/cv_1.pdf",
+    )
 )

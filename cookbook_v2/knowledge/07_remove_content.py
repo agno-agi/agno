@@ -5,6 +5,8 @@ You can remove content by id or by name.
 1. Run: `python cookbook/agent_concepts/knowledge/07_remove_content.py` to run the cookbook
 """
 
+import asyncio
+
 from agno.db.postgres.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
@@ -22,10 +24,12 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_content(
-    name="CV",
-    path="cookbook_v2/knowledge/data/filters/cv_1.pdf",
-    metadata={"user_tag": "Engineering Candidates"},
+asyncio.run(
+    knowledge.add_content(
+        name="CV",
+        path="cookbook_v2/knowledge/data/filters/cv_1.pdf",
+        metadata={"user_tag": "Engineering Candidates"},
+    )
 )
 
 
