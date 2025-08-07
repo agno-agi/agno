@@ -161,7 +161,7 @@ class Model(ABC):
         pass
 
     @abstractmethod
-    def parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
+    def _parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
         """
         Parse the raw response from the model provider into a ModelResponse.
 
@@ -174,7 +174,7 @@ class Model(ABC):
         pass
 
     @abstractmethod
-    def parse_provider_response_delta(self, response: Any) -> ModelResponse:
+    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
         """
         Parse the streaming response from the model provider into ModelResponse objects.
 
@@ -614,7 +614,7 @@ class Model(ABC):
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
         ):
-            model_response_delta = self.parse_provider_response_delta(response_delta)
+            model_response_delta = self._parse_provider_response_delta(response_delta)
             yield from self._populate_stream_data_and_assistant_message(
                 stream_data=stream_data, assistant_message=assistant_message, model_response_delta=model_response_delta
             )
@@ -761,7 +761,7 @@ class Model(ABC):
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
         ):  # type: ignore
-            model_response_delta = self.parse_provider_response_delta(response_delta)
+            model_response_delta = self._parse_provider_response_delta(response_delta)
             for model_response in self._populate_stream_data_and_assistant_message(
                 stream_data=stream_data, assistant_message=assistant_message, model_response_delta=model_response_delta
             ):

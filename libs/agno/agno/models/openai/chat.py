@@ -342,7 +342,7 @@ class OpenAIChat(Model):
             assistant_message.metrics.stop_timer()
 
             # Parse the response into an Agno ModelResponse object
-            provider_response: ModelResponse = self._parse_response(response, response_format=response_format)
+            provider_response: ModelResponse = self._parse_provider_response(response, response_format=response_format)
 
             # Add parsed data to model response
             if provider_response.parsed is not None:
@@ -417,8 +417,8 @@ class OpenAIChat(Model):
             )
             assistant_message.metrics.stop_timer()
 
-            # Parse provider response
-            provider_response: ModelResponse = self._parse_response(response, response_format=response_format)
+            # Parse the response into an Agno ModelResponse object
+            provider_response: ModelResponse = self._parse_provider_response(response, response_format=response_format)
 
             # Add parsed data to model response
             if provider_response.parsed is not None:
@@ -493,7 +493,7 @@ class OpenAIChat(Model):
                 stream_options={"include_usage": True},
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             ):
-                yield self._parse_response_delta(chunk)
+                yield self._parse_provider_response_delta(chunk)
 
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")
@@ -559,7 +559,7 @@ class OpenAIChat(Model):
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
             async for chunk in async_stream:
-                yield self._parse_response_delta(chunk)
+                yield self._parse_provider_response_delta(chunk)
 
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")
@@ -640,7 +640,7 @@ class OpenAIChat(Model):
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
 
-    def _parse_response(
+    def _parse_provider_response(
         self,
         response: ChatCompletion,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -709,7 +709,7 @@ class OpenAIChat(Model):
 
         return model_response
 
-    def _parse_response_delta(self, response_delta: ChatCompletionChunk) -> ModelResponse:
+    def _parse_provider_response_delta(self, response_delta: ChatCompletionChunk) -> ModelResponse:
         """
         Parse the OpenAI streaming response into a ModelResponse.
 

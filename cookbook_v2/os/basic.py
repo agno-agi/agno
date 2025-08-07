@@ -2,7 +2,6 @@
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.interfaces.slack import Slack
@@ -18,7 +17,6 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 basic_agent = Agent(
     name="Basic Agent",
     agent_id="basic-agent",
-    model=Claude("claude-3-5-sonnet-20240620"),
     db=db,
     enable_session_summaries=True,
     enable_user_memories=True,
