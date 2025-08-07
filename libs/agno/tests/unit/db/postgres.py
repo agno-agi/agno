@@ -110,7 +110,7 @@ class TestPostgresDb:
             "agent_data",
             "team_data",
             "workflow_data",
-            "extra_data",
+            "metadata",
             "runs",
             "summary",
             "created_at",

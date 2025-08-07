@@ -5,6 +5,7 @@
 """
 
 from agno.db.migrations.v1_to_v2 import migrate
+from agno.db.postgres.postgres import PostgresDb
 
 # --- Set these variables before running the script ---
 
@@ -27,7 +28,6 @@ v2_memories_table_name = ""
 
 # For Postgres:
 #
-from agno.db.postgres.postgres import PostgresDb
 
 db = PostgresDb(
     db_url=db_url,

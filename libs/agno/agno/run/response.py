@@ -9,7 +9,7 @@ from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifac
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
-from agno.run.base import BaseRunResponseEvent, RunResponseExtraData, RunStatus
+from agno.run.base import BaseRunResponseEvent, RunResponseMetaData, RunStatus
 from agno.utils.log import logger
 
 
@@ -49,6 +49,12 @@ class BaseAgentRunResponseEvent(BaseRunResponseEvent):
     session_id: Optional[str] = None
     team_session_id: Optional[str] = None
 
+    # Step context for workflow execution
+    workflow_id: Optional[str] = None
+    workflow_run_id: Optional[str] = None
+    step_id: Optional[str] = None
+    step_name: Optional[str] = None
+
     # For backwards compatibility
     content: Optional[Any] = None
 
@@ -73,7 +79,7 @@ class RunResponseContentEvent(BaseAgentRunResponseEvent):
     citations: Optional[Citations] = None
     response_audio: Optional[AudioResponse] = None  # Model audio response
     image: Optional[ImageArtifact] = None  # Image attached to the response
-    extra_data: Optional[RunResponseExtraData] = None
+    metadata: Optional[RunResponseMetaData] = None
 
 
 @dataclass
@@ -88,7 +94,7 @@ class RunResponseCompletedEvent(BaseAgentRunResponseEvent):
     videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
     audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
     response_audio: Optional[AudioResponse] = None  # Model audio response
-    extra_data: Optional[RunResponseExtraData] = None
+    metadata: Optional[RunResponseMetaData] = None
 
 
 @dataclass
@@ -254,7 +260,7 @@ class RunResponse:
     audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
     response_audio: Optional[AudioResponse] = None  # Model audio response
     citations: Optional[Citations] = None
-    extra_data: Optional[RunResponseExtraData] = None
+    metadata: Optional[RunResponseMetaData] = None
     created_at: int = field(default_factory=lambda: int(time()))
 
     events: Optional[List[RunResponseEvent]] = None
@@ -290,7 +296,7 @@ class RunResponse:
             not in [
                 "messages",
                 "tools",
-                "extra_data",
+                "metadata",
                 "images",
                 "videos",
                 "audio",
@@ -312,9 +318,9 @@ class RunResponse:
         if self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
 
-        if self.extra_data is not None:
-            _dict["extra_data"] = (
-                self.extra_data.to_dict() if isinstance(self.extra_data, RunResponseExtraData) else self.extra_data
+        if self.metadata is not None:
+            _dict["metadata"] = (
+                self.metadata.to_dict() if isinstance(self.metadata, RunResponseMetaData) else self.metadata
             )
 
         if self.images is not None:

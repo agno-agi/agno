@@ -4,7 +4,7 @@ from agno.exceptions import RunCancelledException
 from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
-from agno.run.base import RunResponseExtraData
+from agno.run.base import RunResponseMetaData
 from agno.run.response import RunResponse, RunResponseEvent, RunResponsePausedEvent
 from agno.run.team import TeamRunResponse, TeamRunResponseEvent
 
@@ -39,20 +39,20 @@ def update_run_response_with_reasoning(
     reasoning_steps: List[ReasoningStep],
     reasoning_agent_messages: List[Message],
 ) -> None:
-    if run_response.extra_data is None:
-        run_response.extra_data = RunResponseExtraData()
+    if run_response.metadata is None:
+        run_response.metadata = RunResponseMetaData()
 
     # Update reasoning_steps
-    if run_response.extra_data.reasoning_steps is None:
-        run_response.extra_data.reasoning_steps = reasoning_steps
+    if run_response.metadata.reasoning_steps is None:
+        run_response.metadata.reasoning_steps = reasoning_steps
     else:
-        run_response.extra_data.reasoning_steps.extend(reasoning_steps)
+        run_response.metadata.reasoning_steps.extend(reasoning_steps)
 
     # Update reasoning_messages
-    if run_response.extra_data.reasoning_messages is None:
-        run_response.extra_data.reasoning_messages = reasoning_agent_messages
+    if run_response.metadata.reasoning_messages is None:
+        run_response.metadata.reasoning_messages = reasoning_agent_messages
     else:
-        run_response.extra_data.reasoning_messages.extend(reasoning_agent_messages)
+        run_response.metadata.reasoning_messages.extend(reasoning_agent_messages)
 
 
 def format_tool_calls(tool_calls: List[ToolExecution]) -> List[str]:

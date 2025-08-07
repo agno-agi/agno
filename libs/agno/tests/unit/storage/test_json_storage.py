@@ -37,7 +37,7 @@ def test_agent_storage_crud(agent_storage: JsonStorage, temp_dir: Path):
         memory={"key": "value"},
         agent_data={"name": "Test Agent"},
         session_data={"state": "active"},
-        extra_data={"custom": "data"},
+        metadata={"custom": "data"},
     )
 
     saved_session = agent_storage.upsert(session)
@@ -76,7 +76,7 @@ def test_workflow_storage_crud(workflow_storage: JsonStorage, temp_dir: Path):
         memory={"key": "value"},
         workflow_data={"name": "Test Workflow"},
         session_data={"state": "active"},
-        extra_data={"custom": "data"},
+        metadata={"custom": "data"},
     )
 
     saved_session = workflow_storage.upsert(session)
@@ -143,7 +143,7 @@ def test_workflow_storage_filtering(workflow_storage: JsonStorage):
             memory={"key": f"value-{i}"},
             workflow_data={"name": f"Test Workflow {i}"},
             session_data={"state": "active"},
-            extra_data={"custom": f"data-{i}"},
+            metadata={"custom": f"data-{i}"},
         )
         for i in range(4)
     ]

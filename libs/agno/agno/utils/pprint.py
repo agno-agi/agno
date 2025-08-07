@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from agno.run.response import RunResponse, RunResponseEvent
 from agno.run.team import TeamRunResponse, TeamRunResponseEvent
-from agno.run.v2.workflow import WorkflowRunResponse, WorkflowRunResponseEvent
+from agno.run.workflow import WorkflowRunResponse, WorkflowRunResponseEvent
 from agno.utils.log import logger
 from agno.utils.timer import Timer
 

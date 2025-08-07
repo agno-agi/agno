@@ -52,7 +52,7 @@ def test_upsert_and_read_agent(gcs_storage):
         memory={"data": "value"},
         agent_data={"name": "Test Agent"},
         session_data={"state": "active"},
-        extra_data={"custom": "data"},
+        metadata={"custom": "data"},
     )
     # Prepare a mock blob
     blob = MagicMock()

@@ -39,7 +39,7 @@ def test_print_response_with_message_panel():
                 mock_response.formatted_tool_calls = []
                 mock_response.citations = None
                 mock_response.is_paused = False
-                mock_response.extra_data = None
+                mock_response.metadata = None
                 mock_response.get_content_as_string = Mock(
                     return_value="It is currently 70 degrees and cloudy in Tokyo"
                 )
@@ -97,7 +97,7 @@ def test_panel_creation_and_structure():
                 mock_response.formatted_tool_calls = []
                 mock_response.citations = None
                 mock_response.is_paused = False
-                mock_response.extra_data = None
+                mock_response.metadata = None
                 mock_response.get_content_as_string.return_value = "Test response content"
                 mock_run.return_value = mock_response
 
@@ -148,7 +148,7 @@ def test_print_response_content_verification():
                 mock_response.formatted_tool_calls = []
                 mock_response.citations = None
                 mock_response.is_paused = False
-                mock_response.extra_data = None
+                mock_response.metadata = None
                 # Based on the debug output, get_content_as_string is called, so let's make sure it works
                 mock_response.get_content_as_string.return_value = expected_response
                 mock_run.return_value = mock_response
@@ -200,7 +200,7 @@ def test_markdown_content_type():
                 mock_response.formatted_tool_calls = []
                 mock_response.citations = None
                 mock_response.is_paused = False
-                mock_response.extra_data = None
+                mock_response.metadata = None
                 mock_run.return_value = mock_response
 
                 agent.print_response(message="Test markdown", console=mock_console, stream=False)
@@ -244,7 +244,7 @@ def test_tool_calls_panel_creation():
                 mock_response.formatted_tool_calls = ["get_weather(location='Tokyo')", "get_temperature()"]
                 mock_response.citations = None
                 mock_response.is_paused = False
-                mock_response.extra_data = None
+                mock_response.metadata = None
                 mock_response.get_content_as_string = Mock(return_value="Response with tool calls")
                 mock_run.return_value = mock_response
 
@@ -297,7 +297,7 @@ def test_live_update_calls():
                 mock_response.formatted_tool_calls = []
                 mock_response.citations = None
                 mock_response.is_paused = False
-                mock_response.extra_data = None
+                mock_response.metadata = None
                 mock_response.get_content_as_string = Mock(return_value="Simple response")
                 mock_run.return_value = mock_response
 
@@ -331,7 +331,7 @@ def test_simple_functionality():
                 mock_response.formatted_tool_calls = []
                 mock_response.citations = None
                 mock_response.is_paused = False
-                mock_response.extra_data = None
+                mock_response.metadata = None
                 mock_response.get_content_as_string = Mock(return_value="Simple test response")
                 mock_run.return_value = mock_response
 
@@ -406,7 +406,7 @@ def test_stream_vs_non_stream_behavior():
                 mock_response.formatted_tool_calls = []
                 mock_response.citations = None
                 mock_response.is_paused = False
-                mock_response.extra_data = None
+                mock_response.metadata = None
                 mock_response.get_content_as_string = Mock(return_value="Non-streaming response")
                 mock_run.return_value = mock_response
 

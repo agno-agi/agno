@@ -22,7 +22,7 @@ class BaseRunResponseEvent:
             not in [
                 "tools",
                 "tool",
-                "extra_data",
+                "metadata",
                 "image",
                 "images",
                 "videos",
@@ -33,9 +33,9 @@ class BaseRunResponseEvent:
             ]
         }
 
-        if hasattr(self, "extra_data") and self.extra_data is not None:
-            _dict["extra_data"] = (
-                self.extra_data.to_dict() if isinstance(self.extra_data, RunResponseExtraData) else self.extra_data
+        if hasattr(self, "metadata") and self.metadata is not None:
+            _dict["metadata"] = (
+                self.metadata.to_dict() if isinstance(self.metadata, RunResponseMetaData) else self.metadata
             )
 
         if hasattr(self, "member_responses") and self.member_responses:
@@ -139,9 +139,9 @@ class BaseRunResponseEvent:
         if response_audio:
             data["response_audio"] = AudioResponse.model_validate(response_audio)
 
-        extra_data = data.pop("extra_data", None)
-        if extra_data:
-            data["extra_data"] = RunResponseExtraData.from_dict(extra_data)
+        metadata = data.pop("metadata", None)
+        if metadata:
+            data["metadata"] = RunResponseMetaData.from_dict(metadata)
 
         # To make it backwards compatible
         if "event" in data:
@@ -159,7 +159,7 @@ class BaseRunResponseEvent:
 
 
 @dataclass
-class RunResponseExtraData:
+class RunResponseMetaData:
     references: Optional[List[MessageReferences]] = None
     additional_messages: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
@@ -178,7 +178,7 @@ class RunResponseExtraData:
         return _dict
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "RunResponseExtraData":
+    def from_dict(cls, data: Dict[str, Any]) -> "RunResponseMetaData":
         additional_messages = data.pop("additional_messages", None)
         if additional_messages is not None:
             additional_messages = [Message.model_validate(message) for message in additional_messages]

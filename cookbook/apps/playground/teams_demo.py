@@ -1,5 +1,3 @@
-from textwrap import dedent
-
 from agno.agent import Agent
 from agno.db.postgres import PostgresStorage
 from agno.memory import Memory
@@ -132,8 +130,6 @@ research_team = Team(
     model=OpenAIChat(id="gpt-4o"),
     mode="coordinate",
     team_id="research_team",
-        A comprehensive research report with clear sections and data-driven insights.
-    """),
     instructions=[
         "You are the lead researcher of a research team! 🔍",
     ],
@@ -157,8 +153,6 @@ multimodal_team = Team(
     model=OpenAIChat(id="gpt-4o"),
     mode="route",
     team_id="multimodal_team",
-        A comprehensive report with clear sections and data-driven insights.
-    """),
     instructions=[
         "You are the lead editor of a prestigious financial news desk! 📰",
     ],

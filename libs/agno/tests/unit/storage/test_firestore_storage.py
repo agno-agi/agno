@@ -114,7 +114,7 @@ def test_agent_storage_crud(agent_storage):
         memory={"key": "value"},
         agent_data={"name": "Test Agent"},
         session_data={"state": "active"},
-        extra_data={"custom": "data"},
+        metadata={"custom": "data"},
     )
 
     # Mock query and document for read
@@ -174,7 +174,7 @@ def test_workflow_storage_crud(workflow_storage):
         memory={"key": "value"},
         workflow_data={"name": "Test Workflow"},
         session_data={"state": "active"},
-        extra_data={"custom": "data"},
+        metadata={"custom": "data"},
     )
 
     # Mock query and document for read

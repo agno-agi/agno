@@ -42,7 +42,7 @@ async def test_add_references(loaded_knowledge):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         knowledge=loaded_knowledge,
-        # Enable RAG by adding references from AgentKnowledge to the user prompt.
+        # Enable RAG by adding references from Knowledge to the user prompt.
         add_references=True,
         # Set as False because Agents default to `search_knowledge=True`
         search_knowledge=False,

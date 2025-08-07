@@ -14,11 +14,10 @@ from agno.media import File as FileMedia
 from agno.run.response import RunResponseErrorEvent
 from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
 from agno.run.team import TeamRunResponseEvent
-from agno.run.v2.workflow import WorkflowErrorEvent
+from agno.run.workflow import WorkflowErrorEvent
 from agno.team.team import Team
 from agno.utils.log import logger
-from agno.workflow.v2.workflow import Workflow as WorkflowV2
-from agno.workflow.workflow import Workflow
+from agno.workflow import Workflow
 
 
 async def agent_chat_response_streamer(
@@ -86,7 +85,7 @@ async def team_chat_response_streamer(
 
 
 async def workflow_response_streamer(
-    workflow: WorkflowV2,
+    workflow: Workflow,
     body: Union[Dict[str, Any], str],
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,

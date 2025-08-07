@@ -512,7 +512,7 @@ class MongoDb(VectorDb):
             logger.error(f"Error checking content_hash existence: {e}")
             return False
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents into the MongoDB collection."""
         log_debug(f"Inserting {len(documents)} documents")
         collection = self._get_collection()
@@ -1232,25 +1232,6 @@ class MongoDb(VectorDb):
             return True
         except Exception as e:
             logger.error(f"Error deleting documents with metadata '{metadata}': {e}")
-            return False
-
-    def content_hash_exists(self, content_hash: str) -> bool:
-        """Check if documents with the given content hash exist in the collection.
-
-        Args:
-            content_hash (str): The content hash to check.
-
-        Returns:
-            bool: True if documents with the content hash exist, False otherwise.
-        """
-        try:
-            collection = self._get_collection()
-            result = collection.find_one({"content_hash": content_hash})
-            exists = result is not None
-            log_debug(f"Document with content_hash '{content_hash}' {'exists' if exists else 'does not exist'}")
-            return exists
-        except Exception as e:
-            logger.error(f"Error checking content_hash existence: {e}")
             return False
 
     def _delete_by_content_hash(self, content_hash: str) -> bool:

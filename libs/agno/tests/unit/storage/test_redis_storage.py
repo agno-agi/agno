@@ -90,7 +90,7 @@ def test_agent_storage_crud(agent_storage, mock_redis_client):
         memory={"key": "value"},
         agent_data={"name": "Test Agent"},
         session_data={"state": "active"},
-        extra_data={"custom": "data"},
+        metadata={"custom": "data"},
     )
 
     # Mock time.time() to return a fixed value
@@ -138,7 +138,7 @@ def test_workflow_storage_crud(workflow_storage, mock_redis_client):
         memory={"key": "value"},
         workflow_data={"name": "Test Workflow"},
         session_data={"state": "active"},
-        extra_data={"custom": "data"},
+        metadata={"custom": "data"},
     )
 
     # Mock time.time() to return a fixed value
@@ -175,7 +175,7 @@ def test_storage_filtering(agent_storage, mock_redis_client):
             memory={},
             agent_data={},
             session_data={},
-            extra_data={},
+            metadata={},
         )
         for i in range(4)
     ]
@@ -214,7 +214,7 @@ def test_team_storage_operations(team_storage, mock_redis_client):
         memory={"key": "value"},
         team_data={"name": "Test Team"},
         session_data={"state": "active"},
-        extra_data={"custom": "data"},
+        metadata={"custom": "data"},
     )
 
     saved_session = team_storage.upsert(session)
@@ -317,7 +317,7 @@ def test_get_all_session_ids(agent_storage, mock_redis_client):
             memory={},
             agent_data={},
             session_data={},
-            extra_data={},
+            metadata={},
         )
         for i in range(4)
     ]

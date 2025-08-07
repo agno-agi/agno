@@ -558,7 +558,7 @@ class PostgresDb(BaseDb):
                         agent_data=session_dict.get("agent_data"),
                         session_data=session_dict.get("session_data"),
                         summary=session_dict.get("summary"),
-                        metadata=session_dict.get("extra_data"),
+                        metadata=session_dict.get("metadata"),
                         created_at=session_dict.get("created_at"),
                         updated_at=session_dict.get("created_at"),
                     )
@@ -570,7 +570,7 @@ class PostgresDb(BaseDb):
                             agent_data=session_dict.get("agent_data"),
                             session_data=session_dict.get("session_data"),
                             summary=session_dict.get("summary"),
-                            metadata=session_dict.get("extra_data"),
+                            metadata=session_dict.get("metadata"),
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
@@ -596,7 +596,7 @@ class PostgresDb(BaseDb):
                         team_data=session_dict.get("team_data"),
                         session_data=session_dict.get("session_data"),
                         summary=session_dict.get("summary"),
-                        metadata=session_dict.get("extra_data"),
+                        metadata=session_dict.get("metadata"),
                         created_at=session_dict.get("created_at"),
                         updated_at=session_dict.get("created_at"),
                     )
@@ -608,7 +608,7 @@ class PostgresDb(BaseDb):
                             team_data=session_dict.get("team_data"),
                             session_data=session_dict.get("session_data"),
                             summary=session_dict.get("summary"),
-                            metadata=session_dict.get("extra_data"),
+                            metadata=session_dict.get("metadata"),
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
@@ -634,7 +634,7 @@ class PostgresDb(BaseDb):
                         workflow_data=session_dict.get("workflow_data"),
                         session_data=session_dict.get("session_data"),
                         summary=session_dict.get("summary"),
-                        metadata=session_dict.get("extra_data"),
+                        metadata=session_dict.get("metadata"),
                         created_at=session_dict.get("created_at"),
                         updated_at=session_dict.get("created_at"),
                     )
@@ -646,7 +646,7 @@ class PostgresDb(BaseDb):
                             workflow_data=session_dict.get("workflow_data"),
                             session_data=session_dict.get("session_data"),
                             summary=session_dict.get("summary"),
-                            metadata=session_dict.get("extra_data"),
+                            metadata=session_dict.get("metadata"),
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
@@ -1305,6 +1305,7 @@ class PostgresDb(BaseDb):
                     "status_message": "status_message",
                     "created_at": "created_at",
                     "updated_at": "updated_at",
+                    "external_id": "external_id",
                 }
 
                 # Build insert and update data only for fields that exist in the table

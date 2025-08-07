@@ -14,7 +14,7 @@ db = PostgresDb(db_url=db_url, session_table="sessions")
 #     db=db,
 #     enable_session_summaries=True,
 #     session_id="session_summary",
-#     add_session_summary_references=True,
+#     add_session_summary_to_context=True,
 # )
 
 # agent.print_response("Hi my name is John and I live in New York")

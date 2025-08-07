@@ -4,8 +4,8 @@ from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
-from agno.workflow.v2.step import Step
-from agno.workflow.v2.workflow import Workflow
+from agno.workflow.step import Step
+from agno.workflow.workflow import Workflow
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 

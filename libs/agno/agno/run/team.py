@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
 from agno.models.message import Citations, Message
 from agno.models.response import ToolExecution
-from agno.run.base import BaseRunResponseEvent, RunResponseExtraData, RunStatus
+from agno.run.base import BaseRunResponseEvent, RunResponseMetaData, RunStatus
 from agno.run.response import RunEvent, RunResponse, RunResponseEvent, run_response_event_from_dict
 
 
@@ -45,6 +45,11 @@ class BaseTeamRunResponseEvent(BaseRunResponseEvent):
     session_id: Optional[str] = None
     # If the team is a member of a team, this will be the session id of the parent team
     team_session_id: Optional[str] = None
+
+    workflow_id: Optional[str] = None
+    workflow_run_id: Optional[str] = None  # This is the workflow's run_id
+    step_id: Optional[str] = None
+    step_name: Optional[str] = None
 
     # For backwards compatibility
     content: Optional[Any] = None
@@ -88,7 +93,7 @@ class RunResponseContentEvent(BaseTeamRunResponseEvent):
     citations: Optional[Citations] = None
     response_audio: Optional[AudioResponse] = None  # Model audio response
     image: Optional[ImageArtifact] = None  # Image attached to the response
-    extra_data: Optional[RunResponseExtraData] = None
+    metadata: Optional[RunResponseMetaData] = None
 
 
 @dataclass
@@ -103,7 +108,7 @@ class RunResponseCompletedEvent(BaseTeamRunResponseEvent):
     videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
     audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
     response_audio: Optional[AudioResponse] = None  # Model audio response
-    extra_data: Optional[RunResponseExtraData] = None
+    metadata: Optional[RunResponseMetaData] = None
     member_responses: List[Union["TeamRunResponse", RunResponse]] = field(default_factory=list)
 
 
@@ -257,7 +262,7 @@ class TeamRunResponse:
 
     citations: Optional[Citations] = None
 
-    extra_data: Optional[RunResponseExtraData] = None
+    metadata: Optional[RunResponseMetaData] = None
     created_at: int = field(default_factory=lambda: int(time()))
 
     events: Optional[List[Union[RunResponseEvent, TeamRunResponseEvent]]] = None
@@ -282,7 +287,7 @@ class TeamRunResponse:
                 "messages",
                 "status",
                 "tools",
-                "extra_data",
+                "metadata",
                 "images",
                 "videos",
                 "audio",
@@ -300,8 +305,8 @@ class TeamRunResponse:
         if self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
 
-        if self.extra_data is not None:
-            _dict["extra_data"] = self.extra_data.to_dict()
+        if self.metadata is not None:
+            _dict["metadata"] = self.metadata.to_dict()
 
         if self.images is not None:
             _dict["images"] = [img.to_dict() for img in self.images]
@@ -371,9 +376,9 @@ class TeamRunResponse:
                 else:
                     parsed_member_responses.append(cls.from_dict(response))
 
-        extra_data = data.pop("extra_data", None)
-        if extra_data is not None:
-            extra_data = RunResponseExtraData.from_dict(extra_data)
+        metadata = data.pop("metadata", None)
+        if metadata is not None:
+            metadata = RunResponseMetaData.from_dict(metadata)
 
         images = data.pop("images", [])
         images = [ImageArtifact.model_validate(image) for image in images] if images else None
@@ -397,7 +402,7 @@ class TeamRunResponse:
         return cls(
             messages=messages,
             member_responses=parsed_member_responses,
-            extra_data=extra_data,
+            metadata=metadata,
             images=images,
             videos=videos,
             audio=audio,

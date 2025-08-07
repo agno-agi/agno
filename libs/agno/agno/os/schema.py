@@ -8,9 +8,16 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.os.apps.memory import MemoryApp
-from agno.os.utils import format_team_tools, format_tools, get_run_input, get_session_name
+from agno.os.utils import (
+    format_team_tools,
+    format_tools,
+    get_run_input,
+    get_session_name,
+    get_workflow_input_schema_dict,
+)
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
+from agno.workflow.workflow import Workflow
 
 
 class InterfaceResponse(BaseModel):
@@ -241,6 +248,19 @@ class WorkflowResponse(BaseModel):
     workflow_id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
+    input_schema: Optional[Dict[str, Any]] = None
+    steps: Optional[List[Dict[str, Any]]] = None
+
+    @classmethod
+    def from_workflow(cls, workflow: Workflow) -> "WorkflowResponse":
+        workflow_dict = workflow.to_dict()
+        return cls(
+            workflow_id=workflow.workflow_id,
+            name=workflow.name,
+            description=workflow.description,
+            steps=workflow_dict.get("steps"),
+            input_schema=get_workflow_input_schema_dict(workflow),
+        )
 
 
 class WorkflowRunRequest(BaseModel):
@@ -292,7 +312,6 @@ class AgentSessionDetailSchema(BaseModel):
     @classmethod
     def from_session(cls, session: AgentSession) -> "AgentSessionDetailSchema":
         session_name = get_session_name({**session.to_dict(), "session_type": "agent"})
-
         return cls(
             user_id=session.user_id,
             agent_session_id=session.session_id,
@@ -345,9 +364,37 @@ class TeamSessionDetailSchema(BaseModel):
 
 
 class WorkflowSessionDetailSchema(BaseModel):
+    user_id: Optional[str]
+    workflow_id: Optional[str]
+    workflow_name: Optional[str]
+
+    session_id: str
+    session_name: str
+
+    session_data: Optional[dict]
+    workflow_data: Optional[dict]
+    metadata: Optional[dict]
+
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
+
     @classmethod
     def from_session(cls, session: WorkflowSession) -> "WorkflowSessionDetailSchema":
-        return cls()
+        session_dict = session.to_dict()
+        session_name = get_session_name({**session_dict, "session_type": "workflow"})
+
+        return cls(
+            session_id=session.session_id,
+            user_id=session.user_id,
+            workflow_id=session.workflow_id,
+            workflow_name=session.workflow_name,
+            session_name=session_name,
+            session_data=session.session_data,
+            workflow_data=session.workflow_data,
+            metadata=session.metadata,
+            created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
+            updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
+        )
 
 
 class RunSchema(BaseModel):
@@ -422,22 +469,29 @@ class TeamRunSchema(BaseModel):
 
 class WorkflowRunSchema(BaseModel):
     run_id: str
-    user_id: Optional[str]
     run_input: Optional[str]
-    run_response_format: Optional[str]
-    run_review: Optional[dict]
+    user_id: Optional[str]
+    content: Optional[str]
+    content_type: Optional[str]
+    status: Optional[str]
+    step_results: Optional[list[dict]]
+    step_executor_runs: Optional[list[dict]]
     metrics: Optional[dict]
     created_at: Optional[datetime]
 
     @classmethod
     def from_dict(cls, run_response: Dict[str, Any]) -> "WorkflowRunSchema":
+        run_input = get_run_input(run_response, is_workflow_run=True)
         return cls(
             run_id=run_response.get("run_id", ""),
+            run_input=run_input,
             user_id=run_response.get("user_id", ""),
-            run_input="",
-            run_response_format="",
-            run_review=None,
-            metrics=run_response.get("metrics", {}),
+            content=run_response.get("content", ""),
+            content_type=run_response.get("content_type", ""),
+            status=run_response.get("status", ""),
+            metrics=run_response.get("workflow_metrics", {}),
+            step_results=run_response.get("step_results", []),
+            step_executor_runs=run_response.get("step_executor_runs", []),
             created_at=datetime.fromtimestamp(run_response["created_at"], tz=timezone.utc)
             if run_response["created_at"]
             else None,
