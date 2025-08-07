@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.models.base import Model
 from agno.models.message import Citations, DocumentCitation, Message, UrlCitation
+from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import MCPServerConfiguration, format_messages
@@ -42,11 +43,7 @@ except ImportError as e:
 
 # Import Beta types
 try:
-    from anthropic.types.beta import (
-        BetaMessage,
-        BetaRawContentBlockDeltaEvent,
-        BetaTextDelta,
-    )
+    from anthropic.types.beta import BetaRawContentBlockDeltaEvent, BetaTextDelta
 except ImportError as e:
     raise ImportError(
         "`anthropic` not installed or missing beta components. Please install with `pip install anthropic`"
@@ -232,10 +229,11 @@ class Claude(Model):
     def invoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Union[AnthropicMessage, BetaMessage]:
+    ) -> ModelResponse:
         """
         Send a request to the Anthropic API to generate a response.
         """
@@ -244,17 +242,25 @@ class Claude(Model):
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
             if self.mcp_servers is not None:
-                return self.get_client().beta.messages.create(
+                provider_response = self.get_client().beta.messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
                     **self.get_request_params(),
                 )
             else:
-                return self.get_client().messages.create(
+                provider_response = self.get_client().messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
                     **request_kwargs,
                 )
+
+            assistant_message.metrics.stop_timer()
+
+            # Parse the response into an Agno ModelResponse object
+            model_response = self._parse_provider_response(provider_response, response_format=response_format)
+
+            return model_response
+
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
@@ -273,6 +279,7 @@ class Claude(Model):
     def invoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -296,25 +303,22 @@ class Claude(Model):
 
         try:
             if self.mcp_servers is not None:
-                return (
-                    self.get_client()
-                    .beta.messages.stream(
-                        model=self.id,
-                        messages=chat_messages,  # type: ignore
-                        **request_kwargs,
-                    )
-                    .__enter__()
+                stream = self.get_client().beta.messages.stream(
+                    model=self.id,
+                    messages=chat_messages,  # type: ignore
+                    **request_kwargs,
                 )
             else:
-                return (
-                    self.get_client()
-                    .messages.stream(
-                        model=self.id,
-                        messages=chat_messages,  # type: ignore
-                        **request_kwargs,
-                    )
-                    .__enter__()
+                stream = self.get_client().messages.stream(
+                    model=self.id,
+                    messages=chat_messages,  # type: ignore
+                    **request_kwargs,
                 )
+
+            with stream as stream_manager:
+                for chunk in stream_manager:
+                    yield self._parse_provider_response_delta(chunk)
+
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
@@ -333,10 +337,11 @@ class Claude(Model):
     async def ainvoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Union[AnthropicMessage, BetaMessage]:
+    ) -> ModelResponse:
         """
         Send an asynchronous request to the Anthropic API to generate a response.
         """
@@ -345,17 +350,25 @@ class Claude(Model):
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
             if self.mcp_servers is not None:
-                return await self.get_async_client().beta.messages.create(
+                provider_response = await self.get_async_client().beta.messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
                     **self.get_request_params(),
                 )
             else:
-                return await self.get_async_client().messages.create(
+                provider_response = await self.get_async_client().messages.create(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
                     **request_kwargs,
                 )
+
+            assistant_message.metrics.stop_timer()
+
+            # Parse the response into an Agno ModelResponse object
+            model_response = self._parse_provider_response(provider_response, response_format=response_format)
+
+            return model_response
+
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
@@ -377,16 +390,13 @@ class Claude(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> AsyncIterator[Any]:
+    ) -> AsyncIterator[ModelResponse]:
         """
         Stream an asynchronous response from the Anthropic API.
-
         Args:
             messages (List[Message]): A list of messages to send to the model.
-
         Returns:
-            Any: The streamed response from the model.
-
+            AsyncIterator[ModelResponse]: An async iterator of processed model responses.
         Raises:
             APIConnectionError: If there are network connectivity issues
             RateLimitError: If the API rate limit is exceeded
@@ -403,7 +413,7 @@ class Claude(Model):
                     **request_kwargs,
                 ) as stream:
                     async for chunk in stream:
-                        yield chunk
+                        yield self._parse_provider_response_delta(chunk)
             else:
                 async with self.get_async_client().messages.stream(
                     model=self.id,
@@ -411,7 +421,8 @@ class Claude(Model):
                     **request_kwargs,
                 ) as stream:
                     async for chunk in stream:  # type: ignore
-                        yield chunk
+                        yield self._parse_provider_response_delta(chunk)
+
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
@@ -453,7 +464,7 @@ class Claude(Model):
             return tool_call_prompt
         return None
 
-    def parse_provider_response(self, response: AnthropicMessage, **kwargs) -> ModelResponse:
+    def _parse_provider_response(self, response: AnthropicMessage, **kwargs) -> ModelResponse:
         """
         Parse the Claude response into a ModelResponse.
 
@@ -514,7 +525,7 @@ class Claude(Model):
                     if tool_input:
                         function_def["arguments"] = json.dumps(tool_input)
 
-                    model_response.extra = model_response.extra or {}
+                    model_response.metadata = model_response.metadata or {}
                     model_response.tool_calls.append(
                         {
                             "id": block.id,
@@ -525,12 +536,19 @@ class Claude(Model):
 
         # Add usage metrics
         if response.usage is not None:
-            model_response.response_usage = response.usage
+            model_response.response_usage = self._get_metrics(response.usage)
 
         return model_response
 
-    def parse_provider_response_delta(
-        self, response: Union[ContentBlockStartEvent, ContentBlockDeltaEvent, ContentBlockStopEvent, MessageStopEvent]
+    def _parse_provider_response_delta(
+        self,
+        response: Union[
+            ContentBlockStartEvent,
+            ContentBlockDeltaEvent,
+            ContentBlockStopEvent,
+            MessageStopEvent,
+            BetaRawContentBlockDeltaEvent,
+        ],
     ) -> ModelResponse:
         """
         Parse the Claude streaming response into ModelProviderResponse objects.
@@ -569,7 +587,7 @@ class Claude(Model):
                 if tool_input:
                     function_def["arguments"] = json.dumps(tool_input)
 
-                model_response.extra = model_response.extra or {}
+                model_response.metadata = model_response.metadata or {}
 
                 model_response.tool_calls = [
                     {
@@ -599,7 +617,7 @@ class Claude(Model):
                         )
 
         if hasattr(response, "usage") and response.usage is not None:  # type: ignore
-            model_response.response_usage = response.usage  # type: ignore
+            model_response.response_usage = self._get_metrics(response.usage)  # type: ignore
 
         # Capture the Beta response
         try:
@@ -614,14 +632,27 @@ class Claude(Model):
 
         return model_response
 
-    def _add_provider_specific_metrics_to_assistant_message(
-        self, assistant_message: Message, response_usage: Union[Usage, MessageDeltaUsage, Dict[str, Any]]
-    ) -> None:
-        """Add Anthropic specific usage metrics fields to the assistant message."""
-        if isinstance(response_usage, Usage) or isinstance(response_usage, MessageDeltaUsage):
-            response_usage = response_usage.to_dict()
+    def _get_metrics(self, response_usage: Union[Usage, MessageDeltaUsage]) -> Metrics:
+        """
+        Parse the given Anthropic-specific usage into an Agno Metrics object.
 
-        if cache_write_tokens := response_usage.get("cache_creation_input_tokens"):
-            assistant_message.metrics.cache_write_tokens = cache_write_tokens
-        if cache_read_tokens := response_usage.get("cache_read_input_tokens"):
-            assistant_message.metrics.cache_read_tokens = cache_read_tokens
+        Args:
+            response_usage: Usage data from Anthropic
+
+        Returns:
+            Metrics: Parsed metrics data
+        """
+        metrics = Metrics()
+
+        metrics.input_tokens = response_usage.input_tokens or 0
+        metrics.output_tokens = response_usage.output_tokens or 0
+        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+        metrics.cache_read_tokens = response_usage.cache_read_input_tokens or 0
+        metrics.cache_write_tokens = response_usage.cache_creation_input_tokens or 0
+
+        # Anthropic-specific additional fields
+        metrics.additional_metrics = {"server_tool_use": response_usage.server_tool_use}
+        if isinstance(response_usage, Usage):
+            metrics.additional_metrics["service_tier"] = response_usage.service_tier
+
+        return metrics

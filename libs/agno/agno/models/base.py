@@ -186,24 +186,6 @@ class Model(ABC):
         """
         pass
 
-    # TODO: remove all these
-    def _add_provider_specific_metrics_to_assistant_message(
-        self, assistant_message: Message, response_usage: Any
-    ) -> None:
-        """Handle metrics fields specific to the contextual provider e.g. OpenAI"""
-        pass
-
-    # TODO: make sure this is not used
-    def _add_metrics_to_assistant_message(self, assistant_message: Message, response_usage: Any) -> None:
-        """
-        Add usage metrics from the model provider to the assistant message.
-
-        Args:
-            assistant_message: Message to update with metrics
-            response_usage: Usage data from model provider
-        """
-        pass
-
     def response(
         self,
         messages: List[Message],
@@ -952,12 +934,6 @@ class Model(ABC):
             if stream_data.metadata is None:
                 stream_data.metadata = {}
             stream_data.metadata.update(model_response_delta.metadata)
-
-        if model_response_delta.response_usage is not None:
-            self._add_metrics_to_assistant_message(
-                assistant_message=assistant_message,
-                response_usage=model_response_delta.response_usage,
-            )
 
         if should_yield:
             yield model_response_delta

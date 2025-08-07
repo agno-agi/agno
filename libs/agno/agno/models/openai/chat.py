@@ -334,7 +334,7 @@ class OpenAIChat(Model):
             ModelResponse: The chat completion response from the API.
         """
         try:
-            response = self.get_client().chat.completions.create(
+            provider_response = self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
@@ -342,13 +342,9 @@ class OpenAIChat(Model):
             assistant_message.metrics.stop_timer()
 
             # Parse the response into an Agno ModelResponse object
-            provider_response: ModelResponse = self._parse_provider_response(response, response_format=response_format)
+            model_response = self._parse_provider_response(provider_response, response_format=response_format)
 
-            # Add parsed data to model response
-            if provider_response.parsed is not None:
-                response.parsed = provider_response.parsed
-
-            return provider_response
+            return model_response
 
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")
