@@ -4973,42 +4973,7 @@ class Agent:
 
                 run_messages.messages += history_copy
 
-        # 4.Add user message to run_messages
-        user_message: Optional[Message] = None
-        # 4.1 Build user message if message is None, str or list
-        if message is None or isinstance(message, str) or isinstance(message, list):
-            user_message = self.get_user_message(
-                message=message,
-                audio=audio,
-                images=images,
-                videos=videos,
-                files=files,
-                knowledge_filters=knowledge_filters,
-                **kwargs,
-            )
-        # 4.2 If message is provided as a Message, use it directly
-        elif isinstance(message, Message):
-            user_message = message
-        # 4.3 If message is provided as a dict, try to validate it as a Message
-        elif isinstance(message, dict):
-            try:
-                user_message = Message.model_validate(message)
-            except Exception as e:
-                log_warning(f"Failed to validate message: {e}")
-        # 4.4 If message is provided as a BaseModel, convert it to a Message
-        elif isinstance(message, BaseModel):
-            try:
-                # Create a user message with the BaseModel content
-                content = message.model_dump_json(indent=2, exclude_none=True)
-                user_message = Message(role=self.user_message_role, content=content)
-            except Exception as e:
-                log_warning(f"Failed to convert BaseModel to message: {e}")
-        # Add user message to run_messages
-        if user_message is not None:
-            run_messages.user_message = user_message
-            run_messages.messages.append(user_message)
-
-        # 5. Add messages to run_messages if provided
+        # 4. Add messages to run_messages if provided
         if messages is not None and len(messages) > 0:
             for _m in messages:
                 if isinstance(_m, Message):
@@ -5024,6 +4989,41 @@ class Agent:
                         run_messages.extra_messages.append(Message.model_validate(_m))
                     except Exception as e:
                         log_warning(f"Failed to validate message: {e}")
+
+        # 5. Add user message to run_messages
+        user_message: Optional[Message] = None
+        # 5.1 Build user message if message is None, str or list
+        if message is None or isinstance(message, str) or isinstance(message, list):
+            user_message = self.get_user_message(
+                message=message,
+                audio=audio,
+                images=images,
+                videos=videos,
+                files=files,
+                knowledge_filters=knowledge_filters,
+                **kwargs,
+            )
+        # 5.2 If message is provided as a Message, use it directly
+        elif isinstance(message, Message):
+            user_message = message
+        # 5.3 If message is provided as a dict, try to validate it as a Message
+        elif isinstance(message, dict):
+            try:
+                user_message = Message.model_validate(message)
+            except Exception as e:
+                log_warning(f"Failed to validate message: {e}")
+        # 5.4 If message is provided as a BaseModel, convert it to a Message
+        elif isinstance(message, BaseModel):
+            try:
+                # Create a user message with the BaseModel content
+                content = message.model_dump_json(indent=2, exclude_none=True)
+                user_message = Message(role=self.user_message_role, content=content)
+            except Exception as e:
+                log_warning(f"Failed to convert BaseModel to message: {e}")
+        # Add user message to run_messages
+        if user_message is not None:
+            run_messages.user_message = user_message
+            run_messages.messages.append(user_message)
 
         return run_messages
 
