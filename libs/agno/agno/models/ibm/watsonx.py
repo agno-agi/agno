@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.watsonx import format_images_for_message
@@ -154,10 +155,11 @@ class WatsonX(Model):
     def invoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Any:
+    ) -> ModelResponse:
         """
         Send a chat completion request to the WatsonX API.
         """
@@ -169,9 +171,13 @@ class WatsonX(Model):
                 response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            # Call chat method
+            assistant_message.metrics.start_timer()
             response = client.chat(messages=formatted_messages, **request_params)
-            return response
+            assistant_message.metrics.stop_timer()
+
+            model_response = self._parse_provider_response(response, response_format=response_format)
+
+            return model_response
 
         except Exception as e:
             log_error(f"Error calling WatsonX API: {str(e)}")
@@ -180,6 +186,7 @@ class WatsonX(Model):
     async def ainvoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -195,7 +202,13 @@ class WatsonX(Model):
                 response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            return await client.achat(messages=formatted_messages, **request_params)
+            assistant_message.metrics.start_timer()
+            provider_response = await client.achat(messages=formatted_messages, **request_params)
+            assistant_message.metrics.stop_timer()
+
+            model_response = self._parse_provider_response(provider_response, response_format=response_format)
+
+            return model_response
 
         except Exception as e:
             log_error(f"Error calling WatsonX API: {str(e)}")
@@ -204,6 +217,7 @@ class WatsonX(Model):
     def invoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -219,7 +233,12 @@ class WatsonX(Model):
                 response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            yield from client.chat_stream(messages=formatted_messages, **request_params)
+            assistant_message.metrics.start_timer()
+
+            for chunk in client.chat_stream(messages=formatted_messages, **request_params):
+                yield self._parse_provider_response_delta(chunk)
+
+            assistant_message.metrics.stop_timer()
 
         except Exception as e:
             log_error(f"Error calling WatsonX API: {str(e)}")
@@ -228,6 +247,7 @@ class WatsonX(Model):
     async def ainvoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -244,9 +264,13 @@ class WatsonX(Model):
                 response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
+            assistant_message.metrics.start_timer()
+
             async_stream = await client.achat_stream(messages=formatted_messages, **request_params)
             async for chunk in async_stream:
-                yield chunk
+                yield self._parse_provider_response_delta(chunk)
+
+            assistant_message.metrics.stop_timer()
 
         except Exception as e:
             log_error(f"Error in async streaming from WatsonX API: {str(e)}")
@@ -293,7 +317,7 @@ class WatsonX(Model):
                     tool_call_entry["type"] = _tool_call_type
         return tool_calls
 
-    def parse_provider_response(
+    def _parse_provider_response(
         self,
         response: Dict[str, Any],
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -334,11 +358,11 @@ class WatsonX(Model):
                 log_warning(f"Error processing tool calls: {e}")
 
         if response.get("usage") is not None:
-            model_response.response_usage = response["usage"]
+            model_response.response_usage = self._get_metrics(response["usage"])
 
         return model_response
 
-    def parse_provider_response_delta(self, response_delta: Dict[str, Any]) -> ModelResponse:
+    def _parse_provider_response_delta(self, response_delta: Dict[str, Any]) -> ModelResponse:
         """
         Parse the OpenAI streaming response into a ModelResponse.
         """
@@ -358,6 +382,24 @@ class WatsonX(Model):
 
         # Add usage metrics if present
         if response_delta.get("usage") is not None:
-            model_response.response_usage = response_delta["usage"]
+            model_response.response_usage = self._get_metrics(response_delta["usage"])
 
         return model_response
+
+    def _get_metrics(self, response_usage: Dict[str, Any]) -> Metrics:
+        """
+        Parse the given WatsonX usage into an Agno Metrics object.
+
+        Args:
+            response_usage: Usage data from WatsonX
+
+        Returns:
+            Metrics: Parsed metrics data
+        """
+        metrics = Metrics()
+
+        metrics.input_tokens = response_usage.get("input_tokens") or 0
+        metrics.output_tokens = response_usage.get("output_tokens") or 0
+        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+
+        return metrics

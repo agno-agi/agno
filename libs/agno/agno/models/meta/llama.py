@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.llama import format_message
@@ -192,54 +193,77 @@ class Llama(Model):
     def invoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> CreateChatCompletionResponse:
+    ) -> ModelResponse:
         """
         Send a chat completion request to the Llama API.
         """
-        return self.get_client().chat.completions.create(
+        assistant_message.metrics.start_timer()
+
+        provider_response = self.get_client().chat.completions.create(
             model=self.id,
             messages=[format_message(m, tool_calls=bool(tools)) for m in messages],  # type: ignore
             **self.get_request_params(tools=tools, response_format=response_format),
         )
+
+        assistant_message.metrics.stop_timer()
+
+        model_response = self._parse_provider_response(provider_response, response_format=response_format)
+        return model_response
 
     async def ainvoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> CreateChatCompletionResponse:
+    ) -> ModelResponse:
         """
         Sends an asynchronous chat completion request to the Llama API.
         """
 
-        return await self.get_async_client().chat.completions.create(
+        assistant_message.metrics.start_timer()
+
+        provider_response = await self.get_async_client().chat.completions.create(
             model=self.id,
             messages=[format_message(m, tool_calls=bool(tools)) for m in messages],  # type: ignore
             **self.get_request_params(tools=tools, response_format=response_format),
         )
 
+        assistant_message.metrics.stop_timer()
+
+        model_response = self._parse_provider_response(provider_response, response_format=response_format)
+        return model_response
+
     def invoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Iterator[CreateChatCompletionResponseStreamChunk]:
+    ) -> Iterator[ModelResponse]:
         """
         Send a streaming chat completion request to the Llama API.
         """
 
         try:
-            yield from self.get_client().chat.completions.create(
+            assistant_message.metrics.start_timer()
+
+            for chunk in self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[format_message(m, tool_calls=bool(tools)) for m in messages],  # type: ignore
                 stream=True,
                 **self.get_request_params(tools=tools, response_format=response_format),
-            )  # type: ignore
+            ):
+                yield self._parse_provider_response_delta(chunk)
+
+            assistant_message.metrics.stop_timer()
+
         except Exception as e:
             log_error(f"Error from Llama API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -247,23 +271,28 @@ class Llama(Model):
     async def ainvoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> AsyncIterator[CreateChatCompletionResponseStreamChunk]:
+    ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming chat completion request to the Llama API.
         """
 
         try:
-            async_stream = await self.get_async_client().chat.completions.create(
+            assistant_message.metrics.start_timer()
+
+            async for chunk in await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[format_message(m, tool_calls=bool(tools)) for m in messages],  # type: ignore
                 stream=True,
                 **self.get_request_params(tools=tools, response_format=response_format),
-            )
-            async for chunk in async_stream:  # type: ignore
-                yield chunk  # type: ignore
+            ):
+                yield self._parse_provider_response_delta(chunk)
+
+            assistant_message.metrics.stop_timer()
+
         except Exception as e:
             log_error(f"Error from Llama API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
@@ -321,7 +350,7 @@ class Llama(Model):
 
         return tool_calls
 
-    def parse_provider_response(self, response: CreateChatCompletionResponse, **kwargs) -> ModelResponse:
+    def _parse_provider_response(self, response: CreateChatCompletionResponse, **kwargs) -> ModelResponse:
         """
         Parse the Llama response into a ModelResponse.
 
@@ -371,11 +400,11 @@ class Llama(Model):
 
         # Add metrics from the metrics list
         if hasattr(response, "metrics"):
-            model_response.response_usage = response.metrics
+            model_response.response_usage = self._get_metrics(response.metrics)
 
         return model_response
 
-    def parse_provider_response_delta(
+    def _parse_provider_response_delta(
         self, response_delta: CreateChatCompletionResponseStreamChunk, **kwargs
     ) -> ModelResponse:
         """
@@ -394,7 +423,7 @@ class Llama(Model):
 
             # Capture metrics event
             if delta.event_type == "metrics" and delta.metrics is not None:
-                model_response.response_usage = delta.metrics
+                model_response.response_usage = self._get_metrics(delta.metrics)
 
             if isinstance(delta.delta, EventDeltaTextDelta):
                 model_response.content = delta.delta.text
@@ -405,19 +434,25 @@ class Llama(Model):
 
         return model_response
 
-    def _add_provider_specific_metrics_to_assistant_message(
-        self, assistant_message: Message, response_usage: Any
-    ) -> None:
-        """Add Llama specific usage metrics fields to the assistant message."""
-        if response_usage is None:
-            return
+    def _get_metrics(self, response_usage: Any) -> Metrics:
+        """
+        Parse the given Llama usage into an Agno Metrics object.
 
-        if not isinstance(response_usage, dict):
-            response_usage = response_usage.to_dict()
+        Args:
+            response_usage: Usage data from Llama
 
-        if input_tokens := response_usage.get("num_prompt_tokens"):
-            assistant_message.metrics.input_tokens = input_tokens
-        if output_tokens := response_usage.get("num_completion_tokens"):
-            assistant_message.metrics.output_tokens = output_tokens
-        if total_tokens := response_usage.get("num_total_tokens"):
-            assistant_message.metrics.total_tokens = total_tokens
+        Returns:
+            Metrics: Parsed metrics data
+        """
+        metrics = Metrics()
+
+        if isinstance(response_usage, dict):
+            metrics.input_tokens = response_usage.get("num_prompt_tokens") or 0
+            metrics.output_tokens = response_usage.get("num_completion_tokens") or 0
+        else:
+            metrics.input_tokens = response_usage.num_prompt_tokens or 0
+            metrics.output_tokens = response_usage.num_completion_tokens or 0
+
+        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+
+        return metrics

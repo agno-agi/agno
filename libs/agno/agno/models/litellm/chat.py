@@ -1,12 +1,13 @@
 import json
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, AsyncIterator, Dict, Iterator, List, Mapping, Optional, Type, Union
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_error, log_warning
 
@@ -140,44 +141,70 @@ class LiteLLM(Model):
     def invoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Mapping[str, Any]:
+    ) -> ModelResponse:
         """Sends a chat completion request to the LiteLLM API."""
         completion_kwargs = self.get_request_params(tools=tools)
         completion_kwargs["messages"] = self._format_messages(messages)
-        return self.get_client().completion(**completion_kwargs)
+
+        assistant_message.metrics.start_timer()
+
+        provider_response = self.get_client().completion(**completion_kwargs)
+
+        assistant_message.metrics.stop_timer()
+
+        model_response = self._parse_provider_response(provider_response, response_format=response_format)
+        return model_response
 
     def invoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Iterator[Mapping[str, Any]]:
+    ) -> Iterator[ModelResponse]:
         """Sends a streaming chat completion request to the LiteLLM API."""
         completion_kwargs = self.get_request_params(tools=tools)
         completion_kwargs["messages"] = self._format_messages(messages)
         completion_kwargs["stream"] = True
         completion_kwargs["stream_options"] = {"include_usage": True}
-        return self.get_client().completion(**completion_kwargs)
+
+        assistant_message.metrics.start_timer()
+
+        for chunk in self.get_client().completion(**completion_kwargs):
+            yield self._parse_provider_response_delta(chunk)
+
+        assistant_message.metrics.stop_timer()
 
     async def ainvoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Mapping[str, Any]:
+    ) -> ModelResponse:
         """Sends an asynchronous chat completion request to the LiteLLM API."""
         completion_kwargs = self.get_request_params(tools=tools)
         completion_kwargs["messages"] = self._format_messages(messages)
-        return await self.get_client().acompletion(**completion_kwargs)
+
+        assistant_message.metrics.start_timer()
+
+        provider_response = await self.get_client().acompletion(**completion_kwargs)
+
+        assistant_message.metrics.stop_timer()
+
+        model_response = self._parse_provider_response(provider_response, response_format=response_format)
+        return model_response
 
     async def ainvoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -189,16 +216,21 @@ class LiteLLM(Model):
         completion_kwargs["stream_options"] = {"include_usage": True}
 
         try:
+            assistant_message.metrics.start_timer()
+
             # litellm.acompletion returns a coroutine that resolves to an async iterator
             # We need to await it first to get the actual async iterator
             async_stream = await self.get_client().acompletion(**completion_kwargs)
             async for chunk in async_stream:
-                yield chunk
+                yield self._parse_provider_response_delta(chunk)
+
+            assistant_message.metrics.stop_timer()
+
         except Exception as e:
             log_error(f"Error in streaming response: {e}")
             raise
 
-    def parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
+    def _parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
         """Parse the provider response."""
         model_response = ModelResponse()
 
@@ -219,11 +251,11 @@ class LiteLLM(Model):
                 )
 
         if response.usage is not None:
-            model_response.response_usage = response.usage
+            model_response.response_usage = self._get_metrics(response.usage)
 
         return model_response
 
-    def parse_provider_response_delta(self, response_delta: Any) -> ModelResponse:
+    def _parse_provider_response_delta(self, response_delta: Any) -> ModelResponse:
         """Parse the provider response delta for streaming responses."""
         model_response = ModelResponse()
 
@@ -262,7 +294,7 @@ class LiteLLM(Model):
 
         # Add usage metrics if present in streaming response
         if hasattr(response_delta, "usage") and response_delta.usage is not None:
-            model_response.response_usage = response_delta.usage
+            model_response.response_usage = self._get_metrics(response_delta.usage)
 
         return model_response
 
@@ -355,3 +387,26 @@ class LiteLLM(Model):
             result.append(tc_copy)
 
         return result
+
+    def _get_metrics(self, response_usage: Any) -> Metrics:
+        """
+        Parse the given LiteLLM usage into an Agno Metrics object.
+
+        Args:
+            response_usage: Usage data from LiteLLM
+
+        Returns:
+            Metrics: Parsed metrics data
+        """
+        metrics = Metrics()
+
+        if isinstance(response_usage, dict):
+            metrics.input_tokens = response_usage.get("prompt_tokens") or 0
+            metrics.output_tokens = response_usage.get("completion_tokens") or 0
+        else:
+            metrics.input_tokens = response_usage.prompt_tokens or 0
+            metrics.output_tokens = response_usage.completion_tokens or 0
+
+        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+
+        return metrics
