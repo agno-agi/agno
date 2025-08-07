@@ -1402,6 +1402,36 @@ class Team:
 
             raise Exception(f"Failed after {num_attempts} attempts.")
 
+    def cancel_run(self, run_id: Optional[str] = None, reason: str = "Run cancelled") -> bool:
+        """Cancel a team run using event-driven cancellation."""
+        target_run_id = run_id or getattr(self, 'run_id', None)
+        if not target_run_id:
+            return False
+        
+        # If this is the current run, trigger cancellation via event system
+        if hasattr(self, 'run_response') and self.run_response and self.run_response.run_id == target_run_id:
+            from agno.run.base import RunStatus
+            from agno.utils.events import create_team_run_response_cancelled_event
+            
+            # Set cancellation status
+            self.run_response.status = RunStatus.cancelled
+            if hasattr(self, 'timer'):
+                self.run_response.end_time = self.timer.time()
+            
+            # Create and store the cancellation event for processing
+            self._cancellation_event = create_team_run_response_cancelled_event(self.run_response, reason)
+        
+        return True
+    
+    def _check_for_cancellation_event(self) -> None:
+        """Check if a cancellation event has been triggered and raise exception."""
+        if hasattr(self, '_cancellation_event') and self._cancellation_event:
+            from agno.exceptions import RunCancelledException
+            reason = getattr(self._cancellation_event, 'reason', 'Team run was cancelled')
+            # Clear the event after processing
+            self._cancellation_event = None
+            raise RunCancelledException(reason)
+
     async def _arun(
         self,
         run_response: TeamRunResponse,
@@ -1420,6 +1450,9 @@ class Team:
         6. Parse any structured outputs
         7. Log the team run
         """
+        
+        # Check for cancellation event before processing
+        self._check_for_cancellation_event()
 
         self.model = cast(Model, self.model)
 
