@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 from pydantic import BaseModel, ConfigDict, Field
 
 from agno.media import Audio, AudioResponse, File, Image, ImageArtifact, Video
-from agno.models.metrics import MessageMetrics
+from agno.models.metrics import Metrics
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 
@@ -100,7 +100,7 @@ class Message(BaseModel):
     # This flag is enabled when a message is fetched from the agent's memory.
     from_history: bool = False
     # Metrics for the message.
-    metrics: MessageMetrics = Field(default_factory=MessageMetrics)
+    metrics: Metrics = Field(default_factory=Metrics)
     # The references added to the message for RAG
     references: Optional[MessageReferences] = None
     # The Unix timestamp the message was created.
@@ -245,7 +245,7 @@ class Message(BaseModel):
             _logger(f"Files added: {len(self.files)}")
 
         metrics_header = " TOOL METRICS " if self.role == "tool" else " METRICS "
-        if metrics and self.metrics is not None and self.metrics != MessageMetrics():
+        if metrics and self.metrics is not None and self.metrics != Metrics():
             _logger(metrics_header, center=True, symbol="*")
 
             # Token metrics

@@ -2,7 +2,7 @@ from dataclasses import replace
 from typing import Iterator
 
 from agno.agent import Agent
-from agno.models.metrics import RunMetrics, SessionMetrics
+from agno.models.metrics import Metrics
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.hackernews import HackerNewsTools
@@ -30,7 +30,7 @@ def test_team_metrics_basic():
 
     # Verify response metrics exist
     assert response.metrics is not None
-    assert isinstance(response.metrics, RunMetrics)
+    assert isinstance(response.metrics, Metrics)
 
     # Check basic metrics
     assert response.metrics.input_tokens is not None
@@ -41,14 +41,14 @@ def test_team_metrics_basic():
     assert len(response.member_responses) == 1
     member_response = response.member_responses[0]
     assert member_response.metrics is not None
-    assert isinstance(member_response.metrics, RunMetrics)
+    assert isinstance(member_response.metrics, Metrics)
     assert member_response.metrics.input_tokens is not None
     assert member_response.metrics.output_tokens is not None
     assert member_response.metrics.total_tokens is not None
 
     # Check session metrics
     assert team.session_metrics is not None
-    assert isinstance(team.session_metrics, SessionMetrics)
+    assert isinstance(team.session_metrics, Metrics)
     assert team.session_metrics.input_tokens is not None
     assert team.session_metrics.output_tokens is not None
     assert team.session_metrics.total_tokens is not None
@@ -82,7 +82,7 @@ def test_team_metrics_streaming():
     # Verify metrics exist after stream completion
     assert team.run_response is not None
     assert team.run_response.metrics is not None
-    assert isinstance(team.run_response.metrics, RunMetrics)
+    assert isinstance(team.run_response.metrics, Metrics)
 
     # Basic metrics checks
     assert team.run_response.metrics.input_tokens is not None

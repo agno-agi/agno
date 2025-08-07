@@ -5,9 +5,7 @@ from fastapi import WebSocket
 from pydantic import BaseModel
 
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
-from agno.models.metrics import RunMetrics
-from agno.run.response import RunResponse
-from agno.run.team import TeamRunResponse
+from agno.models.metrics import Metrics
 from agno.utils.log import log_warning
 
 
@@ -203,7 +201,7 @@ class StepOutput:
     audio: Optional[List[AudioArtifact]] = None
 
     # Metrics for this step execution
-    metrics: Optional[RunMetrics] = None
+    metrics: Optional[Metrics] = None
 
     success: bool = True
     error: Optional[str] = None
@@ -280,7 +278,7 @@ class StepMetrics:
     executor_name: str
 
     # For regular steps: our generic metrics data
-    metrics: Optional[RunMetrics] = None
+    metrics: Optional[Metrics] = None
 
     # For parallel steps: nested step metrics
     parallel_steps: Optional[Dict[str, "StepMetrics"]] = None

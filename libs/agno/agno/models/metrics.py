@@ -5,8 +5,8 @@ from agno.utils.timer import Timer
 
 
 @dataclass
-class SessionMetrics:
-    """Metrics for an Agent, Team or Workflow session. Contains all relevant token-related metrics."""
+class Metrics:
+    """All relevant metrics for a session, run or message."""
 
     # Main token consumption values
     input_tokens: int = 0
@@ -25,6 +25,16 @@ class SessionMetrics:
     # Tokens employed in reasoning
     reasoning_tokens: int = 0
 
+    # Time metrics
+    # Internal timer utility for tracking execution time
+    timer: Optional[Timer] = None
+    # Time from run start to first token generation, in seconds
+    time_to_first_token: Optional[float] = None
+    # Total end-to-end run time, in seconds
+    duration: Optional[float] = None
+    # Time spent on model inference only, in seconds
+    model_duration: Optional[float] = None
+
     # Provider-specific metrics
     provider_metrics: Optional[dict] = None
 
@@ -32,13 +42,17 @@ class SessionMetrics:
     additional_metrics: Optional[dict] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        metrics_dict = asdict(self)
+        # Remove the timer util if present
+        metrics_dict.pop("timer", None)
+        metrics_dict = {
             k: v
-            for k, v in asdict(self).items()
+            for k, v in metrics_dict.items()
             if v is not None and (not isinstance(v, (int, float)) or v != 0) and (not isinstance(v, dict) or len(v) > 0)
         }
+        return metrics_dict
 
-    def __add__(self, other: "SessionMetrics") -> "SessionMetrics":
+    def __add__(self, other: "Metrics") -> "Metrics":
         # Create new instance of the same type as self
         result_class = type(self)
         result = result_class(
@@ -69,67 +83,31 @@ class SessionMetrics:
             if other.additional_metrics:
                 result.additional_metrics.update(other.additional_metrics)
 
+        # Sum durations if both exist
+        if self.duration is not None and other.duration is not None:
+            result.duration = self.duration + other.duration
+        elif self.duration is not None:
+            result.duration = self.duration
+        elif other.duration is not None:
+            result.duration = other.duration
+
+        # Sum model_duration if both exist
+        if self.model_duration is not None and other.model_duration is not None:
+            result.model_duration = self.model_duration + other.model_duration
+        elif self.model_duration is not None:
+            result.model_duration = self.model_duration
+        elif other.model_duration is not None:
+            result.model_duration = other.model_duration
+
+        # Not relevant to add, setting to None to avoid confusion
+        result.time_to_first_token = None
+
         return result
 
-    def __radd__(self, other: "SessionMetrics") -> "SessionMetrics":
+    def __radd__(self, other: "Metrics") -> "Metrics":
         if other == 0:  # Handle sum() starting value
             return self
         return self + other
-
-
-@dataclass
-class RunMetrics(SessionMetrics):
-    """Metrics for a single run. Contains the metrics from the base class plus some related to the run duration specifics."""
-
-    # Internal timer utility for tracking execution time
-    timer: Optional[Timer] = None
-    # Time from run start to first token generation, in seconds
-    time_to_first_token: Optional[float] = None
-    # Total end-to-end run time, in seconds
-    duration: Optional[float] = None
-    # Time spent on model inference only, in seconds
-    model_duration: Optional[float] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        metrics_dict = asdict(self)
-        # Remove the timer util
-        metrics_dict.pop("timer", None)
-        metrics_dict = {
-            k: v
-            for k, v in metrics_dict.items()
-            if v is not None and (not isinstance(v, (int, float)) or v != 0) and (not isinstance(v, dict) or len(v) > 0)
-        }
-        return metrics_dict
-
-    def __add__(self, other: "RunMetrics") -> "RunMetrics":
-        result: RunMetrics = super().__add__(other)  # type: ignore
-
-        # Handle RunMetrics-specific fields if other is also RunMetrics
-        if isinstance(other, RunMetrics):
-            # Sum durations if both exist
-            if self.duration is not None and other.duration is not None:
-                result.duration = self.duration + other.duration
-            elif self.duration is not None:
-                result.duration = self.duration
-            elif other.duration is not None:
-                result.duration = other.duration
-
-            # Sum model_duration if both exist
-            if self.model_duration is not None and other.model_duration is not None:
-                result.model_duration = self.model_duration + other.model_duration
-            elif self.model_duration is not None:
-                result.model_duration = self.model_duration
-            elif other.model_duration is not None:
-                result.model_duration = other.model_duration
-
-            # Not relevant to add, setting to None to avoid confusion
-            result.time_to_first_token = None
-
-        else:
-            # If adding with base Metrics, ignore all the time fields
-            pass
-
-        return result
 
     def start_timer(self):
         if self.timer is None:
@@ -145,10 +123,3 @@ class RunMetrics(SessionMetrics):
     def set_time_to_first_token(self):
         if self.timer is not None:
             self.time_to_first_token = self.timer.elapsed
-
-
-@dataclass
-class MessageMetrics(RunMetrics):
-    """Metrics for a single message."""
-
-    # TODO: placeholder class. Remove if not needed

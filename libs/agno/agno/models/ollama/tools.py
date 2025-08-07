@@ -5,7 +5,7 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Mapping, Optional, 
 
 from pydantic import BaseModel
 
-from agno.models.message import Message, MessageMetrics
+from agno.models.message import Message, Metrics
 from agno.models.ollama.chat import ChatResponse, Ollama
 from agno.models.response import ModelResponse
 from agno.tools.function import Function, FunctionCall
@@ -149,7 +149,7 @@ class OllamaTools(Ollama):
             tool_args=function_call.arguments,
             tool_call_error=not success,
             stop_after_tool_call=function_call.function.stop_after_tool_call,
-            metrics=MessageMetrics(duration=timer.elapsed),
+            metrics=Metrics(duration=timer.elapsed),
         )
 
     def format_function_call_results(self, function_call_results: List[Message], messages: List[Message]) -> None:

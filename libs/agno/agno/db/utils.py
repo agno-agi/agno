@@ -6,7 +6,7 @@ from uuid import UUID
 
 from agno.db.base import SessionType
 from agno.models.message import Message
-from agno.models.metrics import SessionMetrics
+from agno.models.metrics import Metrics
 
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -19,7 +19,7 @@ class CustomJSONEncoder(json.JSONEncoder):
             return obj.isoformat()
         elif isinstance(obj, Message):
             return obj.to_dict()
-        elif isinstance(obj, SessionMetrics):
+        elif isinstance(obj, Metrics):
             return obj.to_dict()
 
         return super().default(obj)
