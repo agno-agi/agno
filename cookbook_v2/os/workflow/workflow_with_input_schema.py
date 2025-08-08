@@ -41,6 +41,7 @@ web_agent = Agent(
 research_team = Team(
     name="Research Team",
     mode="coordinate",
+    model=OpenAIChat(id="gpt-4o-mini"),
     members=[hackernews_agent, web_agent],
     instructions="Research tech topics from Hackernews and the web",
 )
