@@ -315,21 +315,22 @@ class Claude(Model):
 
             if self.mcp_servers is not None:
                 assistant_message.metrics.start_timer()
-                for chunk in self.get_client().beta.messages.stream(
+                with self.get_client().beta.messages.stream(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
                     **request_kwargs,
-                ):
-                    yield self._parse_provider_response_delta(chunk)
-
+                ) as stream:
+                    for chunk in stream:
+                        yield self._parse_provider_response_delta(chunk)
             else:
                 assistant_message.metrics.start_timer()
-                for chunk in self.get_client().messages.stream(
+                with self.get_client().messages.stream(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
                     **request_kwargs,
-                ):
-                    yield self._parse_provider_response_delta(chunk)
+                ) as stream:
+                    for chunk in stream:
+                        yield self._parse_provider_response_delta(chunk)
 
             assistant_message.metrics.stop_timer()
 
@@ -589,6 +590,7 @@ class Claude(Model):
             ModelResponse: Iterator of parsed response data
         """
         model_response = ModelResponse()
+
         if isinstance(response, ContentBlockStartEvent):
             if response.content_block.type == "redacted_thinking":
                 model_response.redacted_thinking = response.content_block.data
@@ -645,8 +647,8 @@ class Claude(Model):
                             DocumentCitation(document_title=citation.document_title, cited_text=citation.cited_text)
                         )
 
-        if hasattr(response, "usage") and response.usage is not None:  # type: ignore
-            model_response.response_usage = self._get_metrics(response.usage)  # type: ignore
+        if hasattr(response, "message") and hasattr(response.message, "usage") and response.message.usage is not None:  # type: ignore
+            model_response.response_usage = self._get_metrics(response.message.usage)  # type: ignore
 
         # Capture the Beta response
         try:
