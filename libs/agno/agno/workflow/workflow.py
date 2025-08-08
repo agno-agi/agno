@@ -66,18 +66,19 @@ from agno.workflow.types import (
     StepInput,
     StepMetrics,
     StepOutput,
+    StepType,
     WebSocketHandler,
     WorkflowExecutionInput,
     WorkflowMetrics,
 )
 
 STEP_TYPE_MAPPING = {
-    Step: "Step",
-    Steps: "Steps",
-    Loop: "Loop",
-    Parallel: "Parallel",
-    Condition: "Condition",
-    Router: "Router",
+    Step: StepType.STEP,
+    Steps: StepType.STEPS,
+    Loop: StepType.LOOP,
+    Parallel: StepType.PARALLEL,
+    Condition: StepType.CONDITION,
+    Router: StepType.ROUTER,
 }
 
 WorkflowSteps = Union[
@@ -1756,7 +1757,7 @@ class Workflow:
                 step_dict = {
                     "name": step.name if hasattr(step, "name") else step.__name__,
                     "description": step.description if hasattr(step, "description") else "User-defined callable step",
-                    "type": step_type,
+                    "type": step_type.value,
                 }
                 steps_dict.append(step_dict)
 
@@ -3456,7 +3457,7 @@ class Workflow:
                     "name": s.name if hasattr(s, "name") else s.__name__,
                     "description": s.description if hasattr(s, "description") else "User-defined callable step",
                     # TODO: The step should have a type field
-                    "type": STEP_TYPE_MAPPING[type(s)],  # type: ignore
+                    "type": STEP_TYPE_MAPPING[type(s)].value,  # type: ignore
                     "agent": s.agent if hasattr(s, "agent") else None,  # type: ignore
                     "team": s.team if hasattr(s, "team") else None,  # type: ignore
                 }

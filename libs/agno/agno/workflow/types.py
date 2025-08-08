@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
 from fastapi import WebSocket
@@ -391,3 +392,12 @@ class WebSocketHandler:
             await self.websocket.send_text(json.dumps(data))
         except Exception as e:
             log_warning(f"Failed to send WebSocket dict: {e}")
+
+
+class StepType(str, Enum):
+    STEP = "Step"
+    STEPS = "Steps"
+    LOOP = "Loop"
+    PARALLEL = "Parallel"
+    CONDITION = "Condition"
+    ROUTER = "Router"
