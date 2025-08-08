@@ -777,7 +777,7 @@ class Agent:
         deque(response_iterator, maxlen=0)
 
         # 6. Calculate session metrics
-        self.set_session_metrics(run_messages)
+        self.set_session_metrics(run_response)
 
         self.run_response = cast(RunResponse, self.run_response)
         self.run_response.status = RunStatus.completed
@@ -863,7 +863,7 @@ class Agent:
         )
 
         # 5. Calculate session metrics
-        self.set_session_metrics(run_messages)
+        self.set_session_metrics(run_response)
 
         self.run_response = cast(RunResponse, self.run_response)
         self.run_response.status = RunStatus.completed
@@ -1181,7 +1181,7 @@ class Agent:
             pass
 
         # 6. Calculate session metrics
-        self.set_session_metrics(run_messages)
+        self.set_session_metrics(run_response)
 
         self.run_response = cast(RunResponse, self.run_response)
         self.run_response.status = RunStatus.completed
@@ -1270,7 +1270,7 @@ class Agent:
             yield event
 
         # 6. Calculate session metrics
-        self.set_session_metrics(run_messages)
+        self.set_session_metrics(run_response)
 
         self.run_response = cast(RunResponse, self.run_response)
         self.run_response.status = RunStatus.completed
@@ -1821,7 +1821,7 @@ class Agent:
         deque(response_iterator, maxlen=0)
 
         # 5. Calculate session metrics
-        self.set_session_metrics(run_messages)
+        self.set_session_metrics(run_response)
 
         self.run_response = cast(RunResponse, self.run_response)
         self.run_response.status = RunStatus.completed
@@ -1898,7 +1898,7 @@ class Agent:
         )
 
         # 5. Calculate session metrics
-        self.set_session_metrics(run_messages)
+        self.set_session_metrics(run_response)
 
         self.run_response = cast(RunResponse, self.run_response)
         self.run_response.status = RunStatus.completed
@@ -2221,7 +2221,7 @@ class Agent:
             pass
 
         # 5. Calculate session metrics
-        self.set_session_metrics(run_messages)
+        self.set_session_metrics(run_response)
 
         self.run_response = cast(RunResponse, self.run_response)
         self.run_response.status = RunStatus.completed
@@ -2303,7 +2303,7 @@ class Agent:
             yield event
 
         # 5. Calculate session metrics
-        self.set_session_metrics(run_messages)
+        self.set_session_metrics(run_response)
 
         self.run_response = cast(RunResponse, self.run_response)
         self.run_response.status = RunStatus.completed
@@ -2738,16 +2738,15 @@ class Agent:
         if self.agent_session is not None:
             self.agent_session.add_run(run=run_response)
 
-    def set_session_metrics(self, run_messages: RunMessages) -> None:
+    def set_session_metrics(self, run_response: RunResponse) -> None:
         """Calculate metrics for the contextual session"""
-
-        # If the session metrics are not set yet, set them to the first run metrics
         if self.session_metrics is None:
-            self.session_metrics = self.calculate_run_metrics(run_messages.messages)
+            self.session_metrics = Metrics()
 
-        # If the session metrics are set, add the new run metrics to them
-        else:
-            self.session_metrics += self.calculate_run_metrics(run_messages.messages)
+        if not run_response.metrics:
+            return
+
+        self.session_metrics += run_response.metrics
 
     def update_memory(
         self,

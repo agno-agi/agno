@@ -30,10 +30,8 @@ class Metrics:
     timer: Optional[Timer] = None
     # Time from run start to first token generation, in seconds
     time_to_first_token: Optional[float] = None
-    # Total end-to-end run time, in seconds
+    # Total run time, in seconds
     duration: Optional[float] = None
-    # Time spent on model inference only, in seconds
-    model_duration: Optional[float] = None
 
     # Provider-specific metrics
     provider_metrics: Optional[dict] = None
@@ -90,14 +88,6 @@ class Metrics:
             result.duration = self.duration
         elif other.duration is not None:
             result.duration = other.duration
-
-        # Sum model_duration if both exist
-        if self.model_duration is not None and other.model_duration is not None:
-            result.model_duration = self.model_duration + other.model_duration
-        elif self.model_duration is not None:
-            result.model_duration = self.model_duration
-        elif other.model_duration is not None:
-            result.model_duration = other.model_duration
 
         # Not relevant to add, setting to None to avoid confusion
         result.time_to_first_token = None

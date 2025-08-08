@@ -553,13 +553,15 @@ class OpenAIChat(Model):
         try:
             assistant_message.metrics.start_timer()
 
-            async for chunk in self.get_async_client().chat.completions.create(
+            async_stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 stream_options={"include_usage": True},
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
-            ):
+            )
+
+            async for chunk in async_stream:
                 yield self._parse_provider_response_delta(chunk)
 
             assistant_message.metrics.stop_timer()
