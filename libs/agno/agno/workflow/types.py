@@ -64,8 +64,6 @@ class StepInput:
 
     message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None
 
-    parent_step_type: Optional[str] = None
-
     previous_step_content: Optional[Any] = None
     previous_step_outputs: Optional[Dict[str, "StepOutput"]] = None
 
@@ -172,7 +170,6 @@ class StepInput:
             "message": message_dict,
             "previous_step_outputs": previous_steps_dict,
             "previous_step_content": previous_step_content_str,
-            "parent_step_type": self.parent_step_type,
             "additional_data": self.additional_data,
             "images": [img.to_dict() for img in self.images] if self.images else None,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,
@@ -188,7 +185,6 @@ class StepOutput:
     step_id: Optional[str] = None
     executor_type: Optional[str] = None
     executor_name: Optional[str] = None
-    step_type: Optional[str] = None
     # Primary output
     content: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, Any]] = None
 
@@ -231,7 +227,6 @@ class StepOutput:
             "executor_name": self.executor_name,
             "step_run_id": self.step_run_id,
             "images": [img.to_dict() for img in self.images] if self.images else None,
-            "step_type": self.step_type,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,
             "audio": [aud.to_dict() for aud in self.audio] if self.audio else None,
             "metrics": self.metrics.to_dict() if hasattr(self.metrics, "to_dict") else self.metrics,
@@ -264,7 +259,6 @@ class StepOutput:
             content=data.get("content"),
             step_run_id=data.get("step_run_id"),
             images=images,
-            step_type=data.get("step_type"),
             videos=videos,
             audio=audio,
             metrics=data.get("metrics"),

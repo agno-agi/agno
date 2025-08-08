@@ -1,5 +1,3 @@
-
-
 from typing import List
 
 from agno.agent.agent import Agent
@@ -9,8 +7,8 @@ from agno.db.postgres import PostgresDb
 from agno.os import AgentOS
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
-from agno.workflow.router import Router
 from agno.workflow.loop import Loop
+from agno.workflow.router import Router
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow

@@ -206,8 +206,6 @@ class Parallel:
             """Execute a single step and preserve its original index"""
             index, step = step_with_index
             try:
-                if not step_input.parent_step_type:
-                    step_input.parent_step_type = "Parallel"
                 result = step.execute(
                     step_input,
                     session_id=session_id,
@@ -322,8 +320,6 @@ class Parallel:
                     # Parallel is a child step - all sub-steps get the same parent number: 1.1, 1.1, 1.1
                     sub_step_index = step_index
 
-                if not step_input.parent_step_type:
-                    step_input.parent_step_type = "Parallel"
                 # All workflow step types have execute_stream() method
                 for event in step.execute_stream(  # type: ignore[union-attr]
                     step_input,
@@ -446,8 +442,6 @@ class Parallel:
             """Execute a single step asynchronously and preserve its original index"""
             index, step = step_with_index
             try:
-                if not step_input.parent_step_type:
-                    step_input.parent_step_type = "Parallel"
                 result = await step.aexecute(
                     step_input,
                     session_id=session_id,
@@ -564,8 +558,6 @@ class Parallel:
                     sub_step_index = step_index
 
                 # All workflow step types have aexecute_stream() method
-                if not step_input.parent_step_type:
-                    step_input.parent_step_type = "Parallel"
                 async for event in step.aexecute_stream(
                     step_input,
                     session_id=session_id,

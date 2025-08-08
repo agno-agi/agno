@@ -129,8 +129,6 @@ class Steps:
         # Track outputs and pass data between steps - following Condition/Router pattern
         all_results: List[StepOutput] = []
         current_step_input = step_input
-        if not current_step_input.parent_step_type:
-            current_step_input.parent_step_type = "Steps"
         steps_step_outputs = {}
 
         try:
@@ -218,8 +216,6 @@ class Steps:
         # Track outputs and pass data between steps - following Condition/Router pattern
         all_results = []
         current_step_input = step_input
-        if not current_step_input.parent_step_type:
-            current_step_input.parent_step_type = "Steps"
         steps_step_outputs = {}
 
         try:
@@ -325,8 +321,6 @@ class Steps:
         # Track outputs and pass data between steps - following Condition/Router pattern
         all_results: List[StepOutput] = []
         current_step_input = step_input
-        if not current_step_input.parent_step_type:
-            current_step_input.parent_step_type = "Steps"
         steps_step_outputs = {}
 
         try:
@@ -413,8 +407,6 @@ class Steps:
         # Track outputs and pass data between steps - following Condition/Router pattern
         all_results = []
         current_step_input = step_input
-        if not current_step_input.parent_step_type:
-            current_step_input.parent_step_type = "Steps"
         steps_step_outputs = {}
 
         try:

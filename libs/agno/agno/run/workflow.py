@@ -174,7 +174,7 @@ class StepCompletedEvent(BaseWorkflowRunResponseEvent):
     step_id: Optional[str] = None
     step_index: Optional[Union[int, tuple]] = None
     step_type: Optional[str] = None
-    
+
     content: Optional[Any] = None
     content_type: str = "str"
 
