@@ -728,9 +728,9 @@ class Agent:
         1. Reason about the task if reasoning is enabled
         2. Generate a response from the Model (includes running function calls)
         3. Update the RunResponse with the model response
-        4. Add RunResponse to Agent Session
-        5. Update Agent Memory
-        6. Calculate session metrics
+        4. Update Agent Memory
+        5. Calculate session metrics
+        6. Add RunResponse to Agent Session
         7. Save session to storage
         8. Optional: Save output to file if save_response_to_file is set
         """
@@ -757,22 +757,13 @@ class Agent:
         # 3. Update the RunResponse with the model response
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
-        # Set the run duration
-        if run_response.metrics:
-            run_response.metrics.stop_timer()
-
-        # 4. Add the RunResponse to Agent Session
-        self.add_run_to_session(
-            run_response=run_response,
-        )
-
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
             return self._handle_agent_run_paused(
                 run_response=run_response, run_messages=run_messages, session_id=session_id, user_id=user_id
             )
 
-        # 5. Update Agent Memory
+        # 4. Update Agent Memory
         response_iterator = self.update_memory(
             run_messages=run_messages,
             session_id=session_id,
@@ -781,7 +772,7 @@ class Agent:
         # Consume the response iterator to ensure the memory is updated before the run is completed
         deque(response_iterator, maxlen=0)
 
-        # 6. Calculate session metrics
+        # 5. Calculate session metrics
         self.set_session_metrics(run_response)
 
         self.run_response = cast(RunResponse, self.run_response)
@@ -789,6 +780,13 @@ class Agent:
 
         # Convert the response to the structured format if needed
         self._convert_response_to_structured_format(run_response)
+
+        # Stop the timer for the Run duration
+        if run_response.metrics:
+            run_response.metrics.stop_timer()
+
+        # 6. Add the RunResponse to Agent Session
+        self.add_run_to_session(run_response=run_response)
 
         # 7. Save session to memory
         self.save_session(user_id=user_id, session_id=session_id)
@@ -819,11 +817,11 @@ class Agent:
         Steps:
         1. Reason about the task if reasoning is enabled
         2. Generate a response from the Model (includes running function calls)
-        3. Add the RunResponse to the Agent Session
-        4. Update Agent Memory
-        5. Calculate session metrics
-        6. Save session to storage
-        7. Optional: Save output to file if save_response_to_file is set
+        3. Update Agent Memory
+        4. Calculate session metrics
+        5. Save session to storage
+        6. Optional: Save output to file if save_response_to_file is set
+        7. Add the RunResponse to the Agent Session
         """
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
@@ -848,15 +846,6 @@ class Agent:
             run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
         )
 
-        # Set the run duration
-        if run_response.metrics:
-            run_response.metrics.stop_timer()
-
-        # 3. Add RunResponse to Agent Session
-        self.add_run_to_session(
-            run_response=run_response,
-        )
-
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
             yield from self._handle_agent_run_paused_stream(
@@ -864,14 +853,14 @@ class Agent:
             )
             return
 
-        # 4. Update Agent Memory
+        # 3. Update Agent Memory
         yield from self.update_memory(
             run_messages=run_messages,
             session_id=session_id,
             user_id=user_id,
         )
 
-        # 5. Calculate session metrics
+        # 4. Calculate session metrics
         self.set_session_metrics(run_response)
 
         self.run_response = cast(RunResponse, self.run_response)
@@ -882,11 +871,18 @@ class Agent:
                 create_run_response_completed_event(from_run_response=run_response), run_response, workflow_context
             )
 
-        # 6. Save session to storage
-        self.save_session(user_id=user_id, session_id=session_id)
+        # Set the run duration
+        if run_response.metrics:
+            run_response.metrics.stop_timer()
 
-        # 7. Optional: Save output to file if save_response_to_file is set
+        # 5. Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
+
+        # 6. Add RunResponse to Agent Session
+        self.add_run_to_session(run_response=run_response)
+
+        # 7. Save session to storage
+        self.save_session(user_id=user_id, session_id=session_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1146,9 +1142,9 @@ class Agent:
         1. Reason about the task if reasoning is enabled
         2. Generate a response from the Model (includes running function calls)
         3. Update the RunResponse with the model response
-        4. Add RunResponse to Agent Session
-        5. Update Agent Memory
-        6. Calculate session metrics
+        4. Update Agent Memory
+        5. Calculate session metrics
+        6. Add RunResponse to Agent Session
         7. Save session to storage
         8. Optional: Save output to file if save_response_to_file is set
         """
@@ -1174,22 +1170,13 @@ class Agent:
         # 3. Update the RunResponse with the model response
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
-        # Set the run duration
-        if run_response.metrics:
-            run_response.metrics.stop_timer()
-
-        # 4. Add RunResponse to Agent Session
-        self.add_run_to_session(
-            run_response=run_response,
-        )
-
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
             return self._handle_agent_run_paused(
                 run_response=run_response, run_messages=run_messages, session_id=session_id, user_id=user_id
             )
 
-        # 5. Update Agent Memory
+        # 4. Update Agent Memory
         async for _ in self._aupdate_memory(
             run_messages=run_messages,
             session_id=session_id,
@@ -1197,7 +1184,7 @@ class Agent:
         ):
             pass
 
-        # 6. Calculate session metrics
+        # 5. Calculate session metrics
         self.set_session_metrics(run_response)
 
         self.run_response = cast(RunResponse, self.run_response)
@@ -1206,11 +1193,18 @@ class Agent:
         # Convert the response to the structured format if needed
         self._convert_response_to_structured_format(run_response)
 
-        # 7. Save session to storage
-        self.save_session(user_id=user_id, session_id=session_id)
+        # Set the run duration
+        if run_response.metrics:
+            run_response.metrics.stop_timer()
 
-        # 8. Optional: Save output to file if save_response_to_file is set
+        # 6. Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
+
+        # 7. Add RunResponse to Agent Session
+        self.add_run_to_session(run_response=run_response)
+
+        # 8. Save session to storage
+        self.save_session(user_id=user_id, session_id=session_id)
 
         # Log Agent Run
         await self._alog_agent_run(user_id=user_id, session_id=session_id)
@@ -1238,8 +1232,8 @@ class Agent:
         3. Add the RunResponse to the Agent Session
         4. Update Agent Memory
         5. Calculate session metrics
-        6. Save session to storage
-        7. Optional: Save output to file if save_response_to_file is set
+        6. Add RunResponse to Agent Session
+        7. Save session to storage
         """
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
         # Start the Run by yielding a RunStarted event
@@ -1265,15 +1259,6 @@ class Agent:
         ):
             yield event
 
-        # Set the run duration
-        if run_response.metrics:
-            run_response.metrics.stop_timer()
-
-        # 3. Add RunResponse to Agent Session
-        self.add_run_to_session(
-            run_response=run_response,
-        )
-
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
             for item in self._handle_agent_run_paused_stream(
@@ -1282,7 +1267,7 @@ class Agent:
                 yield item
             return
 
-        # 5. Update Agent Memory
+        # 3. Update Agent Memory
         async for event in self._aupdate_memory(
             run_messages=run_messages,
             session_id=session_id,
@@ -1290,7 +1275,7 @@ class Agent:
         ):
             yield event
 
-        # 6. Calculate session metrics
+        # 4. Calculate session metrics
         self.set_session_metrics(run_response)
 
         self.run_response = cast(RunResponse, self.run_response)
@@ -1301,11 +1286,18 @@ class Agent:
                 create_run_response_completed_event(from_run_response=run_response), run_response, workflow_context
             )
 
-        # 6. Save session to storage
-        self.save_session(user_id=user_id, session_id=session_id)
+        # Set the run duration
+        if run_response.metrics:
+            run_response.metrics.stop_timer()
 
-        # 8. Optional: Save output to file if save_response_to_file is set
+        # 5. Optional: Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
+
+        # 6. Add RunResponse to Agent Session
+        self.add_run_to_session(run_response=run_response)
+
+        # 7. Save session to storage
+        self.save_session(user_id=user_id, session_id=session_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1801,11 +1793,11 @@ class Agent:
         Steps:
         1. Handle any updated tools
         2. Generate a response from the Model
-        3. Add the run to memory
-        4. Update Agent Memory
-        5. Calculate session metrics
-        6. Save session to storage
-        7. Save output to file if save_response_to_file is set
+        3. Update Agent Memory
+        4. Calculate session metrics
+        5. Save output to file if save_response_to_file is set
+        6. Add RunResponse to Agent Session
+        7. Save session to storage
         """
         self.model = cast(Model, self.model)
 
@@ -1825,18 +1817,13 @@ class Agent:
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
-        # 3. Add the run to memory
-        self.add_run_to_session(
-            run_response=run_response,
-        )
-
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
             return self._handle_agent_run_paused(
                 run_response=run_response, run_messages=run_messages, session_id=session_id, user_id=user_id
             )
 
-        # 4. Update Agent Memory
+        # 3. Update Agent Memory
         response_iterator = self.update_memory(
             run_messages=run_messages,
             session_id=session_id,
@@ -1845,7 +1832,7 @@ class Agent:
         # Consume the response iterator to ensure the memory is updated before the run is completed
         deque(response_iterator, maxlen=0)
 
-        # 5. Calculate session metrics
+        # 4. Calculate session metrics
         self.set_session_metrics(run_response)
 
         self.run_response = cast(RunResponse, self.run_response)
@@ -1854,14 +1841,21 @@ class Agent:
         # Convert the response to the structured format if needed
         self._convert_response_to_structured_format(run_response)
 
-        # 6. Save session to storage
-        self.save_session(user_id=user_id, session_id=session_id)
+        # Set the run duration
+        if run_response.metrics:
+            run_response.metrics.stop_timer()
 
-        # 7. Save output to file if save_response_to_file is set
+        # 5. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
 
         # Log Agent Run
         self._log_agent_run(user_id=user_id, session_id=session_id)
+
+        # 6. Add the run to memory
+        self.add_run_to_session(run_response=run_response)
+
+        # 7. Save session to storage
+        self.save_session(user_id=user_id, session_id=session_id)
 
         run_response.status = RunStatus.running
 
@@ -1881,10 +1875,10 @@ class Agent:
         Steps:
         1. Handle any updated tools
         2. Generate a response from the Model
-        3. Add the run to memory
-        4. Update Agent Memory
-        5. Calculate session metrics
-        6. Save output to file if save_response_to_file is set
+        3. Update Agent Memory
+        4. Calculate session metrics
+        5. Save output to file if save_response_to_file is set
+        6. Add RunResponse to Agent Session
         7. Save session to storage
         """
         # Start the Run by yielding a RunContinued event
@@ -1903,11 +1897,6 @@ class Agent:
         ):
             yield event
 
-        # 3. Add the run to memory
-        self.add_run_to_session(
-            run_response=run_response,
-        )
-
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
             yield from self._handle_agent_run_paused_stream(
@@ -1915,14 +1904,14 @@ class Agent:
             )
             return
 
-        # 4. Update Agent Memory
+        # 3. Update Agent Memory
         yield from self.update_memory(
             run_messages=run_messages,
             session_id=session_id,
             user_id=user_id,
         )
 
-        # 5. Calculate session metrics
+        # 4. Calculate session metrics
         self.set_session_metrics(run_response)
 
         self.run_response = cast(RunResponse, self.run_response)
@@ -1931,11 +1920,18 @@ class Agent:
         if stream_intermediate_steps:
             yield self._handle_event(create_run_response_completed_event(run_response), run_response)
 
-        # 6. Save session to storage
-        self.save_session(user_id=user_id, session_id=session_id)
+        # Set the run duration
+        if run_response.metrics:
+            run_response.metrics.stop_timer()
 
-        # 7. Save output to file if save_response_to_file is set
+        # 5. Save output to file if save_response_to_file is set
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
+
+        # 6. Add the run to memory
+        self.add_run_to_session(run_response=run_response)
+
+        # 7. Save session to storage
+        self.save_session(user_id=user_id, session_id=session_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -2774,6 +2770,7 @@ class Agent:
             return
 
         self.session_metrics += run_response.metrics
+        self.session_metrics.time_to_first_token = None
 
     def update_memory(
         self,
