@@ -7,13 +7,7 @@ from typing_extensions import TypedDict
 from agno.document import Document
 from agno.document.reader.pdf_reader import PDFImageReader, PDFReader
 from agno.knowledge.agent import AgentKnowledge
-from agno.utils.log import log_error, log_error, log_info, logger
-
-
-class PDFConfig(TypedDict, total=False):
-    path: str
-    password: Optional[str]
-    metadata: Optional[Dict[str, Any]]
+from agno.utils.log import log_error, log_info, logger
 
 
 class PDFConfig(TypedDict, total=False):

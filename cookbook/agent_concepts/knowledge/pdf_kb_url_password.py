@@ -1,19 +1,14 @@
 from agno.agent import Agent
-from agno.knowledge.pdf import PDFKnowledgeBase
-from agno.utils.media import download_file
+from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-download_file(
-    "https://agno-public.s3.us-east-1.amazonaws.com/recipes/ThaiRecipes_protected.pdf",
-    "ThaiRecipes_protected.pdf",
-)
 
 # Create a knowledge base with simplified password handling
-knowledge_base = PDFKnowledgeBase(
-    path=[
+knowledge_base = PDFUrlKnowledgeBase(
+    urls=[
         {
-            "path": "ThaiRecipes_protected.pdf",
+            "url": "https://agno-public.s3.us-east-1.amazonaws.com/recipes/ThaiRecipes_protected.pdf",
             "password": "ThaiRecipes",
         }
     ],

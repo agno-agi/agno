@@ -27,7 +27,7 @@ class PDFUrlKnowledgeBase(AgentKnowledge):
                     pdf_password = None
 
                 if self._is_valid_url(url):  # type: ignore
-                    documents = self.reader.read(url=url, password=url_password)  # type: ignore
+                    documents = self.reader.read(url=url, password=pdf_password)  # type: ignore
                     if config:
                         for doc in documents:
                             log_info(f"Adding metadata {config} to document from URL: {url}")
@@ -62,7 +62,7 @@ class PDFUrlKnowledgeBase(AgentKnowledge):
                     pdf_password = None
 
                 if self._is_valid_url(url):  # type: ignore
-                    documents = await self.reader.async_read(url=url, password=url_password)  # type: ignore
+                    documents = await self.reader.async_read(url=url, password=pdf_password)  # type: ignore
                     if config:
                         for doc in documents:
                             log_info(f"Adding metadata {config} to document from URL: {url}")

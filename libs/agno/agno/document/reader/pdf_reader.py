@@ -178,7 +178,6 @@ class BasePDFReader(Reader):
         page_start_numbering_format: Optional[str] = None,
         page_end_numbering_format: Optional[str] = None,
         password: Optional[str] = None,
-
         **kwargs,
     ):
         if page_start_numbering_format is None:
@@ -220,7 +219,7 @@ class BasePDFReader(Reader):
         except Exception as e:
             log_error(f"Error decrypting PDF {doc_name}: {e}")
             return False
-          
+
     def _create_documents(self, pdf_content: List[str], doc_name: str, use_uuid_for_id: bool, page_number_shift):
         if self.split_on_pages:
             shift = page_number_shift if page_number_shift is not None else 1
@@ -325,7 +324,7 @@ class PDFReader(BasePDFReader):
             return []
 
         # Handle PDF decryption if needed
-        if not self._decrypt_pdf(doc_reader, doc_name, password):
+        if not self._decrypt_pdf(pdf_reader, doc_name, password):
             return []
 
         # Read and chunk.
@@ -349,7 +348,7 @@ class PDFReader(BasePDFReader):
             return []
 
         # Handle PDF decryption if needed
-        if not self._decrypt_pdf(doc_reader, doc_name, password):
+        if not self._decrypt_pdf(pdf_reader, doc_name, password):
             return []
 
         # Read and chunk.
@@ -378,7 +377,7 @@ class PDFUrlReader(BasePDFReader):
         pdf_reader = DocumentReader(BytesIO(response.content))
 
         # Handle PDF decryption if needed
-        if not self._decrypt_pdf(doc_reader, doc_name, password):
+        if not self._decrypt_pdf(pdf_reader, doc_name, password):
             return []
 
         # Read and chunk.
@@ -402,7 +401,7 @@ class PDFUrlReader(BasePDFReader):
         pdf_reader = DocumentReader(BytesIO(response.content))
 
         # Handle PDF decryption if needed
-        if not self._decrypt_pdf(doc_reader, doc_name, password):
+        if not self._decrypt_pdf(pdf_reader, doc_name, password):
             return []
 
         # Read and chunk.
@@ -428,7 +427,7 @@ class PDFImageReader(BasePDFReader):
         pdf_reader = DocumentReader(pdf)
 
         # Handle PDF decryption if needed
-        if not self._decrypt_pdf(doc_reader, doc_name, password):
+        if not self._decrypt_pdf(pdf_reader, doc_name, password):
             return []
 
         # Read and chunk.
@@ -450,7 +449,7 @@ class PDFImageReader(BasePDFReader):
         pdf_reader = DocumentReader(pdf)
 
         # Handle PDF decryption if needed
-        if not self._decrypt_pdf(doc_reader, doc_name, password):
+        if not self._decrypt_pdf(pdf_reader, doc_name, password):
             return []
 
         # Read and chunk.
@@ -480,7 +479,7 @@ class PDFUrlImageReader(BasePDFReader):
         pdf_reader = DocumentReader(BytesIO(response.content))
 
         # Handle PDF decryption if needed
-        if not self._decrypt_pdf(doc_reader, doc_name, password):
+        if not self._decrypt_pdf(pdf_reader, doc_name, password):
             return []
 
         # Read and chunk.
@@ -505,7 +504,7 @@ class PDFUrlImageReader(BasePDFReader):
         pdf_reader = DocumentReader(BytesIO(response.content))
 
         # Handle PDF decryption if needed
-        if not self._decrypt_pdf(doc_reader, doc_name, password):
+        if not self._decrypt_pdf(pdf_reader, doc_name, password):
             return []
 
         # Read and chunk.
