@@ -10,7 +10,6 @@ from typing import AsyncIterator, Deque, List, Optional, Set, Tuple, Union
 from ag_ui.core import (
     BaseEvent,
     EventType,
-    RunFinishedEvent,
     StepFinishedEvent,
     StepStartedEvent,
     TextMessageContentEvent,
@@ -216,8 +215,6 @@ def _create_completion_events(
     event_buffer: EventBuffer,
     message_started: bool,
     message_id: str,
-    thread_id: str,
-    run_id: str,
 ) -> List[BaseEvent]:
     """Create events for run completion."""
     events_to_emit = []
@@ -262,9 +259,6 @@ def _create_completion_events(
                 tool_call_id=tool.tool_call_id,
             )
             events_to_emit.append(end_event)
-
-    run_finished_event = RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)
-    events_to_emit.append(run_finished_event)
 
     return events_to_emit
 
@@ -320,7 +314,7 @@ def _emit_event_logic(event: BaseEvent, event_buffer: EventBuffer) -> List[BaseE
 
 
 def stream_agno_response_as_agui_events(
-    response_stream: Iterator[Union[RunResponseEvent, TeamRunResponseEvent]], thread_id: str, run_id: str
+    response_stream: Iterator[Union[RunResponseEvent, TeamRunResponseEvent]]
 ) -> Iterator[BaseEvent]:
     """Map the Agno response stream to AG-UI format, handling event ordering constraints."""
     message_id = str(uuid.uuid4())
@@ -335,8 +329,12 @@ def stream_agno_response_as_agui_events(
             or chunk.event == RunEvent.run_paused
         ):
             completion_events = _create_completion_events(
-                chunk, event_buffer, message_started, message_id, thread_id, run_id
+                chunk, event_buffer, message_started, message_id
             )
+
+            # Reset to false to ensure next team member emits a new TextMessageStartEvent
+            message_started = False
+
             for event in completion_events:
                 events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
                 for emit_event in events_to_emit:
@@ -356,8 +354,6 @@ def stream_agno_response_as_agui_events(
 # Async version - thin wrapper
 async def async_stream_agno_response_as_agui_events(
     response_stream: AsyncIterator[Union[RunResponseEvent, TeamRunResponseEvent]],
-    thread_id: str,
-    run_id: str,
 ) -> AsyncIterator[BaseEvent]:
     """Map the Agno response stream to AG-UI format, handling event ordering constraints."""
     message_id = str(uuid.uuid4())
@@ -367,13 +363,17 @@ async def async_stream_agno_response_as_agui_events(
     async for chunk in response_stream:
         # Handle the lifecycle end event
         if (
-            chunk.event == RunEvent.run_completed
-            or chunk.event == TeamRunEvent.run_completed
+            chunk.event == TeamRunEvent.run_completed
+            or chunk.event == RunEvent.run_completed
             or chunk.event == RunEvent.run_paused
         ):
             completion_events = _create_completion_events(
-                chunk, event_buffer, message_started, message_id, thread_id, run_id
+                chunk, event_buffer, message_started, message_id
             )
+
+            # Reset to false to ensure next team member emits a new TextMessageStartEvent
+            message_started = False
+
             for event in completion_events:
                 events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
                 for emit_event in events_to_emit:
