@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Optional, Type, Union
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
@@ -9,6 +9,7 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
+from agno.run.response import RunResponse
 from agno.utils.log import log_debug, log_error
 from agno.utils.models.mistral import format_messages
 
@@ -170,6 +171,7 @@ class MistralChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> ModelResponse:
         """
         Send a chat completion request to the Mistral model.
@@ -182,6 +184,9 @@ class MistralChat(Model):
                 and isinstance(response_format, type)
                 and issubclass(response_format, BaseModel)
             ):
+                if run_response and run_response.metrics:
+                    run_response.metrics.set_time_to_first_token()
+
                 assistant_message.metrics.start_timer()
 
                 response = self.get_client().chat.complete(
@@ -191,6 +196,9 @@ class MistralChat(Model):
                     **self.get_request_params(tools=tools, tool_choice=tool_choice),
                 )
             else:
+                if run_response and run_response.metrics:
+                    run_response.metrics.set_time_to_first_token()
+
                 assistant_message.metrics.start_timer()
                 response = self.get_client().chat.complete(
                     model=self.id,
@@ -218,14 +226,19 @@ class MistralChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> Iterator[ModelResponse]:
         """
         Stream the response from the Mistral model.
         """
         mistral_messages = format_messages(messages)
-        try:
-            assistant_message.metrics.start_timer()
 
+        if run_response and run_response.metrics:
+            run_response.metrics.set_time_to_first_token()
+
+        assistant_message.metrics.start_timer()
+
+        try:
             for chunk in self.get_client().chat.stream(
                 model=self.id,
                 messages=mistral_messages,
@@ -249,6 +262,7 @@ class MistralChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> ModelResponse:
         """
         Send an asynchronous chat completion request to the Mistral API.
@@ -261,6 +275,8 @@ class MistralChat(Model):
                 and isinstance(response_format, type)
                 and issubclass(response_format, BaseModel)
             ):
+                if run_response and run_response.metrics:
+                    run_response.metrics.set_time_to_first_token()
                 assistant_message.metrics.start_timer()
                 response = await self.get_client().chat.complete_async(
                     model=self.id,
@@ -269,6 +285,8 @@ class MistralChat(Model):
                     **self.get_request_params(tools=tools, tool_choice=tool_choice),
                 )
             else:
+                if run_response and run_response.metrics:
+                    run_response.metrics.set_time_to_first_token()
                 assistant_message.metrics.start_timer()
                 response = await self.get_client().chat.complete_async(
                     model=self.id,
@@ -295,12 +313,16 @@ class MistralChat(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Stream an asynchronous response from the Mistral API.
         """
         mistral_messages = format_messages(messages)
         try:
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
             assistant_message.metrics.start_timer()
 
             async for chunk in await self.get_client().chat.stream_async(

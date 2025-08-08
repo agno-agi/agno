@@ -10,6 +10,7 @@ from agno.models.base import MessageData, Model
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
+from agno.run.response import RunResponse
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
@@ -324,6 +325,7 @@ class AwsBedrock(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> ModelResponse:
         """
         Invoke the Bedrock API.
@@ -345,6 +347,9 @@ class AwsBedrock(Model):
             if self.request_params:
                 log_debug(f"Calling {self.provider} with request parameters: {self.request_params}", log_level=2)
                 body.update(**self.request_params)
+
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
 
             assistant_message.metrics.start_timer()
             response = self.get_client().converse(modelId=self.id, messages=formatted_messages, **body)
@@ -368,6 +373,7 @@ class AwsBedrock(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> Iterator[ModelResponse]:
         """
         Invoke the Bedrock API with streaming.
@@ -388,6 +394,9 @@ class AwsBedrock(Model):
 
             if self.request_params:
                 body.update(**self.request_params)
+
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
 
             assistant_message.metrics.start_timer()
 
@@ -412,6 +421,7 @@ class AwsBedrock(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> ModelResponse:
         """
         Async invoke the Bedrock API.
@@ -434,10 +444,14 @@ class AwsBedrock(Model):
                 log_debug(f"Calling {self.provider} with request parameters: {self.request_params}", log_level=2)
                 body.update(**self.request_params)
 
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
             assistant_message.metrics.start_timer()
 
             async with self.get_async_client() as client:
                 response = await client.converse(modelId=self.id, messages=formatted_messages, **body)
+
             assistant_message.metrics.stop_timer()
 
             model_response = self._parse_provider_response(response, response_format=response_format)
@@ -458,6 +472,7 @@ class AwsBedrock(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Async invoke the Bedrock API with streaming.
@@ -478,6 +493,9 @@ class AwsBedrock(Model):
 
             if self.request_params:
                 body.update(**self.request_params)
+
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
 
             assistant_message.metrics.start_timer()
 

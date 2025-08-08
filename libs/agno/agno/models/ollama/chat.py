@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.metrics import Metrics
-from agno.models.response import ModelResponse
+from agno.models.response import ModelResponse, RunResponse
 from agno.utils.log import log_debug, log_warning
 
 try:
@@ -187,11 +187,15 @@ class Ollama(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> ModelResponse:
         """
         Send a chat request to the Ollama API.
         """
         request_kwargs = self._prepare_request_kwargs_for_invoke(response_format=response_format, tools=tools)
+
+        if run_response and run_response.metrics:
+            run_response.metrics.set_time_to_first_token()
 
         assistant_message.metrics.start_timer()
 
@@ -213,11 +217,15 @@ class Ollama(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> ModelResponse:
         """
         Sends an asynchronous chat request to the Ollama API.
         """
         request_kwargs = self._prepare_request_kwargs_for_invoke(response_format=response_format, tools=tools)
+
+        if run_response and run_response.metrics:
+            run_response.metrics.set_time_to_first_token()
 
         assistant_message.metrics.start_timer()
 
@@ -239,10 +247,14 @@ class Ollama(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> Iterator[ModelResponse]:
         """
         Sends a streaming chat request to the Ollama API.
         """
+        if run_response and run_response.metrics:
+            run_response.metrics.set_time_to_first_token()
+
         assistant_message.metrics.start_timer()
 
         for chunk in self.get_client().chat(
@@ -262,10 +274,14 @@ class Ollama(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming chat completion request to the Ollama API.
         """
+        if run_response and run_response.metrics:
+            run_response.metrics.set_time_to_first_token()
+
         assistant_message.metrics.start_timer()
 
         async for chunk in await self.get_async_client().chat(

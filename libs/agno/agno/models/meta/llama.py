@@ -11,6 +11,7 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
+from agno.run.response import RunResponse
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.llama import format_message
 
@@ -197,6 +198,7 @@ class Llama(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> ModelResponse:
         """
         Send a chat completion request to the Llama API.
@@ -221,10 +223,13 @@ class Llama(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> ModelResponse:
         """
         Sends an asynchronous chat completion request to the Llama API.
         """
+        if run_response and run_response.metrics:
+            run_response.metrics.set_time_to_first_token()
 
         assistant_message.metrics.start_timer()
 
@@ -246,10 +251,13 @@ class Llama(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> Iterator[ModelResponse]:
         """
         Send a streaming chat completion request to the Llama API.
         """
+        if run_response and run_response.metrics:
+            run_response.metrics.set_time_to_first_token()
 
         try:
             assistant_message.metrics.start_timer()
@@ -275,14 +283,17 @@ class Llama(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming chat completion request to the Llama API.
         """
+        if run_response and run_response.metrics:
+            run_response.metrics.set_time_to_first_token()
+
+        assistant_message.metrics.start_timer()
 
         try:
-            assistant_message.metrics.start_timer()
-
             async for chunk in await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[format_message(m, tool_calls=bool(tools)) for m in messages],  # type: ignore

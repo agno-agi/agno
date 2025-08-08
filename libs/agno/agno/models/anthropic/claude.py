@@ -11,6 +11,7 @@ from agno.models.base import Model
 from agno.models.message import Citations, DocumentCitation, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
+from agno.run.response import RunResponse
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import MCPServerConfiguration, format_messages
 
@@ -233,11 +234,15 @@ class Claude(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> ModelResponse:
         """
         Send a request to the Anthropic API to generate a response.
         """
         try:
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
@@ -285,6 +290,7 @@ class Claude(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> Any:
         """
         Stream a response from the Anthropic API.
@@ -304,6 +310,9 @@ class Claude(Model):
         request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
         try:
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
             if self.mcp_servers is not None:
                 assistant_message.metrics.start_timer()
                 for chunk in self.get_client().beta.messages.stream(
@@ -346,11 +355,15 @@ class Claude(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> ModelResponse:
         """
         Send an asynchronous request to the Anthropic API to generate a response.
         """
         try:
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 
@@ -398,6 +411,7 @@ class Claude(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Stream an asynchronous response from the Anthropic API.
@@ -411,6 +425,9 @@ class Claude(Model):
             APIStatusError: For other API-related errors
         """
         try:
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
             chat_messages, system_message = format_messages(messages)
             request_kwargs = self._prepare_request_kwargs(system_message, tools)
 

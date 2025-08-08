@@ -9,6 +9,7 @@ from agno.models.base import MessageData, Model
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
+from agno.run.response import RunResponse
 from agno.utils.log import log_debug, log_error
 from agno.utils.models.cohere import format_messages
 
@@ -153,6 +154,7 @@ class Cohere(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> ModelResponse:
         """
         Invoke a non-streamed chat response from the Cohere API.
@@ -160,6 +162,9 @@ class Cohere(Model):
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
             assistant_message.metrics.start_timer()
             provider_response = self.get_client().chat(
                 model=self.id, messages=format_messages(messages), **request_kwargs
@@ -181,6 +186,7 @@ class Cohere(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> Iterator[ModelResponse]:
         """
         Invoke a streamed chat response from the Cohere API.
@@ -188,6 +194,9 @@ class Cohere(Model):
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
             assistant_message.metrics.start_timer()
             for response in self.get_client().chat_stream(
                 model=self.id,
@@ -208,6 +217,7 @@ class Cohere(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> ModelResponse:
         """
         Asynchronously invoke a non-streamed chat response from the Cohere API.
@@ -215,6 +225,9 @@ class Cohere(Model):
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
             assistant_message.metrics.start_timer()
             provider_response = await self.get_async_client().chat(
                 model=self.id,
@@ -238,6 +251,7 @@ class Cohere(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Asynchronously invoke a streamed chat response from the Cohere API.
@@ -245,6 +259,9 @@ class Cohere(Model):
         request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
             assistant_message.metrics.start_timer()
             async for response in self.get_async_client().chat_stream(
                 model=self.id,
