@@ -20,7 +20,7 @@ class TeamSession:
     team_session_id: Optional[str] = None
 
     # ID of the team that this session is associated with
-    team_id: Optional[str] = None
+    id: Optional[str] = None
     # ID of the user interacting with this team
     user_id: Optional[str] = None
     # ID of the workflow that this session is associated with
@@ -76,7 +76,7 @@ class TeamSession:
 
         return cls(
             session_id=data.get("session_id"),  # type: ignore
-            team_id=data.get("team_id"),
+            id=data.get("team_id"),  # Database still uses team_id
             team_session_id=data.get("team_session_id"),
             user_id=data.get("user_id"),
             workflow_id=data.get("workflow_id"),

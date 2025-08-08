@@ -397,7 +397,7 @@ class GcsJsonDb(BaseDb):
     def _matches_session_key(self, existing_session: Dict[str, Any], session: Session) -> bool:
         """Check if existing session matches the key for the session type."""
         if isinstance(session, AgentSession):
-            return existing_session.get("id", existing_session.get("agent_id")) == session.id
+            return existing_session.get("agent_id") == session.agent_id
         elif isinstance(session, TeamSession):
             return existing_session.get("team_id") == session.team_id
         elif isinstance(session, WorkflowSession):

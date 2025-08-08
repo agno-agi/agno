@@ -24,7 +24,7 @@ agent_storage = PostgresStorage(
 
 file_agent = Agent(
     name="File Upload Agent",
-            id="file-upload-agent",
+    id="file-upload-agent",
     role="Answer questions about the uploaded files",
     model=Claude(id="claude-3-7-sonnet-latest"),
     storage=agent_storage,

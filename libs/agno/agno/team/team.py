@@ -1000,7 +1000,7 @@ class Team:
             run_id=run_id,
             session_id=session_id,
             team_session_id=self.team_session_id,
-            team_id=self.id,
+            id=self.id,
             team_name=self.name,
         )
 
@@ -1390,7 +1390,7 @@ class Team:
             run_id=run_id,
             session_id=session_id,
             team_session_id=self.team_session_id,
-            team_id=self.id,
+            id=self.id,
             team_name=self.name,
         )
 
@@ -1989,7 +1989,7 @@ class Team:
                         self.memory_manager.create_user_memories,
                         message=user_message_str,
                         user_id=user_id,
-                        team_id=self.id,
+                        id=self.id,
                     )
                 )
 
@@ -4652,7 +4652,7 @@ class Team:
         rr = TeamRunResponse(
             run_id=self.run_id,
             session_id=session_id,
-            team_id=self.id,
+            id=self.id,
             team_name=self.name,
             team_session_id=self.team_session_id,
             content=content,
@@ -5277,7 +5277,7 @@ class Team:
                 last_n=self.num_history_runs,
                 skip_role=self.system_message_role,
                 # Only filter by team_id if this is part of a team
-                team_id=self.id if self.team_session_id is not None else None,
+                id=self.id if self.team_session_id is not None else None,
             )
 
             if len(history) > 0:
@@ -5758,7 +5758,7 @@ class Team:
             session_id=session_id,
             last_n=member_agent.num_history_runs or self.num_history_runs,
             skip_role=self.system_message_role,
-            id=member_agent.id if isinstance(member_agent, Agent) else None,
+            id=member_agent.id,
             team_id=member_agent.id if hasattr(member_agent, "id") and not isinstance(member_agent, Agent) else None,
             member_runs=True,
         )
@@ -6791,7 +6791,7 @@ class Team:
         log_debug(f"Creating new TeamSession: {session_id}")
         self.team_session = TeamSession(
             session_id=session_id,
-            team_id=self.id,
+            id=self.id,
             user_id=user_id,
             team_session_id=self.team_session_id,
             team_data=self._get_team_data(),
@@ -7043,7 +7043,7 @@ class Team:
             return self.team_session.get_messages_from_last_n_runs(
                 session_id=_session_id,
                 # Only filter by team_id if this is part of a team
-                team_id=self.id if self.team_session_id is not None else None,
+                id=self.id if self.team_session_id is not None else None,
             )
         else:
             return []
@@ -7718,7 +7718,7 @@ class Team:
 
         return TeamSession(
             session_id=session_id,
-            team_id=self.id,
+            id=self.id,
             user_id=user_id,
             team_session_id=self.team_session_id,
             team_data=self._get_team_data(),

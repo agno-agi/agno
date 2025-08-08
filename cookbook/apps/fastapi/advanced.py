@@ -104,11 +104,7 @@ research_team = Team(
     model=OpenAIChat(id="gpt-4o"),
     mode="coordinate",
     id="research-team",
-        A comprehensive research report with clear sections and data-driven insights.
-    """),
-    instructions=[
-        "You are the lead researcher of a research team! 🔍",
-    ],
+    instructions="You are the lead researcher of a research team! 🔍",
     memory=memory,
     enable_user_memories=True,
     add_datetime_to_context=True,
@@ -140,9 +136,9 @@ app = fastapi_app.get_app()
 if __name__ == "__main__":
     """
     Now you can reach your agents/teams with the following URLs:
-    - http://localhost:8001/runs?id=simple-agent
-- http://localhost:8001/runs?id=web-agent
-- http://localhost:8001/runs?id=finance-agent
+    - http://localhost:8001/runs?agent_id=simple-agent
+    - http://localhost:8001/runs?agent_id=web-agent
+    - http://localhost:8001/runs?agent_id=finance-agent
     - http://localhost:8001/runs?team_id=research-team
     """
     fastapi_app.serve(app="advanced:app", port=8001, reload=True)
