@@ -1,7 +1,7 @@
 import pytest
 
 from agno.agent import Agent, RunResponse
-from agno.db.sqlite import SqliteStorage
+from agno.db.sqlite import SqliteDb
 from agno.models.vercel import v0
 
 

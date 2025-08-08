@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
 from agno.models.message import Citations, Message
+from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
 from agno.run.base import BaseRunResponseEvent, RunResponseMetaData, RunStatus
 from agno.run.response import RunEvent, RunResponse, RunResponseEvent, run_response_event_from_dict
@@ -235,7 +236,7 @@ class TeamRunResponse:
     content_type: str = "str"
     thinking: Optional[str] = None
     messages: Optional[List[Message]] = None
-    metrics: Optional[Dict[str, Any]] = None
+    metrics: Optional[Metrics] = None
     model: Optional[str] = None
     model_provider: Optional[str] = None
 

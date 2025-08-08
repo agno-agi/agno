@@ -23,6 +23,7 @@ def test_image_input_bytes():
         images=[Image(content=image_bytes, format="jpeg")],
     )
 
+    assert response.content is not None
     assert "bridge" in response.content.lower()
 
 
@@ -43,6 +44,7 @@ async def test_async_image_input_bytes():
         images=[Image(content=image_bytes, format="jpeg")],
     )
 
+    assert response.content is not None
     assert "bridge" in response.content.lower()
 
 
@@ -54,22 +56,13 @@ async def test_async_image_input_stream():
     image_path = Path(__file__).parent.parent.parent.joinpath("sample_image.jpg")
     image_bytes = image_path.read_bytes()
 
-    response_stream = await agent.arun(
+    async for response in agent.arun(
         "Describe this image in detail.", images=[Image(content=image_bytes, format="jpeg")], stream=True
-    )
+    ):
+        assert response.content is not None
 
-    responses = []
-    async for chunk in response_stream:
-        responses.append(chunk)
-        assert chunk.content is not None
-
-    assert len(responses) > 0
-
-    full_content = ""
-    for r in responses:
-        full_content += r.content or ""
-
-    assert "bridge" in full_content.lower()
+    assert response.content is not None
+    assert "bridge" in response.content.lower()
 
 
 @pytest.mark.asyncio
@@ -86,4 +79,4 @@ async def test_async_multiple_images():
     )
 
     assert response.content is not None
-    assert len(response.content) > 0
+    assert "bridge" in response.content.lower()

@@ -248,39 +248,43 @@ class Message(BaseModel):
         if metrics and self.metrics is not None and self.metrics != Metrics():
             _logger(metrics_header, center=True, symbol="*")
 
-            # Combine token metrics into a single line
+            # Token metrics
             token_metrics = []
-            if self.metrics.input_tokens:
+            if self.metrics.input_tokens and self.metrics.input_tokens > 0:
                 token_metrics.append(f"input={self.metrics.input_tokens}")
-            if self.metrics.output_tokens:
+            if self.metrics.output_tokens and self.metrics.output_tokens > 0:
                 token_metrics.append(f"output={self.metrics.output_tokens}")
-            if self.metrics.total_tokens:
+            if self.metrics.total_tokens and self.metrics.total_tokens > 0:
                 token_metrics.append(f"total={self.metrics.total_tokens}")
-            if self.metrics.cached_tokens:
-                token_metrics.append(f"cached={self.metrics.cached_tokens}")
-            if self.metrics.cache_write_tokens:
+            if self.metrics.cache_read_tokens and self.metrics.cache_read_tokens > 0:
+                token_metrics.append(f"cached={self.metrics.cache_read_tokens}")
+            if self.metrics.cache_write_tokens and self.metrics.cache_write_tokens > 0:
                 token_metrics.append(f"cache_write_tokens={self.metrics.cache_write_tokens}")
-            if self.metrics.reasoning_tokens:
+            if self.metrics.reasoning_tokens and self.metrics.reasoning_tokens > 0:
                 token_metrics.append(f"reasoning={self.metrics.reasoning_tokens}")
-            if self.metrics.audio_tokens:
-                token_metrics.append(f"audio={self.metrics.audio_tokens}")
+            if self.metrics.audio_total_tokens and self.metrics.audio_total_tokens > 0:
+                token_metrics.append(f"audio={self.metrics.audio_total_tokens}")
             if token_metrics:
                 _logger(f"* Tokens:                      {', '.join(token_metrics)}")
-            if self.metrics.prompt_tokens_details:
-                _logger(f"* Prompt tokens details:       {self.metrics.prompt_tokens_details}")
-            if self.metrics.completion_tokens_details:
-                _logger(f"* Completion tokens details:   {self.metrics.completion_tokens_details}")
-            if self.metrics.time is not None:
-                _logger(f"* Time:                        {self.metrics.time:.4f}s")
-            if self.metrics.output_tokens and self.metrics.time:
-                _logger(f"* Tokens per second:           {self.metrics.output_tokens / self.metrics.time:.4f} tokens/s")
-            if self.metrics.time_to_first_token is not None:
+
+            # Time related metrics
+            if self.metrics.duration is not None and self.metrics.duration > 0:
+                _logger(f"* Duration:                    {self.metrics.duration:.4f}s")
+            if self.metrics.output_tokens and self.metrics.duration and self.metrics.duration > 0:
+                _logger(
+                    f"* Tokens per second:           {self.metrics.output_tokens / self.metrics.duration:.4f} tokens/s"
+                )
+            if self.metrics.time_to_first_token is not None and self.metrics.time_to_first_token > 0:
                 _logger(f"* Time to first token:         {self.metrics.time_to_first_token:.4f}s")
+
+            # Non-generic metrics
+            if self.metrics.provider_metrics:
+                _logger(f"* Provider metrics:            {self.metrics.provider_metrics}")
             if self.metrics.additional_metrics:
                 _logger(f"* Additional metrics:          {self.metrics.additional_metrics}")
+
             _logger(metrics_header, center=True, symbol="*")
 
     def content_is_valid(self) -> bool:
         """Check if the message content is valid."""
-
         return self.content is not None and len(self.content) > 0

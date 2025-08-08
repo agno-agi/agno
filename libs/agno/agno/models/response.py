@@ -106,7 +106,7 @@ class ModelResponse:
 
     citations: Optional[Citations] = None
 
-    response_usage: Optional[Any] = None
+    response_usage: Optional[Metrics] = None
 
     created_at: int = int(time())
 

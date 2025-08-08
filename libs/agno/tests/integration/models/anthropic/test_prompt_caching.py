@@ -32,14 +32,14 @@ def _assert_cache_metrics(response: RunResponse, expect_cache_write: bool = Fals
     if response.metrics is None:
         pytest.fail("Response metrics is None")
 
-    cache_write_tokens = response.metrics.get("cache_write_tokens", [0])
-    cache_read_tokens = response.metrics.get("cached_tokens", [0])
+    cache_write_tokens = response.metrics.cache_write_tokens
+    cache_read_tokens = response.metrics.cache_read_tokens
 
     if expect_cache_write:
-        assert sum(cache_write_tokens) > 0, "Expected cache write tokens but found none"
+        assert cache_write_tokens > 0, "Expected cache write tokens but found none"
 
     if expect_cache_read:
-        assert sum(cache_read_tokens) > 0, "Expected cache read tokens but found none"
+        assert cache_read_tokens > 0, "Expected cache read tokens but found none"
 
 
 def test_system_message_caching_basic():
@@ -84,15 +84,13 @@ def test_usage_metrics_parsing():
 
     mock_response.usage = mock_usage
 
-    model_response = claude.parse_provider_response(mock_response)
+    model_response = claude._parse_provider_response(mock_response)
 
-    expected_usage = {
-        "input_tokens": 100,
-        "output_tokens": 50,
-        "cache_write_tokens": 80,
-        "cached_tokens": 20,
-    }
-    assert model_response.response_usage == expected_usage
+    assert model_response.response_usage is not None
+    assert model_response.response_usage.input_tokens == 100
+    assert model_response.response_usage.output_tokens == 50
+    assert model_response.response_usage.cache_write_tokens == 80
+    assert model_response.response_usage.cache_read_tokens == 20
 
 
 def test_prompt_caching_with_agent():
@@ -114,8 +112,8 @@ def test_prompt_caching_with_agent():
     if response.metrics is None:
         pytest.fail("Response metrics is None")
 
-    cache_creation_tokens = response.metrics.get("cache_write_tokens", [0])[0]
-    cache_hit_tokens = response.metrics.get("cached_tokens", [0])[0]
+    cache_creation_tokens = response.metrics.cache_write_tokens
+    cache_hit_tokens = response.metrics.cache_read_tokens
 
     print(f"Cache creation tokens: {cache_creation_tokens}")
     print(f"Cache hit tokens: {cache_hit_tokens}")
@@ -135,7 +133,7 @@ def test_prompt_caching_with_agent():
         response2 = agent.run("How would you implement monitoring for this architecture?")
         if response2.metrics is None:
             pytest.fail("Response2 metrics is None")
-        cache_read_tokens = response2.metrics.get("cached_tokens", [0])[0]
+        cache_read_tokens = response2.metrics.cache_read_tokens
         assert cache_read_tokens > 0, f"Expected cache read tokens but found {cache_read_tokens}"
     else:
         print(f"✅ Cache was used with {cache_hit_tokens} tokens from previous run")
@@ -155,5 +153,6 @@ async def test_async_prompt_caching():
     response = await agent.arun("Explain REST API design patterns")
 
     assert response.content is not None
+    assert response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]

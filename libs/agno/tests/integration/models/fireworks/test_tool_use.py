@@ -20,7 +20,8 @@ def test_tool_use():
     response = agent.run("What is the current price of TSLA?")
 
     # Verify tool usage
-    assert any(msg.tool_calls for msg in response.messages)
+    assert response.messages is not None
+    assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)
     assert response.content is not None
     assert "TSLA" in response.content
 
@@ -61,7 +62,8 @@ async def test_async_tool_use():
     response = await agent.arun("What is the current price of TSLA?")
 
     # Verify tool usage
-    assert any(msg.tool_calls for msg in response.messages if msg.role == "assistant")
+    assert response.messages is not None
+    assert any(msg.tool_calls for msg in response.messages if msg.role == "assistant" and msg.tool_calls is not None)
     assert response.content is not None
     assert "TSLA" in response.content
 
@@ -104,6 +106,7 @@ def test_parallel_tool_calls():
     response = agent.run("What is the current price of TSLA and AAPL?")
 
     # Verify tool usage
+    assert response.messages is not None
     tool_calls = []
     for msg in response.messages:
         if msg.tool_calls:
@@ -124,6 +127,7 @@ def test_multiple_tool_calls():
     response = agent.run("What is the current price of TSLA and what is the latest news about it?")
 
     # Verify tool usage
+    assert response.messages is not None
     tool_calls = []
     for msg in response.messages:
         if msg.tool_calls:
@@ -150,7 +154,8 @@ def test_tool_call_custom_tool_no_parameters():
     response = agent.run("What is the weather in Tokyo?")
 
     # Verify tool usage
-    assert any(msg.tool_calls for msg in response.messages)
+    assert response.messages is not None
+    assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)
     assert response.content is not None
     assert "70" in response.content
 
@@ -178,7 +183,8 @@ def test_tool_call_custom_tool_optional_parameters():
     response = agent.run("What is the weather in Paris?")
 
     # Verify tool usage
-    assert any(msg.tool_calls for msg in response.messages)
+    assert response.messages is not None
+    assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)
     assert response.content is not None
     assert "70" in response.content
 

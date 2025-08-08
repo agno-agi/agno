@@ -62,7 +62,7 @@ def display_tool_calls(tool_calls_container, tools: List[ToolExecution]):
                         execution_time = (
                             metrics["time"]
                             if isinstance(metrics, dict)
-                            else metrics.time
+                            else metrics.duration
                         )
                         if execution_time is not None:
                             execution_time_str = f"{execution_time:.2f}s"
@@ -87,7 +87,7 @@ def display_tool_calls(tool_calls_container, tools: List[ToolExecution]):
                         st.markdown("**Results:**")
                         try:
                             st.json(content)
-                        except Exception as e:
+                        except Exception:
                             st.markdown(content)
 
     except Exception as e:

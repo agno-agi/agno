@@ -96,7 +96,7 @@ class AgentSession:
         messages = run.messages
         for m in messages:
             if m.metrics is not None:
-                m.metrics.timer = None
+                m.metrics.durationr = None
 
         if not self.runs:
             self.runs = []

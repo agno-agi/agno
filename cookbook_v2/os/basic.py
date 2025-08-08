@@ -17,7 +17,6 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 basic_agent = Agent(
     name="Basic Agent",
     agent_id="basic-agent",
-    model=OpenAIChat(id="gpt-4o"),
     db=db,
     enable_session_summaries=True,
     enable_user_memories=True,

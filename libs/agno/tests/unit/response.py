@@ -1,12 +1,12 @@
 import json
 
-from agno.models.message import Message, MessageMetrics
+from agno.models.message import Message, Metrics
 from agno.run.response import RunResponse
 
 
 def test_timer_serialization():
     message_1 = Message(role="user", content="Hello, world!")
-    message_2 = Message(role="assistant", metrics=MessageMetrics())
+    message_2 = Message(role="assistant", metrics=Metrics())
 
     message_2.metrics.start_timer()
     message_2.metrics.stop_timer()

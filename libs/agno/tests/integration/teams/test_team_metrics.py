@@ -4,7 +4,6 @@ from typing import Iterator
 from agno.agent import Agent
 from agno.models.metrics import Metrics
 from agno.models.openai import OpenAIChat
-from agno.storage.sqlite import SqliteStorage
 from agno.team.team import Team
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.yfinance import YFinanceTools
@@ -31,21 +30,21 @@ def test_team_metrics_basic():
 
     # Verify response metrics exist
     assert response.metrics is not None
-    assert isinstance(response.metrics, dict)
+    assert isinstance(response.metrics, Metrics)
 
     # Check basic metrics
-    assert response.metrics["input_tokens"] is not None
-    assert response.metrics["output_tokens"] is not None
-    assert response.metrics["total_tokens"] is not None
+    assert response.metrics.input_tokens is not None
+    assert response.metrics.output_tokens is not None
+    assert response.metrics.total_tokens is not None
 
     # Check member response metrics
     assert len(response.member_responses) == 1
     member_response = response.member_responses[0]
     assert member_response.metrics is not None
-    assert isinstance(member_response.metrics, dict)
-    assert member_response.metrics["input_tokens"] is not None
-    assert member_response.metrics["output_tokens"] is not None
-    assert member_response.metrics["total_tokens"] is not None
+    assert isinstance(member_response.metrics, Metrics)
+    assert member_response.metrics.input_tokens is not None
+    assert member_response.metrics.output_tokens is not None
+    assert member_response.metrics.total_tokens is not None
 
     # Check session metrics
     assert team.session_metrics is not None
@@ -81,13 +80,14 @@ def test_team_metrics_streaming():
     assert len(responses) > 0
 
     # Verify metrics exist after stream completion
+    assert team.run_response is not None
     assert team.run_response.metrics is not None
-    assert isinstance(team.run_response.metrics, dict)
+    assert isinstance(team.run_response.metrics, Metrics)
 
     # Basic metrics checks
-    assert team.run_response.metrics["input_tokens"] is not None
-    assert team.run_response.metrics["output_tokens"] is not None
-    assert team.run_response.metrics["total_tokens"] is not None
+    assert team.run_response.metrics.input_tokens is not None
+    assert team.run_response.metrics.output_tokens is not None
+    assert team.run_response.metrics.total_tokens is not None
 
 
 def test_team_metrics_multiple_runs():
@@ -124,14 +124,13 @@ def test_team_metrics_multiple_runs():
 def test_member_metrics_aggregation():
     """Test the metrics of all members' are aggregated correctly."""
 
-    memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
-    memory = Memory(db=memory_db)
+    db = SqliteDb(table_name="memory", db_file="tmp/memory.db")
 
     stock_agent = Agent(
         session_id="session-1",
         name="Stock Agent",
         model=OpenAIChat("gpt-4o"),
-        memory=memory,
+        db=db,
         role="Get stock information",
         tools=[YFinanceTools(stock_price=True)],
     )

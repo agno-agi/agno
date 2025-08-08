@@ -8,9 +8,10 @@ from typing_extensions import Literal
 
 from agno.exceptions import ModelProviderError
 from agno.media import File
-from agno.models.base import MessageData, Model, _add_usage_metrics_to_assistant_message
+from agno.models.base import MessageData, Model
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.response import ModelResponse
+from agno.run.response import RunResponse
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.openai_responses import images_to_message
 from agno.utils.models.schema_utils import get_response_schema_for_provider
@@ -404,10 +405,12 @@ class OpenAIResponses(Model):
     def invoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Response:
+        run_response: Optional[RunResponse] = None,
+    ) -> ModelResponse:
         """
         Send a request to the OpenAI Responses API.
         """
@@ -416,11 +419,23 @@ class OpenAIResponses(Model):
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            return self.get_client().responses.create(
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
+            assistant_message.metrics.start_timer()
+
+            provider_response = self.get_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
                 **request_params,
             )
+
+            assistant_message.metrics.stop_timer()
+
+            model_response = self._parse_provider_response(provider_response, response_format=response_format)
+
+            return model_response
+
         except RateLimitError as exc:
             log_error(f"Rate limit error from OpenAI API: {exc}")
             error_message = exc.response.json().get("error", {})
@@ -459,10 +474,12 @@ class OpenAIResponses(Model):
     async def ainvoke(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Response:
+        run_response: Optional[RunResponse] = None,
+    ) -> ModelResponse:
         """
         Sends an asynchronous request to the OpenAI Responses API.
         """
@@ -471,11 +488,23 @@ class OpenAIResponses(Model):
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            return await self.get_async_client().responses.create(
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
+            assistant_message.metrics.start_timer()
+
+            provider_response = await self.get_async_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
                 **request_params,
             )
+
+            assistant_message.metrics.stop_timer()
+
+            model_response = self._parse_provider_response(provider_response, response_format=response_format)
+
+            return model_response
+
         except RateLimitError as exc:
             log_error(f"Rate limit error from OpenAI API: {exc}")
             error_message = exc.response.json().get("error", {})
@@ -514,10 +543,12 @@ class OpenAIResponses(Model):
     def invoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Iterator[ResponseStreamEvent]:
+        run_response: Optional[RunResponse] = None,
+    ) -> Iterator[ModelResponse]:
         """
         Send a streaming request to the OpenAI Responses API.
         """
@@ -526,12 +557,21 @@ class OpenAIResponses(Model):
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
 
-            yield from self.get_client().responses.create(
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
+            assistant_message.metrics.start_timer()
+
+            for chunk in self.get_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
                 stream=True,
                 **request_params,
-            )  # type: ignore
+            ):
+                yield self._parse_provider_response_delta(chunk)
+
+            assistant_message.metrics.stop_timer()
+
         except RateLimitError as exc:
             log_error(f"Rate limit error from OpenAI API: {exc}")
             error_message = exc.response.json().get("error", {})
@@ -570,10 +610,12 @@ class OpenAIResponses(Model):
     async def ainvoke_stream(
         self,
         messages: List[Message],
+        assistant_message: Message,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> AsyncIterator[ResponseStreamEvent]:
+        run_response: Optional[RunResponse] = None,
+    ) -> AsyncIterator[ModelResponse]:
         """
         Sends an asynchronous streaming request to the OpenAI Responses API.
         """
@@ -581,6 +623,12 @@ class OpenAIResponses(Model):
             request_params = self.get_request_params(
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
+
+            if run_response and run_response.metrics:
+                run_response.metrics.set_time_to_first_token()
+
+            assistant_message.metrics.start_timer()
+
             async_stream = await self.get_async_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
@@ -588,7 +636,10 @@ class OpenAIResponses(Model):
                 **request_params,
             )
             async for chunk in async_stream:  # type: ignore
-                yield chunk
+                yield self._parse_provider_response_delta(chunk)
+
+            assistant_message.metrics.stop_timer()
+
         except RateLimitError as exc:
             log_error(f"Rate limit error from OpenAI API: {exc}")
             error_message = exc.response.json().get("error", {})
@@ -738,9 +789,6 @@ class OpenAIResponses(Model):
                 if stream_data.response_provider_data is None:
                     stream_data.response_provider_data = {}
                 stream_data.response_provider_data["response_id"] = stream_event.response.id
-            # Update metrics
-            if not assistant_message.metrics.time_to_first_token:
-                assistant_message.metrics.set_time_to_first_token()
         elif stream_event.type == "response.output_text.annotation.added":
             model_response = ModelResponse()
             if stream_data.response_citations is None:
@@ -808,7 +856,7 @@ class OpenAIResponses(Model):
             if stream_event.response.usage is not None:
                 model_response.response_usage = stream_event.response.usage
 
-            _add_usage_metrics_to_assistant_message(
+            self._add_metrics_to_assistant_message(
                 assistant_message=assistant_message,
                 response_usage=model_response.response_usage,
             )
@@ -823,12 +871,18 @@ class OpenAIResponses(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> Iterator[ModelResponse]:
         """Process the synchronous response stream."""
         tool_use: Dict[str, Any] = {}
 
         for stream_event in self.invoke_stream(
-            messages=messages, tools=tools, response_format=response_format, tool_choice=tool_choice
+            messages=messages,
+            assistant_message=assistant_message,
+            tools=tools,
+            response_format=response_format,
+            tool_choice=tool_choice,
+            run_response=run_response,
         ):
             model_response, tool_use = self._process_stream_response(
                 stream_event=stream_event,
@@ -848,12 +902,18 @@ class OpenAIResponses(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> AsyncIterator[ModelResponse]:
         """Process the asynchronous response stream."""
         tool_use: Dict[str, Any] = {}
 
         async for stream_event in self.ainvoke_stream(
-            messages=messages, tools=tools, response_format=response_format, tool_choice=tool_choice
+            messages=messages,
+            assistant_message=assistant_message,
+            tools=tools,
+            response_format=response_format,
+            tool_choice=tool_choice,
+            run_response=run_response,
         ):
             model_response, tool_use = self._process_stream_response(
                 stream_event=stream_event,

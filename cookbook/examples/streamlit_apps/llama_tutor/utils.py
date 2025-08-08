@@ -59,7 +59,7 @@ def display_tool_calls(tool_calls_container, tools: List[ToolExecution]):
                 execution_time_str = "N/A"
                 try:
                     if metrics:
-                        execution_time = metrics.time
+                        execution_time = metrics.duration
                         if execution_time is not None:
                             execution_time_str = f"{execution_time:.2f}s"
                 except Exception as e:
@@ -83,7 +83,7 @@ def display_tool_calls(tool_calls_container, tools: List[ToolExecution]):
                         st.markdown("**Results:**")
                         try:
                             st.json(content)
-                        except Exception as e:
+                        except Exception:
                             st.markdown(content)
 
     except Exception as e:
@@ -212,14 +212,14 @@ def about_widget() -> None:
     st.sidebar.markdown(
         """
         Llama Tutor is an educational AI assistant that delivers personalized learning experiences tailored to your education level.
-        
+
         Features:
         - 📚 Personalized education at various academic levels
         - 🔍 Real-time information retrieval
         - 📊 In-depth analysis and explanations
         - 🧠 Interactive learning with quizzes and follow-up questions
         - 💾 Save lessons for future reference
-        
+
         Built with:
         - 🦙 Llama 3.3 70B from Meta
         - 🚀 Agno framework
@@ -238,7 +238,7 @@ CUSTOM_CSS = """
         margin-bottom: 0 !important;
         text-align: center;
     }
-    
+
     .subtitle {
         font-size: 1.2rem !important;
         color: #555 !important;
@@ -246,35 +246,35 @@ CUSTOM_CSS = """
         text-align: center;
         margin-bottom: 2rem !important;
     }
-    
+
     /* Dark mode support */
     @media (prefers-color-scheme: dark) {
         .main-title {
             color: #4DA3FF !important;
         }
-        
+
         .subtitle {
             color: #CCC !important;
         }
     }
-    
+
     /* Tool Call Styling */
     .stExpander {
         border-radius: 8px !important;
         border: 1px solid rgba(49, 51, 63, 0.2) !important;
         margin-bottom: 0.5rem !important;
     }
-    
+
     .stExpander summary {
         font-weight: 600 !important;
         padding: 0.5rem 1rem !important;
     }
-    
+
     /* Sidebar Styling */
     .css-1544g2n {
         padding-top: 2rem !important;
     }
-    
+
     /* Education Level Display */
     .education-level-display {
         padding: 8px;
@@ -285,7 +285,7 @@ CUSTOM_CSS = """
         border: 1px solid #e9ecef;
         font-size: 0.9rem;
     }
-    
+
     /* Dark mode support for education level */
     @media (prefers-color-scheme: dark) {
         .education-level-display {

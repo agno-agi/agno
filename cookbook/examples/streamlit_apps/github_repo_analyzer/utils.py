@@ -113,7 +113,7 @@ def display_tool_calls(tool_calls_container, tools: List[ToolExecution]):
                 execution_time_str = "N/A"
                 try:
                     if metrics is not None and hasattr(metrics, "time"):
-                        execution_time = metrics.time
+                        execution_time = metrics.duration
                         if execution_time is not None:
                             execution_time_str = f"{execution_time:.4f}s"
                 except Exception as e:

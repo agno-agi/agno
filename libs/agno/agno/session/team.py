@@ -95,7 +95,7 @@ class TeamSession:
         messages = run.messages
         for m in messages:
             if m.metrics is not None:
-                m.metrics.timer = None
+                m.metrics.duration = None
 
         if not self.runs:
             self.runs = []

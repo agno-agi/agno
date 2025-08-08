@@ -158,7 +158,7 @@ class Parallel:
             total_metrics.input_tokens == 0
             and total_metrics.output_tokens == 0
             and total_metrics.total_tokens == 0
-            and total_metrics.time is None
+            and total_metrics.duration is None
         ):
             return None
 

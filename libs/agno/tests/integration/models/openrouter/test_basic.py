@@ -2,7 +2,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse
-from agno.db.sqlite import SqliteStorage
+from agno.db.sqlite import SqliteDb
 from agno.models.openrouter import OpenRouter
 
 

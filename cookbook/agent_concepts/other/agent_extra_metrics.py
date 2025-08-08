@@ -25,9 +25,9 @@ agent.print_response(
     audio=[Audio(content=wav_data, format="wav")],
 )
 # Showing input audio, output audio and total audio tokens metrics
-print(f"Input audio tokens: {agent.run_response.metrics['input_audio_tokens']}")
-print(f"Output audio tokens: {agent.run_response.metrics['output_audio_tokens']}")
-print(f"Audio tokens: {agent.run_response.metrics['audio_tokens']}")
+print(f"Input audio tokens: {agent.run_response.metrics['audio_input_tokens']}")
+print(f"Output audio tokens: {agent.run_response.metrics['audio_output_tokens']}")
+print(f"Audio tokens: {agent.run_response.metrics['audio_total_tokens']}")
 
 agent = Agent(
     model=OpenAIChat(id="o3-mini"),
@@ -47,4 +47,4 @@ agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False
 agent.run("Share a 2 sentence horror story" * 150)
 agent.print_response("Share a 2 sentence horror story" * 150)
 # Showing cached tokens metrics
-print(f"Cached tokens: {agent.run_response.metrics['cached_tokens']}")
+print(f"Cached tokens: {agent.run_response.metrics['cache_read_tokens']}")
