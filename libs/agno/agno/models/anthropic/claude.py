@@ -306,24 +306,23 @@ class Claude(Model):
         try:
             if self.mcp_servers is not None:
                 assistant_message.metrics.start_timer()
-                stream = self.get_client().beta.messages.stream(
+                for chunk in self.get_client().beta.messages.stream(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
                     **request_kwargs,
-                )
+                ):
+                    yield self._parse_provider_response_delta(chunk)
+
             else:
                 assistant_message.metrics.start_timer()
-                stream = self.get_client().messages.stream(
+                for chunk in self.get_client().messages.stream(
                     model=self.id,
                     messages=chat_messages,  # type: ignore
                     **request_kwargs,
-                )
+                ):
+                    yield self._parse_provider_response_delta(chunk)
 
             assistant_message.metrics.stop_timer()
-
-            with stream as stream_manager:
-                for chunk in stream_manager:
-                    yield self._parse_provider_response_delta(chunk)
 
         except APIConnectionError as e:
             log_error(f"Connection error while calling Claude API: {str(e)}")
@@ -665,10 +664,10 @@ class Claude(Model):
 
         # Anthropic-specific additional fields
         if response_usage.server_tool_use:
-            metrics.additional_metrics = {"server_tool_use": response_usage.server_tool_use}
+            metrics.provider_metrics = {"server_tool_use": response_usage.server_tool_use}
         if isinstance(response_usage, Usage):
             if response_usage.service_tier:
-                metrics.additional_metrics = metrics.additional_metrics or {}
-                metrics.additional_metrics["service_tier"] = response_usage.service_tier
+                metrics.provider_metrics = metrics.provider_metrics or {}
+                metrics.provider_metrics["service_tier"] = response_usage.service_tier
 
         return metrics
