@@ -162,6 +162,7 @@ class StepStartedEvent(BaseWorkflowRunResponseEvent):
     step_name: Optional[str] = None
     step_id: Optional[str] = None
     step_index: Optional[Union[int, tuple]] = None
+    step_type: Optional[str] = None
 
 
 @dataclass
@@ -172,7 +173,8 @@ class StepCompletedEvent(BaseWorkflowRunResponseEvent):
     step_name: Optional[str] = None
     step_id: Optional[str] = None
     step_index: Optional[Union[int, tuple]] = None
-
+    step_type: Optional[str] = None
+    
     content: Optional[Any] = None
     content_type: str = "str"
 
