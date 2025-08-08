@@ -72,3 +72,6 @@ agno_json_data/
 # AI
 .claude/
 .cursor/
+
+# ignore pyrightconfig.json
+pyrightconfig.json
