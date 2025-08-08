@@ -72,6 +72,7 @@ from agno.workflow.types import (
     WorkflowMetrics,
 )
 
+# TODO: This is used to infer the Step type in the main to_dict() method. Instead, each step should have a type field
 STEP_TYPE_MAPPING = {
     Step: StepType.STEP,
     Steps: StepType.STEPS,
