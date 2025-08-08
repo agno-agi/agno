@@ -13,7 +13,7 @@ class EvalType(str, Enum):
 class EvalRunCreate(BaseModel):
     """Data sent to the API to create an evaluation run"""
 
-    agent_id: Optional[str] = None
+    id: Optional[str] = None
     model_id: Optional[str] = None
     model_provider: Optional[str] = None
     team_id: Optional[str] = None

@@ -28,7 +28,7 @@ knowledge.add_content(
 
 rag_agent = Agent(
     name="RAG Agent",
-    agent_id="rag-agent",
+    id="rag-agent",
     model=OpenAIChat(id="gpt-4o"),
     knowledge=knowledge,
     # Add a tool to search the knowledge base which enables agentic RAG.

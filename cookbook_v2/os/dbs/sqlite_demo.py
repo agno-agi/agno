@@ -20,7 +20,7 @@ db = SqliteDb(
 # Setup a basic agent and a basic team
 basic_agent = Agent(
     name="Basic Agent",
-    agent_id="basic-agent",
+    id="basic-agent",
     model=OpenAIChat(id="gpt-4o"),
     db=db,
     enable_user_memories=True,
@@ -31,7 +31,7 @@ basic_agent = Agent(
     markdown=True,
 )
 team_agent = Team(
-    team_id="basic-team",
+    id="basic-team",
     name="Team Agent",
     model=OpenAIChat(id="gpt-4o"),
     db=db,

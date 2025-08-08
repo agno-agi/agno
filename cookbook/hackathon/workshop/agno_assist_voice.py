@@ -20,7 +20,7 @@ _instructions = dedent("""\
 
 agno_assist_voice = Agent(
     name="Agno_Assist_Voice",
-    agent_id="agno-assist-voice",
+    id="agno-assist-voice",
     model=OpenAIChat(
         id="gpt-4o-audio-preview",
         modalities=["text", "audio"],

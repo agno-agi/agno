@@ -100,13 +100,13 @@ def attach_routes(
 
     @router.post("/eval-runs", response_model=EvalSchema, status_code=200)
     async def run_eval(eval_run_input: EvalRunInput) -> Optional[EvalSchema]:
-        if eval_run_input.agent_id and eval_run_input.team_id:
-            raise HTTPException(status_code=400, detail="Only one of agent_id or team_id must be provided")
+        if eval_run_input.id and eval_run_input.team_id:
+            raise HTTPException(status_code=400, detail="Only one of id or team_id must be provided")
 
-        if eval_run_input.agent_id:
-            agent = get_agent_by_id(agent_id=eval_run_input.agent_id, agents=agents)
+        if eval_run_input.id:
+            agent = get_agent_by_id(agent_id=eval_run_input.id, agents=agents)
             if not agent:
-                raise HTTPException(status_code=404, detail=f"Agent with id '{eval_run_input.agent_id}' not found")
+                raise HTTPException(status_code=404, detail=f"Agent with id '{eval_run_input.id}' not found")
 
             default_model = None
             if (
@@ -148,7 +148,7 @@ def attach_routes(
             agent = None
 
         else:
-            raise HTTPException(status_code=400, detail="One of agent_id or team_id must be provided")
+            raise HTTPException(status_code=400, detail="One of id or team_id must be provided")
 
         # Run the evaluation
         if eval_run_input.eval_type == EvalType.ACCURACY:

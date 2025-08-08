@@ -44,7 +44,7 @@ def remove_all_items(agent: Agent) -> str:
 shopping_list_agent = Agent(
     name="Shopping List Agent",
     role="Manage the shopping list",
-    agent_id="shopping_list_manager",
+    id="shopping_list_manager",
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[add_item, remove_item, remove_all_items],
     instructions=[
@@ -58,7 +58,7 @@ shopping_list_agent = Agent(
 # Shopping management team - new layer for handling all shopping list modifications
 shopping_mgmt_team = Team(
     name="Shopping Management Team",
-    team_id="shopping_management",
+    id="shopping_management",
     mode="coordinate",
     model=OpenAIChat(id="gpt-4o-mini"),
     members=[shopping_list_agent],
@@ -86,7 +86,7 @@ def get_ingredients(agent: Agent) -> str:
 
 recipe_agent = Agent(
     name="Recipe Suggester",
-    agent_id="recipe_suggester",
+    id="recipe_suggester",
     role="Suggest recipes based on available ingredients",
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[get_ingredients],
@@ -117,7 +117,7 @@ def list_items(team: Team) -> str:
 # Create meal planning subteam
 meal_planning_team = Team(
     name="Meal Planning Team",
-    team_id="meal_planning",
+    id="meal_planning",
     mode="coordinate",
     model=OpenAIChat(id="gpt-4o-mini"),
     members=[recipe_agent],
@@ -170,7 +170,7 @@ shopping_team = Team(
     team_session_state={"shopping_list": []},
     tools=[list_items, add_chore],
     session_state={"chores": []},
-    team_id="shopping_list_team",
+    id="shopping_list_team",
     members=[
         shopping_mgmt_team,
         meal_planning_team,

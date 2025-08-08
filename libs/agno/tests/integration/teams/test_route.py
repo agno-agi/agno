@@ -157,7 +157,7 @@ def test_route_team_multiple_calls():
 
     web_agent = Agent(
         name="Weather Agent",
-        agent_id="web-agent",
+        id="web-agent",
         model=OpenAIChat("gpt-4o"),
         role="Search the web for weather information",
         tools=[get_weather],
@@ -165,7 +165,7 @@ def test_route_team_multiple_calls():
 
     finance_agent = Agent(
         name="Finance Agent",
-        agent_id="finance-agent",
+        id="finance-agent",
         model=OpenAIChat("gpt-4o"),
         role="Get financial data",
         tools=[get_stock_price],

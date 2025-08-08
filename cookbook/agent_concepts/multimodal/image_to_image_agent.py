@@ -4,7 +4,7 @@ from agno.tools.fal import FalTools
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    agent_id="image-to-image",
+    id="image-to-image",
     name="Image to Image Agent",
     tools=[FalTools()],
     markdown=True,

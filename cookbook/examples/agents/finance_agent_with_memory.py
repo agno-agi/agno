@@ -27,7 +27,7 @@ from agno.tools.yfinance import YFinanceTools
 
 finance_agent_with_memory = Agent(
     name="Finance Agent with Memory",
-    agent_id="financial_agent_with_memory",
+    id="financial_agent_with_memory",
     model=OpenAIChat(id="gpt-4.1"),
     tools=[YFinanceTools(enable_all=True), DuckDuckGoTools()],
     memory=Memory(

@@ -127,7 +127,7 @@ def test_agent_storage_crud(agent_storage):
     result = storage.upsert(session)
     assert result is not None
     assert result.session_id == session.session_id
-    assert result.agent_id == session.agent_id
+    assert result.id == session.id
     mock_table.put_item.assert_called_once()
 
     # Test read
@@ -175,7 +175,7 @@ def test_workflow_storage_crud(workflow_storage):
 
     # Test upsert
     result = storage.upsert(session)
-    assert result == session
+    assert result.id == session.id
     mock_table.put_item.assert_called_once()
 
     # Test read

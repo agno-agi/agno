@@ -55,7 +55,7 @@ finance_agent = Agent(
 simple_agent = Agent(
     name="Simple Agent",
     role="Simple agent",
-    agent_id="simple_agent",
+    id="simple_agent",
     model=OpenAIChat(id="gpt-4o"),
     instructions=["You are a simple agent"],
     db=db,
@@ -65,7 +65,7 @@ simple_agent = Agent(
 research_agent = Agent(
     name="Research Agent",
     role="Research agent",
-    agent_id="research_agent",
+    id="research_agent",
     model=OpenAIChat(id="gpt-4o"),
     instructions=["You are a research agent"],
     tools=[DuckDuckGoTools()],
@@ -79,7 +79,7 @@ research_team = Team(
     members=[research_agent, simple_agent],
     model=OpenAIChat(id="gpt-4o"),
     mode="coordinate",
-    team_id="research_team",
+    id="research_team",
     instructions=[
         "You are the lead researcher of a research team! 🔍",
     ],

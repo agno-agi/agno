@@ -6,7 +6,7 @@ from agno.models.openai.chat import OpenAIChat
 from agno.tools.yfinance import YFinanceTools
 
 finance_agent = Agent(
-    agent_id="finance-agent",
+    id="finance-agent",
     name="Finance Agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[YFinanceTools()],

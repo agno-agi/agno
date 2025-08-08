@@ -42,13 +42,13 @@ class AppsResponse(BaseModel):
 
 
 class AgentSummaryResponse(BaseModel):
-    agent_id: Optional[str] = None
+    id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
 
     @classmethod
     def from_agent(cls, agent: Agent) -> "AgentSummaryResponse":
-        return cls(agent_id=agent.agent_id, name=agent.name, description=agent.description)
+        return cls(id=agent.id, name=agent.name, description=agent.description)
 
 
 class TeamSummaryResponse(BaseModel):
@@ -86,7 +86,7 @@ class ModelResponse(BaseModel):
 
 
 class AgentResponse(BaseModel):
-    agent_id: Optional[str] = None
+    id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
     instructions: Optional[Union[List[str], str]] = None
@@ -133,7 +133,7 @@ class AgentResponse(BaseModel):
         knowledge_table = agent.db.knowledge_table_name if agent.db and agent.knowledge else None
 
         return AgentResponse(
-            agent_id=agent.agent_id,
+            id=agent.id,
             name=agent.name,
             description=agent.description,
             instructions=str(agent.instructions) if agent.instructions else None,
@@ -214,7 +214,7 @@ class TeamResponse(BaseModel):
         team_instructions = team.instructions() if isinstance(team.instructions, Callable) else team.instructions
 
         return TeamResponse(
-            team_id=team.team_id,
+            team_id=team.id,
             name=team.name,
             model=ModelResponse(
                 name=team.model.name or team.model.__class__.__name__ if team.model else None,
@@ -255,7 +255,7 @@ class WorkflowResponse(BaseModel):
     def from_workflow(cls, workflow: Workflow) -> "WorkflowResponse":
         workflow_dict = workflow.to_dict()
         return cls(
-            workflow_id=workflow.workflow_id,
+            workflow_id=workflow.id,
             name=workflow.name,
             description=workflow.description,
             steps=workflow_dict.get("steps"),
@@ -301,7 +301,7 @@ class AgentSessionDetailSchema(BaseModel):
     session_id: str
     session_name: str
     session_summary: Optional[dict]
-    agent_id: Optional[str]
+    id: Optional[str]
     agent_data: Optional[dict]
     total_tokens: Optional[int]
     metrics: Optional[dict]
@@ -318,7 +318,7 @@ class AgentSessionDetailSchema(BaseModel):
             session_id=session.session_id,
             session_name=session_name,
             session_summary=session.summary.to_dict() if session.summary else None,
-            agent_id=session.agent_id if session.agent_id else None,
+            id=session.id if session.id else None,
             agent_data=session.agent_data,
             total_tokens=session.session_data.get("session_metrics", {}).get("total_tokens")
             if session.session_data

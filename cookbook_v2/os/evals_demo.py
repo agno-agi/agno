@@ -14,7 +14,7 @@ db = PostgresDb(db_url=db_url)
 
 # Setup the agent
 basic_agent = Agent(
-    agent_id="basic-agent",
+    id="basic-agent",
     name="Calculator Agent",
     model=OpenAIChat(id="gpt-4o"),
     db=db,
@@ -58,7 +58,7 @@ if __name__ == "__main__":
     Now you can interact with your eval runs using the API. Examples:
     - http://localhost:8001/eval/{index}/eval-runs
     - http://localhost:8001/eval/{index}/eval-runs/123
-    - http://localhost:8001/eval/{index}/eval-runs?agent_id=123
+    - http://localhost:8001/eval/{index}/eval-runs?id=123
     - http://localhost:8001/eval/{index}/eval-runs?limit=10&page=0&sort_by=created_at&sort_order=desc
     - http://localhost:8001/eval/{index}/eval-runs/accuracy
     - http://localhost:8001/eval/{index}/eval-runs/performance

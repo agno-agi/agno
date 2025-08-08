@@ -137,7 +137,7 @@ class ReliabilityEval:
         # Log results to the Agno platform if requested
         if self.db:
             if self.agent_response is not None:
-                agent_id = self.agent_response.agent_id
+                agent_id = self.agent_response.id
                 team_id = None
                 model_id = self.agent_response.model
                 model_provider = self.agent_response.model_provider
@@ -153,7 +153,7 @@ class ReliabilityEval:
                 run_data=asdict(self.result),
                 eval_type=EvalType.RELIABILITY,
                 name=self.name if self.name is not None else None,
-                agent_id=agent_id,
+                id=agent_id,
                 team_id=team_id,
                 model_id=model_id,
                 model_provider=model_provider,
@@ -231,7 +231,7 @@ class ReliabilityEval:
         # Log results to the Agno platform if requested
         if self.db:
             if self.agent_response is not None:
-                agent_id = self.agent_response.agent_id
+                agent_id = self.agent_response.id
                 team_id = None
                 model_id = self.agent_response.model
                 model_provider = self.agent_response.model_provider
@@ -247,7 +247,7 @@ class ReliabilityEval:
                 run_data=asdict(self.result),
                 eval_type=EvalType.RELIABILITY,
                 name=self.name if self.name is not None else None,
-                agent_id=agent_id,
+                id=agent_id,
                 team_id=team_id,
                 model_id=model_id,
                 model_provider=model_provider,

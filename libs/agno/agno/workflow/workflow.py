@@ -99,7 +99,7 @@ class Workflow:
 
     # Workflow identification - make name optional with default
     name: Optional[str] = None
-    workflow_id: Optional[str] = None
+    id: Optional[str] = None
     description: Optional[str] = None
 
     # Workflow configuration
@@ -142,7 +142,7 @@ class Workflow:
 
     def __init__(
         self,
-        workflow_id: Optional[str] = None,
+        id: Optional[str] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
         db: Optional[BaseDb] = None,
@@ -159,7 +159,7 @@ class Workflow:
         input_schema: Optional[Type[BaseModel]] = None,
         store_executor_responses: bool = True,
     ):
-        self.workflow_id = workflow_id
+        self.id = id
         self.name = name
         self.description = description
         self.db = db
@@ -260,9 +260,9 @@ class Workflow:
         return parameters
 
     def initialize_workflow(self):
-        if self.workflow_id is None:
-            self.workflow_id = str(uuid4())
-            log_debug(f"Generated new workflow_id: {self.workflow_id}")
+        if self.id is None:
+            self.id = str(uuid4())
+        log_debug(f"Generated new workflow_id: {self.id}")
 
         if self.session_id is None:
             self.session_id = str(uuid4())
@@ -828,7 +828,7 @@ class Workflow:
 
                 error_event = WorkflowErrorEvent(
                     run_id=self.run_id or "",
-                    workflow_id=self.workflow_id,
+                    workflow_id=self.id,
                     workflow_name=self.name,
                     session_id=self.session_id,
                     error=str(e),
@@ -1203,7 +1203,7 @@ class Workflow:
 
                 error_event = WorkflowErrorEvent(
                     run_id=self.run_id or "",
-                    workflow_id=self.workflow_id,
+                    workflow_id=self.id,
                     workflow_name=self.name,
                     session_id=self.session_id,
                     error=str(e),
@@ -1236,7 +1236,7 @@ class Workflow:
 
         self.workflow_session_state.update(
             {
-                "workflow_id": self.workflow_id,
+                "workflow_id": self.id,
                 "run_id": self.run_id,
                 "session_id": self.session_id,
                 "session_name": self.session_name,
@@ -1279,7 +1279,7 @@ class Workflow:
         workflow_run_response = WorkflowRunResponse(
             run_id=self.run_id,
             session_id=self.session_id,
-            workflow_id=self.workflow_id,
+            workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
             status=RunStatus.pending,
@@ -1359,7 +1359,7 @@ class Workflow:
         workflow_run_response = WorkflowRunResponse(
             run_id=self.run_id,
             session_id=self.session_id,
-            workflow_id=self.workflow_id,
+            workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
             status=RunStatus.pending,
@@ -1519,7 +1519,7 @@ class Workflow:
         workflow_run_response = WorkflowRunResponse(
             run_id=self.run_id,
             session_id=self.session_id,
-            workflow_id=self.workflow_id,
+            workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
         )
@@ -1677,7 +1677,7 @@ class Workflow:
         workflow_run_response = WorkflowRunResponse(
             run_id=self.run_id,
             session_id=self.session_id,
-            workflow_id=self.workflow_id,
+            workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
         )
@@ -1762,7 +1762,7 @@ class Workflow:
         return WorkflowSession(
             session_id=self.session_id,
             user_id=self.user_id,
-            workflow_id=self.workflow_id,
+            workflow_id=self.id,
             workflow_name=self.name,
             runs=self.workflow_session.runs if self.workflow_session else [],
             workflow_data=workflow_data,
@@ -1771,8 +1771,8 @@ class Workflow:
 
     def load_workflow_session(self, session: WorkflowSession):
         """Load workflow session from storage"""
-        if self.workflow_id is None and session.workflow_id is not None:
-            self.workflow_id = session.workflow_id
+        if self.id is None and session.workflow_id is not None:
+            self.id = session.workflow_id
         if self.user_id is None and session.user_id is not None:
             self.user_id = session.user_id
         if self.session_id is None and session.session_id is not None:
@@ -1824,7 +1824,7 @@ class Workflow:
                 self.workflow_session = WorkflowSession(
                     session_id=self.session_id,
                     user_id=self.user_id,
-                    workflow_id=self.workflow_id,
+                    workflow_id=self.id,
                     workflow_name=self.name,
                 )
                 saved_session = self.write_to_storage()
@@ -3433,7 +3433,7 @@ class Workflow:
 
         return {
             "name": self.name,
-            "workflow_id": self.workflow_id,
+            "workflow_id": self.id,
             "description": self.description,
             "steps": [
                 {
@@ -3494,7 +3494,7 @@ class Workflow:
                     if hasattr(active_executor, "workflow_session_id"):
                         active_executor.workflow_session_id = self.session_id
                     if hasattr(active_executor, "workflow_id"):
-                        active_executor.workflow_id = self.workflow_id
+                        active_executor.workflow_id = self.id
 
                     # Set workflow_session_state on agents and teams
                     self._update_executor_workflow_session_state(active_executor)
@@ -3505,7 +3505,7 @@ class Workflow:
                             if hasattr(member, "workflow_session_id"):
                                 member.workflow_session_id = self.session_id
                             if hasattr(member, "workflow_id"):
-                                member.workflow_id = self.workflow_id
+                                member.workflow_id = self.id
 
                             # Set workflow_session_state on team members
                             self._update_executor_workflow_session_state(member)
