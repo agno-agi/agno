@@ -1752,7 +1752,7 @@ class Workflow:
         if self.steps and not callable(self.steps):
             steps_dict = []
             for step in self.steps:  # type: ignore
-                # TODO: We should not infer the Step type like this, it should be a field in all Step implementations
+                # TODO: The step should have a type field
                 step_type = STEP_TYPE_MAPPING[type(step)]
                 step_dict = {
                     "name": step.name if hasattr(step, "name") else step.__name__,
