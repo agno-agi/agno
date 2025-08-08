@@ -859,3 +859,19 @@ class Step:
                 continue
 
         return videos
+
+
+@dataclass
+class ChatStep:
+    """A step that allows for chat-based interactions with the user."""
+
+    # Name of the final step of the workflow that will be used as context for the chat step
+    final_step: str
+    name: Optional[str] = None
+    chat_agent: Optional[Agent] = None
+    validation_agent: Optional[Agent] = None
+
+    # TODO: Add ability to add custom prompts and response models
+    # validation_response_model: Optional[BaseModel] = None
+    # chat_agent_prompt: Optional[str] = None
+    # validation_agent_prompt: Optional[str] = None
