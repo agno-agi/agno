@@ -323,7 +323,7 @@ class PDFReader(BasePDFReader):
             logger.error(f"Error reading PDF: {e}")
             return []
 
-        # Handle PDF decryption if needed
+        # Handle PDF decryption
         if not self._decrypt_pdf(pdf_reader, doc_name, password):
             return []
 
@@ -347,7 +347,7 @@ class PDFReader(BasePDFReader):
             logger.error(f"Error reading PDF: {e}")
             return []
 
-        # Handle PDF decryption if needed
+        # Handle PDF decryption
         if not self._decrypt_pdf(pdf_reader, doc_name, password):
             return []
 
@@ -376,7 +376,7 @@ class PDFUrlReader(BasePDFReader):
         doc_name = url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
         pdf_reader = DocumentReader(BytesIO(response.content))
 
-        # Handle PDF decryption if needed
+        # Handle PDF decryption
         if not self._decrypt_pdf(pdf_reader, doc_name, password):
             return []
 
@@ -400,7 +400,7 @@ class PDFUrlReader(BasePDFReader):
         doc_name = url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
         pdf_reader = DocumentReader(BytesIO(response.content))
 
-        # Handle PDF decryption if needed
+        # Handle PDF decryption
         if not self._decrypt_pdf(pdf_reader, doc_name, password):
             return []
 
@@ -426,7 +426,7 @@ class PDFImageReader(BasePDFReader):
         log_info(f"Reading: {doc_name}")
         pdf_reader = DocumentReader(pdf)
 
-        # Handle PDF decryption if needed
+        # Handle PDF decryption
         if not self._decrypt_pdf(pdf_reader, doc_name, password):
             return []
 
@@ -448,7 +448,7 @@ class PDFImageReader(BasePDFReader):
         log_info(f"Reading: {doc_name}")
         pdf_reader = DocumentReader(pdf)
 
-        # Handle PDF decryption if needed
+        # Handle PDF decryption
         if not self._decrypt_pdf(pdf_reader, doc_name, password):
             return []
 
@@ -478,7 +478,7 @@ class PDFUrlImageReader(BasePDFReader):
         doc_name = url.split("/")[-1].split(".")[0].replace(" ", "_")
         pdf_reader = DocumentReader(BytesIO(response.content))
 
-        # Handle PDF decryption if needed
+        # Handle PDF decryption
         if not self._decrypt_pdf(pdf_reader, doc_name, password):
             return []
 
@@ -503,7 +503,7 @@ class PDFUrlImageReader(BasePDFReader):
         doc_name = url.split("/")[-1].split(".")[0].replace(" ", "_")
         pdf_reader = DocumentReader(BytesIO(response.content))
 
-        # Handle PDF decryption if needed
+        # Handle PDF decryption
         if not self._decrypt_pdf(pdf_reader, doc_name, password):
             return []
 

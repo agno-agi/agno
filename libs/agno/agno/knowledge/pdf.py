@@ -34,7 +34,6 @@ class PDFKnowledgeBase(AgentKnowledge):
                     file_path = item["path"]
                     config = item.get("metadata", {})
                     file_password = item.get("password")
-                    # Ensure password is a string or None for type safety
                     if file_password is not None and not isinstance(file_password, str):
                         file_password = None
 
@@ -83,7 +82,6 @@ class PDFKnowledgeBase(AgentKnowledge):
                     file_path = item["path"]
                     config = item.get("metadata", {})
                     file_password = item.get("password")
-                    # Ensure password is a string or None for type safety
                     if file_password is not None and not isinstance(file_password, str):
                         file_password = None
 

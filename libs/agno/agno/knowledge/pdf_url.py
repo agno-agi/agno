@@ -57,7 +57,6 @@ class PDFUrlKnowledgeBase(AgentKnowledge):
                 url = item["url"]
                 config = item.get("metadata", {})
                 pdf_password = item.get("password")
-                # Ensure password is a string or None for type safety
                 if pdf_password is not None and not isinstance(pdf_password, str):
                     pdf_password = None
 
