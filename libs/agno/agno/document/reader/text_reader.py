@@ -28,7 +28,7 @@ class TextReader(Reader):
             documents = [
                 Document(
                     name=file_name,
-                    id=str({uuid.uuid4()}),
+                    id=str(uuid.uuid4()),
                     content=file_contents,
                 )
             ]
@@ -67,7 +67,7 @@ class TextReader(Reader):
 
             document = Document(
                 name=file_name,
-                id=str({uuid.uuid4()}),
+                id=str(uuid.uuid4()),
                 content=file_contents,
             )
 
