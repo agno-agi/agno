@@ -43,10 +43,10 @@ storage_context = StorageContext.from_defaults()
 
 index = VectorStoreIndex(nodes=nodes, storage_context=storage_context)
 
-retriever = VectorIndexRetriever(index)
+knowledge_retriever = VectorIndexRetriever(index)
 
 # Create a knowledge instance from the vector store
-knowledge = Knowledge(vector_db=LlamaIndexVectorDb(retriever=retriever))
+knowledge = Knowledge(vector_db=LlamaIndexVectorDb(knowledge_retriever=knowledge_retriever))
 
 # Create an agent with the knowledge instance
 agent = Agent(

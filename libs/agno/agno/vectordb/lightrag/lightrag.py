@@ -282,12 +282,12 @@ class LightRag(VectorDb):
         # TODO: Define supported extensions or implement proper URL validation
         return True
 
-    async def lightrag_retriever(
+    async def lightrag_knowledge_retriever(
         self,
         query: str,
     ) -> Optional[List[Dict[str, Any]]]:
         """
-        Custom retriever function to search the LightRAG server for relevant documents.
+        Custom knowledge retriever function to search the LightRAG server for relevant documents.
 
         Args:
             query: The search query string

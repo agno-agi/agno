@@ -1,7 +1,7 @@
 import asyncio
 
 from agno.agent import Agent
-from agno.knowledge.light_rag import LightRagKnowledgeBase, lightrag_retriever
+from agno.knowledge.light_rag import LightRagKnowledgeBase, lightrag_knowledge_retriever
 from agno.models.anthropic import Claude
 
 # Create a knowledge base, loaded with documents from a URL
@@ -20,12 +20,12 @@ asyncio.run(
 )
 
 
-# Create an agent with the knowledge base and the retriever
+# Create an agent with the knowledge base and the knowledge retriever
 agent = Agent(
     model=Claude(id="claude-3-7-sonnet-latest"),
     # Agentic RAG is enabled by default when `knowledge` is provided to the Agent.
     knowledge=knowledge_base,
-    retriever=lightrag_retriever,
+    knowledge_retriever=lightrag_knowledge_retriever,
     # search_knowledge=True gives the Agent the ability to search on demand
     # search_knowledge is True by default
     search_knowledge=True,

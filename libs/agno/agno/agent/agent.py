@@ -159,13 +159,13 @@ class Agent:
     knowledge_filters: Optional[Dict[str, Any]] = None
     # Let the agent choose the knowledge filters
     enable_agentic_knowledge_filters: Optional[bool] = False
-    add_references: bool = False
+    add_knowledge_to_context: bool = False
     # Retrieval function to get references
     # This function, if provided, is used instead of the default search_knowledge function
     # Signature:
-    # def retriever(agent: Agent, query: str, num_documents: Optional[int], **kwargs) -> Optional[list[dict]]:
+    # def knowledge_retriever(agent: Agent, query: str, num_documents: Optional[int], **kwargs) -> Optional[list[dict]]:
     #     ...
-    retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None
+    knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None
     references_format: Literal["json", "yaml"] = "json"
 
     # --- Agent Tools ---
@@ -352,8 +352,8 @@ class Agent:
         knowledge: Optional[Knowledge] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         enable_agentic_knowledge_filters: Optional[bool] = None,
-        add_references: bool = False,
-        retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
+        add_knowledge_to_context: bool = False,
+        knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
         metadata: Optional[Dict[str, Any]] = None,
         tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
@@ -439,8 +439,8 @@ class Agent:
         self.knowledge = knowledge
         self.knowledge_filters = knowledge_filters
         self.enable_agentic_knowledge_filters = enable_agentic_knowledge_filters
-        self.add_references = add_references
-        self.retriever = retriever
+        self.add_knowledge_to_context = add_knowledge_to_context
+        self.knowledge_retriever = knowledge_retriever
         self.references_format = references_format
 
         self.metadata = metadata
@@ -1029,15 +1029,14 @@ class Agent:
         for attempt in range(num_attempts):
             try:
                 # Set run_input
-                if message is not None:
-                    if isinstance(message, str):
-                        self.run_input = message
-                    elif isinstance(message, Message):
-                        self.run_input = message.to_dict()
-                    else:
-                        self.run_input = message
-                elif messages is not None:
+                if messages is not None:
                     self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
+                if message is not None:
+                    formatted_message = message.to_dict() if isinstance(message, Message) else message
+                    if self.run_input is not None:
+                        self.run_input.append(formatted_message)
+                    else:
+                        self.run_input = formatted_message
 
                 # Prepare run messages
                 run_messages: RunMessages = self.get_run_messages(
@@ -1432,15 +1431,14 @@ class Agent:
         for attempt in range(num_attempts):
             try:
                 # Set run_input
-                if message is not None:
-                    if isinstance(message, str):
-                        self.run_input = message
-                    elif isinstance(message, Message):
-                        self.run_input = message.to_dict()
-                    else:
-                        self.run_input = message
-                elif messages is not None:
+                if messages is not None:
                     self.run_input = [m.to_dict() if isinstance(m, Message) else m for m in messages]
+                if message is not None:
+                    formatted_message = message.to_dict() if isinstance(message, Message) else message
+                    if self.run_input is not None:
+                        self.run_input.append(formatted_message)
+                    else:
+                        self.run_input = formatted_message
 
                 # Prepare run messages
                 run_messages: RunMessages = self.get_run_messages(
@@ -3450,13 +3448,13 @@ class Agent:
             self._rebuild_tools = True
 
         # Add tools for accessing knowledge
-        if self.knowledge is not None or self.retriever is not None:
-            # Check if retriever is an async function but used in sync mode
+        if self.knowledge is not None or self.knowledge_retriever is not None:
+            # Check if knowledge retriever is an async function but used in sync mode
             from inspect import iscoroutinefunction
 
-            if not async_mode and self.retriever and iscoroutinefunction(self.retriever):
+            if not async_mode and self.knowledge_retriever and iscoroutinefunction(self.knowledge_retriever):
                 log_warning(
-                    "Async retriever function is being used with synchronous agent.run() or agent.print_response(). "
+                    "Async knowledge retriever function is being used with synchronous agent.run() or agent.print_response(). "
                     "It is recommended to use agent.arun() or agent.aprint_response() instead."
                 )
 
@@ -4248,14 +4246,14 @@ class Agent:
         # Get references from the knowledge base to use in the user message
         references = None
         self.run_response = cast(RunResponse, self.run_response)
-        if self.add_references and message:
+        if self.add_knowledge_to_context and message:
             message_str: str
             if isinstance(message, str):
                 message_str = message
             elif callable(message):
                 message_str = message(agent=self)
             else:
-                raise Exception("message must be a string or a callable when add_references is True")
+                raise Exception("message must be a string or a callable when add_knowledge_to_context is True")
 
             try:
                 retrieval_timer = Timer()
@@ -4360,7 +4358,7 @@ class Agent:
 
         # 4.1 Add references to user message
         if (
-            self.add_references
+            self.add_knowledge_to_context
             and references is not None
             and references.references is not None
             and len(references.references) > 0
@@ -4751,27 +4749,27 @@ class Agent:
                 if not filters:
                     log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
-        if self.retriever is not None and callable(self.retriever):
+        if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
             from inspect import signature
 
             try:
-                sig = signature(self.retriever)
-                retriever_kwargs: Dict[str, Any] = {}
+                sig = signature(self.knowledge_retriever)
+                knowledge_retriever_kwargs: Dict[str, Any] = {}
                 if "agent" in sig.parameters:
-                    retriever_kwargs = {"agent": self}
+                    knowledge_retriever_kwargs = {"agent": self}
                 if "filters" in sig.parameters:
-                    retriever_kwargs["filters"] = filters
-                retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
-                return self.retriever(**retriever_kwargs)
+                    knowledge_retriever_kwargs["filters"] = filters
+                knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
+                return self.knowledge_retriever(**knowledge_retriever_kwargs)
             except Exception as e:
-                log_warning(f"Retriever failed: {e}")
+                log_warning(f"Knowledge retriever failed: {e}")
                 raise e
 
         # Use knowledge base search
         try:
             if self.knowledge is None or (
                 (getattr(self.knowledge, "vector_db", None)) is None
-                and getattr(self.knowledge, "retriever", None) is None
+                and getattr(self.knowledge, "knowledge_retriever", None) is None
             ):
                 return None
 
@@ -4814,32 +4812,32 @@ class Agent:
                 if not filters:
                     log_warning("No valid filters remain after validation. Search will proceed without filters.")
 
-        if self.retriever is not None and callable(self.retriever):
+        if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
             from inspect import isawaitable, signature
 
             try:
-                sig = signature(self.retriever)
-                retriever_kwargs: Dict[str, Any] = {}
+                sig = signature(self.knowledge_retriever)
+                knowledge_retriever_kwargs: Dict[str, Any] = {}
                 if "agent" in sig.parameters:
-                    retriever_kwargs = {"agent": self}
+                    knowledge_retriever_kwargs = {"agent": self}
                 if "filters" in sig.parameters:
-                    retriever_kwargs["filters"] = filters
-                retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
-                result = self.retriever(**retriever_kwargs)
+                    knowledge_retriever_kwargs["filters"] = filters
+                knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
+                result = self.knowledge_retriever(**knowledge_retriever_kwargs)
 
                 if isawaitable(result):
                     result = await result
 
                 return result
             except Exception as e:
-                log_warning(f"Retriever failed: {e}")
+                log_warning(f"Knowledge retriever failed: {e}")
                 raise e
 
         # Use knowledge base search
         try:
             if self.knowledge is None or (
                 getattr(self.knowledge, "vector_db", None) is None
-                and getattr(self.knowledge, "retriever", None) is None
+                and getattr(self.knowledge, "knowledge_retriever", None) is None
             ):
                 return None
 
