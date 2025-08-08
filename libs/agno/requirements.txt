@@ -12,8 +12,6 @@ click==8.1.8
     # via typer
 docstring-parser==0.16
     # via agno (libs/agno/pyproject.toml)
-exceptiongroup==1.2.2
-    # via anyio
 gitdb==4.0.11
     # via gitpython
 gitpython==3.1.43
@@ -32,6 +30,8 @@ markdown-it-py==3.0.0
     # via rich
 mdurl==0.1.2
     # via markdown-it-py
+packaging==25.0
+    # via agno (libs/agno/pyproject.toml)
 pydantic==2.10.4
     # via
     #   agno (libs/agno/pyproject.toml)
@@ -70,5 +70,4 @@ typing-extensions==4.12.2
     #   anyio
     #   pydantic
     #   pydantic-core
-    #   rich
     #   typer
