@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from typing import Iterator, Optional
+from typing import Iterator, Optional, cast
 
 from ag_ui.core import (
     BaseEvent,
@@ -10,6 +10,7 @@ from ag_ui.core import (
     RunAgentInput,
     RunErrorEvent,
     RunStartedEvent,
+    RunFinishedEvent
 )
 from ag_ui.encoder import EventEncoder
 from fastapi import APIRouter
@@ -41,9 +42,11 @@ def run_agent(agent: Agent, run_input: RunAgentInput) -> Iterator[BaseEvent]:
 
         # Stream the response content in AG-UI format
         for event in stream_agno_response_as_agui_events(
-            response_stream=response_stream, thread_id=run_input.thread_id, run_id=run_id
+            response_stream=response_stream
         ):
             yield event
+
+        yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=run_input.thread_id, run_id=run_id)
 
     # Emit a RunErrorEvent if any error occurs
     except Exception as e:
@@ -60,8 +63,10 @@ def run_team(team: Team, input: RunAgentInput) -> Iterator[BaseEvent]:
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=run_id)
 
         # Request streaming response from team
+        # Team.arun() does not handle list[Message] type, join the messages
+        str_messages = list(map(lambda msg: cast(str, msg.content), messages))
         response_stream = team.run(
-            message=messages,
+            message=str_messages,
             session_id=input.thread_id,
             stream=True,
             stream_intermediate_steps=True,
@@ -69,9 +74,11 @@ def run_team(team: Team, input: RunAgentInput) -> Iterator[BaseEvent]:
 
         # Stream the response content in AG-UI format
         for event in stream_agno_response_as_agui_events(
-            response_stream=response_stream, thread_id=input.thread_id, run_id=run_id
+            response_stream=response_stream
         ):
             yield event
+
+        yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=input.thread_id, run_id=run_id)
 
     except Exception as e:
         logger.error(f"Error running team: {e}", exc_info=True)
