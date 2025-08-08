@@ -178,6 +178,7 @@ class BasePDFReader(Reader):
         page_start_numbering_format: Optional[str] = None,
         page_end_numbering_format: Optional[str] = None,
         password: Optional[str] = None,
+
         **kwargs,
     ):
         if page_start_numbering_format is None:
@@ -219,6 +220,88 @@ class BasePDFReader(Reader):
         except Exception as e:
             log_error(f"Error decrypting PDF {doc_name}: {e}")
             return False
+          
+    def _create_documents(self, pdf_content: List[str], doc_name: str, use_uuid_for_id: bool, page_number_shift):
+        if self.split_on_pages:
+            shift = page_number_shift if page_number_shift is not None else 1
+            documents: List[Document] = []
+            for page_number, page_content in enumerate(pdf_content, start=shift):
+                documents.append(
+                    Document(
+                        name=doc_name,
+                        id=(str(uuid4()) if use_uuid_for_id else f"{doc_name}_{page_number}"),
+                        meta_data={"page": page_number},
+                        content=page_content,
+                    )
+                )
+        else:
+            pdf_content_str = "\n".join(pdf_content)
+            document = Document(
+                name=doc_name,
+                id=str(uuid4()) if use_uuid_for_id else doc_name,
+                meta_data={},
+                content=pdf_content_str,
+            )
+            documents = [document]
+
+        if self.chunk:
+            return self._build_chunked_documents(documents)
+
+        return documents
+
+    def _pdf_reader_to_documents(
+        self,
+        doc_reader: DocumentReader,
+        doc_name,
+        read_images=False,
+        use_uuid_for_id=False,
+    ):
+        pdf_content = []
+        pdf_images_text = []
+        for page in doc_reader.pages:
+            pdf_content.append(page.extract_text())
+            if read_images:
+                pdf_images_text.append(_ocr_reader(page))
+
+        pdf_content, shift = _clean_page_numbers(
+            page_content_list=pdf_content,
+            extra_content=pdf_images_text,
+            page_start_numbering_format=self.page_start_numbering_format,
+            page_end_numbering_format=self.page_end_numbering_format,
+        )
+        return self._create_documents(pdf_content, doc_name, use_uuid_for_id, shift)
+
+    async def _async_pdf_reader_to_documents(
+        self,
+        doc_reader: DocumentReader,
+        doc_name: str,
+        read_images=False,
+        use_uuid_for_id=False,
+    ):
+        async def _read_pdf_page(page, read_images) -> Tuple[str, str]:
+            # We tried "asyncio.to_thread(page.extract_text)", but it maintains state internally, which leads to issues.
+            page_text = page.extract_text()
+
+            if read_images:
+                pdf_images_text = await _async_ocr_reader(page)
+            else:
+                pdf_images_text = ""
+
+            return page_text, pdf_images_text
+
+        # Process pages in parallel using asyncio.gather
+        pdf_content: List[Tuple[str, str]] = await asyncio.gather(
+            *[_read_pdf_page(page, read_images) for page in doc_reader.pages]
+        )
+
+        pdf_content_clean, shift = _clean_page_numbers(
+            page_content_list=[x[0] for x in pdf_content],
+            extra_content=[x[1] for x in pdf_content],
+            page_start_numbering_format=self.page_start_numbering_format,
+            page_end_numbering_format=self.page_end_numbering_format,
+        )
+
+        return self._create_documents(pdf_content_clean, doc_name, use_uuid_for_id, shift)
 
 
 class PDFReader(BasePDFReader):
