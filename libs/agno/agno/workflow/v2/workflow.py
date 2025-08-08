@@ -1277,8 +1277,7 @@ class Workflow:
         if self.session_id is None:
             self.session_id = str(uuid4())
 
-        if self.run_id is None:
-            self.run_id = str(uuid4())
+        self.run_id = str(uuid4())
 
         self.initialize_workflow()
         self.load_session()
@@ -1357,8 +1356,7 @@ class Workflow:
         if self.session_id is None:
             self.session_id = str(uuid4())
 
-        if self.run_id is None:
-            self.run_id = str(uuid4())
+        self.run_id = str(uuid4())
 
         self.initialize_workflow()
         self.load_session()
