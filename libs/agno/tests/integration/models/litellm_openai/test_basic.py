@@ -2,7 +2,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse
-from agno.db.sqlite import SqliteStorage
+from agno.db.sqlite import SqliteDb
 from agno.models.litellm import LiteLLMOpenAI
 
 
@@ -20,9 +20,9 @@ def _assert_metrics(response: RunResponse):
     assert "time" in response.metrics
 
     # Check that the total tokens is the sum of input and output tokens
-    input_tokens = sum(response.metrics.get("input_tokens", []))
-    output_tokens = sum(response.metrics.get("output_tokens", []))
-    total_tokens = sum(response.metrics.get("total_tokens", []))
+    input_tokens = sum(response.metrics.input_tokens or [])
+    output_tokens = sum(response.metrics.output_tokens or [])
+    total_tokens = sum(response.metrics.total_tokens or [])
 
     # The total should be at least the sum of input and output
     assert total_tokens >= input_tokens + output_tokens - 5  # Allow small margin of error
@@ -36,6 +36,7 @@ def test_basic():
     response: RunResponse = agent.run("Share a 2 sentence horror story")
 
     assert response.content is not None
+    assert response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
 
@@ -56,6 +57,7 @@ def test_basic_stream():
     for response in responses:
         assert response.content is not None
 
+    assert agent.run_response is not None
     _assert_metrics(agent.run_response)
 
 
@@ -67,6 +69,7 @@ async def test_async_basic():
     response = await agent.arun("Share a 2 sentence horror story")
 
     assert response.content is not None
+    assert response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
     _assert_metrics(response)
@@ -81,6 +84,7 @@ async def test_async_basic_stream():
 
     async for response in response_stream:
         assert response.content is not None
+    assert agent.run_response is not None
     _assert_metrics(agent.run_response)
 
 
@@ -134,15 +138,23 @@ def test_response_model():
 def test_history():
     agent = Agent(
         model=LiteLLMOpenAI(id="gpt-4o"),
-        storage=SqliteStorage(table_name="agent_sessions_storage", db_file="tmp/data.db"),
+        db=SqliteDb(table_name="agent_sessions_storage", db_file="tmp/litellm_openai_agent_storage.db"),
         add_history_to_context=True,
         telemetry=False,
     )
     agent.run("Hello")
+    assert agent.run_response is not None
+    assert agent.run_response.messages is not None
     assert len(agent.run_response.messages) == 2
     agent.run("Hello 2")
+    assert agent.run_response is not None
+    assert agent.run_response.messages is not None
     assert len(agent.run_response.messages) == 4
     agent.run("Hello 3")
+    assert agent.run_response is not None
+    assert agent.run_response.messages is not None
     assert len(agent.run_response.messages) == 6
     agent.run("Hello 4")
+    assert agent.run_response is not None
+    assert agent.run_response.messages is not None
     assert len(agent.run_response.messages) == 8

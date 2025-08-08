@@ -6,14 +6,15 @@ from agno.models.cerebras import CerebrasOpenAI
 
 
 def _assert_metrics(response: RunResponse):
-    input_tokens = response.metrics.get("input_tokens", [])
-    output_tokens = response.metrics.get("output_tokens", [])
-    total_tokens = response.metrics.get("total_tokens", [])
+    assert response.metrics is not None
+    input_tokens = response.metrics.input_tokens
+    output_tokens = response.metrics.output_tokens
+    total_tokens = response.metrics.total_tokens
 
-    assert sum(input_tokens) > 0
-    assert sum(output_tokens) > 0
-    assert sum(total_tokens) > 0
-    assert sum(total_tokens) == sum(input_tokens) + sum(output_tokens)
+    assert input_tokens > 0
+    assert output_tokens > 0
+    assert total_tokens > 0
+    assert total_tokens == input_tokens + output_tokens
 
 
 def test_basic():
@@ -21,7 +22,7 @@ def test_basic():
 
     response: RunResponse = agent.run("Share a 2 sentence horror story")
 
-    assert response.content is not None
+    assert response.content is not None and response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
 
@@ -50,7 +51,7 @@ async def test_async_basic():
 
     response = await agent.arun("Share a 2 sentence horror story")
 
-    assert response.content is not None
+    assert response.content is not None and response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
     _assert_metrics(response)

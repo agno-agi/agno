@@ -3,9 +3,10 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, Field
 
-from agno.agent import Agent, RunResponse, RunResponseEvent  # noqa
+from agno.agent import Agent, RunResponse
 from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
+from agno.utils.log import log_warning
 from agno.utils.media import download_file
 
 
@@ -166,32 +167,32 @@ def test_history():
     assert len(agent.run_response.messages) == 8
 
 
-# def test_prompt_caching():
-#     large_system_prompt = _get_large_system_prompt()
-#     agent = Agent(
-#         model=Claude(id="claude-3-5-haiku-20241022", cache_system_prompt=True),
-#         system_message=large_system_prompt,
-#         telemetry=False,
-#     )
+def test_prompt_caching():
+    large_system_prompt = _get_large_system_prompt()
+    agent = Agent(
+        model=Claude(id="claude-3-5-haiku-20241022", cache_system_prompt=True),
+        system_message=large_system_prompt,
+        telemetry=False,
+    )
 
-#     response = agent.run("Explain the difference between REST and GraphQL APIs with examples")
-#     assert response.content is not None
-#     assert response.metrics is not None
+    response = agent.run("Explain the difference between REST and GraphQL APIs with examples")
+    assert response.content is not None
+    assert response.metrics is not None
 
-#     # This test needs a clean Anthropic cache to run. If the cache is not empty, we skip the test.
-#     if response.metrics.cache_read_tokens > 0:
-#         log_warning(
-#             "A cache is already active in this Anthropic context. This test can't run until the cache is cleared."
-#         )
-#         return
+    # This test needs a clean Anthropic cache to run. If the cache is not empty, we skip the test.
+    if response.metrics.cache_read_tokens > 0:
+        log_warning(
+            "A cache is already active in this Anthropic context. This test can't run until the cache is cleared."
+        )
+        return
 
-#     # Asserting the system prompt is cached on the first run
-#     assert response.metrics.cache_write_tokens > 0
-#     assert response.metrics.cache_read_tokens == 0
+    # Asserting the system prompt is cached on the first run
+    assert response.metrics.cache_write_tokens > 0
+    assert response.metrics.cache_read_tokens == 0
 
-#     # Asserting the cached prompt is used on the second run
-#     response = agent.run("What are the key principles of clean code and how do I apply them in Python?")
-#     assert response.content is not None
-#     assert response.metrics is not None
-#     assert response.metrics.cache_write_tokens == 0
-#     assert response.metrics.cache_read_tokens > 0
+    # Asserting the cached prompt is used on the second run
+    response = agent.run("What are the key principles of clean code and how do I apply them in Python?")
+    assert response.content is not None
+    assert response.metrics is not None
+    assert response.metrics.cache_write_tokens == 0
+    assert response.metrics.cache_read_tokens > 0
