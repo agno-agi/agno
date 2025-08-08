@@ -87,6 +87,7 @@ class Playground:
                     workflow.app_id = self.app_id
                 if not workflow.workflow_id:
                     workflow.workflow_id = generate_id(workflow.name)
+                workflow.initialize_workflow()
 
     def set_app_id(self) -> str:
         # If app_id is already set, keep it instead of overriding with UUID
