@@ -438,7 +438,7 @@ class Knowledge:
         upsert: bool,
         skip_if_exists: bool,
     ):
-        log_info(f"Adding content from URL {content.name}")
+        log_info(f"Adding content from URL {content.url}")
         content.file_type = "url"
 
         if self.vector_db.__class__.__name__ == "LightRag":
