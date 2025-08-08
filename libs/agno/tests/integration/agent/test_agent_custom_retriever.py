@@ -2,13 +2,13 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 
 
-def test_agent_with_custom_retriever():
-    def custom_retriever(**kwargs):
+def test_agent_with_custom_knowledge_retriever():
+    def custom_knowledge_retriever(**kwargs):
         return ["Paris is the capital of France"]
 
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
-        retriever=custom_retriever,
+        knowledge_retriever=custom_knowledge_retriever,
         add_references=True,
     )
     response = agent.run("What is the capital of France?")
@@ -16,13 +16,13 @@ def test_agent_with_custom_retriever():
     assert "Paris is the capital of France" in response.messages[0].content
 
 
-def test_agent_with_custom_retriever_error():
-    def custom_retriever(**kwargs):
+def test_agent_with_custom_knowledge_retriever_error():
+    def custom_knowledge_retriever(**kwargs):
         raise Exception("Test error")
 
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
-        retriever=custom_retriever,
+        knowledge_retriever=custom_knowledge_retriever,
         add_references=True,
     )
     response = agent.run("What is the capital of France?")
@@ -30,13 +30,13 @@ def test_agent_with_custom_retriever_error():
     assert "<references>" not in response.messages[0].content
 
 
-def test_agent_with_custom_retriever_search_knowledge_error():
-    def custom_retriever(**kwargs):
+def test_agent_with_custom_knowledge_retriever_search_knowledge_error():
+    def custom_knowledge_retriever(**kwargs):
         raise Exception("Test error")
 
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
-        retriever=custom_retriever,
+        knowledge_retriever=custom_knowledge_retriever,
         search_knowledge=True,
         debug_mode=True,
     )

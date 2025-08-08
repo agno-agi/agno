@@ -34,11 +34,11 @@ Chroma.from_documents(
 # Get the vector database
 db = Chroma(embedding_function=OpenAIEmbeddings(), persist_directory=str(chroma_db_dir))
 
-# Create a retriever from the vector store
-retriever = db.as_retriever()
+# Create a knowledge retriever from the vector store
+knowledge_retriever = db.as_retriever()
 
 # Create a knowledge instance
-knowledge = Knowledge(vector_db=LangChainVectorDb(retriever=retriever))
+knowledge = Knowledge(vector_db=LangChainVectorDb(knowledge_retriever=knowledge_retriever))
 
 # Create an agent with the knowledge base
 agent = Agent(knowledge=knowledge)

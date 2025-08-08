@@ -9,7 +9,7 @@ class LangChainVectorDb(VectorDb):
     vectorstore: Optional[Any] = None
     search_kwargs: Optional[dict] = None
 
-    retriever: Optional[Any] = None
+    knowledge_retriever: Optional[Any] = None
 
     def create(self) -> None:
         raise NotImplementedError
@@ -60,24 +60,24 @@ class LangChainVectorDb(VectorDb):
                 "The `langchain` package is not installed. Please install it via `pip install langchain`."
             )
 
-        if self.vectorstore is not None and self.retriever is None:
-            log_debug("Creating retriever")
+        if self.vectorstore is not None and self.knowledge_retriever is None:
+            log_debug("Creating knowledge retriever")
             if self.search_kwargs is None:
                 self.search_kwargs = {"k": self.num_documents}
             if filters is not None:
                 self.search_kwargs.update(filters)
-            self.retriever = self.vectorstore.as_retriever(search_kwargs=self.search_kwargs)
+            self.knowledge_retriever = self.vectorstore.as_retriever(search_kwargs=self.search_kwargs)
 
-        if self.retriever is None:
-            logger.error("No retriever provided")
+        if self.knowledge_retriever is None:
+            logger.error("No knowledge retriever provided")
             return []
 
-        if not isinstance(self.retriever, BaseRetriever):
-            raise ValueError(f"Retriever is not of type BaseRetriever: {self.retriever}")
+        if not isinstance(self.knowledge_retriever, BaseRetriever):
+            raise ValueError(f"Knowledge retriever is not of type BaseRetriever: {self.knowledge_retriever}")
 
         _num_documents = num_documents or self.num_documents
         log_debug(f"Getting {_num_documents} relevant documents for query: {query}")
-        lc_documents: List[LangChainDocument] = self.retriever.invoke(input=query)
+        lc_documents: List[LangChainDocument] = self.knowledge_retriever.invoke(input=query)
         documents = []
         for lc_doc in lc_documents:
             documents.append(
