@@ -3854,7 +3854,7 @@ class Agent:
         log_debug(f"Creating new AgentSession: {session_id}")
         self.agent_session = AgentSession(
             session_id=session_id,
-            id=self.id,
+            agent_id=self.id,
             user_id=user_id,
             team_session_id=self.team_session_id,
             agent_data=self.get_agent_data(),
