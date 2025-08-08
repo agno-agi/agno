@@ -122,7 +122,6 @@ class Workflow:
     session_id: Optional[str] = None
     session_name: Optional[str] = None
     user_id: Optional[str] = None
-    workflow_session_id: Optional[str] = None
     workflow_session_state: Optional[Dict[str, Any]] = None
 
     # Runtime state
@@ -1850,16 +1849,6 @@ class Workflow:
 
         return self.session_id
 
-    def new_session(self) -> None:
-        """Create a new workflow session"""
-        log_debug("Creating new workflow session")
-
-        self.workflow_session = None
-        self.session_id = str(uuid4())
-
-        log_debug(f"New session ID: {self.session_id}")
-        self.load_session(force=True)
-
     def _format_step_content_for_display(self, step_output: StepOutput) -> str:
         """Format content for display, handling structured outputs. Works for both raw content and StepOutput objects."""
         # If it's a StepOutput, extract the content
@@ -3512,8 +3501,6 @@ class Workflow:
                 if isinstance(step, Step):
                     active_executor = step.active_executor
 
-                    if hasattr(active_executor, "workflow_session_id"):
-                        active_executor.workflow_session_id = self.session_id
                     if hasattr(active_executor, "workflow_id"):
                         active_executor.workflow_id = self.workflow_id
 
@@ -3523,8 +3510,6 @@ class Workflow:
                     # If it's a team, update all members
                     if hasattr(active_executor, "members"):
                         for member in active_executor.members:
-                            if hasattr(member, "workflow_session_id"):
-                                member.workflow_session_id = self.session_id
                             if hasattr(member, "workflow_id"):
                                 member.workflow_id = self.workflow_id
 

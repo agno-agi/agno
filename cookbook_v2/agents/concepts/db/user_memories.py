@@ -21,7 +21,7 @@ agent = Agent(
 agent.print_response("I love astronomy, specifically the science behind nebulae")
 
 # 2. Using a custom memory manager by creating an instance of MemoryManager
-memory_manager = MemoryManager(model=OpenAIChat(id="gpt-4o-mini"))
+# memory_manager = MemoryManager(model=OpenAIChat(id="gpt-4o-mini"))
 
 # agent = Agent(
 #     model=OpenAIChat(id="gpt-4o-mini"),

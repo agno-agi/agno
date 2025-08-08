@@ -64,12 +64,10 @@ class WorkflowSession:
         # Find existing run and update it, or append new one
         for i, existing_run in enumerate(self.runs):
             if existing_run.run_id == run.run_id:
-                # Update existing run
                 self.runs[i] = run
-                return
-
-        # Run not found, append new one
-        self.runs.append(run)
+                break
+        else:
+            self.runs.append(run)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for storage, serializing runs to dicts"""

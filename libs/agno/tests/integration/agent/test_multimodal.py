@@ -3,11 +3,11 @@ from agno.media import Image
 from agno.models.openai.chat import OpenAIChat
 
 
-def test_agent_image_input(agent_storage):
+def test_agent_image_input(shared_db):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         markdown=True,
-        storage=agent_storage,
+        storage=shared_db,
     )
 
     response = agent.run(
@@ -16,7 +16,7 @@ def test_agent_image_input(agent_storage):
     )
     assert response.content is not None
 
-    session_in_db = agent_storage.read(response.session_id)
+    session_in_db = shared_db.read(response.session_id)
     assert session_in_db is not None
     assert session_in_db.memory["runs"] is not None
     assert len(session_in_db.memory["runs"]) == 1
@@ -31,11 +31,11 @@ def test_agent_image_input(agent_storage):
     )
 
 
-def test_agent_image_input_no_prompt(agent_storage):
+def test_agent_image_input_no_prompt(shared_db):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         markdown=True,
-        storage=agent_storage,
+        storage=shared_db,
     )
 
     response = agent.run(
@@ -43,7 +43,7 @@ def test_agent_image_input_no_prompt(agent_storage):
     )
     assert response.content is not None
 
-    session_in_db = agent_storage.read(response.session_id)
+    session_in_db = shared_db.read(response.session_id)
     assert session_in_db is not None
     assert session_in_db.memory["runs"] is not None
     assert len(session_in_db.memory["runs"]) == 1

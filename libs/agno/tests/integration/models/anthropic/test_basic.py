@@ -154,7 +154,7 @@ def test_json_response_mode():
 def test_history():
     agent = Agent(
         model=Claude(id="claude-3-5-haiku-20241022"),
-        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
+        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/shared_db.db"),
         add_history_to_context=True,
         telemetry=False,
     )

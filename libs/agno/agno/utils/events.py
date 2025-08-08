@@ -45,7 +45,6 @@ def create_team_run_response_started_event(from_run_response: TeamRunResponse) -
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
         model=from_run_response.model,  # type: ignore
         model_provider=from_run_response.model_provider,  # type: ignore
@@ -57,7 +56,6 @@ def create_run_response_started_event(from_run_response: RunResponse) -> RunResp
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
         model=from_run_response.model,  # type: ignore
         model_provider=from_run_response.model_provider,  # type: ignore
@@ -69,7 +67,6 @@ def create_team_run_response_completed_event(from_run_response: TeamRunResponse)
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=from_run_response.content,  # type: ignore
         content_type=from_run_response.content_type,  # type: ignore
@@ -90,7 +87,6 @@ def create_run_response_completed_event(from_run_response: RunResponse) -> RunRe
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=from_run_response.content,  # type: ignore
         content_type=from_run_response.content_type,  # type: ignore
@@ -112,7 +108,6 @@ def create_run_response_paused_event(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
         tools=tools,
         content=from_run_response.content,
@@ -124,7 +119,6 @@ def create_run_response_continued_event(from_run_response: RunResponse) -> RunRe
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -134,7 +128,6 @@ def create_team_run_response_error_event(from_run_response: TeamRunResponse, err
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=error,
     )
@@ -145,7 +138,6 @@ def create_run_response_error_event(from_run_response: RunResponse, error: str) 
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=error,
     )
@@ -158,7 +150,6 @@ def create_team_run_response_cancelled_event(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
         reason=reason,
     )
@@ -169,7 +160,6 @@ def create_run_response_cancelled_event(from_run_response: RunResponse, reason: 
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
         reason=reason,
     )
@@ -180,7 +170,6 @@ def create_memory_update_started_event(from_run_response: RunResponse) -> Memory
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -190,7 +179,6 @@ def create_team_memory_update_started_event(from_run_response: TeamRunResponse) 
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -200,7 +188,6 @@ def create_memory_update_completed_event(from_run_response: RunResponse) -> Memo
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -210,7 +197,6 @@ def create_team_memory_update_completed_event(from_run_response: TeamRunResponse
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -220,7 +206,6 @@ def create_reasoning_started_event(from_run_response: RunResponse) -> ReasoningS
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -230,7 +215,6 @@ def create_team_reasoning_started_event(from_run_response: TeamRunResponse) -> T
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -242,7 +226,6 @@ def create_reasoning_step_event(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=reasoning_step,
         content_type=reasoning_step.__class__.__name__,
@@ -257,7 +240,6 @@ def create_team_reasoning_step_event(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=reasoning_step,
         content_type=reasoning_step.__class__.__name__,
@@ -272,7 +254,6 @@ def create_reasoning_completed_event(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=content,
         content_type=content_type or "str",
@@ -286,7 +267,6 @@ def create_team_reasoning_completed_event(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=content,
         content_type=content_type or "str",
@@ -298,7 +278,6 @@ def create_tool_call_started_event(from_run_response: RunResponse, tool: ToolExe
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
         tool=tool,
     )
@@ -310,8 +289,7 @@ def create_team_tool_call_started_event(
     return TeamToolCallStartedEvent(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
-        team_name=from_run_response.team_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore  
         run_id=from_run_response.run_id,
         tool=tool,
     )
@@ -324,7 +302,6 @@ def create_tool_call_completed_event(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
         tool=tool,
         content=content,
@@ -341,7 +318,6 @@ def create_team_tool_call_completed_event(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
         tool=tool,
         content=content,
@@ -367,7 +343,6 @@ def create_run_response_content_event(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=content,
         content_type=content_type or "str",
@@ -394,7 +369,6 @@ def create_team_run_response_content_event(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
         content=content,
         content_type=content_type or "str",
@@ -413,7 +387,6 @@ def create_parser_model_response_started_event(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -425,7 +398,6 @@ def create_parser_model_response_completed_event(
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -437,7 +409,6 @@ def create_team_parser_model_response_started_event(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -449,6 +420,5 @@ def create_team_parser_model_response_completed_event(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
     )

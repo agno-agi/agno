@@ -96,7 +96,7 @@ def test_with_memory():
 def test_history():
     agent = Agent(
         model=v0(id="v0-1.0-md"),
-        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
+        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/shared_db.db"),
         add_history_to_context=True,
         telemetry=False,
     )

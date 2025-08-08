@@ -43,8 +43,6 @@ class BaseTeamRunResponseEvent(BaseRunResponseEvent):
     team_name: str = ""
     run_id: Optional[str] = None
     session_id: Optional[str] = None
-    # If the team is a member of a team, this will be the session id of the parent team
-    team_session_id: Optional[str] = None
 
     workflow_id: Optional[str] = None
     workflow_run_id: Optional[str] = None  # This is the workflow's run_id
@@ -245,8 +243,6 @@ class TeamRunResponse:
     team_id: Optional[str] = None
     team_name: Optional[str] = None
     session_id: Optional[str] = None
-    # If the team is a member of a team, this will be the session id of the parent team
-    team_session_id: Optional[str] = None
     parent_run_id: Optional[str] = None
 
     tools: Optional[List[ToolExecution]] = None

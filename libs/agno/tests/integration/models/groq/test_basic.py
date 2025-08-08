@@ -147,7 +147,7 @@ def test_json_response_mode():
 def test_history():
     agent = Agent(
         model=Groq(id="llama3-70b-8192"),
-        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
+        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/shared_db.db"),
         add_history_to_context=True,
         telemetry=False,
     )

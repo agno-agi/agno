@@ -5,7 +5,6 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
-from agno.utils.pprint import pprint_run_response
 from pydantic import BaseModel
 
 

@@ -631,7 +631,6 @@ class SingleStoreDb(BaseDb):
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.AGENT.value,
                         agent_id=session_dict.get("agent_id"),
-                        team_session_id=session_dict.get("team_session_id"),
                         user_id=session_dict.get("user_id"),
                         runs=session_dict.get("runs"),
                         agent_data=session_dict.get("agent_data"),
@@ -643,7 +642,6 @@ class SingleStoreDb(BaseDb):
                     )
                     stmt = stmt.on_duplicate_key_update(
                         agent_id=stmt.inserted.agent_id,
-                        team_session_id=stmt.inserted.team_session_id,
                         user_id=stmt.inserted.user_id,
                         agent_data=stmt.inserted.agent_data,
                         session_data=stmt.inserted.session_data,
@@ -676,7 +674,6 @@ class SingleStoreDb(BaseDb):
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.TEAM.value,
                         team_id=session_dict.get("team_id"),
-                        team_session_id=session_dict.get("team_session_id"),
                         user_id=session_dict.get("user_id"),
                         runs=session_dict.get("runs"),
                         team_data=session_dict.get("team_data"),
@@ -688,7 +685,6 @@ class SingleStoreDb(BaseDb):
                     )
                     stmt = stmt.on_duplicate_key_update(
                         team_id=stmt.inserted.team_id,
-                        team_session_id=stmt.inserted.team_session_id,
                         user_id=stmt.inserted.user_id,
                         team_data=stmt.inserted.team_data,
                         session_data=stmt.inserted.session_data,

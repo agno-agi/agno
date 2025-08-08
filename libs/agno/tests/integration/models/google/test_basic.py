@@ -188,7 +188,7 @@ def test_history():
         model=Gemini(id="gemini-1.5-flash"),
         exponential_backoff=True,
         delay_between_retries=5,
-        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
+        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/shared_db.db"),
         add_history_to_context=True,
         telemetry=False,
     )

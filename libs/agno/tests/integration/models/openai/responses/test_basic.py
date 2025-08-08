@@ -174,7 +174,7 @@ def test_history():
     """Test conversation history in the agent."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        storage=SqliteAgentStorage(table_name="responses_agent_sessions", db_file="tmp/agent_storage.db"),
+        storage=SqliteAgentStorage(table_name="responses_agent_sessions", db_file="tmp/shared_db.db"),
         add_history_to_context=True,
         telemetry=False,
     )

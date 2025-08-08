@@ -151,11 +151,11 @@ def test_condition_direct_multiple_steps():
 # ============================================================================
 
 
-def test_basic_condition_true(workflow_storage):
+def test_basic_condition_true(shared_db):
     """Test basic condition that evaluates to True."""
     workflow = Workflow(
         name="Basic Condition",
-        db=workflow_storage,
+        db=shared_db,
         steps=[research_step, Condition(name="stats_check", evaluator=has_statistics, steps=[fact_check_step])],
     )
 
@@ -169,11 +169,11 @@ def test_basic_condition_true(workflow_storage):
     assert "Fact check complete" in response.step_results[1][0].content
 
 
-def test_basic_condition_false(workflow_storage):
+def test_basic_condition_false(shared_db):
     """Test basic condition that evaluates to False."""
     workflow = Workflow(
         name="Basic Condition False",
-        db=workflow_storage,
+        db=shared_db,
         steps=[research_step, Condition(name="stats_check", evaluator=has_statistics, steps=[fact_check_step])],
     )
 
@@ -186,11 +186,11 @@ def test_basic_condition_false(workflow_storage):
     assert response.step_results[1] == []  # Condition returned empty list
 
 
-def test_parallel_with_conditions(workflow_storage):
+def test_parallel_with_conditions(shared_db):
     """Test parallel containing multiple conditions."""
     workflow = Workflow(
         name="Parallel with Conditions",
-        db=workflow_storage,
+        db=shared_db,
         steps=[
             research_step,  # Add a step before parallel to ensure proper chaining
             Parallel(
@@ -212,11 +212,11 @@ def test_parallel_with_conditions(workflow_storage):
     assert "SUCCESS: fact_check_step" in parallel_output.content
 
 
-def test_condition_streaming(workflow_storage):
+def test_condition_streaming(shared_db):
     """Test condition with streaming."""
     workflow = Workflow(
         name="Streaming Condition",
-        db=workflow_storage,
+        db=shared_db,
         steps=[Condition(name="tech_check", evaluator=is_tech_topic, steps=[research_step, analysis_step])],
     )
 
@@ -233,7 +233,7 @@ def test_condition_streaming(workflow_storage):
     assert condition_started[0].condition_result is True
 
 
-def test_condition_error_handling(workflow_storage):
+def test_condition_error_handling(shared_db):
     """Test condition error handling."""
 
     def failing_evaluator(_: StepInput) -> bool:
@@ -241,7 +241,7 @@ def test_condition_error_handling(workflow_storage):
 
     workflow = Workflow(
         name="Error Condition",
-        db=workflow_storage,
+        db=shared_db,
         steps=[Condition(name="failing_check", evaluator=failing_evaluator, steps=[research_step])],
     )
 
@@ -251,11 +251,11 @@ def test_condition_error_handling(workflow_storage):
     assert "Evaluator failed" in response.content
 
 
-def test_nested_conditions(workflow_storage):
+def test_nested_conditions(shared_db):
     """Test nested conditions."""
     workflow = Workflow(
         name="Nested Conditions",
-        db=workflow_storage,
+        db=shared_db,
         steps=[
             Condition(
                 name="outer",
@@ -275,11 +275,11 @@ def test_nested_conditions(workflow_storage):
 
 
 @pytest.mark.asyncio
-async def test_async_condition(workflow_storage):
+async def test_async_condition(shared_db):
     """Test async condition."""
     workflow = Workflow(
         name="Async Condition",
-        db=workflow_storage,
+        db=shared_db,
         steps=[Condition(name="async_check", evaluator=async_evaluator, steps=[research_step])],
     )
 
@@ -291,11 +291,11 @@ async def test_async_condition(workflow_storage):
 
 
 @pytest.mark.asyncio
-async def test_async_condition_streaming(workflow_storage):
+async def test_async_condition_streaming(shared_db):
     """Test async condition with streaming."""
     workflow = Workflow(
         name="Async Streaming Condition",
-        db=workflow_storage,
+        db=shared_db,
         steps=[Condition(name="async_check", evaluator=async_evaluator, steps=[research_step])],
     )
 

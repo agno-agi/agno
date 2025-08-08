@@ -38,36 +38,13 @@ def temp_memory_db_file():
 
 
 @pytest.fixture
-def agent_storage(temp_storage_db_file):
-    """Create a SQLite storage for agent sessions."""
+def shared_db(temp_storage_db_file):
+    """Create a SQLite storage for sessions."""
     # Use a unique table name for each test run
-    table_name = f"agent_sessions_{uuid.uuid4().hex[:8]}"
-    storage = SqliteDb(table_name=table_name, db_file=temp_storage_db_file)
-    storage.create()
-    return storage
+    table_name = f"sessions_{uuid.uuid4().hex[:8]}"
+    db = SqliteDb(session_table=table_name, db_file=temp_storage_db_file)
+    return db
 
-
-@pytest.fixture
-def team_storage(temp_storage_db_file):
-    """Create a SQLite storage for team sessions."""
-    # Use a unique table name for each test run
-    table_name = f"team_sessions_{uuid.uuid4().hex[:8]}"
-    storage = SqliteDb(table_name=table_name, db_file=temp_storage_db_file, mode="team")
-    storage.create()
-    return storage
-
-
-@pytest.fixture
-def workflow_storage(temp_storage_db_file):
-    """Create a SQLite storage for workflow sessions."""
-    # Use a unique table name for each test run
-    table_name = f"workflow_sessions_{uuid.uuid4().hex[:8]}"
-    storage = SqliteDb(table_name=table_name, db_file=temp_storage_db_file, mode="workflow")
-    storage.create()
-    return storage
-
-
-# -- DB Fixtures --
 
 
 @pytest.fixture

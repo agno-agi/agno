@@ -41,7 +41,7 @@ def temp_memory_db_file():
 
 
 @pytest.fixture
-def team_storage(temp_storage_db_file):
+def shared_db(temp_storage_db_file):
     """Create a SQLite storage for team sessions."""
     # Use a unique table name for each test run
     table_name = f"team_sessions_{uuid.uuid4().hex[:8]}"
@@ -65,21 +65,21 @@ def memory(memory_db):
 
 
 @pytest.fixture
-def route_team(team_storage, memory):
+def route_team(shared_db, memory):
     """Create a route team with storage and memory for testing."""
     return Team(
         name="Route Team",
         mode="route",
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[],
-        storage=team_storage,
+        storage=shared_db,
         memory=memory,
         enable_user_memories=True,
     )
 
 
 @pytest.fixture
-def route_team_with_members(team_storage, agent_storage, memory):
+def route_team_with_members(shared_db, shared_db, memory):
     """Create a route team with storage and memory for testing."""
 
     def get_weather(city: str) -> str:
@@ -91,7 +91,7 @@ def route_team_with_members(team_storage, agent_storage, memory):
     travel_agent = Agent(
         name="Travel Agent",
         model=Gemini(id="gemini-2.0-flash-001"),
-        storage=agent_storage,
+        storage=shared_db,
         memory=memory,
         add_history_to_context=True,
         role="Search the web for travel information. Don't call multiple tools at once. First get weather, then restaurants.",
@@ -102,7 +102,7 @@ def route_team_with_members(team_storage, agent_storage, memory):
         mode="route",
         model=Gemini(id="gemini-2.0-flash-001"),
         members=[travel_agent],
-        storage=team_storage,
+        storage=shared_db,
         memory=memory,
         instructions="Route a single question to the travel agent. Don't make multiple requests.",
         enable_user_memories=True,
@@ -110,7 +110,7 @@ def route_team_with_members(team_storage, agent_storage, memory):
 
 
 @pytest.mark.asyncio
-async def test_run_history_persistence(route_team, team_storage, memory):
+async def test_run_history_persistence(route_team, shared_db, memory):
     """Test that all runs within a session are persisted in storage."""
     user_id = "john@example.com"
     session_id = "session_123"
@@ -134,7 +134,7 @@ async def test_run_history_persistence(route_team, team_storage, memory):
         await route_team.arun(msg, user_id=user_id, session_id=session_id)
 
     # Verify the stored session data after all turns
-    team_session = team_storage.read(session_id=session_id)
+    team_session = shared_db.read(session_id=session_id)
 
     stored_memory_data = team_session.memory
     assert stored_memory_data is not None, "Memory data not found in stored session."
@@ -147,7 +147,7 @@ async def test_run_history_persistence(route_team, team_storage, memory):
 
 
 @pytest.mark.asyncio
-async def test_run_session_summary(route_team, team_storage, memory):
+async def test_run_session_summary(route_team, shared_db, memory):
     """Test that the session summary is persisted in storage."""
     session_id = "session_123"
     user_id = "john@example.com"
@@ -163,19 +163,19 @@ async def test_run_session_summary(route_team, team_storage, memory):
 
     assert route_team.get_session_summary(user_id=user_id, session_id=session_id).summary is not None
 
-    team_session = team_storage.read(session_id=session_id)
+    team_session = shared_db.read(session_id=session_id)
     assert len(team_session.memory["summaries"][user_id][session_id]) > 0
 
     await route_team.arun("Where is Tokyo?", user_id=user_id, session_id=session_id)
 
     assert route_team.get_session_summary(user_id=user_id, session_id=session_id).summary is not None
 
-    team_session = team_storage.read(session_id=session_id)
+    team_session = shared_db.read(session_id=session_id)
     assert len(team_session.memory["summaries"][user_id][session_id]) > 0
 
 
 @pytest.mark.asyncio
-async def test_member_run_history_persistence(route_team_with_members, agent_storage, memory):
+async def test_member_run_history_persistence(route_team_with_members, shared_db, memory):
     """Test that all runs within a member's session are persisted in storage."""
     user_id = "john@example.com"
     session_id = "session_123"
@@ -188,7 +188,7 @@ async def test_member_run_history_persistence(route_team_with_members, agent_sto
         "I'm traveling to Tokyo, what is the weather and open restaurants?", user_id=user_id, session_id=session_id
     )
 
-    agent_session = agent_storage.read(session_id=session_id)
+    agent_session = shared_db.read(session_id=session_id)
 
     stored_memory_data = agent_session.memory
     assert stored_memory_data is not None, "Memory data not found in stored session."
@@ -209,7 +209,7 @@ async def test_member_run_history_persistence(route_team_with_members, agent_sto
         "I'm traveling to Munich, what is the weather and open restaurants?", user_id=user_id, session_id=session_id
     )
 
-    agent_session = agent_storage.read(session_id=session_id)
+    agent_session = shared_db.read(session_id=session_id)
 
     stored_memory_data = agent_session.memory
     assert stored_memory_data is not None, "Memory data not found in stored session."
@@ -227,7 +227,7 @@ async def test_member_run_history_persistence(route_team_with_members, agent_sto
         session_id=session_id,
     )
 
-    agent_session = agent_storage.read(session_id=session_id)
+    agent_session = shared_db.read(session_id=session_id)
 
     stored_memory_data = agent_session.memory
     assert stored_memory_data is not None, "Memory data not found in stored session."
@@ -240,7 +240,7 @@ async def test_member_run_history_persistence(route_team_with_members, agent_sto
 
 
 @pytest.mark.asyncio
-async def test_multi_user_multi_session_route_team(route_team, team_storage, memory):
+async def test_multi_user_multi_session_route_team(route_team, shared_db, memory):
     """Test multi-user multi-session route team with storage and memory."""
     # Define user and session IDs
     user_1_id = "user_1@example.com"
@@ -286,26 +286,26 @@ async def test_multi_user_multi_session_route_team(route_team, team_storage, mem
     )
 
     # Verify storage DB has the right sessions
-    all_session_ids = team_storage.get_all_session_ids()
+    all_session_ids = shared_db.get_all_session_ids()
     assert len(all_session_ids) == 4  # 4 sessions total
 
     # Check that each user has the expected sessions
-    user_1_sessions = team_storage.get_all_sessions(user_id=user_1_id)
+    user_1_sessions = shared_db.get_all_sessions(user_id=user_1_id)
     assert len(user_1_sessions) == 2
     assert user_1_session_1_id in [session.session_id for session in user_1_sessions]
     assert user_1_session_2_id in [session.session_id for session in user_1_sessions]
 
-    user_2_sessions = team_storage.get_all_sessions(user_id=user_2_id)
+    user_2_sessions = shared_db.get_all_sessions(user_id=user_2_id)
     assert len(user_2_sessions) == 1
     assert user_2_session_1_id in [session.session_id for session in user_2_sessions]
 
-    user_3_sessions = team_storage.get_all_sessions(user_id=user_3_id)
+    user_3_sessions = shared_db.get_all_sessions(user_id=user_3_id)
     assert len(user_3_sessions) == 1
     assert user_3_session_1_id in [session.session_id for session in user_3_sessions]
 
 
 @pytest.mark.asyncio
-async def test_correct_sessions_in_db(route_team, team_storage, agent_storage):
+async def test_correct_sessions_in_db(route_team, shared_db, shared_db):
     """Test multi-user multi-session route team with storage and memory."""
     # Define user and session IDs
     user_id = "user_1@example.com"
@@ -316,12 +316,12 @@ async def test_correct_sessions_in_db(route_team, team_storage, agent_storage):
         Agent(
             name="Answers small questions",
             model=OpenAIChat(id="gpt-4o-mini"),
-            storage=agent_storage,
+            storage=shared_db,
         ),
         Agent(
             name="Answers big questions",
             model=OpenAIChat(id="gpt-4o-mini"),
-            storage=agent_storage,
+            storage=shared_db,
         ),
     ]
 
@@ -332,13 +332,13 @@ async def test_correct_sessions_in_db(route_team, team_storage, agent_storage):
         session_id=session_id,
     )
 
-    team_sessions = team_storage.get_all_sessions(entity_id=route_team.team_id)
+    team_sessions = shared_db.get_all_sessions(entity_id=route_team.team_id)
     assert len(team_sessions) == 1
     assert team_sessions[0].session_id == session_id
     assert team_sessions[0].user_id == user_id
     assert len(team_sessions[0].memory["runs"][0]["member_responses"]) == 2
 
-    agent_sessions = agent_storage.get_all_sessions()
+    agent_sessions = shared_db.get_all_sessions()
 
     # Single shared session for both agents
     assert len(agent_sessions) == 1
@@ -352,7 +352,7 @@ async def test_correct_sessions_in_db(route_team, team_storage, agent_storage):
 
 
 @pytest.mark.asyncio
-async def test_cache_session_behavior(team_storage, memory):
+async def test_cache_session_behavior(shared_db, memory):
     """Test that cache_session=False removes sessions from memory after storage."""
     user_id = "test_user@example.com"
     session_id = "test_session_123"
@@ -363,7 +363,7 @@ async def test_cache_session_behavior(team_storage, memory):
         mode="coordinate",
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[],
-        storage=team_storage,
+        storage=shared_db,
         memory=memory,
         cache_session=False,  # This is the key setting we're testing
     )
@@ -382,7 +382,7 @@ async def test_cache_session_behavior(team_storage, memory):
     assert response.content is not None
 
     # Verify the session was stored in storage
-    team_session = team_storage.read(session_id=session_id)
+    team_session = shared_db.read(session_id=session_id)
     assert team_session is not None, "Session should be stored in database"
     assert team_session.session_id == session_id
     assert team_session.user_id == user_id
@@ -404,6 +404,6 @@ async def test_cache_session_behavior(team_storage, memory):
     assert len(memory.runs) == 0, "Memory should still be empty after second run"
 
     # Verify storage still has the session data
-    team_session_updated = team_storage.read(session_id=session_id)
+    team_session_updated = shared_db.read(session_id=session_id)
     assert team_session_updated is not None, "Session should still be in storage"
     assert len(team_session_updated.memory["runs"]) == 2, "Storage should have both runs"

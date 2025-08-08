@@ -141,7 +141,7 @@ def test_json_response_mode():
 def test_history():
     agent = Agent(
         model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
-        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
+        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/shared_db.db"),
         add_history_to_context=True,
         telemetry=False,
     )

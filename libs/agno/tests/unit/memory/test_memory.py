@@ -192,7 +192,7 @@ def test_custom_summarizer_with_system_message(mock_model, mock_db):
             ],
         )
 
-        memory.add_run(session_id, run_response)
+        memory.upsert_run(session_id, run_response)
 
         # Create the summary
         summary = memory.create_session_summary(session_id, user_id)
@@ -311,7 +311,7 @@ def test_create_session_summary(memory_with_managers):
         messages=[Message(role="user", content="Hello"), Message(role="assistant", content="Hi there!")],
     )
 
-    memory_with_managers.add_run(session_id, run_response)
+    memory_with_managers.upsert_run(session_id, run_response)
 
     # Create the summary
     summary = memory_with_managers.create_session_summary(session_id, user_id)
@@ -439,7 +439,7 @@ def test_add_run(memory_with_model, sample_run_response):
     session_id = "test_session"
 
     # Add a run
-    memory_with_model.add_run(session_id, sample_run_response)
+    memory_with_model.upsert_run(session_id, sample_run_response)
 
     # Verify it was added
     assert session_id in memory_with_model.runs
@@ -460,7 +460,7 @@ def test_get_messages_for_session(memory_with_model):
         ],
     )
 
-    memory_with_model.add_run(session_id, run_response)
+    memory_with_model.upsert_run(session_id, run_response)
 
     # Get messages for the session
     messages = memory_with_model.get_messages_for_session(session_id)
@@ -494,8 +494,8 @@ def test_get_messages_for_session_with_multiple_runs(memory_with_model):
         ],
     )
 
-    memory_with_model.add_run(session_id, run1)
-    memory_with_model.add_run(session_id, run2)
+    memory_with_model.upsert_run(session_id, run1)
+    memory_with_model.upsert_run(session_id, run2)
 
     # Get messages for the session
     messages = memory_with_model.get_messages_for_session(session_id)
@@ -534,8 +534,8 @@ def test_get_messages_for_session_with_history_messages(memory_with_model):
         ],
     )
 
-    memory_with_model.add_run(session_id, run_response_1)
-    memory_with_model.add_run(session_id, run_response_2)
+    memory_with_model.upsert_run(session_id, run_response_1)
+    memory_with_model.upsert_run(session_id, run_response_2)
 
     # Get messages for the session with skip_history_messages=True (default)
     messages = memory_with_model.get_messages_for_session(session_id)
@@ -583,8 +583,8 @@ def test_get_messages_from_last_n_runs(memory_with_model):
         ],
     )
 
-    memory_with_model.add_run(session_id, run1)
-    memory_with_model.add_run(session_id, run2)
+    memory_with_model.upsert_run(session_id, run1)
+    memory_with_model.upsert_run(session_id, run2)
 
     # Get messages from the last 1 run
     messages = memory_with_model.get_messages_from_last_n_runs(session_id, last_n=1)
