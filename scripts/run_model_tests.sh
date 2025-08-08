@@ -30,6 +30,7 @@ if [ -z "$1" ]; then
     echo "- google"
     echo "- groq"
     echo "- ibm"
+    echo "- litellm"
     echo "- mistral"
     echo "- nvidia"
     echo "- openai"
@@ -200,6 +201,14 @@ case $MODEL_NAME in
             print_heading "Error: IBM_WATSONX_URL environment variable is not set"
             exit 1
         fi
+        ;;
+    "litellm")
+        if [ -z "${LITELLM_API_KEY}" ] && [ -z "${OPENAI_API_KEY}" ]; then
+            print_heading "Error: LITELLM_API_KEY or OPENAI_API_KEY environment variable is not set"
+            exit 1
+        fi
+        print_info "Installing litellm package -- required in tests"
+        pip install litellm
         ;;
     "cerebras")
         if [ -z "${CEREBRAS_API_KEY}" ]; then

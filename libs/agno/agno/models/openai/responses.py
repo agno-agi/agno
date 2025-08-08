@@ -47,7 +47,7 @@ class OpenAIResponses(Model):
     top_p: Optional[float] = None
     truncation: Optional[Literal["auto", "disabled"]] = None
     user: Optional[str] = None
-
+    service_tier: Optional[Literal["auto", "default", "flex", "priority"]] = None
     request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
@@ -178,6 +178,7 @@ class OpenAIResponses(Model):
             "top_p": self.top_p,
             "truncation": self.truncation,
             "user": self.user,
+            "service_tier": self.service_tier,
         }
         # Set the response format
         if response_format is not None:
@@ -310,11 +311,11 @@ class OpenAIResponses(Model):
         formatted_tools = []
         if tools:
             for _tool in tools:
-                if _tool["type"] == "function":
-                    _tool_dict = _tool["function"]
+                if _tool.get("type") == "function":
+                    _tool_dict = _tool.get("function", {})
                     _tool_dict["type"] = "function"
-                    for prop in _tool_dict["parameters"]["properties"].values():
-                        if isinstance(prop["type"], list):
+                    for prop in _tool_dict.get("parameters", {}).get("properties", {}).values():
+                        if isinstance(prop.get("type", ""), list):
                             prop["type"] = prop["type"][0]
 
                     formatted_tools.append(_tool_dict)
