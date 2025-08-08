@@ -17,7 +17,7 @@ from agno.os.utils import (
 )
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
-from agno.workflow.v2.workflow import Workflow
+from agno.workflow.workflow import Workflow
 
 
 class InterfaceResponse(BaseModel):

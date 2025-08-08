@@ -96,6 +96,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
             metadata=parsed_metadata,
             file_data=file_data,
             size=file.size if file else None if text_content else None,
+            upload_file=file,
         )
 
         background_tasks.add_task(process_content, knowledge, content_id, content, reader_id)

@@ -4,10 +4,8 @@ from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
-from agno.workflow.v2.step import Step
-from agno.workflow.v2.workflow import Workflow
-
-from cookbook.os.dbs.redis_demo import db
+from agno.workflow.step import Step
+from agno.workflow.workflow import Workflow
 
 # Define agents
 hackernews_agent = Agent(

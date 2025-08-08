@@ -677,7 +677,7 @@ jobs:
         working-directory: .
         run: |
           source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/workflows  ./libs/agno/tests/integration/workflows_2
+          python -m pytest ./libs/agno/tests/integration/workflows  
 
   test-embedder:
     runs-on: ubuntu-latest
