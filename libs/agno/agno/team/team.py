@@ -190,7 +190,7 @@ class Team:
     enable_agentic_knowledge_filters: Optional[bool] = False
 
     # If True, add references to the user prompt
-    add_references: bool = False
+    add_knowledge_to_context: bool = False
     # Retrieval function to get references
     # This function, if provided, is used instead of the default search_knowledge function
     # Signature:
@@ -336,7 +336,7 @@ class Team:
         add_dependencies_to_context: bool = False,
         knowledge: Optional[Knowledge] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        add_references: bool = False,
+        add_knowledge_to_context: bool = False,
         enable_agentic_knowledge_filters: Optional[bool] = False,
         knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
@@ -417,7 +417,7 @@ class Team:
         self.knowledge = knowledge
         self.knowledge_filters = knowledge_filters
         self.enable_agentic_knowledge_filters = enable_agentic_knowledge_filters
-        self.add_references = add_references
+        self.add_knowledge_to_context = add_knowledge_to_context
         self.knowledge_retriever = knowledge_retriever
         self.references_format = references_format
 
@@ -5326,7 +5326,7 @@ class Team:
         # Get references from the knowledge base to use in the user message
         references = None
         self.run_response = cast(TeamRunResponse, self.run_response)
-        if self.add_references and message:
+        if self.add_knowledge_to_context and message:
             message_str: str
             if isinstance(message, str):
                 message_str = message
@@ -5335,7 +5335,7 @@ class Team:
             elif isinstance(message, BaseModel):
                 message_str = message.model_dump_json(indent=2, exclude_none=True)
             else:
-                raise Exception("message must be a string or a callable when add_references is True")
+                raise Exception("message must be a string or a callable when add_knowledge_to_context is True")
 
             try:
                 retrieval_timer = Timer()
@@ -5376,7 +5376,7 @@ class Team:
 
             # Add references to user message
             if (
-                self.add_references
+                self.add_knowledge_to_context
                 and references is not None
                 and references.references is not None
                 and len(references.references) > 0

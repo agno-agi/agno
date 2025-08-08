@@ -9,7 +9,7 @@ def test_agent_with_custom_knowledge_retriever():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         knowledge_retriever=custom_knowledge_retriever,
-        add_references=True,
+        add_knowledge_to_context=True,
     )
     response = agent.run("What is the capital of France?")
     assert response.metadata.references[0].references == ["Paris is the capital of France"]
@@ -23,7 +23,7 @@ def test_agent_with_custom_knowledge_retriever_error():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         knowledge_retriever=custom_knowledge_retriever,
-        add_references=True,
+        add_knowledge_to_context=True,
     )
     response = agent.run("What is the capital of France?")
     assert response.metadata is None, "There should be no references"

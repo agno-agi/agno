@@ -159,7 +159,7 @@ class Agent:
     knowledge_filters: Optional[Dict[str, Any]] = None
     # Let the agent choose the knowledge filters
     enable_agentic_knowledge_filters: Optional[bool] = False
-    add_references: bool = False
+    add_knowledge_to_context: bool = False
     # Retrieval function to get references
     # This function, if provided, is used instead of the default search_knowledge function
     # Signature:
@@ -352,7 +352,7 @@ class Agent:
         knowledge: Optional[Knowledge] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         enable_agentic_knowledge_filters: Optional[bool] = None,
-        add_references: bool = False,
+        add_knowledge_to_context: bool = False,
         knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
         metadata: Optional[Dict[str, Any]] = None,
@@ -439,7 +439,7 @@ class Agent:
         self.knowledge = knowledge
         self.knowledge_filters = knowledge_filters
         self.enable_agentic_knowledge_filters = enable_agentic_knowledge_filters
-        self.add_references = add_references
+        self.add_knowledge_to_context = add_knowledge_to_context
         self.knowledge_retriever = knowledge_retriever
         self.references_format = references_format
 
@@ -4237,14 +4237,14 @@ class Agent:
         # Get references from the knowledge base to use in the user message
         references = None
         self.run_response = cast(RunResponse, self.run_response)
-        if self.add_references and message:
+        if self.add_knowledge_to_context and message:
             message_str: str
             if isinstance(message, str):
                 message_str = message
             elif callable(message):
                 message_str = message(agent=self)
             else:
-                raise Exception("message must be a string or a callable when add_references is True")
+                raise Exception("message must be a string or a callable when add_knowledge_to_context is True")
 
             try:
                 retrieval_timer = Timer()
@@ -4349,7 +4349,7 @@ class Agent:
 
         # 4.1 Add references to user message
         if (
-            self.add_references
+            self.add_knowledge_to_context
             and references is not None
             and references.references is not None
             and len(references.references) > 0
