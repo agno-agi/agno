@@ -26,7 +26,7 @@ from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
-from agno.run.response import RunResponseContentEvent, RunResponseEvent
+from agno.run.response import RunResponse, RunResponseContentEvent, RunResponseEvent
 from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
 from agno.run.team import TeamRunResponseEvent
 from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
@@ -194,6 +194,7 @@ class Model(ABC):
         functions: Optional[Dict[str, Function]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -217,6 +218,7 @@ class Model(ABC):
                 response_format=response_format,
                 tools=tools,
                 tool_choice=tool_choice or self._tool_choice,
+                run_response=run_response,
             )
 
             # Add assistant message to messages
@@ -416,6 +418,7 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> None:
         """
         Process a single model response and return the assistant message and whether to continue.
@@ -430,6 +433,7 @@ class Model(ABC):
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
+            run_response=run_response,
         )
 
         # Populate the assistant message
@@ -464,6 +468,7 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> None:
         """
         Process a single async model response and return the assistant message and whether to continue.
@@ -478,6 +483,7 @@ class Model(ABC):
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
             assistant_message=assistant_message,
+            run_response=run_response,
         )
 
         # Populate the assistant message
@@ -573,6 +579,7 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> Iterator[ModelResponse]:
         """
         Process a streaming response from the model.
@@ -584,6 +591,7 @@ class Model(ABC):
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
+            run_response=run_response,
         ):
             yield from self._populate_stream_data_and_assistant_message(
                 stream_data=stream_data,
@@ -600,6 +608,7 @@ class Model(ABC):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         stream_model_response: bool = True,
+        run_response: Optional[RunResponse] = None,
     ) -> Iterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
         """
         Generate a streaming response from the model.
@@ -624,6 +633,7 @@ class Model(ABC):
                     response_format=response_format,
                     tools=tools,
                     tool_choice=tool_choice or self._tool_choice,
+                    run_response=run_response,
                 )
 
                 # Populate assistant message from stream data
@@ -721,6 +731,7 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Process a streaming response from the model.
@@ -731,6 +742,7 @@ class Model(ABC):
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
+            run_response=run_response,
         ):  # type: ignore
             for model_response in self._populate_stream_data_and_assistant_message(
                 stream_data=stream_data,
@@ -751,6 +763,7 @@ class Model(ABC):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         stream_model_response: bool = True,
+        run_response: Optional[RunResponse] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -775,6 +788,7 @@ class Model(ABC):
                     response_format=response_format,
                     tools=tools,
                     tool_choice=tool_choice or self._tool_choice,
+                    run_response=run_response,
                 ):
                     yield response
 
@@ -801,6 +815,7 @@ class Model(ABC):
                     response_format=response_format,
                     tools=tools,
                     tool_choice=tool_choice or self._tool_choice,
+                    run_response=run_response,
                 )
                 yield model_response
 
@@ -867,11 +882,6 @@ class Model(ABC):
         self, stream_data: MessageData, assistant_message: Message, model_response_delta: ModelResponse
     ) -> Iterator[ModelResponse]:
         """Update the stream data and assistant message with the model response."""
-
-        # Update metrics
-        if not assistant_message.metrics.time_to_first_token:
-            assistant_message.metrics.set_time_to_first_token()
-
         # Add role to assistant message
         if model_response_delta.role is not None:
             assistant_message.role = model_response_delta.role

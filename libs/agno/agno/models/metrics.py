@@ -89,8 +89,13 @@ class Metrics:
         elif other.duration is not None:
             result.duration = other.duration
 
-        # Not relevant to add, setting to None to avoid confusion
-        result.time_to_first_token = None
+        # Sum time to first token if both exist
+        if self.time_to_first_token is not None and other.time_to_first_token is not None:
+            result.time_to_first_token = self.time_to_first_token + other.time_to_first_token
+        elif self.time_to_first_token is not None:
+            result.time_to_first_token = self.time_to_first_token
+        elif other.time_to_first_token is not None:
+            result.time_to_first_token = other.time_to_first_token
 
         return result
 

@@ -313,8 +313,6 @@ class Cohere(Model):
         ):
             # Update metrics
             assistant_message.metrics.output_tokens += 1
-            if not assistant_message.metrics.time_to_first_token:
-                assistant_message.metrics.set_time_to_first_token()
 
             # Update provider response content
             stream_data.response_content += response.delta.message.content.text

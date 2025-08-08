@@ -748,6 +748,7 @@ class Agent:
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             response_format=response_format,
+            run_response=run_response,
         )
 
         # If a parser model is provided, structure the response separately
@@ -755,6 +756,10 @@ class Agent:
 
         # 3. Update the RunResponse with the model response
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
+
+        # Set the run duration
+        if run_response.metrics:
+            run_response.metrics.stop_timer()
 
         # 4. Add the RunResponse to Agent Session
         self.add_run_to_session(
@@ -842,6 +847,10 @@ class Agent:
         yield from self._parse_response_with_parser_model_stream(
             run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
         )
+
+        # Set the run duration
+        if run_response.metrics:
+            run_response.metrics.stop_timer()
 
         # 3. Add RunResponse to Agent Session
         self.add_run_to_session(
@@ -1016,6 +1025,10 @@ class Agent:
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
 
+        # Start the run metrics timer, to calculate the run duration
+        run_response.metrics = Metrics()
+        run_response.metrics.start_timer()
+
         self.run_response = run_response
         self.run_id = run_id
 
@@ -1161,6 +1174,10 @@ class Agent:
         # 3. Update the RunResponse with the model response
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
+        # Set the run duration
+        if run_response.metrics:
+            run_response.metrics.stop_timer()
+
         # 4. Add RunResponse to Agent Session
         self.add_run_to_session(
             run_response=run_response,
@@ -1247,6 +1264,10 @@ class Agent:
             run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
         ):
             yield event
+
+        # Set the run duration
+        if run_response.metrics:
+            run_response.metrics.stop_timer()
 
         # 3. Add RunResponse to Agent Session
         self.add_run_to_session(
@@ -1417,6 +1438,10 @@ class Agent:
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
+
+        # Start the run metrics timer, to calculate the run duration
+        run_response.metrics = Metrics()
+        run_response.metrics.start_timer()
 
         self.run_response = run_response
         self.run_id = run_id
@@ -2731,7 +2756,9 @@ class Agent:
         # Update the RunResponse messages
         run_response.messages = messages_for_run_response
         # Update the RunResponse metrics
-        run_response.metrics = self.calculate_run_metrics(messages_for_run_response)
+        run_response.metrics = self.calculate_run_metrics(
+            messages=messages_for_run_response, current_run_metrics=run_response.metrics
+        )
 
     def add_run_to_session(self, run_response: RunResponse):
         """Add the given RunResponse to memory, together with some calculated data"""
@@ -2801,6 +2828,7 @@ class Agent:
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
+            run_response=run_response,
         ):
             yield from self._handle_model_response_chunk(
                 run_response=run_response,
@@ -2834,7 +2862,9 @@ class Agent:
         # Update the RunResponse messages
         run_response.messages = messages_for_run_response
         # Update the RunResponse metrics
-        run_response.metrics = self.calculate_run_metrics(messages_for_run_response)
+        run_response.metrics = self.calculate_run_metrics(
+            messages=messages_for_run_response, current_run_metrics=run_response.metrics
+        )
 
         # Update the run_response audio if streaming
         if model_response.audio is not None:
@@ -2868,6 +2898,7 @@ class Agent:
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
+            run_response=run_response,
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
@@ -2903,7 +2934,9 @@ class Agent:
         # Update the RunResponse messages
         run_response.messages = messages_for_run_response
         # Update the RunResponse metrics
-        run_response.metrics = self.calculate_run_metrics(messages_for_run_response)
+        run_response.metrics = self.calculate_run_metrics(
+            messages=messages_for_run_response, current_run_metrics=run_response.metrics
+        )
 
         # Update the run_response audio if streaming
         if model_response.audio is not None:
@@ -4976,14 +5009,20 @@ class Agent:
         else:
             self.run_response.reasoning_content += reasoning_content
 
-    def calculate_run_metrics(self, messages: List[Message]) -> Metrics:
+    def calculate_run_metrics(self, messages: List[Message], current_run_metrics: Optional[Metrics] = None) -> Metrics:
         """Sum the metrics of the given messages into a Metrics object"""
-        metrics = Metrics()
+        metrics = current_run_metrics or Metrics()
 
         assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
         for m in messages:
             if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
                 metrics += m.metrics
+
+        # If the run metrics were already initialized, keep the time related metrics
+        if current_run_metrics is not None:
+            metrics.timer = current_run_metrics.timer
+            metrics.duration = current_run_metrics.duration
+            metrics.time_to_first_token = current_run_metrics.time_to_first_token
 
         return metrics
 

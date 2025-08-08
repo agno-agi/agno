@@ -738,9 +738,6 @@ class OpenAIResponses(Model):
                 if stream_data.response_provider_data is None:
                     stream_data.response_provider_data = {}
                 stream_data.response_provider_data["response_id"] = stream_event.response.id
-            # Update metrics
-            if not assistant_message.metrics.time_to_first_token:
-                assistant_message.metrics.set_time_to_first_token()
         elif stream_event.type == "response.output_text.annotation.added":
             model_response = ModelResponse()
             if stream_data.response_citations is None:

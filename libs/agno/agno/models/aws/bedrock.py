@@ -599,10 +599,6 @@ class AwsBedrock(Model):
         ):
             should_yield = False
 
-            # Update metrics
-            if not assistant_message.metrics.time_to_first_token:
-                assistant_message.metrics.set_time_to_first_token()
-
             if response_delta.content:
                 stream_data.response_content += response_delta.content
                 should_yield = True
@@ -641,10 +637,6 @@ class AwsBedrock(Model):
             tool_choice=tool_choice,
         ):
             should_yield = False
-
-            # Update metrics
-            if not assistant_message.metrics.time_to_first_token:
-                assistant_message.metrics.set_time_to_first_token()
 
             if response_delta.content:
                 stream_data.response_content += response_delta.content
