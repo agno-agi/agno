@@ -10,7 +10,7 @@ from agno.utils.log import log_info, logger
 class MarkdownKnowledgeBase(AgentKnowledge):
     path: Optional[Union[str, Path, List[Dict[str, Union[str, Dict[str, Any]]]]]] = None
     formats: List[str] = [".md"]
-    reader: MarkdownReader = MarkdownReader()
+    reader: MarkdownReader = MarkdownReader(chunking_strategy=None)
 
     @property
     def document_lists(self) -> Iterator[List[Document]]:
