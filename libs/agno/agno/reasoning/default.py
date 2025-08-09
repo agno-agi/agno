@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from textwrap import dedent
-from typing import Callable, Dict, List, Literal, Optional, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Union
 
 from agno.models.base import Model
 from agno.reasoning.step import ReasoningSteps
@@ -19,6 +19,9 @@ def get_default_reasoning_agent(
     telemetry: bool = True,
     debug_mode: bool = False,
     debug_level: Literal[1, 2] = 1,
+    session_state: Optional[Dict[str, Any]] = None,
+    context: Optional[Dict[str, Any]] = None,
+    extra_data: Optional[Dict[str, Any]] = None,
 ) -> Optional["Agent"]:  # type: ignore  # noqa: F821
     from agno.agent import Agent
 
@@ -87,6 +90,9 @@ def get_default_reasoning_agent(
         telemetry=telemetry,
         debug_mode=debug_mode,
         debug_level=debug_level,
+        session_state=session_state,
+        context=context,
+        extra_data=extra_data,
     )
 
     agent.model.show_tool_calls = False  # type: ignore
