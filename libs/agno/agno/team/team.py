@@ -230,6 +230,10 @@ class Team:
     parser_model: Optional[Model] = None
     # Provide a prompt for the parser model
     parser_model_prompt: Optional[str] = None
+    # Provide an output model to parse the response from the team
+    output_model: Optional[Model] = None
+    # Provide a prompt for the output model
+    output_model_prompt: Optional[str] = None
     # If `response_model` is set, sets the response mode of the model, i.e. if the model should explicitly respond with a JSON object instead of a Pydantic model
     use_json_mode: bool = False
     # If True, parse the response
@@ -346,6 +350,8 @@ class Team:
         response_model: Optional[Type[BaseModel]] = None,
         parser_model: Optional[Model] = None,
         parser_model_prompt: Optional[str] = None,
+        output_model: Optional[Model] = None,
+        output_model_prompt: Optional[str] = None,
         use_json_mode: bool = False,
         parse_response: bool = True,
         memory: Optional[Union[TeamMemory, Memory]] = None,
@@ -432,6 +438,8 @@ class Team:
         self.response_model = response_model
         self.parser_model = parser_model
         self.parser_model_prompt = parser_model_prompt
+        self.output_model = output_model
+        self.output_model_prompt = output_model_prompt
         self.use_json_mode = use_json_mode
         self.parse_response = parse_response
 
@@ -1016,6 +1024,9 @@ class Team:
             tool_call_limit=self.tool_call_limit,
         )
 
+        # If an output model is provided, generate output using the output model
+        self._parse_response_with_output_model(model_response, run_messages)
+
         # If a parser model is provided, structure the response separately
         self._parse_response_with_parser_model(model_response, run_messages)
 
@@ -1085,12 +1096,36 @@ class Team:
             yield self._handle_event(create_team_run_response_started_event(run_response), run_response)
 
         # 2. Get a response from the model
-        yield from self._handle_model_response_stream(
-            run_response=run_response,
-            run_messages=run_messages,
-            response_format=response_format,
-            stream_intermediate_steps=stream_intermediate_steps,
-        )
+        if self.output_model is None:
+            yield from self._handle_model_response_stream(
+                run_response=run_response,
+                run_messages=run_messages,
+                response_format=response_format,
+                stream_intermediate_steps=stream_intermediate_steps,
+            )
+        else:
+            for event in self._handle_model_response_stream(
+                run_response=run_response,
+                run_messages=run_messages,
+                response_format=response_format,
+                stream_intermediate_steps=stream_intermediate_steps,
+            ):
+                from agno.run.team import IntermediateRunResponseContentEvent, RunResponseContentEvent
+
+                if isinstance(event, RunResponseContentEvent):
+                    if stream_intermediate_steps:
+                        yield IntermediateRunResponseContentEvent(
+                            content=event.content,
+                            content_type=event.content_type,
+                        )
+                else:
+                    yield event
+
+            yield from self._generate_response_with_output_model_stream(
+                run_response=run_response,
+                run_messages=run_messages,
+                stream_intermediate_steps=stream_intermediate_steps,
+            )
 
         # If a parser model is provided, structure the response separately
         yield from self._parse_response_with_parser_model_stream(
@@ -1409,6 +1444,9 @@ class Team:
             tool_call_limit=self.tool_call_limit,
         )  # type: ignore
 
+        # If an output model is provided, generate output using the output model
+        await self._agenerate_response_with_output_model(model_response=model_response, run_messages=run_messages)
+
         # If a parser model is provided, structure the response separately
         await self._aparse_response_with_parser_model(model_response=model_response, run_messages=run_messages)
 
@@ -1477,13 +1515,38 @@ class Team:
             )
 
         # 2. Get a response from the model
-        async for event in self._ahandle_model_response_stream(
-            run_response=run_response,
-            run_messages=run_messages,
-            response_format=response_format,
-            stream_intermediate_steps=stream_intermediate_steps,
-        ):
-            yield event
+        if self.output_model is None:
+            async for event in self._ahandle_model_response_stream(
+                run_response=run_response,
+                run_messages=run_messages,
+                response_format=response_format,
+                stream_intermediate_steps=stream_intermediate_steps,
+            ):
+                yield event
+        else:
+            async for event in self._ahandle_model_response_stream(
+                run_response=run_response,
+                run_messages=run_messages,
+                response_format=response_format,
+                stream_intermediate_steps=stream_intermediate_steps,
+            ):
+                from agno.run.team import IntermediateRunResponseContentEvent, RunResponseContentEvent
+
+                if isinstance(event, RunResponseContentEvent):
+                    if stream_intermediate_steps:
+                        yield IntermediateRunResponseContentEvent(
+                            content=event.content,
+                            content_type=event.content_type,
+                        )
+                else:
+                    yield event
+
+            async for event in self._agenerate_response_with_output_model_stream(
+                run_response=run_response,
+                run_messages=run_messages,
+                stream_intermediate_steps=stream_intermediate_steps,
+            ):
+                yield event
 
         # If a parser model is provided, structure the response separately
         async for event in self._aparse_response_with_parser_model_stream(
@@ -2387,6 +2450,105 @@ class Team:
             else:
                 log_warning("A response model is required to parse the response with a parser model")
 
+    def _parse_response_with_output_model(self, model_response: ModelResponse, run_messages: RunMessages) -> None:
+        """Parse the model response using the output model."""
+        if self.output_model is None:
+            return
+
+        messages_for_output_model = self.get_messages_for_output_model(run_messages.messages)
+        output_model_response: ModelResponse = self.output_model.response(messages=messages_for_output_model)
+        model_response.content = output_model_response.content
+
+    def _generate_response_with_output_model_stream(
+        self, run_response: TeamRunResponse, run_messages: RunMessages, stream_intermediate_steps: bool = False
+    ):
+        """Parse the model response using the output model stream."""
+        from agno.utils.events import (
+            create_team_output_model_response_completed_event,
+            create_team_output_model_response_started_event,
+        )
+
+        if self.output_model is None:
+            return
+
+        if stream_intermediate_steps:
+            yield self._handle_event(create_team_output_model_response_started_event(run_response), run_response)
+
+        messages_for_output_model = self.get_messages_for_output_model(run_messages.messages)
+        model_response = ModelResponse(content="")
+
+        for model_response_event in self.output_model.response_stream(messages=messages_for_output_model):
+            yield from self._handle_model_response_chunk(
+                run_response=run_response,
+                full_model_response=model_response,
+                model_response_event=model_response_event,
+            )
+
+        # Update the TeamRunResponse content
+        run_response.content = model_response.content
+        run_response.created_at = model_response.created_at
+
+        if stream_intermediate_steps:
+            yield self._handle_event(create_team_output_model_response_completed_event(run_response), run_response)
+
+        # Build a list of messages that should be added to the RunResponse
+        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+        # Update the RunResponse messages
+        run_response.messages = messages_for_run_response
+        # Update the RunResponse metrics
+        run_response.metrics = self._aggregate_metrics_from_messages(messages_for_run_response)
+
+    async def _agenerate_response_with_output_model(
+        self, model_response: ModelResponse, run_messages: RunMessages
+    ) -> None:
+        """Parse the model response using the output model stream."""
+        if self.output_model is None:
+            return
+
+        messages_for_output_model = self.get_messages_for_output_model(run_messages.messages)
+        output_model_response: ModelResponse = await self.output_model.aresponse(messages=messages_for_output_model)
+        model_response.content = output_model_response.content
+
+    async def _agenerate_response_with_output_model_stream(
+        self, run_response: TeamRunResponse, run_messages: RunMessages, stream_intermediate_steps: bool = False
+    ):
+        """Parse the model response using the output model stream."""
+        from agno.utils.events import (
+            create_team_output_model_response_completed_event,
+            create_team_output_model_response_started_event,
+        )
+
+        if self.output_model is None:
+            return
+
+        if stream_intermediate_steps:
+            yield self._handle_event(create_team_output_model_response_started_event(run_response), run_response)
+
+        messages_for_output_model = self.get_messages_for_output_model(run_messages.messages)
+        model_response = ModelResponse(content="")
+
+        async for model_response_event in self.output_model.aresponse_stream(messages=messages_for_output_model):
+            for event in self._handle_model_response_chunk(
+                run_response=run_response,
+                full_model_response=model_response,
+                model_response_event=model_response_event,
+            ):
+                yield event
+
+        # Update the TeamRunResponse content
+        run_response.content = model_response.content
+        run_response.created_at = model_response.created_at
+
+        if stream_intermediate_steps:
+            yield self._handle_event(create_team_output_model_response_completed_event(run_response), run_response)
+
+        # Build a list of messages that should be added to the RunResponse
+        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+        # Update the RunResponse messages
+        run_response.messages = messages_for_run_response
+        # Update the RunResponse metrics
+        run_response.metrics = self._aggregate_metrics_from_messages(messages_for_run_response)
+
     def _handle_event(self, event: Union[RunResponseEvent, TeamRunResponseEvent], run_response: TeamRunResponse):
         # We only store events that are not run_response_content events
         events_to_skip = [event.value for event in self.events_to_skip] if self.events_to_skip else []
@@ -2788,10 +2950,9 @@ class Team:
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
 
-        stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
-
         _response_content: str = ""
         _response_thinking: str = ""
+        _response_reasoning_content: str = ""
         reasoning_steps: List[ReasoningStep] = []
 
         # Track tool calls by member and team
@@ -2867,6 +3028,8 @@ class Team:
                                 log_warning(f"Failed to convert response to JSON: {e}")
                         if resp.thinking is not None:
                             _response_thinking += resp.thinking
+                        if hasattr(resp, "reasoning_content") and resp.reasoning_content is not None:
+                            _response_reasoning_content += resp.reasoning_content
                     if (
                         hasattr(resp, "extra_data")
                         and resp.extra_data is not None
@@ -3662,12 +3825,11 @@ class Team:
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
 
-        stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
-
         self.run_response = cast(TeamRunResponse, self.run_response)
 
         _response_content: str = ""
         _response_thinking: str = ""
+        _response_reasoning_content: str = ""
         reasoning_steps: List[ReasoningStep] = []
 
         # Track tool calls by member and team
@@ -3741,6 +3903,8 @@ class Team:
                                 log_warning(f"Failed to convert response to JSON: {e}")
                         if resp.thinking is not None:
                             _response_thinking += resp.thinking
+                        if hasattr(resp, "reasoning_content") and resp.reasoning_content is not None:
+                            _response_reasoning_content += resp.reasoning_content
                     if (
                         hasattr(resp, "extra_data")
                         and resp.extra_data is not None
@@ -3827,6 +3991,18 @@ class Team:
                         border_style="green",
                     )
                     panels.append(thinking_panel)
+                if render:
+                    live_console.update(Group(*panels))
+
+                if len(_response_reasoning_content) > 0:
+                    render = True
+                    # Create panel for reasoning content
+                    reasoning_panel = create_panel(
+                        content=Text(_response_reasoning_content),
+                        title=f"Reasoning ({response_timer.elapsed:.1f}s)",
+                        border_style="green",
+                    )
+                    panels.append(reasoning_panel)
                 if render:
                     live_console.update(Group(*panels))
 
@@ -5524,6 +5700,13 @@ class Team:
                 return Message.model_validate(message)
             except Exception as e:
                 log_warning(f"Failed to validate message: {e}")
+        elif isinstance(message, BaseModel):
+            try:
+                # Create a user message with the BaseModel content
+                content = message.model_dump_json(indent=2, exclude_none=True)
+                return Message(role="user", content=content)
+            except Exception as e:
+                log_warning(f"Failed to convert BaseModel to message: {e}")
 
     def get_messages_for_parser_model(
         self, model_response: ModelResponse, response_format: Optional[Union[Dict, Type[BaseModel]]]
@@ -5564,6 +5747,24 @@ class Team:
             Message(role="system", content=system_content),
             Message(role="user", content=run_response.content),
         ]
+
+    def get_messages_for_output_model(self, messages: List[Message]) -> List[Message]:
+        """Get the messages for the output model."""
+
+        if self.output_model_prompt is not None:
+            system_message_exists = False
+            for message in messages:
+                if message.role == "system":
+                    system_message_exists = True
+                    message.content = self.output_model_prompt
+                    break
+            if not system_message_exists:
+                messages.insert(0, Message(role="system", content=self.output_model_prompt))
+
+        # Remove the last assistant message from the messages list
+        messages.pop(-1)
+
+        return messages
 
     def _format_message_with_state_variables(self, message: Any, user_id: Optional[str] = None) -> Any:
         """Format a message with the session state variables."""
@@ -6936,9 +7137,10 @@ class Team:
                     # If the session_state is already set, merge the session_state from the database with the current session_state
                     if self.session_state is not None and len(self.session_state) > 0:
                         # This updates session_state_from_db
-                        merge_dictionaries(session_state_from_db, self.session_state)
-                    # Update the current session_state
-                    self.session_state = session_state_from_db
+                        merge_dictionaries(self.session_state, session_state_from_db)
+                    else:
+                        # Update the current session_state
+                        self.session_state = session_state_from_db
 
             if "team_session_state" in session.session_data:
                 team_session_state_from_db = session.session_data.get("team_session_state")

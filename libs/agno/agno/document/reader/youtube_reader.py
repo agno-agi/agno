@@ -24,7 +24,7 @@ class YouTubeReader(Reader):
 
             # Get transcript
             log_debug(f"Fetching transcript for video: {video_id}")
-            # Create an instance of YouTubeTranscriptApi 
+            # Create an instance of YouTubeTranscriptApi
             ytt_api = YouTubeTranscriptApi()
             transcript_data = ytt_api.fetch(video_id)
 

@@ -17,6 +17,7 @@ class RunEvent(str, Enum):
 
     run_started = "RunStarted"
     run_response_content = "RunResponseContent"
+    run_intermediate_response_content = "RunIntermediateResponseContent"
     run_completed = "RunCompleted"
     run_error = "RunError"
     run_cancelled = "RunCancelled"
@@ -36,6 +37,9 @@ class RunEvent(str, Enum):
 
     parser_model_response_started = "ParserModelResponseStarted"
     parser_model_response_completed = "ParserModelResponseCompleted"
+
+    output_model_response_started = "OutputModelResponseStarted"
+    output_model_response_completed = "OutputModelResponseCompleted"
 
 
 @dataclass
@@ -82,10 +86,18 @@ class RunResponseContentEvent(BaseAgentRunResponseEvent):
     content: Optional[Any] = None
     content_type: str = "str"
     thinking: Optional[str] = None
+    reasoning_content: Optional[str] = None
     citations: Optional[Citations] = None
     response_audio: Optional[AudioResponse] = None  # Model audio response
     image: Optional[ImageArtifact] = None  # Image attached to the response
     extra_data: Optional[RunResponseExtraData] = None
+
+
+@dataclass
+class IntermediateRunResponseContentEvent(BaseAgentRunResponseEvent):
+    event: str = RunEvent.run_intermediate_response_content.value
+    content: Optional[Any] = None
+    content_type: str = "str"
 
 
 @dataclass
@@ -190,9 +202,20 @@ class ParserModelResponseCompletedEvent(BaseAgentRunResponseEvent):
     event: str = RunEvent.parser_model_response_completed.value
 
 
+@dataclass
+class OutputModelResponseStartedEvent(BaseAgentRunResponseEvent):
+    event: str = RunEvent.output_model_response_started.value
+
+
+@dataclass
+class OutputModelResponseCompletedEvent(BaseAgentRunResponseEvent):
+    event: str = RunEvent.output_model_response_completed.value
+
+
 RunResponseEvent = Union[
     RunResponseStartedEvent,
     RunResponseContentEvent,
+    IntermediateRunResponseContentEvent,
     RunResponseCompletedEvent,
     RunResponseErrorEvent,
     RunResponseCancelledEvent,
@@ -207,6 +230,8 @@ RunResponseEvent = Union[
     ToolCallCompletedEvent,
     ParserModelResponseStartedEvent,
     ParserModelResponseCompletedEvent,
+    OutputModelResponseStartedEvent,
+    OutputModelResponseCompletedEvent,
 ]
 
 
@@ -214,6 +239,7 @@ RunResponseEvent = Union[
 RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.run_started.value: RunResponseStartedEvent,
     RunEvent.run_response_content.value: RunResponseContentEvent,
+    RunEvent.run_intermediate_response_content.value: IntermediateRunResponseContentEvent,
     RunEvent.run_completed.value: RunResponseCompletedEvent,
     RunEvent.run_error.value: RunResponseErrorEvent,
     RunEvent.run_cancelled.value: RunResponseCancelledEvent,
@@ -228,6 +254,8 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.tool_call_completed.value: ToolCallCompletedEvent,
     RunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,
     RunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
+    RunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,
+    RunEvent.output_model_response_completed.value: OutputModelResponseCompletedEvent,
 }
 
 

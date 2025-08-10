@@ -96,7 +96,6 @@ def test_read_large_transcript():
         mock_api_class.return_value = mock_api_instance
         mock_api_instance.fetch.return_value = mock_transcript
 
-
         reader = YouTubeReader()
         # Ensure chunking is disabled
         reader.chunk = False
@@ -134,7 +133,6 @@ def test_read_video_unicode_content():
         mock_api_instance = MagicMock()
         mock_api_class.return_value = mock_api_instance
         mock_api_instance.fetch.return_value = mock_transcript
-
 
         reader = YouTubeReader()
         reader.chunk = False
