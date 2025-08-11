@@ -5645,7 +5645,7 @@ class Team:
                 if isinstance(message, str):
                     user_message_content = message
                 else:
-                    user_message_content = "\n".join(message)
+                    user_message_content = "\n".join(str(message))
 
             # Add references to user message
             if (
