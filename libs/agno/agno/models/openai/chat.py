@@ -662,9 +662,10 @@ class OpenAIChat(Model):
                     )
             except Exception as e:
                 log_warning(f"Error processing audio: {e}")
-
-        if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:
-            model_response.reasoning_content = response_message.reasoning_content
+        
+        if hasattr(response_message, "reasoning") and response_message.reasoning is not None:
+            model_response.reasoning = f"<think>\n{response_message.reasoning}\n</think>"
+            model_response.content = f"<think>\n{response_message.reasoning}\n</think> {model_response.content}"
 
         if response.usage is not None:
             model_response.response_usage = response.usage
