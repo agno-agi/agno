@@ -16,7 +16,10 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from agno.agent.agent import Agent
-from agno.os.interfaces.agui.utils import async_stream_agno_response_as_agui_events, convert_agui_messages_to_agno_messages
+from agno.os.interfaces.agui.utils import (
+    async_stream_agno_response_as_agui_events,
+    convert_agui_messages_to_agno_messages,
+)
 from agno.team.team import Team
 
 logger = logging.getLogger(__name__)
@@ -83,7 +86,6 @@ def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Option
         raise ValueError("Either agent or team must be provided.")
 
     encoder = EventEncoder()
-
 
     @router.post("/agui")
     async def run_agent_agui(run_input: RunAgentInput):

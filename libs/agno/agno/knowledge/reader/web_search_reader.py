@@ -143,7 +143,6 @@ class WebSearchReader(Reader):
                     logger.error(f"All Google search attempts failed: {e}")
                     return []
 
-
     def _perform_web_search(self, query: str) -> List[Dict[str, str]]:
         """Perform web search using the configured search engine"""
         if self.search_engine == "duckduckgo":

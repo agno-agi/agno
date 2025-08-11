@@ -1,11 +1,12 @@
 """Main class for the AG-UI app, used to expose an Agno Agent or Team in an AG-UI compatible format."""
+
 from typing import Optional
 
 from fastapi.routing import APIRouter
 
 from agno.agent import Agent
-from agno.os.interfaces.base import BaseInterface
 from agno.os.interfaces.agui.router import attach_routes
+from agno.os.interfaces.base import BaseInterface
 from agno.team import Team
 
 

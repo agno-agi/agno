@@ -1782,7 +1782,7 @@ class Workflow:
             workflow_name=self.name,
             runs=self.workflow_session.runs if self.workflow_session else [],
             workflow_data=workflow_data,
-            session_data={},
+            session_data=self.workflow_session_state,
         )
 
     def load_workflow_session(self, session: WorkflowSession):

@@ -241,6 +241,7 @@ def _generate_schema_from_params(self, params: Dict[str, Any]) -> Dict[str, Any]
 
     return schema
 
+
 def generate_id(name: Optional[str] = None) -> str:
     if name:
         return name.lower().replace(" ", "-").replace("_", "-")

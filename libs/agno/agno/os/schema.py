@@ -211,7 +211,9 @@ class TeamResponse(BaseModel):
         memory_table = team.db.memory_table_name if team.db and team.enable_user_memories else None
         knowledge_table = team.db.knowledge_table_name if team.db and team.knowledge else None
 
-        team_instructions = team.instructions() if team.instructions and callable(team.instructions) else team.instructions
+        team_instructions = (
+            team.instructions() if team.instructions and callable(team.instructions) else team.instructions
+        )
 
         return TeamResponse(
             team_id=team.team_id,
@@ -476,6 +478,11 @@ class TeamRunSchema(BaseModel):
             if run_dict.get("created_at") is not None
             else None,
         )
+
+
+class SessionStateSchema(BaseModel):
+    session_id: str
+    state: Optional[dict]
 
 
 class WorkflowRunSchema(BaseModel):
