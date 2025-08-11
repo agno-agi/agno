@@ -33,7 +33,6 @@ from agno.os.schema import (
     Model,
     RunSchema,
     SessionSchema,
-    SessionStateSchema,
     TeamResponse,
     TeamRunSchema,
     TeamSessionDetailSchema,
@@ -725,25 +724,6 @@ def get_base_router(
 
         return AgentSessionDetailSchema.from_session(session)  # type: ignore
 
-    @router.get(
-        "/agents/{agent_id}/sessions/{session_id}/state",
-        response_model=SessionStateSchema,
-        response_model_exclude_none=True,
-    )
-    async def get_agent_session_state(agent_id: str, session_id: str):
-        agent = get_agent_by_id(agent_id, os.agents)
-        if agent is None:
-            raise HTTPException(status_code=404, detail="Agent not found")
-        if agent.db is None:
-            raise HTTPException(status_code=404, detail="Agent has no database. Session state is unavailable.")
-
-        session = agent.db.get_session(session_type=SessionType.AGENT, session_id=session_id)
-        if not session:
-            raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
-
-        state = (session.session_data or {}).get("session_state") if session.session_data else None
-        return SessionStateSchema(session_id=session.session_id, state=state)
-
     # -- Team routes ---
 
     @router.post("/teams/{team_id}/runs")
@@ -1000,25 +980,6 @@ def get_base_router(
 
         return TeamSessionDetailSchema.from_session(session)  # type: ignore
 
-    @router.get(
-        "/teams/{team_id}/sessions/{session_id}/state",
-        response_model=SessionStateSchema,
-        response_model_exclude_none=True,
-    )
-    async def get_team_session_state(team_id: str, session_id: str):
-        team = get_team_by_id(team_id, os.teams)
-        if team is None:
-            raise HTTPException(status_code=404, detail="Team not found")
-        if team.db is None:
-            raise HTTPException(status_code=404, detail="Team has no database. Session state is unavailable.")
-
-        session = team.db.get_session(session_type=SessionType.TEAM, session_id=session_id)
-        if not session:
-            raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
-
-        state = (session.session_data or {}).get("team_session_state") if session.session_data else None
-        return SessionStateSchema(session_id=session.session_id, state=state)
-
     # -- Workflow routes ---
 
     @router.websocket("/workflows/ws")
@@ -1197,25 +1158,5 @@ def get_base_router(
             raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
 
         return [WorkflowRunSchema.from_dict(run) for run in session["runs"]]  # type: ignore
-
-    @router.get(
-        "/workflows/{workflow_id}/sessions/{session_id}/state",
-        response_model=SessionStateSchema,
-        response_model_exclude_none=True,
-    )
-    async def get_workflow_session_state(workflow_id: str, session_id: str):
-        workflow = get_workflow_by_id(workflow_id, os.workflows)
-        if workflow is None:
-            raise HTTPException(status_code=404, detail="Workflow not found")
-        if workflow.db is None:
-            raise HTTPException(status_code=404, detail="Workflow has no database. Session state is unavailable.")
-
-        session = workflow.db.get_session(session_type=SessionType.WORKFLOW, session_id=session_id)
-        if not session:
-            raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
-
-        # Workflow state is stored directly under session_data
-        state = session.session_data or None
-        return SessionStateSchema(session_id=session.session_id, state=state)
 
     return router

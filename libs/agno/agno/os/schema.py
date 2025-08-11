@@ -285,15 +285,18 @@ class WorkflowRunRequest(BaseModel):
 class SessionSchema(BaseModel):
     session_id: str
     session_name: str
+    session_data: Optional[dict]
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
 
     @classmethod
     def from_dict(cls, session: Dict[str, Any]) -> "SessionSchema":
         session_name = get_session_name(session)
+        breakpoint()
         return cls(
             session_id=session.get("session_id", ""),
             session_name=session_name,
+            session_data=session.get("session_data", {}),
             created_at=datetime.fromtimestamp(session.get("created_at", 0), tz=timezone.utc)
             if session.get("created_at")
             else None,
@@ -478,11 +481,6 @@ class TeamRunSchema(BaseModel):
             if run_dict.get("created_at") is not None
             else None,
         )
-
-
-class SessionStateSchema(BaseModel):
-    session_id: str
-    state: Optional[dict]
 
 
 class WorkflowRunSchema(BaseModel):
