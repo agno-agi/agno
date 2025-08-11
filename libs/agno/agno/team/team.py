@@ -310,6 +310,7 @@ class Team:
         model: Optional[Model] = None,
         name: Optional[str] = None,
         team_id: Optional[str] = None,
+        role: Optional[str] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -390,6 +391,7 @@ class Team:
 
         self.name = name
         self.team_id = team_id
+        self.role = role
 
         self.user_id = user_id
         self.session_id = session_id
@@ -5452,6 +5454,10 @@ class Team:
 
         if self.description is not None:
             system_message_content += f"<description>\n{self.description}\n</description>\n\n"
+
+        # 3.3.4 Then add the Team role if provided
+        if self.role is not None:
+            system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
 
         # 3.3.5 Then add instructions for the Agent
         if len(instructions) > 0:
