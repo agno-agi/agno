@@ -5,6 +5,7 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Mapping, Optional, 
 
 from pydantic import BaseModel
 
+from agno.agent.agent import RunResponse
 from agno.models.message import Message, Metrics
 from agno.models.ollama.chat import ChatResponse, Ollama
 from agno.models.response import ModelResponse
@@ -205,6 +206,7 @@ class OllamaTools(Ollama):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> Iterator[ModelResponse]:
         """
         Process a streaming response from the model.
@@ -212,7 +214,11 @@ class OllamaTools(Ollama):
         tool_call_data = ToolCall()
 
         for response_delta in self.invoke_stream(
-            messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+            messages=messages,
+            response_format=response_format,
+            tools=tools,
+            tool_choice=tool_choice,
+            run_response=run_response,
         ):
             model_response_delta = self.parse_provider_response_delta(response_delta, tool_call_data)
             if model_response_delta:
@@ -230,6 +236,7 @@ class OllamaTools(Ollama):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Process a streaming response from the model.
@@ -242,6 +249,7 @@ class OllamaTools(Ollama):
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice,
+            run_response=run_response,
         ):
             model_response_delta = self.parse_provider_response_delta(response_delta, tool_call_data)
             if model_response_delta:

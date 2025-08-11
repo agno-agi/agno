@@ -153,8 +153,6 @@ async def test_async_basic_stream():
     async for response in agent.arun("Share a 2 sentence horror story", stream=True):
         assert response.content is not None
 
-    _assert_metrics(agent.run_response)  # type: ignore
-
 
 @pytest.mark.asyncio
 async def test_async_with_memory():

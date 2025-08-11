@@ -587,7 +587,7 @@ class AwsBedrock(Model):
             model_response.content = content
 
         if "usage" in response:
-            model_response.response_usage = response["usage"]
+            model_response.response_usage = self._get_metrics(response["usage"])
 
         return model_response
 
@@ -599,6 +599,7 @@ class AwsBedrock(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> Iterator[ModelResponse]:
         """
         Process the synchronous response stream.
@@ -614,6 +615,7 @@ class AwsBedrock(Model):
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice,
+            run_response=run_response,
         ):
             should_yield = False
 
@@ -638,6 +640,7 @@ class AwsBedrock(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Process the asynchronous response stream.
@@ -653,6 +656,7 @@ class AwsBedrock(Model):
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice,
+            run_response=run_response,
         ):
             should_yield = False
 
@@ -668,6 +672,8 @@ class AwsBedrock(Model):
 
             if should_yield:
                 yield response_delta
+
+        self._populate_assistant_message(assistant_message=assistant_message, provider_response=response_delta)
 
     def _parse_provider_response_delta(self, response_delta: Dict[str, Any]) -> ModelResponse:  # type: ignore
         """Parse the provider response delta for streaming.

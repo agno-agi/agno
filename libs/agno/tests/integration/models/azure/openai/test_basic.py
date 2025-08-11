@@ -2,7 +2,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.db.sqlite import SqliteStorage
+from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.azure import AzureOpenAI
 
 
@@ -147,7 +147,7 @@ def test_json_response_mode():
 def test_history():
     agent = Agent(
         model=AzureOpenAI(id="gpt-4o-mini"),
-        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
+        db=SqliteDb(db_file="tmp/agent_storage.db"),
         add_history_to_context=True,
         telemetry=False,
     )

@@ -371,6 +371,7 @@ class Cohere(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> Iterator[ModelResponse]:
         """Process the synchronous response stream."""
         tool_use: Dict[str, Any] = {}
@@ -381,6 +382,7 @@ class Cohere(Model):
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice,
+            run_response=run_response,
         ):
             model_response, tool_use = self._process_stream_response(
                 response=response, assistant_message=assistant_message, stream_data=stream_data, tool_use=tool_use
@@ -396,6 +398,7 @@ class Cohere(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> AsyncIterator[ModelResponse]:
         """Process the asynchronous response stream."""
         tool_use: Dict[str, Any] = {}
@@ -406,6 +409,7 @@ class Cohere(Model):
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice,
+            run_response=run_response,
         ):
             model_response, tool_use = self._process_stream_response(
                 response=response, assistant_message=assistant_message, stream_data=stream_data, tool_use=tool_use
