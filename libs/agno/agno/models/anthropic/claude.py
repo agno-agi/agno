@@ -514,6 +514,8 @@ class Claude(Model):
                     if tool_input:
                         function_def["arguments"] = json.dumps(tool_input)
 
+                    model_response.extra = model_response.extra or {}
+
                     model_response.tool_calls.append(
                         {
                             "id": block.id,
@@ -578,6 +580,8 @@ class Claude(Model):
                 function_def = {"name": tool_name}
                 if tool_input:
                     function_def["arguments"] = json.dumps(tool_input)
+
+                model_response.extra = model_response.extra or {}
 
                 model_response.tool_calls = [
                     {
