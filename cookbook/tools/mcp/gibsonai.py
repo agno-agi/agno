@@ -43,33 +43,40 @@ from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools
 
 
-async def run_gibsonai_agent(message: str) -> None:
+async def run_gibsonai_agent(message: str):
     """Run the GibsonAI agent with the given message."""
-    async with MCPTools(
+    mcp_tools = MCPTools(
         "uvx --from gibson-cli@latest gibson mcp run",
         timeout_seconds=300,  # Extended timeout for GibsonAI operations
-    ) as mcp_tools:
-        agent = Agent(
-            name="GibsonAIAgent",
-            model=OpenAIChat(id="gpt-4o"),
-            tools=[mcp_tools],
-            description="Agent for managing database projects and schemas",
-            instructions=dedent("""\
-                You are a GibsonAI database assistant. Help users manage their database projects and schemas.
+    )
 
-                Your capabilities include:
-                - Creating new GibsonAI projects
-                - Managing database schemas (tables, columns, relationships)
-                - Deploying schema changes to hosted databases
-                - Querying database schemas and data
-                - Providing insights about database structure and best practices
-            """),
-            markdown=True,
-            show_tool_calls=True,
-        )
+    # Connect to the MCP server
+    await mcp_tools.connect()
 
-        # Run the agent
-        await agent.aprint_response(message, stream=True)
+    agent = Agent(
+        name="GibsonAIAgent",
+        model=OpenAIChat(id="gpt-4o"),
+        tools=[mcp_tools],
+        description="Agent for managing database projects and schemas",
+        instructions=dedent("""\
+            You are a GibsonAI database assistant. Help users manage their database projects and schemas.
+
+            Your capabilities include:
+            - Creating new GibsonAI projects
+            - Managing database schemas (tables, columns, relationships)
+            - Deploying schema changes to hosted databases
+            - Querying database schemas and data
+            - Providing insights about database structure and best practices
+        """),
+        markdown=True,
+        show_tool_calls=True,
+    )
+
+    # Run the agent
+    await agent.aprint_response(message, stream=True)
+
+    # Close the MCP connection
+    await mcp_tools.close()
 
 
 # Example usage
