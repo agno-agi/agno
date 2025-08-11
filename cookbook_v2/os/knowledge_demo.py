@@ -1,7 +1,7 @@
 import os
 
 from agno.agent import Agent
-from agno.db.json import JsonDb
+from agno.db.json import JsonDb  # noqa: F401
 from agno.db.postgres.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat

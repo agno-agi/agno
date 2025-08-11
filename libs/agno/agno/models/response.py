@@ -110,7 +110,7 @@ class ModelResponse:
 
     created_at: int = int(time())
 
-    metadata: Optional[Dict[str, Any]] = None
+    extra: Optional[Dict[str, Any]] = None
 
 
 class FileType(str, Enum):

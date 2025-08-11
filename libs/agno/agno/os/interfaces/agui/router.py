@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from typing import Iterator, Optional
+from typing import AsyncIterator, Optional
 
 from ag_ui.core import (
     BaseEvent,
@@ -16,13 +16,13 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from agno.agent.agent import Agent
-from agno.app.agui.utils import convert_agui_messages_to_agno_messages, stream_agno_response_as_agui_events
+from agno.os.interfaces.agui.utils import async_stream_agno_response_as_agui_events, convert_agui_messages_to_agno_messages
 from agno.team.team import Team
 
 logger = logging.getLogger(__name__)
 
 
-def run_agent(agent: Agent, run_input: RunAgentInput) -> Iterator[BaseEvent]:
+async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[BaseEvent]:
     """Run the contextual Agent, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format."""
     run_id = run_input.run_id or str(uuid.uuid4())
 
@@ -32,7 +32,7 @@ def run_agent(agent: Agent, run_input: RunAgentInput) -> Iterator[BaseEvent]:
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
         # Request streaming response from agent
-        response_stream = agent.run(
+        response_stream = agent.arun(
             messages=messages,
             session_id=run_input.thread_id,
             stream=True,
@@ -40,7 +40,7 @@ def run_agent(agent: Agent, run_input: RunAgentInput) -> Iterator[BaseEvent]:
         )
 
         # Stream the response content in AG-UI format
-        for event in stream_agno_response_as_agui_events(
+        async for event in async_stream_agno_response_as_agui_events(
             response_stream=response_stream, thread_id=run_input.thread_id, run_id=run_id
         ):
             yield event
@@ -51,7 +51,7 @@ def run_agent(agent: Agent, run_input: RunAgentInput) -> Iterator[BaseEvent]:
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
 
 
-def run_team(team: Team, input: RunAgentInput) -> Iterator[BaseEvent]:
+async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]:
     """Run the contextual Team, mapping AG-UI input messages to Agno format, and streaming the response in AG-UI format."""
     run_id = input.run_id or str(uuid.uuid4())
     try:
@@ -60,7 +60,7 @@ def run_team(team: Team, input: RunAgentInput) -> Iterator[BaseEvent]:
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=run_id)
 
         # Request streaming response from team
-        response_stream = team.run(
+        response_stream = team.arun(
             message=messages,
             session_id=input.thread_id,
             stream=True,
@@ -68,7 +68,7 @@ def run_team(team: Team, input: RunAgentInput) -> Iterator[BaseEvent]:
         )
 
         # Stream the response content in AG-UI format
-        for event in stream_agno_response_as_agui_events(
+        async for event in async_stream_agno_response_as_agui_events(
             response_stream=response_stream, thread_id=input.thread_id, run_id=run_id
         ):
             yield event
@@ -78,22 +78,22 @@ def run_team(team: Team, input: RunAgentInput) -> Iterator[BaseEvent]:
         yield RunErrorEvent(type=EventType.RUN_ERROR, message=str(e))
 
 
-def get_sync_agui_router(agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
-    """Return an AG-UI compatible FastAPI router."""
-    if (agent is None and team is None) or (agent is not None and team is not None):
-        raise ValueError("One of 'agent' or 'team' must be provided.")
+def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
+    if agent is None and team is None:
+        raise ValueError("Either agent or team must be provided.")
 
-    router = APIRouter()
     encoder = EventEncoder()
 
-    def _run(run_input: RunAgentInput):
-        def event_generator():
+
+    @router.post("/agui")
+    async def run_agent_agui(run_input: RunAgentInput):
+        async def event_generator():
             if agent:
-                for event in run_agent(agent, run_input):
+                async for event in run_agent(agent, run_input):
                     encoded_event = encoder.encode(event)
                     yield encoded_event
             elif team:
-                for event in run_team(team, run_input):
+                async for event in run_team(team, run_input):
                     encoded_event = encoder.encode(event)
                     yield encoded_event
 
@@ -109,12 +109,8 @@ def get_sync_agui_router(agent: Optional[Agent] = None, team: Optional[Team] = N
             },
         )
 
-    @router.post("/agui")
-    def run_agent_agui(run_input: RunAgentInput):
-        return _run(run_input)
-
     @router.get("/status")
-    def get_status():
+    async def get_status():
         return {"status": "available"}
 
     return router

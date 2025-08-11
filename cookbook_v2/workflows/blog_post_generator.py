@@ -385,7 +385,7 @@ async def blog_generation_execution(
             return cached_blog
 
     # Phase 1: Research and gather sources
-    print(f"\n🔍 PHASE 1: RESEARCH & SOURCE GATHERING")
+    print("\n🔍 PHASE 1: RESEARCH & SOURCE GATHERING")
     print("=" * 50)
 
     search_results = await get_search_results(workflow, blog_topic, use_search_cache)
@@ -398,7 +398,7 @@ async def blog_generation_execution(
         print(f"   {i}. {article.title[:60]}...")
 
     # Phase 2: Content extraction
-    print(f"\n📄 PHASE 2: CONTENT EXTRACTION")
+    print("\n📄 PHASE 2: CONTENT EXTRACTION")
     print("=" * 50)
 
     scraped_articles = await scrape_articles(
@@ -411,7 +411,7 @@ async def blog_generation_execution(
     print(f"📖 Successfully extracted content from {len(scraped_articles)} articles")
 
     # Phase 3: Blog post writing
-    print(f"\n✍️ PHASE 3: BLOG POST CREATION")
+    print("\n✍️ PHASE 3: BLOG POST CREATION")
     print("=" * 50)
 
     # Prepare input for the writer

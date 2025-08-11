@@ -3,11 +3,19 @@ from agno.team import Team
 
 Team(
     members=[
-        Agent(name="Sarah", role="Data Researcher", instructions="Focus on gathering and analyzing data"),
-        Agent(name="Mike", role="Technical Writer", instructions="Create clear, concise summaries"),
+        Agent(
+            name="Sarah",
+            role="Data Researcher",
+            instructions="Focus on gathering and analyzing data",
+        ),
+        Agent(
+            name="Mike",
+            role="Technical Writer",
+            instructions="Create clear, concise summaries",
+        ),
     ],
 ).print_response(
-   [
+    [
         {"type": "text", "text": "What's in this image?"},
         {
             "type": "image_url",

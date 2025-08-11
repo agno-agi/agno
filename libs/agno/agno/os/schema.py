@@ -1,6 +1,6 @@
 import json
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -211,7 +211,7 @@ class TeamResponse(BaseModel):
         memory_table = team.db.memory_table_name if team.db and team.enable_user_memories else None
         knowledge_table = team.db.knowledge_table_name if team.db and team.knowledge else None
 
-        team_instructions = team.instructions() if isinstance(team.instructions, Callable) else team.instructions
+        team_instructions = team.instructions() if team.instructions and callable(team.instructions) else team.instructions
 
         return TeamResponse(
             team_id=team.team_id,
@@ -250,15 +250,26 @@ class WorkflowResponse(BaseModel):
     description: Optional[str] = None
     input_schema: Optional[Dict[str, Any]] = None
     steps: Optional[List[Dict[str, Any]]] = None
+    agent: Optional[AgentResponse] = None
+    team: Optional[TeamResponse] = None
 
     @classmethod
     def from_workflow(cls, workflow: Workflow) -> "WorkflowResponse":
         workflow_dict = workflow.to_dict()
+        steps = workflow_dict.get("steps")
+
+        if steps:
+            for step in steps:
+                if step.get("agent"):
+                    step["agent"] = AgentResponse.from_agent(step["agent"])
+                if step.get("team"):
+                    step["team"] = TeamResponse.from_team(step["team"])
+
         return cls(
             workflow_id=workflow.workflow_id,
             name=workflow.name,
             description=workflow.description,
-            steps=workflow_dict.get("steps"),
+            steps=steps,
             input_schema=get_workflow_input_schema_dict(workflow),
         )
 

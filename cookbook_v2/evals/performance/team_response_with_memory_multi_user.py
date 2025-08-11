@@ -9,7 +9,6 @@ from agno.memory.v2.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.storage.postgres import PostgresStorage
 from agno.team.team import Team
-from agno.tools.reasoning import ReasoningTools
 
 users = [
     "abel@example.com",

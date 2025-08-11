@@ -9,12 +9,12 @@ Agent().print_response(
             content="I'm preparing a presentation for my company about renewable energy adoption.",
         ),
         Message(
-            role="assistant", 
-            content="I'd be happy to help with your renewable energy presentation. What specific aspects would you like me to focus on?"
+            role="assistant",
+            content="I'd be happy to help with your renewable energy presentation. What specific aspects would you like me to focus on?",
         ),
         Message(
             role="user",
-            content="Could you research the latest solar panel efficiency improvements in 2024?"
+            content="Could you research the latest solar panel efficiency improvements in 2024?",
         ),
     ],
     markdown=True,

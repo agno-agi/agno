@@ -41,6 +41,7 @@ web_agent = Agent(
 research_team = Team(
     name="Research Team",
     mode="coordinate",
+    model=OpenAIChat(id="gpt-4o-mini"),
     members=[hackernews_agent, web_agent],
     instructions="Research tech topics from Hackernews and the web",
 )
@@ -85,4 +86,4 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="test:app", reload=True)
+    agent_os.serve(app="workflow_with_input_schema:app", reload=True)

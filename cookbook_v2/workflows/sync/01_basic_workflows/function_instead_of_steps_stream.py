@@ -1,10 +1,7 @@
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.team import Team
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
-from agno.utils.pprint import pprint_run_response
 from agno.workflow.types import WorkflowExecutionInput
 from agno.workflow.workflow import Workflow
 

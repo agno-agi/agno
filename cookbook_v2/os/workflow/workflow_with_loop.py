@@ -2,6 +2,7 @@ from typing import List
 
 from agno.agent.agent import Agent
 from agno.db.sqlite import SqliteDb
+from agno.models.openai.chat import OpenAIChat
 
 # Import the workflows
 from agno.os import AgentOS
@@ -15,6 +16,7 @@ from agno.workflow.workflow import Workflow
 research_agent = Agent(
     name="Research Agent",
     role="Research specialist",
+    model=OpenAIChat(id="gpt-4o-mini"),
     tools=[HackerNewsTools(), DuckDuckGoTools()],
     instructions="You are a research specialist. Research the given topic thoroughly.",
     markdown=True,
@@ -22,6 +24,7 @@ research_agent = Agent(
 
 content_agent = Agent(
     name="Content Agent",
+    model=OpenAIChat(id="gpt-4o-mini"),
     role="Content creator",
     instructions="You are a content creator. Create engaging content based on research.",
     markdown=True,
@@ -98,4 +101,4 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="test:app", reload=True)
+    agent_os.serve(app="workflow_with_loop:app", reload=True)

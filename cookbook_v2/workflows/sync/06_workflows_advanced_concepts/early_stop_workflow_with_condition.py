@@ -45,7 +45,7 @@ def compliance_checker(step_input: StepInput) -> StepOutput:
 # Custom quality assurance function
 def quality_assurance(step_input: StepInput) -> StepOutput:
     """Quality assurance that runs after compliance check"""
-    content = step_input.previous_step_content or ""
+    _ = step_input.previous_step_content or ""
 
     return StepOutput(
         step_name="Quality Assurance",

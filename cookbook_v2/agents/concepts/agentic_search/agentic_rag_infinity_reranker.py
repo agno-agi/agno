@@ -98,7 +98,7 @@ def test_infinity_connection():
     try:
         from infinity_client import Client
 
-        client = Client(base_url="http://localhost:7997")
+        _ = Client(base_url="http://localhost:7997")
         print("✅ Successfully connected to Infinity server at localhost:7997")
         return True
     except Exception as e:

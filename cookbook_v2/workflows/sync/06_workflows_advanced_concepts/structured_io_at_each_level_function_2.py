@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
@@ -100,7 +100,7 @@ def enhanced_analysis_function(step_input: StepInput) -> StepOutput:
     data_quality_score = 0.9
 
     if previous_step_content:
-        print(f"\n🔍 Previous Step Content Analysis:")
+        print("\n🔍 Previous Step Content Analysis:")
 
         if isinstance(previous_step_content, ResearchFindings):
             structured_data_detected = True
@@ -118,7 +118,7 @@ def enhanced_analysis_function(step_input: StepInput) -> StepOutput:
                     f"Found {len(previous_step_content.key_insights)} key insights",
                     f"Identified {len(previous_step_content.trending_technologies)} trending technologies",
                     f"Research confidence level: {previous_step_content.confidence_score}",
-                    f"Market impact assessment available",
+                    "Market impact assessment available",
                 ]
             )
 
@@ -161,7 +161,7 @@ def enhanced_analysis_function(step_input: StepInput) -> StepOutput:
         data_quality_score=data_quality_score,
     )
 
-    print(f"\n📋 Analysis Results (BaseModel):")
+    print("\n📋 Analysis Results (BaseModel):")
     print(f"   Analysis Type: {analysis_report.analysis_type}")
     print(f"   Structured Data: {analysis_report.structured_data_detected}")
     print(f"   Confidence: {analysis_report.confidence_score}")
@@ -176,7 +176,7 @@ def simple_data_processor(step_input: StepInput) -> StepOutput:
     """
     Simple function that demonstrates accessing different content types
     """
-    print(f"\n🔧 SIMPLE DATA PROCESSOR")
+    print("\n🔧 SIMPLE DATA PROCESSOR")
     print(f"Previous step content type: {type(step_input.previous_step_content)}")
 
     # Access the structured data directly

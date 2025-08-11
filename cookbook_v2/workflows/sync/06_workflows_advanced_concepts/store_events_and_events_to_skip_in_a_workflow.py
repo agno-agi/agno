@@ -93,7 +93,7 @@ for event in step_workflow.run(
             f"Event: {event.event if hasattr(event, 'event') else type(event).__name__}"
         )
 
-print(f"\nStep workflow completed!")
+print("\nStep workflow completed!")
 print(
     f"Total events stored: {len(step_workflow.run_response.events) if step_workflow.run_response and step_workflow.run_response.events else 0}"
 )

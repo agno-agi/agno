@@ -140,7 +140,7 @@ def test_agent_run_input_consistency():
     first_run_input = agent.run_input.copy()
 
     # Second run with only message
-    response2 = agent.run(message="New question", session_id=response1.session_id)
+    _ = agent.run(message="New question", session_id=response1.session_id)
     second_run_input = agent.run_input
 
     # Verify run_input captured correctly for each run

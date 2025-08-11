@@ -14,7 +14,7 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.workflow.types import WorkflowExecutionInput
 from agno.workflow.workflow import Workflow
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from pypdf import PdfReader
 
 
@@ -64,7 +64,7 @@ def simulate_zoom_scheduling(
     meeting_id = random.randint(100000000, 999999999)
     zoom_url = f"https://zoom.us/j/{meeting_id}"
 
-    result = f"✅ Zoom call scheduled successfully!\n"
+    result = "✅ Zoom call scheduled successfully!\n"
     result += f"📅 Time: {scheduled_time.strftime('%Y-%m-%d %H:%M')} IST\n"
     result += f"🔗 Meeting URL: {zoom_url}\n"
     result += f"👤 Participant: {candidate_name} ({candidate_email})"
@@ -74,7 +74,7 @@ def simulate_zoom_scheduling(
 
 def simulate_email_sending(agent: Agent, to_email: str, subject: str, body: str) -> str:
     """Simulate email sending"""
-    result = f"📧 Email sent successfully!\n"
+    result = "📧 Email sent successfully!\n"
     result += f"📮 To: {to_email}\n"
     result += f"📝 Subject: {subject}\n"
     result += f"✉️ Body length: {len(body)} characters\n"
@@ -158,7 +158,7 @@ def recruitment_execution(
     selected_candidates: List[ScreeningResult] = []
 
     # Phase 1: Screening
-    print(f"\n📊 PHASE 1: CANDIDATE SCREENING")
+    print("\n📊 PHASE 1: CANDIDATE SCREENING")
     print("=" * 50)
 
     for i, url in enumerate(resumes, 1):
@@ -169,12 +169,12 @@ def recruitment_execution(
             print(f"📄 Extracting text from: {url}")
             workflow.workflow_session_state[url] = extract_text_from_pdf(url)
         else:
-            print(f"📋 Using cached resume content")
+            print("📋 Using cached resume content")
 
         resume_text = workflow.workflow_session_state[url]
 
         if not resume_text:
-            print(f"❌ Could not extract text from resume")
+            print("❌ Could not extract text from resume")
             continue
 
         # Screen the candidate
@@ -203,13 +203,13 @@ def recruitment_execution(
 
         if candidate.score >= 5.0:
             selected_candidates.append(candidate)
-            print(f"✅ SELECTED for interview!")
+            print("✅ SELECTED for interview!")
         else:
-            print(f"❌ Not selected (score below 5.0)")
+            print("❌ Not selected (score below 5.0)")
 
     # Phase 2: Interview Scheduling & Email Communication
     if selected_candidates:
-        print(f"\n📅 PHASE 2: INTERVIEW SCHEDULING")
+        print("\n📅 PHASE 2: INTERVIEW SCHEDULING")
         print("=" * 50)
 
         for i, candidate in enumerate(selected_candidates, 1):
@@ -256,7 +256,7 @@ def recruitment_execution(
             Use the simulate_email_sending tool.
             """
 
-            send_result = email_sender_agent.run(send_prompt)
+            _ = email_sender_agent.run(send_prompt)
             print(f"📧 Email sent to {candidate.email}")
 
     # Final summary

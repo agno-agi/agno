@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 from agno.knowledge.reader.csv_reader import CSVReader

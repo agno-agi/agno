@@ -983,7 +983,6 @@ class Knowledge:
             log_warning(f"Contents DB not found for knowledge base: {self.name}")
 
     def _process_lightrag_content(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
-
         self._add_to_contents_db(content)
         if content_type == KnowledgeContentOrigin.PATH:
             if content.file_data is None:

@@ -11,7 +11,6 @@ from langchain.text_splitter import CharacterTextSplitter
 from langchain_chroma import Chroma
 from langchain_community.document_loaders import TextLoader
 from langchain_openai import OpenAIEmbeddings
-from PIL.Image import v
 
 # Define the directory where the Chroma database is located
 chroma_db_dir = pathlib.Path("./chroma_db")
@@ -38,7 +37,9 @@ db = Chroma(embedding_function=OpenAIEmbeddings(), persist_directory=str(chroma_
 knowledge_retriever = db.as_retriever()
 
 # Create a knowledge instance
-knowledge = Knowledge(vector_db=LangChainVectorDb(knowledge_retriever=knowledge_retriever))
+knowledge = Knowledge(
+    vector_db=LangChainVectorDb(knowledge_retriever=knowledge_retriever)
+)
 
 # Create an agent with the knowledge base
 agent = Agent(knowledge=knowledge)

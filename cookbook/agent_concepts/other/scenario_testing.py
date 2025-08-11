@@ -24,6 +24,7 @@ async def test_vegetarian_recipe_agent():
     scenario = Scenario(
         "User is looking for a dinner idea",
         agent=vegetarian_recipe_agent,
+        success_criteria=[
             "Recipe agent generates a vegetarian recipe",
             "Recipe includes a list of ingredients",
             "Recipe includes step-by-step cooking instructions",

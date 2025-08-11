@@ -1,5 +1,5 @@
-from agno.knowledge.knowledge import Knowledge
 from agno.embedder.jina import JinaEmbedder
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
 
 # Basic usage - automatically loads from JINA_API_KEY environment variable

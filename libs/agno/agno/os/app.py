@@ -10,7 +10,6 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 
 from agno.agent.agent import Agent
-from agno.app.utils import generate_id
 from agno.cli.console import console
 from agno.os.apps import (
     EvalApp,
@@ -23,6 +22,7 @@ from agno.os.apps.base import BaseApp
 from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router
 from agno.os.settings import AgnoAPISettings
+from agno.os.utils import generate_id
 from agno.team.team import Team
 from agno.utils.log import log_debug, log_warning
 from agno.workflow.workflow import Workflow
@@ -271,12 +271,12 @@ class AgentOS:
         from rich.align import Align
         from rich.console import Group
 
-        public_endpoint = Align.center(f"[bold cyan]{public_endpoint}[/bold cyan]")
+        aligned_endpoint = Align.center(f"[bold cyan]{public_endpoint}[/bold cyan]")
         connection_endpoint = f"\n\n[bold dark_orange]Running on:[/bold dark_orange] http://{host}:{port}"
 
         console.print(
             Panel(
-                Group(public_endpoint, connection_endpoint),
+                Group(aligned_endpoint, connection_endpoint),
                 title="AgentOS",
                 expand=False,
                 border_style="dark_orange",

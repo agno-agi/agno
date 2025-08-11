@@ -19,7 +19,7 @@ memory.add_user_memory(
         topics=["name"],
     ),
 )
-print(f"\nUser: default")
+print("\nUser: default")
 print("Memories:")
 pprint(memory.get_user_memories())
 

@@ -828,6 +828,7 @@ class Team:
             run_messages=run_messages,
             response_format=response_format,
             stream_intermediate_steps=stream_intermediate_steps,
+            workflow_context=workflow_context,
         )
 
         # 3. Add the run to memory
@@ -1229,6 +1230,7 @@ class Team:
             run_messages=run_messages,
             response_format=response_format,
             stream_intermediate_steps=stream_intermediate_steps,
+            workflow_context=workflow_context,
         ):
             yield event
 
@@ -1593,6 +1595,7 @@ class Team:
         run_messages: RunMessages,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
+        workflow_context: Optional[Dict] = None,
     ) -> Iterator[Union[TeamRunResponseEvent, RunResponseEvent]]:
         self.model = cast(Model, self.model)
 
@@ -1623,6 +1626,7 @@ class Team:
                 reasoning_state=reasoning_state,
                 stream_intermediate_steps=stream_intermediate_steps,
                 parse_structured_output=self.should_parse_structured_output,
+                workflow_context=workflow_context,
             )
 
         # 3. Update TeamRunResponse
@@ -1673,6 +1677,7 @@ class Team:
         run_messages: RunMessages,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
+        workflow_context: Optional[Dict] = None,
     ) -> AsyncIterator[Union[TeamRunResponseEvent, RunResponseEvent]]:
         self.model = cast(Model, self.model)
 
@@ -1704,6 +1709,7 @@ class Team:
                 reasoning_state=reasoning_state,
                 stream_intermediate_steps=stream_intermediate_steps,
                 parse_structured_output=self.should_parse_structured_output,
+                workflow_context=workflow_context,
             ):
                 yield chunk
 
@@ -1758,6 +1764,7 @@ class Team:
         reasoning_state: Optional[Dict[str, Any]] = None,
         stream_intermediate_steps: bool = False,
         parse_structured_output: bool = False,
+        workflow_context: Optional[Dict] = None,
     ) -> Iterator[Union[TeamRunResponseEvent, RunResponseEvent]]:
         if isinstance(model_response_event, tuple(get_args(RunResponseEvent))) or isinstance(
             model_response_event, tuple(get_args(TeamRunResponseEvent))
@@ -1846,6 +1853,7 @@ class Team:
                                 image=model_response_event.image,
                             ),
                             run_response,
+                            workflow_context=workflow_context,
                         )
                     else:
                         yield self._handle_event(
@@ -1855,6 +1863,7 @@ class Team:
                                 content_type=content_type,
                             ),
                             run_response,
+                            workflow_context=workflow_context,
                         )
 
             # If the model response is a tool_call_started, add the tool call to the run_response

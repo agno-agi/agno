@@ -835,6 +835,7 @@ class Agent:
             run_messages=run_messages,
             response_format=response_format,
             stream_intermediate_steps=stream_intermediate_steps,
+            workflow_context=workflow_context,
         ):
             yield event
 
@@ -1238,6 +1239,7 @@ class Agent:
             run_messages=run_messages,
             response_format=response_format,
             stream_intermediate_steps=stream_intermediate_steps,
+            workflow_context=workflow_context,
         ):
             yield event
 
@@ -2776,6 +2778,7 @@ class Agent:
         run_messages: RunMessages,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
+        workflow_context: Optional[Dict] = None,
     ) -> Iterator[RunResponseEvent]:
         self.model = cast(Model, self.model)
 
@@ -2806,6 +2809,7 @@ class Agent:
                 reasoning_state=reasoning_state,
                 parse_structured_output=self.should_parse_structured_output,
                 stream_intermediate_steps=stream_intermediate_steps,
+                workflow_context=workflow_context,
             )
 
         # Determine reasoning completed
@@ -2843,6 +2847,7 @@ class Agent:
         run_messages: RunMessages,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
+        workflow_context: Optional[Dict] = None,
     ) -> AsyncIterator[RunResponseEvent]:
         self.model = cast(Model, self.model)
 
@@ -2875,6 +2880,7 @@ class Agent:
                 reasoning_state=reasoning_state,
                 parse_structured_output=self.should_parse_structured_output,
                 stream_intermediate_steps=stream_intermediate_steps,
+                workflow_context=workflow_context,
             ):
                 yield event
 
@@ -2914,6 +2920,7 @@ class Agent:
         reasoning_state: Optional[Dict[str, Any]] = None,
         parse_structured_output: bool = False,
         stream_intermediate_steps: bool = False,
+        workflow_context: Optional[Dict] = None,
     ) -> Iterator[RunResponseEvent]:
         if isinstance(model_response_event, tuple(get_args(RunResponseEvent))) or isinstance(
             model_response_event, tuple(get_args(TeamRunResponseEvent))
@@ -2965,6 +2972,7 @@ class Agent:
                             content_type=content_type,
                         ),
                         run_response,
+                        workflow_context=workflow_context,
                     )
                 elif (
                     model_response_event.content is not None
@@ -2981,6 +2989,7 @@ class Agent:
                             citations=model_response_event.citations,
                         ),
                         run_response,
+                        workflow_context=workflow_context,
                     )
 
                 # Process audio
@@ -3017,6 +3026,7 @@ class Agent:
                             response_audio=run_response.response_audio,
                         ),
                         run_response,
+                        workflow_context=workflow_context,
                     )
 
                 if model_response_event.image is not None:
@@ -3028,6 +3038,7 @@ class Agent:
                             image=model_response_event.image,
                         ),
                         run_response,
+                        workflow_context=workflow_context,
                     )
 
             # Handle tool interruption events

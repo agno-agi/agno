@@ -5,7 +5,6 @@ You can remove vectors by metadata or by name.
 1. Run: `python cookbook/agent_concepts/knowledge/06_remove_vectors.py` to run the cookbook
 """
 
-from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
 
