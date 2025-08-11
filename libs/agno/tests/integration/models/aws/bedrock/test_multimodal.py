@@ -48,6 +48,7 @@ async def test_async_image_input_bytes():
     assert "bridge" in response.content.lower()
 
 
+# TODO: fails because the model breaks, set a new one
 @pytest.mark.asyncio
 async def test_async_image_input_stream():
     """Test async image input with streaming using Amazon Nova Pro model."""
