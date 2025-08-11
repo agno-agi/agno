@@ -3618,7 +3618,10 @@ class Team:
                 live_console.update(Group(*panels))
 
             # Get response from the team
-            stream_resp = await self.arun(  # type: ignore
+            team_markdown = None
+            member_markdown = {}
+
+            async for resp in self.arun(  # type: ignore
                 message=message,
                 audio=audio,
                 images=images,
@@ -3632,11 +3635,7 @@ class Team:
                 user_id=user_id,
                 knowledge_filters=knowledge_filters,
                 **kwargs,
-            )
-            team_markdown = None
-            member_markdown = {}
-
-            async for resp in stream_resp:
+            ):
                 if team_markdown is None:
                     if markdown:
                         team_markdown = True
