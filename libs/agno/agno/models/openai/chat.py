@@ -664,7 +664,7 @@ class OpenAIChat(Model):
                 log_warning(f"Error processing audio: {e}")
         import logging
         logging.basicConfig(level=logging.INFO)  # Configure logging level and format as needed
-        logging.info(f"Response back: {response_message}")
+        logging.warning(f"Response back: {response_message}")
         if hasattr(response_message, "reasoning") and response_message.reasoning is not None:
             model_response.reasoning = f"<think>\n{response_message.reasoning}\n</think>"
             model_response.content = f"{model_response.reasoning}\n {model_response.content}"
