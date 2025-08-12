@@ -25,7 +25,6 @@ def test_tool_use():
     assert response.content is not None
 
 
-@pytest.mark.skip(reason="This test is flaky.")
 def test_tool_use_stream():
     agent = Agent(
         model=Groq(id="llama-3.3-70b-versatile"),
@@ -41,8 +40,10 @@ def test_tool_use_stream():
 
     for chunk in response_stream:
         responses.append(chunk)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
+
+        # Check for ToolCallStartedEvent or ToolCallCompletedEvent
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
+            if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -75,9 +76,7 @@ async def test_async_tool_use_stream():
         telemetry=False,
     )
 
-    response_stream = await agent.arun(
-        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
-    )
+    response_stream = agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
 
     responses = []
     tool_call_seen = False
@@ -87,14 +86,13 @@ async def test_async_tool_use_stream():
 
         # Check for ToolCallStartedEvent or ToolCallCompletedEvent
         if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
-            if chunk.tool.tool_name:
+            if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
 
 
-@pytest.mark.skip(reason="This test is flaky.")
 def test_parallel_tool_calls():
     agent = Agent(
         model=Groq(id="gemma2-9b-it"),
@@ -115,7 +113,6 @@ def test_parallel_tool_calls():
     assert response.content is not None
 
 
-@pytest.mark.skip(reason="Groq does not support native structured outputs for tool calls at this time.")
 def test_tool_use_with_native_structured_outputs():
     class StockPrice(BaseModel):
         price: float = Field(..., description="The price of the stock")

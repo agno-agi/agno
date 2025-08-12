@@ -84,7 +84,7 @@ async def test_async_basic_stream():
         telemetry=False,
     )
 
-    response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
+    response_stream = agent.arun("Share a 2 sentence horror story", stream=True)
 
     async for response in response_stream:
         assert response.content is not None
@@ -117,7 +117,6 @@ def test_with_memory():
         exponential_backoff=True,
         delay_between_retries=5,
         add_history_to_context=True,
-        num_history_responses=5,
         markdown=True,
         telemetry=False,
     )
@@ -128,6 +127,7 @@ def test_with_memory():
 
     # Second interaction should remember the name
     response2 = agent.run("What's my name?")
+    assert response2.content is not None
     assert "John Smith" in response2.content
 
     # Verify memories were created
@@ -203,7 +203,6 @@ def test_history():
     assert len(agent.run_response.messages) == 4
 
 
-@pytest.mark.skip("Need to update credentials for this to work")
 def test_custom_client_params():
     generation_config = types.GenerateContentConfig(
         temperature=0,
