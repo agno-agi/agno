@@ -237,7 +237,7 @@ class AgentKnowledge(BaseModel):
         self._load_init(recreate=False, upsert=upsert)
         if self.vector_db is None:
             return
-        
+
         log_info("Loading knowledge base")
         # Upsert documents if upsert is True
         if upsert and self.vector_db.upsert_available():

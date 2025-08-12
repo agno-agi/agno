@@ -59,7 +59,9 @@ def custom_trafilatura_tools(mock_trafilatura_modules):
     )
 
 
-def create_mock_metadata_document(title="Test Title", author="Test Author", date="2024-01-01", url="https://example.com"):
+def create_mock_metadata_document(
+    title="Test Title", author="Test Author", date="2024-01-01", url="https://example.com"
+):
     """Helper function to create mock metadata document."""
     mock_doc = Mock()
     mock_doc.as_dict.return_value = {
@@ -67,7 +69,7 @@ def create_mock_metadata_document(title="Test Title", author="Test Author", date
         "author": author,
         "date": date,
         "url": url,
-        "text": "Sample text content"
+        "text": "Sample text content",
     }
     return mock_doc
 
@@ -170,10 +172,7 @@ class TestExtractTextMethod:
 
         # Execute with custom parameters
         result = trafilatura_tools.extract_text(
-            "https://example.com",
-            output_format="json",
-            include_comments=False,
-            with_metadata=True
+            "https://example.com", output_format="json", include_comments=False, with_metadata=True
         )
 
         # Assert
@@ -380,6 +379,7 @@ class TestExtractBatchMethod:
 
     def test_extract_batch_partial_failure(self, trafilatura_tools, mock_trafilatura_modules):
         """Test batch extraction with partial failures."""
+
         # Setup mocks - first URL succeeds, second fails
         def fetch_side_effect(url):
             if "example1" in url:
@@ -433,9 +433,7 @@ class TestUtilityMethods:
     def test_get_extraction_params_overrides(self, trafilatura_tools):
         """Test _get_extraction_params with parameter overrides."""
         params = trafilatura_tools._get_extraction_params(
-            output_format="json",
-            include_comments=False,
-            with_metadata=True
+            output_format="json", include_comments=False, with_metadata=True
         )
         assert params["output_format"] == "json"
         assert params["include_comments"] is False

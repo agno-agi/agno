@@ -5,21 +5,23 @@ from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
 
 try:
-    from trafilatura.meta import reset_caches
     from trafilatura import (
         extract,
-        extract_metadata, 
+        extract_metadata,
         fetch_url,
         html2txt,
     )
+    from trafilatura.meta import reset_caches
+
     # Import spider functionality
     try:
         from trafilatura.spider import focused_crawler
+
         SPIDER_AVAILABLE = True
     except ImportError:
         SPIDER_AVAILABLE = False
         logger.warning("Trafilatura spider module not available. Web crawling functionality will be disabled.")
-        
+
 except ImportError:
     raise ImportError("`trafilatura` not installed. Please install using `pip install trafilatura`")
 
@@ -27,7 +29,7 @@ except ImportError:
 class TrafilaturaTools(Toolkit):
     """
     TrafilaturaTools is a toolkit for web scraping and text extraction.
-    
+
     Args:
         extract_text (bool): Whether to extract main text content from URLs.
         extract_metadata_only (bool): Whether to extract only metadata from URLs.
@@ -88,18 +90,18 @@ class TrafilaturaTools(Toolkit):
 
         tools = []
         if extract_text:
-            tools.append(self.extract_text)
+            tools.append(lambda url, *args, **kwargs: self.extract_text(url))
         if extract_metadata_only:
-            tools.append(self.extract_metadata_only)
+            tools.append(lambda url, *args, **kwargs: self.extract_metadata_only(url))
         if crawl_website and SPIDER_AVAILABLE:
-            tools.append(self.crawl_website)
+            tools.append(lambda url, *args, **kwargs: self.crawl_website(url))
         elif crawl_website and not SPIDER_AVAILABLE:
             logger.warning("Web crawling requested but spider module not available. Skipping crawler tool.")
         if html_to_text:
-            tools.append(self.html_to_text)
-        
+            tools.append(lambda content, *args, **kwargs: self.html_to_text(content))
+
         # Add batch processing
-        tools.append(self.extract_batch)
+        tools.append(lambda content, *args, **kwargs: self.extract_batch(content))
 
         super().__init__(name="trafilatura_tools", tools=tools, **kwargs)
 
@@ -181,7 +183,7 @@ class TrafilaturaTools(Toolkit):
         """
         try:
             log_debug(f"Extracting text from URL: {url}")
-            
+
             # Fetch the webpage content
             html_content = fetch_url(url)
             if not html_content:
@@ -206,13 +208,13 @@ class TrafilaturaTools(Toolkit):
             )
 
             result = extract(html_content, url=url, **params)
-            
+
             if result is None:
                 return f"Error: Could not extract readable content from URL: {url}"
 
             # Reset caches
             reset_caches()
-            
+
             return result
 
         except Exception as e:
@@ -240,7 +242,7 @@ class TrafilaturaTools(Toolkit):
         """
         try:
             log_debug(f"Extracting metadata from URL: {url}")
-            
+
             # Fetch the webpage content
             html_content = fetch_url(url)
             if not html_content:
@@ -258,7 +260,7 @@ class TrafilaturaTools(Toolkit):
                 return f"Error: Could not extract metadata from URL: {url}"
 
             metadata_dict = metadata_doc.as_dict()
-            
+
             # Reset caches
             reset_caches()
 
@@ -298,10 +300,10 @@ class TrafilaturaTools(Toolkit):
         """
         if not SPIDER_AVAILABLE:
             return "Error: Web crawling functionality not available. Trafilatura spider module could not be imported."
-            
+
         try:
             log_debug(f"Starting website crawl from: {homepage_url}")
-            
+
             # Use instance defaults if not specified
             max_seen = max_seen_urls if max_seen_urls is not None else self.max_crawl_urls
             max_known = max_known_urls if max_known_urls is not None else self.max_known_urls
@@ -329,17 +331,17 @@ class TrafilaturaTools(Toolkit):
             if extract_content and known_links:
                 log_debug("Extracting content from discovered URLs")
                 extracted_content = {}
-                
+
                 # Limit extraction to avoid overwhelming responses
-                urls_to_extract = list(known_links)[:min(10, len(known_links))]
-                
+                urls_to_extract = list(known_links)[: min(10, len(known_links))]
+
                 for url in urls_to_extract:
                     try:
                         params = self._get_extraction_params(
                             output_format=output_format,
                             with_metadata=include_metadata,
                         )
-                        
+
                         html_content = fetch_url(url)
                         if html_content:
                             content = extract(html_content, url=url, **params)
@@ -347,7 +349,7 @@ class TrafilaturaTools(Toolkit):
                                 extracted_content[url] = content
                     except Exception as e:
                         extracted_content[url] = f"Error extracting content: {e}"
-                
+
                 crawl_results["extracted_content"] = extracted_content
 
             # Reset caches
@@ -376,12 +378,12 @@ class TrafilaturaTools(Toolkit):
         """
         try:
             log_debug("Converting HTML to text")
-            
+
             result = html2txt(html_content, clean=clean)
-            
+
             # Reset caches
             reset_caches()
-            
+
             return result if result else "Error: Could not extract text from HTML content"
 
         except Exception as e:
@@ -407,17 +409,17 @@ class TrafilaturaTools(Toolkit):
         """
         try:
             log_debug(f"Starting batch extraction for {len(urls)} URLs")
-            
+
             results = {}
             failed_urls = []
-            
+
             for url in urls:
                 try:
                     params = self._get_extraction_params(
                         output_format=output_format,
                         with_metadata=include_metadata,
                     )
-                    
+
                     html_content = fetch_url(url)
                     if html_content:
                         content = extract(html_content, url=url, **params)
@@ -427,7 +429,7 @@ class TrafilaturaTools(Toolkit):
                             failed_urls.append(url)
                     else:
                         failed_urls.append(url)
-                        
+
                 except Exception as e:
                     failed_urls.append(url)
                     results[url] = f"Error: {e}"
@@ -436,7 +438,8 @@ class TrafilaturaTools(Toolkit):
             reset_caches()
 
             batch_results = {
-                "successful_extractions": len(results) - len([k for k, v in results.items() if str(v).startswith("Error:")]),
+                "successful_extractions": len(results)
+                - len([k for k, v in results.items() if str(v).startswith("Error:")]),
                 "failed_extractions": len(failed_urls),
                 "total_urls": len(urls),
                 "results": results,

@@ -117,6 +117,7 @@ youtube = ["youtube_transcript_api"]
 zep = ["zep-cloud"]
 daytona=["daytona"]
 oxylabs = ["oxylabs"]
+trafilatura = ["trafilatura"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
