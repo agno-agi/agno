@@ -7,7 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Path,
 
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.reader.base import Reader
+from agno.knowledge.reader import ReaderFactory
 from agno.os.apps.knowledge.schemas import (
     ConfigResponseSchema,
     ContentResponseSchema,
@@ -97,6 +97,24 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
             size=file.size if file else None if text_content else None,
         )
 
+        # If reader_id is provided, resolve and set it; else auto-detection will occur later
+        if reader_id and reader_id.strip():
+            resolved_reader = None
+            if knowledge.readers and reader_id in knowledge.readers:
+                resolved_reader = knowledge.readers[reader_id]
+            else:
+                key = reader_id.lower().strip().replace("-", "_").replace(" ", "_")
+                candidates = [key] + ([key[:-6]] if key.endswith("reader") else [])
+                for cand in candidates:
+                    try:
+                        resolved_reader = ReaderFactory.create_reader(cand)
+                        break
+                    except Exception:
+                        continue
+            if resolved_reader is None:
+                raise HTTPException(status_code=400, detail=f"Invalid reader_id: {reader_id}")
+            content.reader = resolved_reader
+
         background_tasks.add_task(process_content, knowledge, content_id, content, reader_id)
 
         response = ContentResponseSchema(
@@ -140,10 +158,21 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         )
 
         if update_data.reader_id:
+            resolved_reader = None
             if knowledge.readers and update_data.reader_id in knowledge.readers:
-                content.reader = knowledge.readers[update_data.reader_id]
+                resolved_reader = knowledge.readers[update_data.reader_id]
             else:
+                key = update_data.reader_id.lower().strip().replace("-", "_").replace(" ", "_")
+                candidates = [key] + ([key[:-6]] if key.endswith("reader") else [])
+                for cand in candidates:
+                    try:
+                        resolved_reader = ReaderFactory.create_reader(cand)
+                        break
+                    except Exception:
+                        continue
+            if resolved_reader is None:
                 raise HTTPException(status_code=400, detail=f"Invalid reader_id: {update_data.reader_id}")
+            content.reader = resolved_reader
 
         updated_content_dict = knowledge.patch_content(content)
         if not updated_content_dict:
@@ -266,23 +295,61 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
 
     @router.get("/config", status_code=200)
     def get_config() -> ConfigResponseSchema:
-        readers_dict: Dict[str, Reader] = knowledge.get_readers() or {}
+        readers = knowledge.get_readers() 
+        if isinstance(readers, dict):
+            reader_schemas = [ReaderSchema(id=k, name=v.name, description=v.description if v.description else None) for k, v in readers.items()]
+        else:
+            # Handle case where readers is a list - use reader name or class name as id
+            reader_schemas = []
+            for reader in readers:
+                reader_id = reader.name if hasattr(reader, 'name') and reader.name else reader.__class__.__name__
+                reader_schemas.append(ReaderSchema(
+                    id=reader_id, 
+                    name=reader.name if hasattr(reader, 'name') else None, 
+                    description=reader.description if hasattr(reader, 'description') and reader.description else None
+                ))
+        
         return ConfigResponseSchema(
-            readers=[ReaderSchema(id=k, name=v.name, description=v.description) for k, v in readers_dict.items()],
+            readers=reader_schemas,
             filters=knowledge.get_filters(),
         )
 
-    return router
+    return router 
 
 
 async def process_content(knowledge: Knowledge, content_id: str, content: Content, reader_id: Optional[str] = None):
     """Background task to process the content"""
     log_info(f"Processing content {content_id}")
     try:
-        content.id = content_id or str(uuid4())
-        if reader_id and knowledge.readers:
-            content.reader = knowledge.readers[reader_id]
+        content.id = content_id
+        if reader_id:
+            reader = None
+            if knowledge.readers and reader_id in knowledge.readers:
+                reader = knowledge.readers[reader_id]
+            else:
+                key = reader_id.lower().strip().replace("-", "_").replace(" ", "_")
+                candidates = [key] + ([key[:-6]] if key.endswith("reader") else [])
+                for cand in candidates:
+                    try:
+                        reader = ReaderFactory.create_reader(cand)
+                        log_debug(f"Resolved reader: {reader.__class__.__name__}")
+                        break
+                    except Exception:
+                        continue
+            if reader:
+                content.reader = reader
+        if getattr(content, "reader", None) is not None:
+            log_debug(f"Using reader: {content.reader.__class__.__name__}")
         await knowledge._load_content(content, upsert=False, skip_if_exists=True)
         log_info(f"Content {content_id} processed successfully")
     except Exception as e:
         log_info(f"Error processing content {content_id}: {e}")
+        # Mark content as failed in the contents DB
+        try:
+            content.status = ContentStatus.FAILED
+            content.status_message = str(e)
+            content.id = content_id
+            knowledge.patch_content(content)
+        except Exception:
+            # Swallow any secondary errors to avoid crashing the background task
+            pass
