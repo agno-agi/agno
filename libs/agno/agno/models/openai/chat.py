@@ -692,15 +692,15 @@ class OpenAIChat(Model):
 
             if choice_delta:
                 
-                # Add reasoning as content
-                is_reasoning = hasattr(choice_delta, 'reasoning') and getattr(choice_delta, 'reasoning', None)
-                if is_reasoning is not None: 
+                # Add thinking as content
+                is_reasoning = hasattr(choice_delta, 'reasoning')
+                if is_reasoning and choice_delta.reasoning is not None:
                     model_response.content = choice_delta.reasoning
-                
-                # Add content
-                if choice_delta.content is not None and  hasattr(choice_delta, 'reasoning') and getattr(choice_delta, 'reasoning', None) is None:
-                    model_response.content = choice_delta.content
 
+                # Add content if there is no thinking
+                if not (is_reasoning and choice_delta.reasoning is not None) and choice_delta.content is not None:
+                    model_response.content = choice_delta.content
+                                    
                 # Add tool calls
                 if choice_delta.tool_calls is not None:
                     model_response.tool_calls = choice_delta.tool_calls  # type: ignore
