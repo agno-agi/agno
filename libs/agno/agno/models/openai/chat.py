@@ -662,9 +662,7 @@ class OpenAIChat(Model):
                     )
             except Exception as e:
                 log_warning(f"Error processing audio: {e}")
-        import logging
-        logging.basicConfig(level=logging.INFO)  # Configure logging level and format as needed
-        logging.warning(f"Response back: {response_message}")
+
         if hasattr(response_message, "reasoning") and response_message.reasoning is not None:
             model_response.reasoning = f"<think>\n{response_message.reasoning}\n</think>"
             model_response.content = f"{model_response.reasoning}\n {model_response.content}"
@@ -684,8 +682,6 @@ class OpenAIChat(Model):
         Returns:
             ModelResponse: Parsed response data
         """
-        from pprint import pprint
-        pprint(response_delta)
         model_response = ModelResponse()
         if response_delta.choices and len(response_delta.choices) > 0:
             choice_delta: ChoiceDelta = response_delta.choices[0].delta
