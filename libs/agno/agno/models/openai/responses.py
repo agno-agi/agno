@@ -79,7 +79,7 @@ class OpenAIResponses(Model):
     )
 
     def _using_reasoning_model(self) -> bool:
-        """Return True if the contextual used model is a reasoning model."""
+        """Return True if the contextual used model is a known reasoning model."""
         return self.id.startswith("o3") or self.id.startswith("o4-mini") or self.id.startswith("gpt-5")
 
     def _get_client_params(self) -> Dict[str, Any]:
