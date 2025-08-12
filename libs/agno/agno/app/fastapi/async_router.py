@@ -231,7 +231,7 @@ def get_async_router(
 
         return base64_images, base64_audios, base64_videos
 
-    def team_process_file(
+    async def team_process_file(
         files: List[UploadFile],
     ):
         base64_images: List[Image] = []
