@@ -684,6 +684,8 @@ class OpenAIChat(Model):
         Returns:
             ModelResponse: Parsed response data
         """
+        from pprint import pprint
+        pprint(response_delta)
         model_response = ModelResponse()
         if response_delta.choices and len(response_delta.choices) > 0:
             choice_delta: ChoiceDelta = response_delta.choices[0].delta
