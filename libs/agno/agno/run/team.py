@@ -242,7 +242,7 @@ class TeamRunResponse:
     member_responses: List[Union["TeamRunResponse", RunResponse]] = field(default_factory=list)
 
     run_id: Optional[str] = None
-    id: Optional[str] = None
+    team_id: Optional[str] = None
     team_name: Optional[str] = None
     session_id: Optional[str] = None
     # If the team is a member of a team, this will be the session id of the parent team

@@ -86,7 +86,7 @@ class ModelResponse(BaseModel):
 
 
 class AgentResponse(BaseModel):
-    id: Optional[str] = None
+    agent_id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
     instructions: Optional[Union[List[str], str]] = None
@@ -133,7 +133,7 @@ class AgentResponse(BaseModel):
         knowledge_table = agent.db.knowledge_table_name if agent.db and agent.knowledge else None
 
         return AgentResponse(
-            id=agent.id,
+            agent_id=agent.id,
             name=agent.name,
             description=agent.description,
             instructions=str(agent.instructions) if agent.instructions else None,
@@ -152,7 +152,7 @@ class AgentResponse(BaseModel):
 
 
 class TeamResponse(BaseModel):
-    id: Optional[str] = None
+    team_id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
     mode: Optional[str] = None
@@ -216,7 +216,7 @@ class TeamResponse(BaseModel):
         )
 
         return TeamResponse(
-            id=team.id,
+            team_id=team.id,
             name=team.name,
             model=ModelResponse(
                 name=team.model.name or team.model.__class__.__name__ if team.model else None,
