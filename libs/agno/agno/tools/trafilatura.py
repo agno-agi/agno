@@ -88,7 +88,7 @@ class TrafilaturaTools(Toolkit):
         self.max_crawl_urls = max_crawl_urls
         self.max_known_urls = max_known_urls
 
-        tools = []
+        tools: List[Any] = []
         if extract_text:
             tools.append(self.extract_text)
         if extract_metadata_only:

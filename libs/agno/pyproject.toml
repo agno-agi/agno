@@ -223,6 +223,7 @@ tools = [
   "agno[mem0]",
   "agno[google_bigquery]",
   "agno[psycopg]",
+  "agno[trafilatura]",
 ]
 
 # All storage
@@ -455,5 +456,6 @@ module = [
   "zep_cloud.*",
   "oxylabs.*",
   "surrealdb.*"
+  "trafilatura.*"
 ]
 ignore_missing_imports = true
