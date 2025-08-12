@@ -455,7 +455,7 @@ module = [
   "acouchbase.*",
   "zep_cloud.*",
   "oxylabs.*",
-  "surrealdb.*"
+  "surrealdb.*",
   "trafilatura.*"
 ]
 ignore_missing_imports = true
