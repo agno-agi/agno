@@ -221,7 +221,7 @@ class OpenAIResponses(Model):
             request_params["tool_choice"] = tool_choice
 
         # Handle reasoning tools for o3 and o4-mini models
-        if (self.id.startswith("o3") or self.id.startswith("o4-mini")) and messages is not None:
+        if (self.id.startswith("o3") or self.id.startswith("o4-mini") or self.id.startswith("gpt-5")) and messages is not None:
             request_params["store"] = True
 
             # Check if the last assistant message has a previous_response_id to continue from
@@ -352,6 +352,21 @@ class OpenAIResponses(Model):
             Dict[str, Any]: The formatted message.
         """
         formatted_messages: List[Dict[str, Any]] = []
+
+        # Detect whether we're chaining via previous_response_id. If so, we should NOT
+        # re-send prior function_call items; the Responses API already has the state and
+        # expects only the corresponding function_call_output items.
+        previous_response_id: Optional[str] = None
+        for msg in reversed(messages):
+            if (
+                msg.role == "assistant"
+                and hasattr(msg, "provider_data")
+                and msg.provider_data
+                and "response_id" in msg.provider_data
+            ):
+                previous_response_id = msg.provider_data["response_id"]
+                break
+
         for message in messages:
             if message.role in ["user", "system"]:
                 message_dict: Dict[str, Any] = {
@@ -384,6 +399,13 @@ class OpenAIResponses(Model):
                         {"type": "function_call_output", "call_id": message.tool_call_id, "output": message.content}
                     )
             elif message.tool_calls is not None and len(message.tool_calls) > 0:
+                # Only include prior function_call items when we are NOT using
+                # previous_response_id. When previous_response_id is present, the
+                # Responses API already knows about earlier output items (including
+                # reasoning/function_call), and re-sending them can trigger validation
+                # errors (e.g., missing required reasoning item).
+                if previous_response_id is not None:
+                    continue
                 for tool_call in message.tool_calls:
                     formatted_messages.append(
                         {
