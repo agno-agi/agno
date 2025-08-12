@@ -50,6 +50,7 @@ class AccuracyEvaluation:
     expected_output: Union[str, list[str]]
     score: int
     reason: str
+    passing_score: int
 
     def print_eval(self, console: Optional["Console"] = None):
         from rich.box import ROUNDED
@@ -70,6 +71,8 @@ class AccuracyEvaluation:
         )
         results_table.add_row("Input", self.input)
         results_table.add_row("Output", self.output)
+        passed = "[green]Passed[/green]" if self.score >= self.passing_score else "[red]Failed[/red]"
+        results_table.add_row("Result", passed)
         results_table.add_row("Expected Output", str(self.expected_output))
         results_table.add_row("Accuracy Score", f"{str(self.score)}/10")
         results_table.add_row("Accuracy Reason", Markdown(self.reason))
@@ -78,6 +81,8 @@ class AccuracyEvaluation:
 
 @dataclass
 class AccuracyResult:
+    passing_score: int
+
     results: List[AccuracyEvaluation] = field(default_factory=list)
     avg_score: float = field(init=False)
     mean_score: float = field(init=False)
@@ -116,6 +121,8 @@ class AccuracyResult:
             title_justify="center",
         )
         summary_table.add_row("Number of Runs", f"{len(self.results)}")
+        passed = "[green]Passed[/green]" if self.avg_score >= self.passing_score else "[red]Failed[/red]"
+        summary_table.add_row("Result", passed)
         summary_table.add_row("Average Score", f"{self.avg_score:.2f}")
         summary_table.add_row("Mean Score", f"{self.mean_score:.2f}")
         summary_table.add_row("Minimum Score", f"{self.min_score:.2f}")
@@ -143,7 +150,10 @@ class AccuracyResult:
             results_table.add_row("Input", result.input)
             results_table.add_row("Output", result.output)
             results_table.add_row("Expected Output(s)", str(result.expected_output))
+            passed = "[green]Passed[/green]" if result.score >= result.passing_score else "[red]Failed[/red]"
+            results_table.add_row("Result", passed)
             results_table.add_row("Accuracy Score", f"{str(result.score)}/10")
+
             if result.reason:
                 results_table.add_row("Accuracy Reason", result.reason)
         console.print(results_table)
@@ -182,6 +192,8 @@ class AccuracyEval:
     # Additional context to the evaluator agent
     additional_context: Optional[str] = None
 
+    # Score (from 1 to 10) from which the evaluation is considered passed
+    passing_score: int = 7
     # Print summary of results
     print_summary: bool = False
     # Print detailed results
@@ -195,6 +207,9 @@ class AccuracyEval:
 
     def _warn_configuration_conflicts(self):
         """Handle validation of the evaluation configuration and warnings."""
+        if self.passing_score < 1 or self.passing_score > 10:
+            raise EvalError("The passing score must be between 1 and 10.")
+
         if self.mode != AccuracyEvalMode.REASONING and (self.evaluator_agent is not None or self.model is not None):
             logger.warning(
                 f"The provided evaluation mode ({self.mode}) is not compatible with having a custom evaluator agent or model. The custom evaluator agent or model will be ignored."
@@ -290,7 +305,12 @@ class AccuracyEval:
                 else:
                     score = 10 if agent_output == expected_output else 0
                 return AccuracyEvaluation(
-                    input=input, output=agent_output, expected_output=expected_output, score=score, reason=""
+                    input=input,
+                    output=agent_output,
+                    expected_output=expected_output,
+                    score=score,
+                    reason="",
+                    passing_score=self.passing_score,
                 )
             else:
                 if evaluator_agent is None:
@@ -304,6 +324,7 @@ class AccuracyEval:
                     expected_output=expected_output,
                     score=accuracy_agent_response.accuracy_score,
                     reason=accuracy_agent_response.accuracy_reason,
+                    passing_score=self.passing_score,
                 )
         except Exception as e:
             logger.exception(f"Failed to perform the evaluation: {e}")
@@ -329,6 +350,7 @@ class AccuracyEval:
                 expected_output=evaluator_expected_output,
                 score=accuracy_agent_response.accuracy_score,
                 reason=accuracy_agent_response.accuracy_reason,
+                passing_score=self.passing_score,
             )
         except Exception as e:
             logger.exception(f"Failed to evaluate accuracy asynchronously: {e}")
@@ -352,7 +374,7 @@ class AccuracyEval:
 
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
         self._warn_configuration_conflicts()
-        self.result = AccuracyResult()
+        self.result = AccuracyResult(passing_score=self.passing_score)
 
         logger.debug(f"************ Evaluation Start: {self.eval_id} ************")
 
@@ -461,7 +483,7 @@ class AccuracyEval:
 
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
 
-        self.result = AccuracyResult()
+        self.result = AccuracyResult(passing_score=self.passing_score)
 
         logger.debug(f"************ Evaluation Start: {self.eval_id} ************")
 
@@ -561,7 +583,7 @@ class AccuracyEval:
         """Run the evaluation logic against the given answer, instead of generating an answer with the Agent"""
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
         self._warn_configuration_conflicts()
-        self.result = AccuracyResult()
+        self.result = AccuracyResult(passing_score=self.passing_score)
 
         logger.debug(f"************ Evaluation Start: {self.eval_id} ************")
 
@@ -644,7 +666,7 @@ class AccuracyEval:
         """Run the evaluation logic against the given answer, instead of generating an answer with the Agent"""
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
 
-        self.result = AccuracyResult()
+        self.result = AccuracyResult(passing_score=self.passing_score)
 
         logger.debug(f"************ Evaluation Start: {self.eval_id} ************")
 
