@@ -90,18 +90,18 @@ class TrafilaturaTools(Toolkit):
 
         tools = []
         if extract_text:
-            tools.append(lambda url, *args, **kwargs: self.extract_text(url))
+            tools.append(self.extract_text)
         if extract_metadata_only:
-            tools.append(lambda url, *args, **kwargs: self.extract_metadata_only(url))
+            tools.append(self.extract_metadata_only)
         if crawl_website and SPIDER_AVAILABLE:
-            tools.append(lambda url, *args, **kwargs: self.crawl_website(url))
+            tools.append(self.crawl_website)
         elif crawl_website and not SPIDER_AVAILABLE:
             logger.warning("Web crawling requested but spider module not available. Skipping crawler tool.")
         if html_to_text:
-            tools.append(lambda content, *args, **kwargs: self.html_to_text(content))
+            tools.append(self.html_to_text)
 
         # Add batch processing
-        tools.append(lambda content, *args, **kwargs: self.extract_batch(content))
+        tools.append(self.extract_batch)
 
         super().__init__(name="trafilatura_tools", tools=tools, **kwargs)
 
