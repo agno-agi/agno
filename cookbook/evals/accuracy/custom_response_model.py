@@ -26,14 +26,15 @@ class ResponseModel(BaseModel):
         return f"Answer: {self.answer}\nReason: {self.reason}"
 
 
-# This is the agent that will be evaluated
+# This is the Agent which answer will be evaluated.
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[CalculatorTools(enable_all=True)],
 )
 
-# This is the agent we will use to perform the evaluation
+# This is the Agent that will perform the evaluation. We equip it with some Calculator tools to perform the evaluation.
 evaluator_agent = Agent(
+    instructions="You are a helpful assistant that evaluates the accuracy of a given Agent's answer.",
     model=OpenAIChat(id="o4-mini"),
     tools=[CalculatorTools(enable_all=True)],
     response_model=ResponseModel,
@@ -46,4 +47,9 @@ evaluation = AccuracyEval(
     expected_output="$1,739,130.43",
 )
 
-result: Optional[AccuracyResult] = evaluation.run(print_results=True)
+evaluation_result: Optional[AccuracyResult] = evaluation.run(print_results=True)
+assert evaluation_result is not None
+
+# You can check the evaluator Agent responses:
+for result in evaluation_result.results:
+    evalutor_agent_response = result.output

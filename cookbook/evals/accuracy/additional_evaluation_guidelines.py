@@ -7,13 +7,13 @@ from agno.eval.accuracy import AccuracyAgentResponse, AccuracyEval, AccuracyResu
 from agno.models.openai import OpenAIChat
 from agno.tools.calculator import CalculatorTools
 
-# This is the agent that will be evaluated
+# This is the Agent which answer will be evaluated
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[CalculatorTools(enable_all=True)],
 )
 
-# This is the agent we will use to perform the evaluation
+# This is the Agent that will perform the evaluation. We equip it with some Calculator tools to perform the evaluation.
 evaluator_agent = Agent(
     model=OpenAIChat(id="o4-mini"),
     tools=[CalculatorTools(enable_all=True)],
