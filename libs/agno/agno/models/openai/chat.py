@@ -692,9 +692,8 @@ class OpenAIChat(Model):
 
             if choice_delta:
                 
-                reasoning = getattr(choice_delta, 'reasoning', None)
-                if choice_delta.reasoning is not None:
-                    model_response.content = choice_delta.content
+                if hasattr(choice_delta, 'reasoning') and getattr(choice_delta, 'reasoning', None) is not None: 
+                    model_response.content = choice_delta.reasoning
                 
                 # Add content
                 if choice_delta.content is not None:
