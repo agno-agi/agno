@@ -55,7 +55,7 @@ class BaseWorkflowRunResponseEvent:
     event: str = ""
 
     # Workflow-specific fields
-    workflow_id: Optional[str] = None
+    id: Optional[str] = None
     workflow_name: Optional[str] = None
     session_id: Optional[str] = None
     run_id: Optional[str] = None
@@ -414,7 +414,7 @@ class WorkflowRunResponse:
     metrics: Optional[Dict[str, Any]] = None
 
     # Workflow-specific fields
-    workflow_id: Optional[str] = None
+    id: Optional[str] = None
     workflow_name: Optional[str] = None
 
     run_id: Optional[str] = None

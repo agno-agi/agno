@@ -247,7 +247,7 @@ class TeamResponse(BaseModel):
 
 
 class WorkflowResponse(BaseModel):
-    workflow_id: Optional[str] = None
+    id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
     input_schema: Optional[Dict[str, Any]] = None
@@ -268,7 +268,7 @@ class WorkflowResponse(BaseModel):
                     step["team"] = TeamResponse.from_team(step["team"])
 
         return cls(
-            workflow_id=workflow.id,
+            id=workflow.id,
             name=workflow.name,
             description=workflow.description,
             steps=steps,
