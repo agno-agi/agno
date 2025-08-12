@@ -40,7 +40,8 @@ def test_basic_stream():
         telemetry=False,
     )
 
-    for chunk in agent.run("Share a 2 sentence horror story", stream=True):
+    run_stream = agent.run("Share a 2 sentence horror story", stream=True)
+    for chunk in run_stream:
         assert chunk.content is not None
 
 

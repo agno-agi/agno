@@ -48,9 +48,6 @@ def test_tool_use_stream():
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    full_content = ""
-    for r in responses:
-        full_content += r.content or "" or ""
 
 
 @pytest.mark.asyncio

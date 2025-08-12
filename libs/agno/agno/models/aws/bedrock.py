@@ -563,11 +563,11 @@ class AwsBedrock(Model):
             # Tools
             if "stopReason" in response and response["stopReason"] == "tool_use":
                 model_response.tool_calls = []
-                model_response.metadata = model_response.metadata or {}
-                model_response.metadata["tool_ids"] = []
+                model_response.extra = model_response.extra or {}
+                model_response.extra["tool_ids"] = []
                 for tool in content:
                     if "toolUse" in tool:
-                        model_response.metadata["tool_ids"].append(tool["toolUse"]["toolUseId"])
+                        model_response.extra["tool_ids"].append(tool["toolUse"]["toolUseId"])
                         model_response.tool_calls.append(
                             {
                                 "id": tool["toolUse"]["toolUseId"],

@@ -246,12 +246,13 @@ class Claude(AnthropicClaude):
 
             assistant_message.metrics.start_timer()
 
-            for chunk in self.get_client().messages.stream(
+            with self.get_client().messages.stream(
                 model=self.id,
                 messages=chat_messages,  # type: ignore
                 **request_kwargs,
-            ):
-                yield self._parse_provider_response_delta(chunk)
+            ) as stream:
+                for chunk in stream:
+                    yield self._parse_provider_response_delta(chunk)
 
             assistant_message.metrics.stop_timer()
 

@@ -7,6 +7,7 @@ from agno.models.aws import AwsBedrock
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
+from agno.utils.log import log_info
 
 
 def test_tool_use():
@@ -39,6 +40,7 @@ def test_tool_use_stream():
     tool_call_seen = False
 
     for chunk in response_stream:
+        log_info(chunk)
         responses.append(chunk)
 
         # Check for ToolCallStartedEvent or ToolCallCompletedEvent
@@ -48,9 +50,6 @@ def test_tool_use_stream():
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    full_content = ""
-    for r in responses:
-        full_content += r.content or ""
 
 
 def test_parallel_tool_calls():
