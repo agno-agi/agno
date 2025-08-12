@@ -14,7 +14,7 @@ agent = Agent(
 )
 
 # Get the response in a variable
-# run_response: Iterator[RunResponse] = agent.run("What is the stock price of NVDA and TSLA", stream=True)
+# run_response: Iterator[RunResponseEvent] = agent.run("What is the stock price of NVDA and TSLA", stream=True)
 # for chunk in run_response:
 #     print(chunk.content)
 

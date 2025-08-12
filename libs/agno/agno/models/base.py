@@ -3,7 +3,20 @@ import collections.abc
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from types import AsyncGeneratorType, GeneratorType
-from typing import Any, AsyncGenerator, AsyncIterator, Dict, Iterator, List, Literal, Optional, Tuple, Type, Union
+from typing import (
+    Any,
+    AsyncGenerator,
+    AsyncIterator,
+    Dict,
+    Iterator,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    Type,
+    Union,
+    get_args,
+)
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -12,6 +25,9 @@ from agno.exceptions import AgentRunException
 from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations, Message, MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
+from agno.run.response import RunResponseContentEvent, RunResponseEvent
+from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
+from agno.run.team import TeamRunResponseEvent
 from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.timer import Timer
@@ -318,16 +334,24 @@ class Model(ABC):
 
         while True:
             # Get response from model
-            assistant_message, has_tool_calls = self._process_model_response(
+            assistant_message = Message(role=self.assistant_message_role)
+            self._process_model_response(
                 messages=messages,
+                assistant_message=assistant_message,
                 model_response=model_response,
                 response_format=response_format,
                 tools=tools,
                 tool_choice=tool_choice or self._tool_choice,
             )
 
+            # Add assistant message to messages
+            messages.append(assistant_message)
+
+            # Log response and metrics
+            assistant_message.log(metrics=True)
+
             # Handle tool calls if present
-            if has_tool_calls:
+            if assistant_message.tool_calls:
                 # Prepare function calls
                 function_calls_to_run = self._prepare_function_calls(
                     assistant_message=assistant_message,
@@ -344,24 +368,25 @@ class Model(ABC):
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
                 ):
-                    if (
-                        function_call_response.event
-                        in [
-                            ModelResponseEvent.tool_call_completed.value,
-                            ModelResponseEvent.tool_call_paused.value,
-                        ]
-                        and function_call_response.tool_executions is not None
-                    ):
-                        if model_response.tool_executions is None:
-                            model_response.tool_executions = []
-                        model_response.tool_executions.extend(function_call_response.tool_executions)
+                    if isinstance(function_call_response, ModelResponse):
+                        if (
+                            function_call_response.event
+                            in [
+                                ModelResponseEvent.tool_call_completed.value,
+                                ModelResponseEvent.tool_call_paused.value,
+                            ]
+                            and function_call_response.tool_executions is not None
+                        ):
+                            if model_response.tool_executions is None:
+                                model_response.tool_executions = []
+                            model_response.tool_executions.extend(function_call_response.tool_executions)
 
-                    elif function_call_response.event not in [
-                        ModelResponseEvent.tool_call_started.value,
-                        ModelResponseEvent.tool_call_completed.value,
-                    ]:
-                        if function_call_response.content:
-                            model_response.content += function_call_response.content  # type: ignore
+                        elif function_call_response.event not in [
+                            ModelResponseEvent.tool_call_started.value,
+                            ModelResponseEvent.tool_call_completed.value,
+                        ]:
+                            if function_call_response.content:
+                                model_response.content += function_call_response.content  # type: ignore
 
                 # Add a function call for each successful execution
                 function_call_count += len(function_call_results)
@@ -420,16 +445,24 @@ class Model(ABC):
 
         while True:
             # Get response from model
-            assistant_message, has_tool_calls = await self._aprocess_model_response(
+            assistant_message = Message(role=self.assistant_message_role)
+            await self._aprocess_model_response(
                 messages=messages,
+                assistant_message=assistant_message,
                 model_response=model_response,
                 response_format=response_format,
                 tools=tools,
                 tool_choice=tool_choice or self._tool_choice,
             )
 
+            # Add assistant message to messages
+            messages.append(assistant_message)
+
+            # Log response and metrics
+            assistant_message.log(metrics=True)
+
             # Handle tool calls if present
-            if has_tool_calls:
+            if assistant_message.tool_calls:
                 # Prepare function calls
                 function_calls_to_run = self._prepare_function_calls(
                     assistant_message=assistant_message,
@@ -446,23 +479,24 @@ class Model(ABC):
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
                 ):
-                    if (
-                        function_call_response.event
-                        in [
+                    if isinstance(function_call_response, ModelResponse):
+                        if (
+                            function_call_response.event
+                            in [
+                                ModelResponseEvent.tool_call_completed.value,
+                                ModelResponseEvent.tool_call_paused.value,
+                            ]
+                            and function_call_response.tool_executions is not None
+                        ):
+                            if model_response.tool_executions is None:
+                                model_response.tool_executions = []
+                            model_response.tool_executions.extend(function_call_response.tool_executions)
+                        elif function_call_response.event not in [
+                            ModelResponseEvent.tool_call_started.value,
                             ModelResponseEvent.tool_call_completed.value,
-                            ModelResponseEvent.tool_call_paused.value,
-                        ]
-                        and function_call_response.tool_executions is not None
-                    ):
-                        if model_response.tool_executions is None:
-                            model_response.tool_executions = []
-                        model_response.tool_executions.extend(function_call_response.tool_executions)
-                    elif function_call_response.event not in [
-                        ModelResponseEvent.tool_call_started.value,
-                        ModelResponseEvent.tool_call_completed.value,
-                    ]:
-                        if function_call_response.content:
-                            model_response.content += function_call_response.content  # type: ignore
+                        ]:
+                            if function_call_response.content:
+                                model_response.content += function_call_response.content  # type: ignore
 
                 # Add a function call for each successful execution
                 function_call_count += len(function_call_results)
@@ -502,20 +536,18 @@ class Model(ABC):
     def _process_model_response(
         self,
         messages: List[Message],
+        assistant_message: Message,
         model_response: ModelResponse,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Tuple[Message, bool]:
+    ) -> None:
         """
         Process a single model response and return the assistant message and whether to continue.
 
         Returns:
             Tuple[Message, bool]: (assistant_message, should_continue)
         """
-        # Create assistant message
-        assistant_message = Message(role=self.assistant_message_role)
-
         # Generate response
         assistant_message.metrics.start_timer()
         response = self.invoke(
@@ -536,12 +568,6 @@ class Model(ABC):
         # Populate the assistant message
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
 
-        # Add assistant message to messages
-        messages.append(assistant_message)
-
-        # Log response and metrics
-        assistant_message.log(metrics=True)
-
         # Update model response with assistant message content and audio
         if assistant_message.content is not None:
             if model_response.content is None:
@@ -563,25 +589,21 @@ class Model(ABC):
                 model_response.extra = {}
             model_response.extra.update(provider_response.extra)
 
-        return assistant_message, bool(assistant_message.tool_calls)
-
     async def _aprocess_model_response(
         self,
         messages: List[Message],
+        assistant_message: Message,
         model_response: ModelResponse,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Tuple[Message, bool]:
+    ) -> None:
         """
         Process a single async model response and return the assistant message and whether to continue.
 
         Returns:
             Tuple[Message, bool]: (assistant_message, should_continue)
         """
-        # Create assistant message
-        assistant_message = Message(role=self.assistant_message_role)
-
         # Generate response
         assistant_message.metrics.start_timer()
         response = await self.ainvoke(
@@ -602,12 +624,6 @@ class Model(ABC):
         # Populate the assistant message
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
 
-        # Add assistant message to messages
-        messages.append(assistant_message)
-
-        # Log response and metrics
-        assistant_message.log(metrics=True)
-
         # Update model response with assistant message content and audio
         if assistant_message.content is not None:
             if model_response.content is None:
@@ -628,8 +644,6 @@ class Model(ABC):
             if model_response.extra is None:
                 model_response.extra = {}
             model_response.extra.update(provider_response.extra)
-
-        return assistant_message, bool(assistant_message.tool_calls)
 
     def _populate_assistant_message(
         self,
@@ -706,6 +720,7 @@ class Model(ABC):
         """
         Process a streaming response from the model.
         """
+        assistant_message.metrics.start_timer()
         for response_delta in self.invoke_stream(
             messages=messages,
             response_format=response_format,
@@ -716,6 +731,7 @@ class Model(ABC):
             yield from self._populate_stream_data_and_assistant_message(
                 stream_data=stream_data, assistant_message=assistant_message, model_response_delta=model_response_delta
             )
+        assistant_message.metrics.stop_timer()
 
     def response_stream(
         self,
@@ -725,7 +741,8 @@ class Model(ABC):
         functions: Optional[Dict[str, Function]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
-    ) -> Iterator[ModelResponse]:
+        stream_model_response: bool = True,
+    ) -> Iterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
         """
         Generate a streaming response from the model.
         """
@@ -737,37 +754,47 @@ class Model(ABC):
         function_call_count = 0
 
         while True:
-            # Create assistant message and stream data
             assistant_message = Message(role=self.assistant_message_role)
+            # Create assistant message and stream data
             stream_data = MessageData()
+            if stream_model_response:
+                # Generate response
+                yield from self.process_response_stream(
+                    messages=messages,
+                    assistant_message=assistant_message,
+                    stream_data=stream_data,
+                    response_format=response_format,
+                    tools=tools,
+                    tool_choice=tool_choice or self._tool_choice,
+                )
 
-            # Generate response
-            assistant_message.metrics.start_timer()
-            yield from self.process_response_stream(
-                messages=messages,
-                assistant_message=assistant_message,
-                stream_data=stream_data,
-                response_format=response_format,
-                tools=tools,
-                tool_choice=tool_choice or self._tool_choice,
-            )
-            assistant_message.metrics.stop_timer()
+                # Populate assistant message from stream data
+                if stream_data.response_content:
+                    assistant_message.content = stream_data.response_content
+                if stream_data.response_thinking:
+                    assistant_message.thinking = stream_data.response_thinking
+                if stream_data.response_redacted_thinking:
+                    assistant_message.redacted_thinking = stream_data.response_redacted_thinking
+                if stream_data.response_provider_data:
+                    assistant_message.provider_data = stream_data.response_provider_data
+                if stream_data.response_citations:
+                    assistant_message.citations = stream_data.response_citations
+                if stream_data.response_audio:
+                    assistant_message.audio_output = stream_data.response_audio
+                if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
+                    assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
 
-            # Populate assistant message from stream data
-            if stream_data.response_content:
-                assistant_message.content = stream_data.response_content
-            if stream_data.response_thinking:
-                assistant_message.thinking = stream_data.response_thinking
-            if stream_data.response_redacted_thinking:
-                assistant_message.redacted_thinking = stream_data.response_redacted_thinking
-            if stream_data.response_provider_data:
-                assistant_message.provider_data = stream_data.response_provider_data
-            if stream_data.response_citations:
-                assistant_message.citations = stream_data.response_citations
-            if stream_data.response_audio:
-                assistant_message.audio_output = stream_data.response_audio
-            if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
-                assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
+            else:
+                model_response = ModelResponse()
+                self._process_model_response(
+                    messages=messages,
+                    assistant_message=assistant_message,
+                    model_response=model_response,
+                    response_format=response_format,
+                    tools=tools,
+                    tool_choice=tool_choice or self._tool_choice,
+                )
+                yield model_response
 
             # Add assistant message to messages
             messages.append(assistant_message)
@@ -794,12 +821,10 @@ class Model(ABC):
                 function_call_count += len(function_call_results)
 
                 # Format and add results to messages
-                if stream_data.extra is not None:
+                if stream_data and stream_data.extra is not None:
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
-                    for function_call_result in function_call_results:
-                        function_call_result.log(metrics=True)
                 else:
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 
@@ -842,6 +867,7 @@ class Model(ABC):
         """
         Process a streaming response from the model.
         """
+        assistant_message.metrics.start_timer()
         async for response_delta in self.ainvoke_stream(
             messages=messages,
             response_format=response_format,
@@ -853,6 +879,7 @@ class Model(ABC):
                 stream_data=stream_data, assistant_message=assistant_message, model_response_delta=model_response_delta
             ):
                 yield model_response
+        assistant_message.metrics.stop_timer()
 
     async def aresponse_stream(
         self,
@@ -862,7 +889,8 @@ class Model(ABC):
         functions: Optional[Dict[str, Function]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
-    ) -> AsyncIterator[ModelResponse]:
+        stream_model_response: bool = True,
+    ) -> AsyncIterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
         """
         Generate an asynchronous streaming response from the model.
         """
@@ -877,33 +905,43 @@ class Model(ABC):
             # Create assistant message and stream data
             assistant_message = Message(role=self.assistant_message_role)
             stream_data = MessageData()
+            if stream_model_response:
+                # Generate response
+                async for response in self.aprocess_response_stream(
+                    messages=messages,
+                    assistant_message=assistant_message,
+                    stream_data=stream_data,
+                    response_format=response_format,
+                    tools=tools,
+                    tool_choice=tool_choice or self._tool_choice,
+                ):
+                    yield response
 
-            # Generate response
-            assistant_message.metrics.start_timer()
-            async for response in self.aprocess_response_stream(
-                messages=messages,
-                assistant_message=assistant_message,
-                stream_data=stream_data,
-                response_format=response_format,
-                tools=tools,
-                tool_choice=tool_choice or self._tool_choice,
-            ):
-                yield response
-            assistant_message.metrics.stop_timer()
+                # Populate assistant message from stream data
+                if stream_data.response_content:
+                    assistant_message.content = stream_data.response_content
+                if stream_data.response_thinking:
+                    assistant_message.thinking = stream_data.response_thinking
+                if stream_data.response_redacted_thinking:
+                    assistant_message.redacted_thinking = stream_data.response_redacted_thinking
+                if stream_data.response_provider_data:
+                    assistant_message.provider_data = stream_data.response_provider_data
+                if stream_data.response_audio:
+                    assistant_message.audio_output = stream_data.response_audio
+                if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
+                    assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
 
-            # Populate assistant message from stream data
-            if stream_data.response_content:
-                assistant_message.content = stream_data.response_content
-            if stream_data.response_thinking:
-                assistant_message.thinking = stream_data.response_thinking
-            if stream_data.response_redacted_thinking:
-                assistant_message.redacted_thinking = stream_data.response_redacted_thinking
-            if stream_data.response_provider_data:
-                assistant_message.provider_data = stream_data.response_provider_data
-            if stream_data.response_audio:
-                assistant_message.audio_output = stream_data.response_audio
-            if stream_data.response_tool_calls and len(stream_data.response_tool_calls) > 0:
-                assistant_message.tool_calls = self.parse_tool_calls(stream_data.response_tool_calls)
+            else:
+                model_response = ModelResponse()
+                await self._aprocess_model_response(
+                    messages=messages,
+                    assistant_message=assistant_message,
+                    model_response=model_response,
+                    response_format=response_format,
+                    tools=tools,
+                    tool_choice=tool_choice or self._tool_choice,
+                )
+                yield model_response
 
             # Add assistant message to messages
             messages.append(assistant_message)
@@ -930,12 +968,10 @@ class Model(ABC):
                 function_call_count += len(function_call_results)
 
                 # Format and add results to messages
-                if stream_data.extra is not None:
+                if stream_data and stream_data.extra is not None:
                     self.format_function_call_results(
                         messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
-                    for function_call_result in function_call_results:
-                        function_call_result.log(metrics=True)
                 else:
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
 
@@ -987,6 +1023,10 @@ class Model(ABC):
 
         if model_response_delta.thinking is not None:
             stream_data.response_thinking += model_response_delta.thinking
+            should_yield = True
+
+        if model_response_delta.reasoning_content is not None:
+            stream_data.response_thinking += model_response_delta.reasoning_content
             should_yield = True
 
         if model_response_delta.redacted_thinking is not None:
@@ -1133,7 +1173,7 @@ class Model(ABC):
         function_call: FunctionCall,
         function_call_results: List[Message],
         additional_messages: Optional[List[Message]] = None,
-    ) -> Iterator[ModelResponse]:
+    ) -> Iterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
         # Start function call
         function_call_timer = Timer()
         function_call_timer.start()
@@ -1172,9 +1212,28 @@ class Model(ABC):
 
         if isinstance(function_call.result, (GeneratorType, collections.abc.Iterator)):
             for item in function_call.result:
-                function_call_output += str(item)
-                if function_call.function.show_result:
-                    yield ModelResponse(content=str(item))
+                # This function yields agent/team run events
+                if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(
+                    item, tuple(get_args(TeamRunResponseEvent))
+                ):
+                    # We only capture content events
+                    if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
+                        if item.content is not None and isinstance(item.content, BaseModel):
+                            function_call_output += item.content.model_dump_json()
+                        else:
+                            # Capture output
+                            function_call_output += item.content or ""
+
+                        if function_call.function.show_result:
+                            yield ModelResponse(content=item.content)
+
+                    # Yield the event itself to bubble it up
+                    yield item
+
+                else:
+                    function_call_output += str(item)
+                    if function_call.function.show_result:
+                        yield ModelResponse(content=str(item))
         else:
             function_call_output = str(function_call.result)
             if function_call.function.show_result:
@@ -1210,7 +1269,7 @@ class Model(ABC):
         additional_messages: Optional[List[Message]] = None,
         current_function_call_count: int = 0,
         function_call_limit: Optional[int] = None,
-    ) -> Iterator[ModelResponse]:
+    ) -> Iterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
         # Additional messages from function calls that will be added to the function call results
         if additional_messages is None:
             additional_messages = []
@@ -1353,7 +1412,7 @@ class Model(ABC):
         current_function_call_count: int = 0,
         function_call_limit: Optional[int] = None,
         skip_pause_check: bool = False,
-    ) -> AsyncIterator[ModelResponse]:
+    ) -> AsyncIterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
         # Additional messages from function calls that will be added to the function call results
         if additional_messages is None:
             additional_messages = []
@@ -1503,14 +1562,52 @@ class Model(ABC):
             function_call_output: str = ""
             if isinstance(fc.result, (GeneratorType, collections.abc.Iterator)):
                 for item in fc.result:
-                    function_call_output += str(item)
-                    if fc.function.show_result:
-                        yield ModelResponse(content=str(item))
+                    # This function yields agent/team run events
+                    if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(
+                        item, tuple(get_args(TeamRunResponseEvent))
+                    ):
+                        # We only capture content events
+                        if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
+                            if item.content is not None and isinstance(item.content, BaseModel):
+                                function_call_output += item.content.model_dump_json()
+                            else:
+                                # Capture output
+                                function_call_output += item.content or ""
+
+                            if fc.function.show_result:
+                                yield ModelResponse(content=item.content)
+                                continue
+
+                        # Yield the event itself to bubble it up
+                        yield item
+                    else:
+                        function_call_output += str(item)
+                        if fc.function.show_result:
+                            yield ModelResponse(content=str(item))
             elif isinstance(fc.result, (AsyncGeneratorType, collections.abc.AsyncIterator)):
                 async for item in fc.result:
-                    function_call_output += str(item)
-                    if fc.function.show_result:
-                        yield ModelResponse(content=str(item))
+                    # This function yields agent/team run events
+                    if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(
+                        item, tuple(get_args(TeamRunResponseEvent))
+                    ):
+                        # We only capture content events
+                        if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
+                            if item.content is not None and isinstance(item.content, BaseModel):
+                                function_call_output += item.content.model_dump_json()
+                            else:
+                                # Capture output
+                                function_call_output += item.content or ""
+
+                            if fc.function.show_result:
+                                yield ModelResponse(content=item.content)
+                                continue
+
+                        # Yield the event itself to bubble it up
+                        yield item
+                    else:
+                        function_call_output += str(item)
+                        if fc.function.show_result:
+                            yield ModelResponse(content=str(item))
             else:
                 function_call_output = str(fc.result)
                 if fc.function.show_result:

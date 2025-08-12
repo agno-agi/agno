@@ -1,8 +1,5 @@
 """Run `pip install agno llama-api-client yfinance` to install dependencies."""
 
-# Note: Currently, Llama API does not support tools with parameters other than string.
-# This is a limitation of the Llama API.
-
 import asyncio
 
 from agno.agent import Agent

@@ -107,6 +107,7 @@ class WorkflowRunRequest(BaseModel):
     input: Dict[str, Any]
     user_id: Optional[str] = None
     session_id: Optional[str] = None
+    stream: bool = True
 
 
 class WorkflowSessionResponse(BaseModel):
@@ -148,7 +149,6 @@ class TeamGetResponse(BaseModel):
     expected_output: Optional[str] = None
     context: Optional[str] = None
     enable_agentic_context: Optional[bool] = None
-    response_model: Optional[str] = None
     storage: Optional[Dict[str, Any]] = None
     memory: Optional[Dict[str, Any]] = None
     async_mode: bool = False
@@ -187,7 +187,6 @@ class TeamGetResponse(BaseModel):
             expected_output=team.expected_output,
             context=json.dumps(team.context) if isinstance(team.context, dict) else team.context,
             enable_agentic_context=team.enable_agentic_context,
-            response_model=team.response_model,
             mode=team.mode,
             storage={"name": team.storage.__class__.__name__} if team.storage else None,
             memory=memory_dict,

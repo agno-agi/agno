@@ -4,7 +4,7 @@ import pytest
 from ag_ui.core import EventType
 
 from agno.app.agui.utils import EventBuffer, async_stream_agno_response_as_agui_events
-from agno.run.response import RunResponse
+from agno.run.response import RunResponseContentEvent, ToolCallCompletedEvent, ToolCallStartedEvent
 
 
 def test_event_buffer_initial_state():
@@ -159,15 +159,13 @@ async def test_stream_basic():
     from agno.run.response import RunEvent
 
     async def mock_stream():
-        text_response = RunResponse()
-        text_response.event = RunEvent.run_response
+        text_response = RunResponseContentEvent()
+        text_response.event = RunEvent.run_response_content
         text_response.content = "Hello world"
-        text_response.messages = []
         yield text_response
-        completed_response = RunResponse()
+        completed_response = RunResponseContentEvent()
         completed_response.event = RunEvent.run_completed
         completed_response.content = ""
-        completed_response.messages = []
         yield completed_response
 
     events = []
@@ -189,39 +187,34 @@ async def test_stream_with_tool_call_blocking():
 
     async def mock_stream_with_tool_calls():
         # Start with a text response
-        text_response = RunResponse()
-        text_response.event = RunEvent.run_response
+        text_response = RunResponseContentEvent()
+        text_response.event = RunEvent.run_response_content
         text_response.content = "I'll help you"
-        text_response.messages = []
         yield text_response
 
         # Start a tool call
-        tool_start_response = RunResponse()
+        tool_start_response = ToolCallStartedEvent()
         tool_start_response.event = RunEvent.tool_call_started
         tool_start_response.content = ""
-        tool_start_response.messages = []
         tool_call = MagicMock()
         tool_call.tool_call_id = "tool_1"
         tool_call.tool_name = "search"
         tool_call.tool_args = {"query": "test"}
-        tool_start_response.tools = [tool_call]
+        tool_start_response.tool = tool_call
         yield tool_start_response
 
-        buffered_text_response = RunResponse()
-        buffered_text_response.event = RunEvent.run_response
+        buffered_text_response = RunResponseContentEvent()
+        buffered_text_response.event = RunEvent.run_response_content
         buffered_text_response.content = "Searching..."
-        buffered_text_response.messages = []
         yield buffered_text_response
-        tool_end_response = RunResponse()
+        tool_end_response = ToolCallCompletedEvent()
         tool_end_response.event = RunEvent.tool_call_completed
         tool_end_response.content = ""
-        tool_end_response.messages = []
-        tool_end_response.tools = [tool_call]
+        tool_end_response.tool = tool_call
         yield tool_end_response
-        completed_response = RunResponse()
+        completed_response = RunResponseContentEvent()
         completed_response.event = RunEvent.run_completed
         completed_response.content = ""
-        completed_response.messages = []
         yield completed_response
 
     events = []

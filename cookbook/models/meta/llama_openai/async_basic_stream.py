@@ -9,7 +9,7 @@ agent = Agent(
 )
 
 # Get the response in a variable
-# run_response: Iterator[RunResponse] = asyncio.run(agent.arun("Share a 2 sentence horror story", stream=True))
+# run_response: Iterator[RunResponseEvent] = asyncio.run(agent.arun("Share a 2 sentence horror story", stream=True))
 # for chunk in run_response:
 #     print(chunk.content)
 

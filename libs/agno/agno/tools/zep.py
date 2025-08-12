@@ -118,7 +118,7 @@ class ZepTools(Toolkit):
 
             # Create session associated with the user
             try:
-                self.zep_client.memory.add_session(session_id=self.session_id, user_id=self.user_id)
+                self.zep_client.thread.create(thread_id=self.session_id, user_id=self.user_id)
                 log_debug(f"Created session {self.session_id} for user {self.user_id}")
             except Exception as e:
                 log_debug(f"Session may already exist: {e}")
@@ -148,7 +148,7 @@ class ZepTools(Toolkit):
 
         try:
             zep_message = ZepMessage(
-                role_type=role,
+                role=role,
                 content=content,
             )
 
@@ -156,8 +156,8 @@ class ZepTools(Toolkit):
             ignore_roles_list = ["assistant"] if self.ignore_assistant_messages else None
 
             # Add message to Zep memory
-            self.zep_client.memory.add(  # type: ignore
-                session_id=self.session_id,
+            self.zep_client.thread.add_messages(  # type: ignore
+                thread_id=self.session_id,
                 messages=[zep_message],
                 ignore_roles=ignore_roles_list,
             )
@@ -171,7 +171,7 @@ class ZepTools(Toolkit):
         """
         Retrieves the memory for the current Zep session.
         Args:
-            memory_type: The type of memory to retrieve ('context', 'messages', 'relevant_facts').
+            memory_type: The type of memory to retrieve ('context', 'messages').
         Returns:
             The requested memory content as a string, or an error string.
         """
@@ -181,21 +181,16 @@ class ZepTools(Toolkit):
 
         try:
             log_debug(f"Getting Zep memory for session {self.session_id}")
-            memory_data = self.zep_client.memory.get(session_id=self.session_id)  # type: ignore
 
             if memory_type == "context":
                 # Ensure context is a string
-                return memory_data.context or "No context available."
+                user_context = self.zep_client.thread.get_user_context(thread_id=self.session_id, mode="basic")  # type: ignore
+                log_debug(f"Memory data: {user_context}")
+                return user_context.context or "No context available."
             elif memory_type == "messages":
+                messages_list = self.zep_client.thread.get(thread_id=self.session_id)  # type: ignore
                 # Ensure messages string representation is returned
-                return str(memory_data.messages) if memory_data.messages else "No messages available."
-            elif memory_type == "relevant_facts":
-                # Return all relevant facts from memory
-                if memory_data.relevant_facts:
-                    facts_str = "\n".join([f"- {fact.fact}" for fact in memory_data.relevant_facts])
-                    return f"Relevant facts:\n{facts_str}"
-                else:
-                    return "No relevant facts available."
+                return str(messages_list.messages) if messages_list.messages else "No messages available."
             else:
                 warning_msg = f"Unsupported memory_type requested: {memory_type}. Returning empty string."
                 log_warning(warning_msg)
@@ -328,7 +323,7 @@ class ZepAsyncTools(Toolkit):
 
             # Create session associated with the user
             try:
-                await self.zep_client.memory.add_session(session_id=self.session_id, user_id=self.user_id)  # type: ignore
+                await self.zep_client.thread.create(thread_id=self.session_id, user_id=self.user_id)  # type: ignore
                 log_debug(f"Created session {self.session_id} for user {self.user_id}")
             except Exception as e:
                 log_debug(f"Session may already exist: {e}")
@@ -361,7 +356,7 @@ class ZepAsyncTools(Toolkit):
 
         try:
             zep_message = ZepMessage(
-                role_type=role,
+                role=role,
                 content=content,
             )
 
@@ -369,8 +364,8 @@ class ZepAsyncTools(Toolkit):
             ignore_roles_list = ["assistant"] if self.ignore_assistant_messages else None
 
             # Add message to Zep memory
-            await self.zep_client.memory.add(  # type: ignore
-                session_id=self.session_id,
+            await self.zep_client.thread.add_messages(  # type: ignore
+                thread_id=self.session_id,
                 messages=[zep_message],
                 ignore_roles=ignore_roles_list,
             )
@@ -384,7 +379,7 @@ class ZepAsyncTools(Toolkit):
         """
         Retrieves the memory for the current Zep session.
         Args:
-            memory_type: The type of memory to retrieve ('context', 'messages', 'relevant_facts').
+            memory_type: The type of memory to retrieve ('context', 'messages').
         Returns:
             The requested memory content as a string, or an error string.
         """
@@ -396,25 +391,19 @@ class ZepAsyncTools(Toolkit):
             return "Error: Zep client/session not initialized."
 
         try:
-            memory_data = await self.zep_client.memory.get(session_id=self.session_id)  # type: ignore
-
             if memory_type == "context":
                 # Ensure context is a string
-                return memory_data.context or "No context available."
+                user_context = await self.zep_client.thread.get_user_context(thread_id=self.session_id, mode="basic")  # type: ignore
+                log_debug(f"Memory data: {user_context}")
+                return user_context.context or "No context available."
             elif memory_type == "messages":
                 # Ensure messages string representation is returned
-                return str(memory_data.messages) if memory_data.messages else "No messages available."
-            elif memory_type == "relevant_facts":
-                # Return relevant facts from memory
-                if memory_data.relevant_facts:
-                    facts_str = "\n".join([f"- {fact.fact}" for fact in memory_data.relevant_facts])
-                    return f"Relevant facts:\n{facts_str}"
-                else:
-                    return "No relevant facts available."
+                messages_list = await self.zep_client.thread.get(thread_id=self.session_id)  # type: ignore
+                return str(messages_list.messages) if messages_list.messages else "No messages available."
             else:
                 warning_msg = f"Unsupported memory_type requested: {memory_type}. Returning context."
                 log_warning(warning_msg)
-                return memory_data.context or "No context available."
+                return "No context available."
 
         except Exception as e:
             error_msg = f"Failed to get Zep memory for session {self.session_id}: {e}"

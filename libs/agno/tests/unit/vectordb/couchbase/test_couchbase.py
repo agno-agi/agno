@@ -631,11 +631,12 @@ def test_search_cluster_level(mock_cluster, mock_embedder):
 @pytest.mark.asyncio
 async def test_async_create(couchbase_fts):
     """Test the async_create method."""
-    with patch.object(
-        couchbase_fts, "_async_create_collection_and_scope", new_callable=AsyncMock
-    ) as mock_create_coll_scope, patch.object(
-        couchbase_fts, "_async_create_fts_index", new_callable=AsyncMock
-    ) as mock_create_fts:
+    with (
+        patch.object(
+            couchbase_fts, "_async_create_collection_and_scope", new_callable=AsyncMock
+        ) as mock_create_coll_scope,
+        patch.object(couchbase_fts, "_async_create_fts_index", new_callable=AsyncMock) as mock_create_fts,
+    ):
         await couchbase_fts.async_create()
         mock_create_coll_scope.assert_called_once()
         mock_create_fts.assert_called_once()
@@ -833,11 +834,12 @@ async def test_async_search_scope_level(couchbase_fts, mock_embedder):
     # mock_get_result_kv.success = True # Not directly used by new logic, absence of exception is success
     mock_async_collection_instance.get = AsyncMock(return_value=mock_get_result_kv)
 
-    with patch.object(
-        couchbase_fts, "get_async_scope", AsyncMock(return_value=mock_scope_inst)
-    ) as mock_get_async_scope, patch.object(
-        couchbase_fts, "get_async_collection", AsyncMock(return_value=mock_async_collection_instance)
-    ) as mock_get_async_collection_for_kv:
+    with (
+        patch.object(couchbase_fts, "get_async_scope", AsyncMock(return_value=mock_scope_inst)) as mock_get_async_scope,
+        patch.object(
+            couchbase_fts, "get_async_collection", AsyncMock(return_value=mock_async_collection_instance)
+        ) as mock_get_async_collection_for_kv,
+    ):
         couchbase_fts.is_global_level_index = False  # Ensure scope level search
 
         results = await couchbase_fts.async_search("test query scope kv", limit=5)
@@ -909,11 +911,14 @@ async def test_async_search_cluster_level(couchbase_fts, mock_embedder):
     mock_async_collection_instance.get = AsyncMock(return_value=mock_get_result_kv)
 
     # Instead of mocking mock_async_cluster fixture, we patch get_async_cluster on the instance
-    with patch.object(
-        couchbase_fts, "get_async_cluster", AsyncMock(return_value=mock_cluster_inst)
-    ) as mock_get_async_cluster_for_search, patch.object(
-        couchbase_fts, "get_async_collection", AsyncMock(return_value=mock_async_collection_instance)
-    ) as mock_get_async_collection_for_kv:
+    with (
+        patch.object(
+            couchbase_fts, "get_async_cluster", AsyncMock(return_value=mock_cluster_inst)
+        ) as mock_get_async_cluster_for_search,
+        patch.object(
+            couchbase_fts, "get_async_collection", AsyncMock(return_value=mock_async_collection_instance)
+        ) as mock_get_async_collection_for_kv,
+    ):
         couchbase_fts.is_global_level_index = True  # Ensure cluster level search
 
         results = await couchbase_fts.async_search("cluster query kv", limit=3)

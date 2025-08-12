@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Type, Union
 from pydantic import BaseModel
 
 from agno.models.openai.like import OpenAILike
+from agno.utils.log import log_debug
 
 
 @dataclass
@@ -51,13 +52,13 @@ class vLLM(OpenAILike):
             body["chat_template_kwargs"] = {"enable_thinking": self.enable_thinking}
         self.extra_body = body or None
 
-    def get_request_kwargs(
+    def get_request_params(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        request_kwargs = super().get_request_kwargs(
+        request_kwargs = super().get_request_params(
             response_format=response_format, tools=tools, tool_choice=tool_choice
         )
 
@@ -71,4 +72,6 @@ class vLLM(OpenAILike):
             existing_body = request_kwargs.get("extra_body") or {}
             request_kwargs["extra_body"] = {**existing_body, **vllm_body}
 
+        if request_kwargs:
+            log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)
         return request_kwargs

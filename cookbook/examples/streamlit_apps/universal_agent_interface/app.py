@@ -2,6 +2,7 @@ import asyncio
 
 import nest_asyncio
 import streamlit as st
+from agno.run.response import RunEvent
 from agno.team import Team
 from agno.utils.log import logger
 from css import CUSTOM_CSS
@@ -164,12 +165,12 @@ async def body() -> None:
                     )
                     async for resp_chunk in run_response:
                         # Display tool calls if available
-                        if resp_chunk.tools and len(resp_chunk.tools) > 0:
-                            display_tool_calls(tool_calls_container, resp_chunk.tools)
+                        if resp_chunk.tool:
+                            display_tool_calls(tool_calls_container, [resp_chunk.tool])
 
                         # Display response if available and event is RunResponse
                         if (
-                            resp_chunk.event == "RunResponse"
+                            resp_chunk.event == RunEvent.run_response_content
                             and resp_chunk.content is not None
                         ):
                             response += resp_chunk.content

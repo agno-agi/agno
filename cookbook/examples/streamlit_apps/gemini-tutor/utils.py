@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 import streamlit as st
 from agno.models.message import Citations
+from agno.models.response import ToolExecution
 from agno.utils.log import logger
 
 
@@ -36,7 +37,7 @@ def add_message(
     st.session_state["messages"].append(message)
 
 
-def display_tool_calls(container: Any, tool_calls: List[Dict[str, Any]]) -> None:
+def display_tool_calls(container: Any, tool_calls: List[ToolExecution]) -> None:
     """
     Display tool calls in a formatted way.
 
@@ -52,10 +53,10 @@ def display_tool_calls(container: Any, tool_calls: List[Dict[str, Any]]) -> None
 
         for i, tool_call in enumerate(tool_calls):
             # Format the tool call name
-            tool_name = tool_call.get("name", "Unknown Tool")
+            tool_name = tool_call.tool_name or "Unknown Tool"
 
             # Format the args as pretty JSON
-            args = tool_call.get("arguments", {})
+            args = tool_call.tool_args or {}
             formatted_args = json.dumps(args, indent=2)
 
             expander_label = f"📋 Tool Call {i + 1}: {tool_name}"

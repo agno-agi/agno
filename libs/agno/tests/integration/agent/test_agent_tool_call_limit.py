@@ -40,8 +40,8 @@ def test_tool_use_tool_call_limit_stream():
 
     tools = []
     for chunk in response_stream:
-        if chunk.tools and chunk.event == RunEvent.tool_call_completed:
-            tools.extend(chunk.tools)
+        if chunk.event == RunEvent.tool_call_completed:
+            tools.append(chunk.tool)
 
     assert len(tools) == 1
     assert tools[0].tool_name == "get_current_stock_price"
@@ -85,8 +85,8 @@ async def test_tool_use_tool_call_limit_stream_async():
 
     tools = []
     async for chunk in response_stream:
-        if chunk.tools and chunk.event == RunEvent.tool_call_completed:
-            tools.extend(chunk.tools)
+        if chunk.event == RunEvent.tool_call_completed:
+            tools.append(chunk.tool)
 
     assert len(tools) == 1
     assert tools[0].tool_name == "get_current_stock_price"

@@ -2,6 +2,8 @@ import asyncio
 import time
 from typing import Any, Dict, List, Optional
 
+from bson import ObjectId
+
 from agno.document import Document
 from agno.embedder import Embedder
 from agno.utils.log import log_debug, log_info, log_warning, logger
@@ -533,7 +535,7 @@ class MongoDb(VectorDb):
     ) -> List[Document]:
         """Search for documents using vector similarity."""
         if self.search_type == SearchType.hybrid:
-            return self.hybrid_search(query, limit=limit)
+            return self.hybrid_search(query, limit=limit, filters=filters)
 
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
@@ -624,15 +626,17 @@ class MongoDb(VectorDb):
 
                 results = list(collection.aggregate(pipeline))  # type: ignore
 
-                docs = [
-                    Document(
-                        id=str(doc["_id"]),
-                        name=doc.get("name"),
-                        content=doc["content"],
-                        meta_data={**doc.get("meta_data", {}), "score": doc.get("score", 0.0)},
+                docs = []
+                for doc in results:
+                    # Convert ObjectIds to strings before creating Document
+                    clean_doc = self._convert_objectids_to_strings(doc)
+                    document = Document(
+                        id=str(clean_doc["_id"]),
+                        name=clean_doc.get("name"),
+                        content=clean_doc["content"],
+                        meta_data={**clean_doc.get("meta_data", {}), "score": clean_doc.get("score", 0.0)},
                     )
-                    for doc in results
-                ]
+                    docs.append(document)
 
                 log_info(f"Search completed. Found {len(docs)} documents.")
                 return docs
@@ -673,6 +677,7 @@ class MongoDb(VectorDb):
         self,
         query: str,
         limit: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
     ) -> List[Document]:
         """
         Perform a hybrid search combining vector and keyword-based searches using Reciprocal Rank Fusion.
@@ -697,6 +702,15 @@ class MongoDb(VectorDb):
         collection = self._get_collection()
 
         k = self.hybrid_rank_constant
+
+        mongo_filters = {}
+        if filters:
+            for key, value in filters.items():
+                # If the key doesn't already include a dot notation for meta_data
+                if not key.startswith("meta_data.") and "." not in key:
+                    mongo_filters[f"meta_data.{key}"] = value
+                else:
+                    mongo_filters[key] = value
 
         pipeline = [
             # Vector Search Branch
@@ -803,17 +817,25 @@ class MongoDb(VectorDb):
             {"$limit": limit},
         ]
 
+        # Apply filters if provided
+        if mongo_filters:
+            pipeline.append({"$match": mongo_filters})
+
         try:
             results = list(collection.aggregate(pipeline))
-            docs = [
-                Document(
-                    id=str(doc["_id"]),
-                    name=doc.get("name"),
-                    content=doc["content"],
-                    meta_data={**doc.get("meta_data", {}), "score": doc.get("score", 0.0)},
+
+            docs = []
+            for doc in results:
+                # Convert ObjectIds to strings before creating Document
+                clean_doc = self._convert_objectids_to_strings(doc)
+                document = Document(
+                    id=str(clean_doc["_id"]),
+                    name=clean_doc.get("name"),
+                    content=clean_doc["content"],
+                    meta_data={**clean_doc.get("meta_data", {}), "score": clean_doc.get("score", 0.0)},
                 )
-                for doc in results
-            ]
+                docs.append(document)
+
             log_info(f"Hybrid search completed. Found {len(docs)} documents.")
             return docs
         except errors.OperationFailure as e:
@@ -1091,3 +1113,24 @@ class MongoDb(VectorDb):
         # Cosmos DB supports: COS (cosine), L2 (Euclidean), IP (inner product)
         metric_mapping = {"cosine": "COS", "euclidean": "L2", "dotProduct": "IP"}
         return metric_mapping.get(self.distance_metric, "COS")
+
+    def _convert_objectids_to_strings(self, obj: Any) -> Any:
+        """
+        Recursively convert MongoDB ObjectIds to strings in any data structure.
+
+        Args:
+            obj: Any object that might contain ObjectIds
+
+        Returns:
+            The same object with ObjectIds converted to strings
+        """
+        if ObjectId and isinstance(obj, ObjectId):
+            return str(obj)
+        elif isinstance(obj, dict):
+            return {key: self._convert_objectids_to_strings(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [self._convert_objectids_to_strings(item) for item in obj]
+        elif isinstance(obj, tuple):
+            return tuple(self._convert_objectids_to_strings(item) for item in obj)
+        else:
+            return obj

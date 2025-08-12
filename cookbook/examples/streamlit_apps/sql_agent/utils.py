@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 import streamlit as st
 from agents import get_sql_agent
 from agno.agent.agent import Agent
+from agno.models.response import ToolExecution
 from agno.utils.log import logger
 
 
@@ -64,7 +65,7 @@ def export_chat_history():
     return ""
 
 
-def display_tool_calls(tool_calls_container, tools):
+def display_tool_calls(tool_calls_container, tools: List[ToolExecution]):
     """Display tool calls in a streamlit container with expandable sections.
 
     Args:
@@ -74,10 +75,10 @@ def display_tool_calls(tool_calls_container, tools):
     try:
         with tool_calls_container.container():
             for tool_call in tools:
-                tool_name = tool_call.get("tool_name", "Unknown Tool")
-                tool_args = tool_call.get("tool_args", {})
-                content = tool_call.get("content", None)
-                metrics = tool_call.get("metrics", None)
+                tool_name = tool_call.tool_name or "Unknown Tool"
+                tool_args = tool_call.tool_args or {}
+                content = tool_call.result or None
+                metrics = tool_call.metrics or None
 
                 # Add timing information
                 execution_time_str = "N/A"

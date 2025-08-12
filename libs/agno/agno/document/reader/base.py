@@ -16,13 +16,6 @@ class Reader:
     separators: List[str] = field(default_factory=lambda: ["\n", "\n\n", "\r", "\r\n", "\n\r", "\t", " ", "  "])
     chunking_strategy: Optional[ChunkingStrategy] = None
 
-    def __init__(
-        self, chunk: bool = True, chunk_size: int = 5000, chunking_strategy: Optional[ChunkingStrategy] = None
-    ) -> None:
-        self.chunk = chunk
-        self.chunk_size = chunk_size
-        self.chunking_strategy = chunking_strategy
-
     def read(self, obj: Any) -> List[Document]:
         raise NotImplementedError
 

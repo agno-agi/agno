@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.app.whatsapp.app import WhatsappAPI
+from agno.app.whatsapp import WhatsappAPI
 from agno.models.google import Gemini
 
 image_agent = Agent(

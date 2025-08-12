@@ -11,6 +11,7 @@ class LinearTools(Toolkit):
     def __init__(
         self,
         get_user_details: bool = True,
+        get_teams_details: bool = True,
         get_issue_details: bool = True,
         create_issue: bool = True,
         update_issue: bool = True,
@@ -31,6 +32,8 @@ class LinearTools(Toolkit):
         tools: List[Any] = []
         if get_user_details:
             tools.append(self.get_user_details)
+        if get_teams_details:
+            tools.append(self.get_teams_details)
         if get_issue_details:
             tools.append(self.get_issue_details)
         if create_issue:
@@ -109,6 +112,44 @@ class LinearTools(Toolkit):
             logger.error(f"Error fetching authenticated user details: {e}")
             raise
 
+    def get_teams_details(self) -> Optional[str]:
+        """
+        Fetch the list of authenticated teams.
+        It will return the unique ID and team name for each team, from the viewer object in the GraphQL response.
+
+        Returns:
+            str or None: A dictionary containing team details like team name, id.
+
+        Raises:
+            Exception: If an error occurs during the query execution or data retrieval.
+        """
+
+        query = """
+        query Teams {
+          teams {
+            nodes {
+              id
+              name
+            }
+          }
+        }
+        """
+
+        try:
+            response = self._execute_query(query)
+
+            if response.get("teams"):
+                teams = response["teams"]["nodes"]
+                log_info(f"Retrieved authenticated team details: {teams}")
+                return str(teams)
+            else:
+                logger.error("Failed to retrieve the current user details")
+                return None
+
+        except Exception as e:
+            logger.error(f"Error fetching authenticated user details: {e}")
+            raise
+
     def get_issue_details(self, issue_id: str) -> Optional[str]:
         """
         Retrieve details of a specific issue by issue ID.
@@ -150,7 +191,12 @@ class LinearTools(Toolkit):
             raise
 
     def create_issue(
-        self, title: str, description: str, team_id: str, project_id: str, assignee_id: str
+        self,
+        title: str,
+        description: str,
+        team_id: str,
+        project_id: Optional[str] = None,
+        assignee_id: Optional[str] = None,
     ) -> Optional[str]:
         """
         Create a new issue within a specific project and team.
@@ -159,6 +205,8 @@ class LinearTools(Toolkit):
             title (str): The title of the new issue.
             description (str): The description of the new issue.
             team_id (str): The unique identifier of the team in which to create the issue.
+            project_id (Optional[str]): The ID of the project (optional).
+            assignee_id (Optional[str]): The ID of the assignee (optional).
 
         Returns:
             str or None: A string containing the created issue's details like issue id and issue title.
@@ -187,9 +235,12 @@ class LinearTools(Toolkit):
             "title": title,
             "description": description,
             "teamId": team_id,
-            "projectId": project_id,
-            "assigneeId": assignee_id,
         }
+        if project_id is not None:
+            variables["projectId"] = project_id
+        if assignee_id is not None:
+            variables["assigneeId"] = assignee_id
+
         try:
             response = self._execute_query(query, variables)
             log_info(f"Response: {response}")

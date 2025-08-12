@@ -16,7 +16,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from agno.agent.agent import Agent
-from agno.app.agui.utils import get_last_user_message, stream_agno_response_as_agui_events
+from agno.app.agui.utils import convert_agui_messages_to_agno_messages, stream_agno_response_as_agui_events
 from agno.team.team import Team
 
 logger = logging.getLogger(__name__)
@@ -28,12 +28,12 @@ def run_agent(agent: Agent, run_input: RunAgentInput) -> Iterator[BaseEvent]:
 
     try:
         # Preparing the input for the Agent and emitting the run started event
-        message = get_last_user_message(run_input.messages)
+        messages = convert_agui_messages_to_agno_messages(run_input.messages or [])
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=run_input.thread_id, run_id=run_id)
 
         # Request streaming response from agent
         response_stream = agent.run(
-            message=message,
+            messages=messages,
             session_id=run_input.thread_id,
             stream=True,
             stream_intermediate_steps=True,
@@ -56,12 +56,12 @@ def run_team(team: Team, input: RunAgentInput) -> Iterator[BaseEvent]:
     run_id = input.run_id or str(uuid.uuid4())
     try:
         # Extract the last user message for team execution
-        user_message = get_last_user_message(input.messages) if input.messages else ""
+        messages = convert_agui_messages_to_agno_messages(input.messages or [])
         yield RunStartedEvent(type=EventType.RUN_STARTED, thread_id=input.thread_id, run_id=run_id)
 
         # Request streaming response from team
         response_stream = team.run(
-            message=user_message,
+            message=messages,
             session_id=input.thread_id,
             stream=True,
             stream_intermediate_steps=True,
