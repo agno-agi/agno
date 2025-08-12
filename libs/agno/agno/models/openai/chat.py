@@ -689,6 +689,10 @@ class OpenAIChat(Model):
             choice_delta: ChoiceDelta = response_delta.choices[0].delta
 
             if choice_delta:
+                
+                if choice_delta.reasoning is None:
+                    model_response.content = choice_delta.content
+                
                 # Add content
                 if choice_delta.content is not None:
                     model_response.content = choice_delta.content
