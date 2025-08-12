@@ -1,5 +1,4 @@
 import json
-from dataclasses import asdict
 from io import BytesIO
 from typing import Any, Dict, Generator, List, Optional, cast
 from uuid import uuid4
@@ -37,13 +36,15 @@ from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.memory.agent import AgentMemory
 from agno.memory.v2 import Memory
-from agno.run.response import RunEvent
-from agno.run.team import TeamRunResponse
+from agno.run.response import RunResponseErrorEvent, RunResponseEvent
+from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
+from agno.run.v2.workflow import WorkflowErrorEvent
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
 from agno.storage.session.workflow import WorkflowSession
 from agno.team.team import Team
 from agno.utils.log import logger
+from agno.workflow.v2.workflow import Workflow as WorkflowV2
 from agno.workflow.workflow import Workflow
 
 
@@ -55,6 +56,7 @@ def chat_response_streamer(
     images: Optional[List[Image]] = None,
     audio: Optional[List[Audio]] = None,
     videos: Optional[List[Video]] = None,
+    files: Optional[List[FileMedia]] = None,
 ) -> Generator:
     try:
         run_response = agent.run(
@@ -64,19 +66,49 @@ def chat_response_streamer(
             images=images,
             audio=audio,
             videos=videos,
+            files=files,
             stream=True,
             stream_intermediate_steps=True,
         )
         for run_response_chunk in run_response:
-            run_response_chunk = cast(RunResponse, run_response_chunk)
+            run_response_chunk = cast(RunResponseEvent, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
         import traceback
 
         traceback.print_exc(limit=3)
-        error_response = RunResponse(
+        error_response = RunResponseErrorEvent(
             content=str(e),
-            event=RunEvent.run_error,
+        )
+        yield error_response.to_json()
+        return
+
+
+def agent_continue_run_streamer(
+    agent: Agent,
+    run_id: Optional[str] = None,
+    updated_tools: Optional[List] = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> Generator:
+    try:
+        continue_response = agent.continue_run(
+            run_id=run_id,
+            updated_tools=updated_tools,
+            session_id=session_id,
+            user_id=user_id,
+            stream=True,
+            stream_intermediate_steps=True,
+        )
+        for run_response_chunk in continue_response:
+            run_response_chunk = cast(RunResponseEvent, run_response_chunk)
+            yield run_response_chunk.to_json()
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
+        error_response = RunResponseErrorEvent(
+            content=str(e),
         )
         yield error_response.to_json()
         return
@@ -105,15 +137,38 @@ def team_chat_response_streamer(
             stream_intermediate_steps=True,
         )
         for run_response_chunk in run_response:
-            run_response_chunk = cast(TeamRunResponse, run_response_chunk)
             yield run_response_chunk.to_json()
     except Exception as e:
         import traceback
 
         traceback.print_exc(limit=3)
-        error_response = TeamRunResponse(
+        error_response = TeamRunResponseErrorEvent(
             content=str(e),
-            event=RunEvent.run_error,
+        )
+        yield error_response.to_json()
+        return
+
+
+def workflow_response_streamer(
+    workflow: WorkflowV2,
+    body: WorkflowRunRequest,
+) -> Generator:
+    try:
+        run_response = workflow.run(
+            **body.input,
+            user_id=body.user_id,
+            session_id=body.session_id or str(uuid4()),
+            stream=True,
+            stream_intermediate_steps=True,
+        )
+        for run_response_chunk in run_response:
+            yield run_response_chunk.to_json()
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
+        error_response = WorkflowErrorEvent(
+            error=str(e),
         )
         yield error_response.to_json()
         return
@@ -243,6 +298,7 @@ def get_sync_playground_router(
         base64_images: List[Image] = []
         base64_audios: List[Audio] = []
         base64_videos: List[Video] = []
+        input_files: List[FileMedia] = []
 
         if files:
             for file in files:
@@ -280,59 +336,86 @@ def get_sync_playground_router(
                         logger.error(f"Error processing video {file.filename}: {e}")
                         continue
                 else:
-                    # Check for knowledge base before processing documents
-                    if agent.knowledge is None:
-                        raise HTTPException(status_code=404, detail="KnowledgeBase not found")
+                    #  Process document files
 
                     if file.content_type == "application/pdf":
                         from agno.document.reader.pdf_reader import PDFReader
 
                         contents = file.file.read()
-                        pdf_file = BytesIO(contents)
-                        pdf_file.name = file.filename
-                        file_content = PDFReader().read(pdf_file)
+
+                        # If agent has knowledge base, load the document into it
                         if agent.knowledge is not None:
+                            pdf_file = BytesIO(contents)
+                            pdf_file.name = file.filename
+                            file_content = PDFReader().read(pdf_file)
                             agent.knowledge.load_documents(file_content)
+                        else:
+                            # If no knowledge base, treat as direct file input (similar to cookbook examples)
+                            input_files.append(FileMedia(content=contents))
+
                     elif file.content_type == "text/csv":
                         from agno.document.reader.csv_reader import CSVReader
 
                         contents = file.file.read()
-                        csv_file = BytesIO(contents)
-                        csv_file.name = file.filename
-                        file_content = CSVReader().read(csv_file)
+
+                        # If agent has knowledge base, load the document into it
                         if agent.knowledge is not None:
+                            csv_file = BytesIO(contents)
+                            csv_file.name = file.filename
+                            file_content = CSVReader().read(csv_file)
                             agent.knowledge.load_documents(file_content)
+                        else:
+                            # If no knowledge base, treat as direct file input
+                            input_files.append(FileMedia(content=contents))
+
                     elif file.content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
                         from agno.document.reader.docx_reader import DocxReader
 
                         contents = file.file.read()
-                        docx_file = BytesIO(contents)
-                        docx_file.name = file.filename
-                        file_content = DocxReader().read(docx_file)
+
+                        # If agent has knowledge base, load the document into it
                         if agent.knowledge is not None:
+                            docx_file = BytesIO(contents)
+                            docx_file.name = file.filename
+                            file_content = DocxReader().read(docx_file)
                             agent.knowledge.load_documents(file_content)
+                        else:
+                            # If no knowledge base, treat as direct file input
+                            input_files.append(FileMedia(content=contents))
+
                     elif file.content_type == "text/plain":
                         from agno.document.reader.text_reader import TextReader
 
                         contents = file.file.read()
-                        text_file = BytesIO(contents)
-                        text_file.name = file.filename
-                        file_content = TextReader().read(text_file)
+
+                        # If agent has knowledge base, load the document into it
                         if agent.knowledge is not None:
+                            text_file = BytesIO(contents)
+                            text_file.name = file.filename
+                            file_content = TextReader().read(text_file)
                             agent.knowledge.load_documents(file_content)
+                        else:
+                            # If no knowledge base, treat as direct file input
+                            input_files.append(FileMedia(content=contents))
+
                     elif file.content_type == "application/json":
                         from agno.document.reader.json_reader import JSONReader
 
                         contents = file.file.read()
-                        json_file = BytesIO(contents)
-                        json_file.name = file.filename
-                        file_content = JSONReader().read(json_file)
+
+                        # If agent has knowledge base, load the document into it
                         if agent.knowledge is not None:
+                            json_file = BytesIO(contents)
+                            json_file.name = file.filename
+                            file_content = JSONReader().read(json_file)
                             agent.knowledge.load_documents(file_content)
+                        else:
+                            # If no knowledge base, treat as direct file input
+                            input_files.append(FileMedia(content=contents))
                     else:
                         raise HTTPException(status_code=400, detail="Unsupported file type")
 
-        if stream and agent.is_streamable:
+        if stream:
             return StreamingResponse(
                 chat_response_streamer(
                     agent,
@@ -342,6 +425,7 @@ def get_sync_playground_router(
                     images=base64_images if base64_images else None,
                     audio=base64_audios if base64_audios else None,
                     videos=base64_videos if base64_videos else None,
+                    files=input_files if input_files else None,
                 ),
                 media_type="text/event-stream",
             )
@@ -355,10 +439,74 @@ def get_sync_playground_router(
                     images=base64_images if base64_images else None,
                     audio=base64_audios if base64_audios else None,
                     videos=base64_videos if base64_videos else None,
+                    files=input_files if input_files else None,
                     stream=False,
                 ),
             )
             return run_response.to_dict()
+
+    @playground_router.post("/agents/{agent_id}/runs/{run_id}/continue")
+    def continue_agent_run(
+        agent_id: str,
+        run_id: str,
+        tools: str = Form(...),  # JSON string of tools
+        session_id: Optional[str] = Form(None),
+        user_id: Optional[str] = Form(None),
+        stream: bool = Form(True),
+    ):
+        # Parse the JSON string manually
+        try:
+            tools_data = json.loads(tools) if tools else None
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON in tools field")
+
+        logger.debug(
+            f"AgentContinueRunRequest: run_id={run_id} session_id={session_id} user_id={user_id} agent_id={agent_id}"
+        )
+        agent = get_agent_by_id(agent_id, agents)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        if session_id is None or session_id == "":
+            logger.warning(
+                "Continuing run without session_id. This might lead to unexpected behavior if session context is important."
+            )
+        else:
+            logger.debug(f"Continuing run within session: {session_id}")
+
+        # Convert tools dict to ToolExecution objects if provided
+        updated_tools = None
+        if tools_data:
+            try:
+                from agno.models.response import ToolExecution
+
+                updated_tools = [ToolExecution.from_dict(tool) for tool in tools_data]
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Invalid structure or content for tools: {str(e)}")
+
+        if stream:
+            return StreamingResponse(
+                agent_continue_run_streamer(
+                    agent,
+                    run_id=run_id,  # run_id from path
+                    updated_tools=updated_tools,
+                    session_id=session_id,
+                    user_id=user_id,
+                ),
+                media_type="text/event-stream",
+            )
+        else:
+            run_response_obj = cast(
+                RunResponse,
+                agent.continue_run(
+                    run_id=run_id,  # run_id from path
+                    updated_tools=updated_tools,
+                    session_id=session_id,
+                    user_id=user_id,
+                    stream=False,
+                ),
+            )
+            return run_response_obj.to_dict()
 
     @playground_router.get("/agents/{agent_id}/sessions")
     def get_agent_sessions(agent_id: str, user_id: Optional[str] = Query(None, min_length=1)):
@@ -403,7 +551,7 @@ def get_sync_playground_router(
             runs = agent_session.memory.get("runs")
             if runs is not None:
                 first_run = runs[0]
-                if "content" in first_run:
+                if "content" in first_run or first_run.get("is_paused", False) or first_run.get("event") == "RunPaused":
                     agent_session_dict["runs"] = []
                     for run in runs:
                         first_user_message = None
@@ -494,13 +642,22 @@ def get_sync_playground_router(
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        return WorkflowGetResponse(
-            workflow_id=workflow.workflow_id,
-            name=workflow.name,
-            description=workflow.description,
-            parameters=workflow._run_parameters or {},
-            storage=workflow.storage.__class__.__name__ if workflow.storage else None,
-        )
+        if isinstance(workflow, Workflow):
+            return WorkflowGetResponse(
+                workflow_id=workflow.workflow_id,
+                name=workflow.name,
+                description=workflow.description,
+                parameters=workflow._run_parameters or {},
+                storage=workflow.storage.__class__.__name__ if workflow.storage else None,
+            )
+        else:
+            return WorkflowGetResponse(
+                workflow_id=workflow.workflow_id,
+                name=workflow.name,
+                description=workflow.description,
+                parameters=workflow.run_parameters,
+                storage=workflow.storage.__class__.__name__ if workflow.storage else None,
+            )
 
     @playground_router.post("/workflows/{workflow_id}/runs")
     def create_workflow_run(workflow_id: str, body: WorkflowRunRequest):
@@ -510,26 +667,54 @@ def get_sync_playground_router(
             raise HTTPException(status_code=404, detail="Workflow not found")
 
         # Create a new instance of this workflow
-        new_workflow_instance = workflow.deep_copy(update={"workflow_id": workflow_id})
-        new_workflow_instance.user_id = body.user_id
-        new_workflow_instance.session_name = None
+        if isinstance(workflow, Workflow):
+            new_workflow_instance = workflow.deep_copy(
+                update={"workflow_id": workflow_id, "session_id": body.session_id}
+            )
+            new_workflow_instance.user_id = body.user_id
+            new_workflow_instance.session_name = None
 
-        # Return based on the response type
-        try:
-            if new_workflow_instance._run_return_type == "RunResponse":
-                # Return as a normal response
-                return new_workflow_instance.run(**body.input)
-            else:
-                # Return as a streaming response
-                return StreamingResponse(
-                    (json.dumps(asdict(result)) for result in new_workflow_instance.run(**body.input)),
-                    media_type="text/event-stream",
-                )
-        except Exception as e:
-            # Handle unexpected runtime errors
-            raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
+            # Return based on the response type
+            try:
+                if new_workflow_instance._run_return_type == "RunResponse":
+                    # Return as a normal response
+                    return new_workflow_instance.run(**body.input)
+                else:
+                    # Return as a streaming response
+                    return StreamingResponse(
+                        (result.to_json() for result in new_workflow_instance.run(**body.input)),
+                        media_type="text/event-stream",
+                        headers={
+                            "Access-Control-Allow-Origin": "*",
+                            "Access-Control-Allow-Methods": "POST, OPTIONS",
+                            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+                        },
+                    )
+            except Exception as e:
+                # Handle unexpected runtime errors
+                raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
+        else:
+            # Return based on the response type
+            try:
+                if body.stream:
+                    # Return as a streaming response
+                    return StreamingResponse(
+                        workflow_response_streamer(workflow, body),
+                        media_type="text/event-stream",
+                        headers={
+                            "Access-Control-Allow-Origin": "*",
+                            "Access-Control-Allow-Methods": "POST, OPTIONS",
+                            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+                        },
+                    )
+                else:
+                    # Return as a normal response
+                    return workflow.arun(**body.input, session_id=body.session_id or str(uuid4()), user_id=body.user_id)
+            except Exception as e:
+                # Handle unexpected runtime errors
+                raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
 
-    @playground_router.get("/workflows/{workflow_id}/sessions", response_model=List[WorkflowSessionResponse])
+    @playground_router.get("/workflows/{workflow_id}/sessions")
     def get_all_workflow_sessions(workflow_id: str, user_id: Optional[str] = Query(None, min_length=1)):
         # Retrieve the workflow by ID
         workflow = get_workflow_by_id(workflow_id, workflows)
@@ -549,15 +734,18 @@ def get_sync_playground_router(
             raise HTTPException(status_code=500, detail=f"Error retrieving sessions: {str(e)}")
 
         # Return the sessions
-        return [
-            WorkflowSessionResponse(
-                title=get_session_title_from_workflow_session(session),
-                session_id=session.session_id,
-                session_name=session.session_data.get("session_name") if session.session_data else None,
-                created_at=session.created_at,
+        workflow_sessions: List[WorkflowSessionResponse] = []
+        for session in all_workflow_sessions:
+            title = get_session_title_from_workflow_session(session)
+            workflow_sessions.append(
+                {
+                    "title": title,
+                    "session_id": session.session_id,
+                    "session_name": session.session_data.get("session_name") if session.session_data else None,
+                    "created_at": session.created_at,
+                }  # type: ignore
             )
-            for session in all_workflow_sessions
-        ]
+        return workflow_sessions
 
     @playground_router.get("/workflows/{workflow_id}/sessions/{session_id}", response_model=WorkflowSession)
     def get_workflow_session(workflow_id: str, session_id: str, user_id: Optional[str] = Query(None, min_length=1)):
@@ -579,8 +767,11 @@ def get_sync_playground_router(
         if not workflow_session:
             raise HTTPException(status_code=404, detail="Session not found")
 
-        # Return the session
-        return workflow_session
+        workflow_session_dict = workflow_session.to_dict()
+        if "memory" not in workflow_session_dict:
+            workflow_session_dict["memory"] = {"runs": workflow_session_dict.pop("runs", [])}
+
+        return JSONResponse(content=workflow_session_dict)
 
     @playground_router.post("/workflows/{workflow_id}/sessions/{session_id}/rename")
     def rename_workflow_session(
@@ -699,7 +890,7 @@ def get_sync_playground_router(
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")
 
-        if stream and team.is_streamable:
+        if stream:
             return StreamingResponse(
                 team_chat_response_streamer(
                     team,
@@ -775,9 +966,12 @@ def get_sync_playground_router(
             runs = team_session.memory.get("runs")
             if runs is not None:
                 first_run = runs[0]
-                if "content" in first_run:
+                if "content" in first_run or first_run.get("is_paused", False) or first_run.get("event") == "RunPaused":
                     team_session_dict["runs"] = []
                     for run in runs:
+                        # We skip runs that are not from the parent team
+                        if run.get("team_session_id") is not None and run.get("team_session_id") == session_id:
+                            continue
                         first_user_message = None
                         for msg in run.get("messages", []):
                             if msg.get("role") == "user" and msg.get("from_history", False) is False:

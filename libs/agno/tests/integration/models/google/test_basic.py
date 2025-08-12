@@ -58,7 +58,6 @@ def test_basic_stream():
     responses = list(response_stream)
     assert len(responses) > 0
     for response in responses:
-        assert isinstance(response, RunResponse)
         assert response.content is not None
 
     _assert_metrics(agent.run_response)
@@ -97,7 +96,6 @@ async def test_async_basic_stream():
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 
     async for response in response_stream:
-        assert isinstance(response, RunResponse)
         assert response.content is not None
 
     _assert_metrics(agent.run_response)
@@ -158,7 +156,6 @@ def test_persistent_memory():
         delay_between_retries=5,
         tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
         instructions=[

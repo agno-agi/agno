@@ -45,7 +45,6 @@ async def test_add_references(loaded_knowledge_base):
         add_references=True,
         # Set as False because Agents default to `search_knowledge=True`
         search_knowledge=False,
-        show_tool_calls=True,
         markdown=True,
     )
     response = await agent.arun("How do I make chicken and galangal in coconut milk soup")

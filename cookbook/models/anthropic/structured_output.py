@@ -26,7 +26,7 @@ class MovieScript(BaseModel):
 
 
 movie_agent = Agent(
-    model=Claude(id="claude-3-5-sonnet-20240620"),
+    model=Claude(id="claude-sonnet-4-20250514"),
     description="You help people write movie scripts.",
     response_model=MovieScript,
 )

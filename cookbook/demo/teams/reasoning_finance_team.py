@@ -63,11 +63,12 @@ finance_agent = Agent(
     ),
     memory=memory,
     instructions=[
-        "You are a financial data specialist. Provide comprehensive and accurate financial data.",
+        "You are a financial data specialist and your goal is to generate comprehensive and accurate financial reports.",
         "Use tables to display stock prices, fundamentals (P/E, Market Cap, Revenue), and recommendations.",
         "Clearly state the company name and ticker symbol.",
         "Include key financial ratios and metrics in your analysis.",
         "Focus on delivering actionable financial insights.",
+        "Delegate tasks and run tools in parallel if needed.",
     ],
     add_datetime_to_instructions=True,
 )

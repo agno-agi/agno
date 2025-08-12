@@ -4,7 +4,7 @@ from typing import Any, List, Optional
 
 import httpx
 
-from agno.tools.toolkit import Toolkit
+from agno.tools import Toolkit
 from agno.utils.log import log_info
 
 
@@ -27,9 +27,8 @@ class Searxng(Toolkit):
         self.engines = engines
         self.fixed_max_results = fixed_max_results
 
-        self.register(self.search)
-
         tools: List[Any] = []
+        tools.append(self.search)
         if images:
             tools.append(self.image_search)
         if it:
@@ -160,3 +159,7 @@ class Searxng(Toolkit):
             return json.dumps(resp)
         except Exception as e:
             return f"Error fetching results from searxng: {e}"
+
+
+# Alias for consistency with other tools
+SearxngTools = Searxng

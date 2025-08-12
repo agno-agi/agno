@@ -214,6 +214,11 @@ movie_writer = Agent(
     name="Movie Writer Agent",
     model=OpenAIChat(id="gpt-4o"),
     response_model=MovieScript,
+    storage=SqliteStorage(
+        table_name="movie_writer",
+        db_file=agent_storage_file,
+        auto_upgrade_schema=True,
+    ),
 )
 
 playground = Playground(

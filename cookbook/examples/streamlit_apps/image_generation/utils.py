@@ -2,6 +2,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
+from agno.models.response import ToolExecution
 from agno.utils.log import logger
 
 
@@ -29,15 +30,15 @@ def add_message(
     )
 
 
-def display_tool_calls(tool_calls_container: Any, tools: List[Dict[str, Any]]) -> None:
+def display_tool_calls(tool_calls_container: Any, tools: List[ToolExecution]) -> None:
     """Display tool calls in a Streamlit container"""
     try:
         with tool_calls_container.container():
             for tool_call in tools:
-                tool_name = tool_call.get("tool_name", "Unknown Tool")
-                tool_args = tool_call.get("tool_args", {})
-                content = tool_call.get("content")
-                metrics = tool_call.get("metrics")
+                tool_name = tool_call.tool_name or "Unknown Tool"
+                tool_args = tool_call.tool_args or {}
+                content = tool_call.result or None
+                metrics = tool_call.metrics or None
 
                 execution_time_str = "N/A"
                 if metrics is not None and hasattr(metrics, "time"):

@@ -10,6 +10,7 @@ from agno.document.reader.pdf_reader import PDFReader
 from agno.document.reader.text_reader import TextReader
 from agno.document.reader.website_reader import WebsiteReader
 from agno.memory.v2 import Memory, UserMemory
+from agno.models.response import ToolExecution
 from agno.team import Team
 from agno.utils.log import logger
 from uagi import UAgIConfig, create_uagi
@@ -223,7 +224,7 @@ def is_json(myjson):
     return True
 
 
-def display_tool_calls(tool_calls_container, tools):
+def display_tool_calls(tool_calls_container, tools: List[ToolExecution]):
     """Display tool calls in a streamlit container with expandable sections.
 
     Args:
@@ -247,8 +248,8 @@ def display_tool_calls(tool_calls_container, tools):
                     "name", "Unknown Tool"
                 )
                 tool_args = tool_call.get("tool_args") or tool_call.get("args", {})
-                content = tool_call.get("content", None)
-                metrics = tool_call.get("metrics", None)
+                content = tool_call.result or None
+                metrics = tool_call.metrics or None
 
                 # Add timing information safely
                 execution_time_str = "N/A"

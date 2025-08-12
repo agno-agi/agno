@@ -10,7 +10,7 @@ from agno.media import Audio, File, Image, Video
 from agno.team.team import Team
 from agno.tools.whatsapp import WhatsAppTools
 from agno.utils.log import log_error, log_info, log_warning
-from agno.utils.whatsapp import get_media_async, send_image_message_async, upload_media_async
+from agno.utils.whatsapp import get_media_async, send_image_message_async, typing_indicator_async, upload_media_async
 
 from .security import validate_webhook_signature
 
@@ -88,6 +88,9 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
             message_audio = None
             message_doc = None
 
+            message_id = message.get("id")
+            await typing_indicator_async(message_id)
+
             if message.get("type") == "text":
                 message_text = message["text"]["body"]
             elif message.get("type") == "image":
@@ -138,28 +141,33 @@ def get_async_router(agent: Optional[Agent] = None, team: Optional[Team] = None)
                 await _send_whatsapp_message(phone_number, f"Reasoning: \n{response.reasoning_content}", italics=True)
 
             if response.images:
-                image_content = response.images[0].content
-                image_bytes = None
-                if isinstance(image_content, bytes):
-                    try:
-                        decoded_string = image_content.decode("utf-8")
+                number_of_images = len(response.images)
+                log_info(f"images generated: f{number_of_images}")
+                for i in range(number_of_images):
+                    image_content = response.images[i].content
+                    image_bytes = None
+                    if isinstance(image_content, bytes):
+                        try:
+                            decoded_string = image_content.decode("utf-8")
 
-                        image_bytes = base64.b64decode(decoded_string)
-                    except UnicodeDecodeError:
-                        image_bytes = image_content
-                elif isinstance(image_content, str):
-                    image_bytes = base64.b64decode(image_content)
-                else:
-                    log_error(f"Unexpected image content type: {type(image_content)} for user {phone_number}")
+                            image_bytes = base64.b64decode(decoded_string)
+                        except UnicodeDecodeError:
+                            image_bytes = image_content
+                    elif isinstance(image_content, str):
+                        image_bytes = base64.b64decode(image_content)
+                    else:
+                        log_error(f"Unexpected image content type: {type(image_content)} for user {phone_number}")
 
-                if image_bytes:
-                    media_id = await upload_media_async(
-                        media_data=image_bytes, mime_type="image/png", filename="image.png"
-                    )
-                    await send_image_message_async(media_id=media_id, recipient=phone_number, text=response.content)
-                else:
-                    log_warning(f"Could not process image content for user {phone_number}. Type: {type(image_content)}")
-                    await _send_whatsapp_message(phone_number, response.content)  # Send text part if image fails
+                    if image_bytes:
+                        media_id = await upload_media_async(
+                            media_data=image_bytes, mime_type="image/png", filename="image.png"
+                        )
+                        await send_image_message_async(media_id=media_id, recipient=phone_number, text=response.content)
+                    else:
+                        log_warning(
+                            f"Could not process image content for user {phone_number}. Type: {type(image_content)}"
+                        )
+                        await _send_whatsapp_message(phone_number, response.content)  # Send text part if image fails
             else:
                 await _send_whatsapp_message(phone_number, response.content)
 
