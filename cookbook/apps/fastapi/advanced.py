@@ -104,8 +104,6 @@ research_team = Team(
     model=OpenAIChat(id="gpt-4o"),
     mode="coordinate",
     team_id="research-team",
-        A comprehensive research report with clear sections and data-driven insights.
-    """),
     instructions=[
         "You are the lead researcher of a research team! 🔍",
     ],

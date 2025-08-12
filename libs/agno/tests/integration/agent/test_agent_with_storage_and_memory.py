@@ -1,7 +1,6 @@
 import pytest
 
 from agno.agent.agent import Agent
-from agno.models.message import Message
 from agno.models.openai.chat import OpenAIChat
 
 

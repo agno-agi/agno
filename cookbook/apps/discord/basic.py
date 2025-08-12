@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.app.discord import DiscordClient
+from agno.discord import DiscordClient
 from agno.models.openai import OpenAIChat
 
 basic_agent = Agent(

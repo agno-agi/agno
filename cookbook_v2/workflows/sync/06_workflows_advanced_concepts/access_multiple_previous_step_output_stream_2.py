@@ -43,7 +43,7 @@ def create_comprehensive_report(step_input: StepInput) -> StepOutput:
     web_data = step_input.get_step_content("step_2") or ""
 
     # Or access ALL previous content
-    all_research = step_input.get_all_previous_content()
+    _ = step_input.get_all_previous_content()
 
     # Create a comprehensive report combining all sources
     report = f"""

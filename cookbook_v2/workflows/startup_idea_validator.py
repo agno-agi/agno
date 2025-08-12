@@ -185,7 +185,7 @@ async def startup_validation_execution(
     print(f"💡 Validation request: {message}")
 
     # Phase 1: Idea Clarification
-    print(f"\n🎯 PHASE 1: IDEA CLARIFICATION & REFINEMENT")
+    print("\n🎯 PHASE 1: IDEA CLARIFICATION & REFINEMENT")
     print("=" * 60)
 
     clarification_prompt = f"""
@@ -202,20 +202,20 @@ async def startup_validation_execution(
     Provide insights on how to strengthen and focus the core concept.
     """
 
-    print(f"🔍 Analyzing and refining the startup concept...")
+    print("🔍 Analyzing and refining the startup concept...")
 
     try:
         clarification_result = await idea_clarifier_agent.arun(clarification_prompt)
         idea_clarification = clarification_result.content
 
-        print(f"✅ Idea clarification completed")
+        print("✅ Idea clarification completed")
         print(f"📝 Mission: {idea_clarification.mission[:100]}...")
 
     except Exception as e:
         return f"❌ Failed to clarify idea: {str(e)}"
 
     # Phase 2: Market Research
-    print(f"\n📊 PHASE 2: MARKET RESEARCH & ANALYSIS")
+    print("\n📊 PHASE 2: MARKET RESEARCH & ANALYSIS")
     print("=" * 60)
 
     market_research_prompt = f"""
@@ -232,20 +232,20 @@ async def startup_validation_execution(
     Use web search to find current market data and trends.
     """
 
-    print(f"📈 Researching market size and customer segments...")
+    print("📈 Researching market size and customer segments...")
 
     try:
         market_result = await market_research_agent.arun(market_research_prompt)
         market_research = market_result.content
 
-        print(f"✅ Market research completed")
+        print("✅ Market research completed")
         print(f"🎯 TAM: {market_research.total_addressable_market[:100]}...")
 
     except Exception as e:
         return f"❌ Failed to complete market research: {str(e)}"
 
     # Phase 3: Competitor Analysis
-    print(f"\n🏢 PHASE 3: COMPETITIVE LANDSCAPE ANALYSIS")
+    print("\n🏢 PHASE 3: COMPETITIVE LANDSCAPE ANALYSIS")
     print("=" * 60)
 
     competitor_prompt = f"""
@@ -263,20 +263,20 @@ async def startup_validation_execution(
     Use web search to find current competitor information.
     """
 
-    print(f"🔎 Analyzing competitive landscape...")
+    print("🔎 Analyzing competitive landscape...")
 
     try:
         competitor_result = await competitor_analysis_agent.arun(competitor_prompt)
         competitor_analysis = competitor_result.content
 
-        print(f"✅ Competitor analysis completed")
+        print("✅ Competitor analysis completed")
         print(f"🏆 Positioning: {competitor_analysis.positioning[:100]}...")
 
     except Exception as e:
         return f"❌ Failed to complete competitor analysis: {str(e)}"
 
     # Phase 4: Final Validation Report
-    print(f"\n📋 PHASE 4: COMPREHENSIVE VALIDATION REPORT")
+    print("\n📋 PHASE 4: COMPREHENSIVE VALIDATION REPORT")
     print("=" * 60)
 
     report_prompt = f"""
@@ -306,13 +306,13 @@ async def startup_validation_execution(
     6. Specific next steps for the entrepreneur
     """
 
-    print(f"📝 Generating comprehensive validation report...")
+    print("📝 Generating comprehensive validation report...")
 
     try:
         final_result = await report_agent.arun(report_prompt)
         validation_report = final_result.content
 
-        print(f"✅ Validation report completed")
+        print("✅ Validation report completed")
 
     except Exception as e:
         return f"❌ Failed to generate final report: {str(e)}"

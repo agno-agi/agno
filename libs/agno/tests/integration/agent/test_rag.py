@@ -38,12 +38,12 @@ async def loaded_knowledge_base():
 
 
 @pytest.mark.asyncio
-async def test_add_references(loaded_knowledge):
+async def test_add_knowledge_to_context(loaded_knowledge):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         knowledge=loaded_knowledge,
         # Enable RAG by adding references from Knowledge to the user prompt.
-        add_references=True,
+        add_knowledge_to_context=True,
         # Set as False because Agents default to `search_knowledge=True`
         search_knowledge=False,
         markdown=True,

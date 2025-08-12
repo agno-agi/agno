@@ -3,8 +3,6 @@ This example shows a straightforward use case of additional_messages
 to teach a customer support team proper response patterns.
 """
 
-import asyncio
-
 from agno.agent import Agent
 from agno.models.message import Message
 from agno.models.openai.chat import OpenAIChat

@@ -66,10 +66,21 @@ from agno.workflow.types import (
     StepInput,
     StepMetrics,
     StepOutput,
+    StepType,
     WebSocketHandler,
     WorkflowExecutionInput,
     WorkflowMetrics,
 )
+
+# TODO: This is used to infer the Step type in the main to_dict() method. Instead, each step should have a type field
+STEP_TYPE_MAPPING = {
+    Step: StepType.STEP,
+    Steps: StepType.STEPS,
+    Loop: StepType.LOOP,
+    Parallel: StepType.PARALLEL,
+    Condition: StepType.CONDITION,
+    Router: StepType.ROUTER,
+}
 
 WorkflowSteps = Union[
     Callable[
@@ -276,7 +287,6 @@ class Workflow:
         if self.session_id is None:
             return f"Workflow Session - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
 
-        workflow_session = self.get_workflow_session()
         datetime_str = datetime.now().strftime("%Y-%m-%d %H:%M")
         new_session_name = f"Workflow Session-{datetime_str}"
 
@@ -1268,8 +1278,7 @@ class Workflow:
         if self.session_id is None:
             self.session_id = str(uuid4())
 
-        if self.run_id is None:
-            self.run_id = str(uuid4())
+        self.run_id = str(uuid4())
 
         self.initialize_workflow()
         self.load_session()
@@ -1348,8 +1357,7 @@ class Workflow:
         if self.session_id is None:
             self.session_id = str(uuid4())
 
-        if self.run_id is None:
-            self.run_id = str(uuid4())
+        self.run_id = str(uuid4())
 
         self.initialize_workflow()
         self.load_session()
@@ -1740,19 +1748,27 @@ class Workflow:
     def get_workflow_session(self) -> WorkflowSession:
         """Get a WorkflowSession object for storage"""
         workflow_data = {}
+
         if self.steps and not callable(self.steps):
-            workflow_data["steps"] = [
-                {
+            steps_dict = []
+            for step in self.steps:  # type: ignore
+                # TODO: The step should have a type field
+                step_type = STEP_TYPE_MAPPING[type(step)]
+                step_dict = {
                     "name": step.name if hasattr(step, "name") else step.__name__,
                     "description": step.description if hasattr(step, "description") else "User-defined callable step",
+                    "type": step_type.value,
                 }
-                for step in self.steps  # type: ignore
-            ]
+                steps_dict.append(step_dict)
+
+            workflow_data["steps"] = steps_dict
+
         elif callable(self.steps):
             workflow_data["steps"] = [
                 {
                     "name": "Custom Function",
                     "description": "User-defined callable workflow",
+                    "type": "Callable",
                 }
             ]
 
@@ -1766,7 +1782,7 @@ class Workflow:
             workflow_name=self.name,
             runs=self.workflow_session.runs if self.workflow_session else [],
             workflow_data=workflow_data,
-            session_data={},
+            session_data=self.workflow_session_state,
         )
 
     def load_workflow_session(self, session: WorkflowSession):
@@ -3436,9 +3452,14 @@ class Workflow:
             "workflow_id": self.workflow_id,
             "description": self.description,
             "steps": [
+                # TODO: this should be encapsulated in step.to_dict() - for all step classes
                 {
                     "name": s.name if hasattr(s, "name") else s.__name__,
                     "description": s.description if hasattr(s, "description") else "User-defined callable step",
+                    # TODO: The step should have a type field
+                    "type": STEP_TYPE_MAPPING[type(s)].value,  # type: ignore
+                    "agent": s.agent if hasattr(s, "agent") else None,  # type: ignore
+                    "team": s.team if hasattr(s, "team") else None,  # type: ignore
                 }
                 for s in steps_list
             ],

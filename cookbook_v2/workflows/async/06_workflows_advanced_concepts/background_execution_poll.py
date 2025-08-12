@@ -101,7 +101,7 @@ async def main():
 
     final_result = content_creation_workflow.get_run(bg_response.run_id)
 
-    print(f"\n Final Result:")
+    print("\n Final Result:")
     print("=" * 50)
     pprint_run_response(final_result, markdown=True)
 

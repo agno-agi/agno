@@ -909,7 +909,7 @@ class FirestoreDb(BaseDb):
                     return result_date
 
             # No metrics records. Return the date of the first recorded session.
-            first_session_result = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1)
+            first_session_result = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
             first_session_date = None
 
             if isinstance(first_session_result, list) and len(first_session_result) > 0:

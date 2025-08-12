@@ -199,7 +199,7 @@ async def investment_analysis_execution(
     print(f"💼 Analysis request: {message}")
 
     # Phase 1: Stock Analysis
-    print(f"\n📊 PHASE 1: COMPREHENSIVE STOCK ANALYSIS")
+    print("\n📊 PHASE 1: COMPREHENSIVE STOCK ANALYSIS")
     print("=" * 60)
 
     analysis_prompt = f"""
@@ -216,13 +216,13 @@ async def investment_analysis_execution(
     Companies to analyze: {company_symbols}
     """
 
-    print(f"🔍 Analyzing market data and fundamentals...")
+    print("🔍 Analyzing market data and fundamentals...")
     stock_analysis_result = await stock_analyst.arun(analysis_prompt)
     stock_analysis = stock_analysis_result.content
 
     # Save to file
     with open(stock_analyst_report, "w") as f:
-        f.write(f"# Stock Analysis Report\n\n")
+        f.write("# Stock Analysis Report\n\n")
         f.write(f"**Companies:** {stock_analysis.company_symbols}\n\n")
         f.write(f"## Market Analysis\n{stock_analysis.market_analysis}\n\n")
         f.write(f"## Financial Metrics\n{stock_analysis.financial_metrics}\n\n")
@@ -232,7 +232,7 @@ async def investment_analysis_execution(
     print(f"✅ Stock analysis completed and saved to {stock_analyst_report}")
 
     # Phase 2: Investment Ranking
-    print(f"\n🏆 PHASE 2: INVESTMENT POTENTIAL RANKING")
+    print("\n🏆 PHASE 2: INVESTMENT POTENTIAL RANKING")
     print("=" * 60)
 
     ranking_prompt = f"""
@@ -249,13 +249,13 @@ async def investment_analysis_execution(
     4. Growth potential assessment
     """
 
-    print(f"📈 Ranking companies by investment potential...")
+    print("📈 Ranking companies by investment potential...")
     ranking_result = await research_analyst.arun(ranking_prompt)
     ranking_analysis = ranking_result.content
 
     # Save to file
     with open(research_analyst_report, "w") as f:
-        f.write(f"# Investment Ranking Report\n\n")
+        f.write("# Investment Ranking Report\n\n")
         f.write(f"## Company Rankings\n{ranking_analysis.ranked_companies}\n\n")
         f.write(f"## Investment Rationale\n{ranking_analysis.investment_rationale}\n\n")
         f.write(f"## Risk Evaluation\n{ranking_analysis.risk_evaluation}\n\n")
@@ -264,7 +264,7 @@ async def investment_analysis_execution(
     print(f"✅ Investment ranking completed and saved to {research_analyst_report}")
 
     # Phase 3: Portfolio Allocation Strategy
-    print(f"\n💼 PHASE 3: PORTFOLIO ALLOCATION STRATEGY")
+    print("\n💼 PHASE 3: PORTFOLIO ALLOCATION STRATEGY")
     print("=" * 60)
 
     portfolio_prompt = f"""
@@ -281,13 +281,13 @@ async def investment_analysis_execution(
     4. Final actionable recommendations
     """
 
-    print(f"💰 Developing portfolio allocation strategy...")
+    print("💰 Developing portfolio allocation strategy...")
     portfolio_result = await investment_lead.arun(portfolio_prompt)
     portfolio_strategy = portfolio_result.content
 
     # Save to file
     with open(investment_report, "w") as f:
-        f.write(f"# Investment Portfolio Report\n\n")
+        f.write("# Investment Portfolio Report\n\n")
         f.write(f"## Allocation Strategy\n{portfolio_strategy.allocation_strategy}\n\n")
         f.write(f"## Investment Thesis\n{portfolio_strategy.investment_thesis}\n\n")
         f.write(f"## Risk Management\n{portfolio_strategy.risk_management}\n\n")

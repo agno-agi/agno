@@ -1,6 +1,4 @@
-from typing import List, Union
-
-from agno.agent.agent import Agent
+from agno.agent import Agent
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.hackernews import HackerNewsTools

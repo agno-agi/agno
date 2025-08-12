@@ -26,13 +26,13 @@ knowledge.add_content(
 
 
 # ---------------------------------------------------------
-# Define the custom async retriever
+# Define the custom async knowledge retriever
 # This is the function that the agent will use to retrieve documents
-async def retriever(
+async def knowledge_retriever(
     query: str, agent: Optional[Agent] = None, num_documents: int = 5, **kwargs
 ) -> Optional[list[dict]]:
     """
-    Custom async retriever function to search the vector database for relevant documents.
+    Custom async knowledge retriever function to search the vector database for relevant documents.
 
     Args:
         query (str): The search query string
@@ -63,11 +63,11 @@ async def retriever(
 
 async def amain():
     """Async main function to demonstrate agent usage."""
-    # Initialize agent with custom retriever
+    # Initialize agent with custom knowledge retriever
     # Remember to set search_knowledge=True to use agentic_rag or add_reference=True for traditional RAG
     # search_knowledge=True is default when you add a knowledge base but is needed here
     agent = Agent(
-        retriever=retriever,
+        knowledge_retriever=knowledge_retriever,
         search_knowledge=True,
         instructions="Search the knowledge base for information",
     )

@@ -10,10 +10,9 @@ from uuid import uuid4
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.memory import MemoryManager
+from agno.memory import MemoryManager  # noqa: F401
 from agno.models.openai import OpenAIChat
 from agno.team import Team
-from rich.pretty import pprint
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url, user_memory_table="user_memories")

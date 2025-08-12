@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
@@ -78,7 +78,7 @@ def data_analysis_function(step_input: StepInput) -> StepOutput:
     analysis_results = []
 
     if previous_step_content:
-        print(f"\n🔍 Previous Step Content Preview:")
+        print("\n🔍 Previous Step Content Preview:")
         print("Topic: ", previous_step_content.topic, "\n")
         print("Key Insights: ", previous_step_content.key_insights, "\n")
         print(
@@ -123,7 +123,7 @@ def data_analysis_function(step_input: StepInput) -> StepOutput:
         Based on the data analysis, the content planning step should receive this processed information.
     """.strip()
 
-    print(f"\n📋 Analysis Results:")
+    print("\n📋 Analysis Results:")
     for result in analysis_results:
         print(f"   {result}")
 

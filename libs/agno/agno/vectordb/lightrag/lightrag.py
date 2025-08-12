@@ -90,7 +90,6 @@ class LightRag(VectorDb):
     async def async_search(
         self, query: str, limit: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
-
         mode: str = "hybrid"  # Default mode, can be "local", "global", or "hybrid"
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -283,12 +282,12 @@ class LightRag(VectorDb):
         # TODO: Define supported extensions or implement proper URL validation
         return True
 
-    async def lightrag_retriever(
+    async def lightrag_knowledge_retriever(
         self,
         query: str,
     ) -> Optional[List[Dict[str, Any]]]:
         """
-        Custom retriever function to search the LightRAG server for relevant documents.
+        Custom knowledge retriever function to search the LightRAG server for relevant documents.
 
         Args:
             query: The search query string
@@ -331,7 +330,6 @@ class LightRag(VectorDb):
             return None
 
     def _format_lightrag_response(self, result: Any, query: str, mode: str) -> List[Document]:
-
         """Format LightRAG server response to expected document format."""
         # LightRAG server returns a dict with 'response' key, but we expect a list of documents
         # Convert the response to the expected format

@@ -47,7 +47,7 @@ Here's a basic example of how to use the DiscordClient:
 
 ```python
 from agno.agent import Agent
-from agno.app.discord.client import DiscordClient
+from agno.discord.client import DiscordClient
 from agno.models.anthropic import Claude
 
 # Create your agent
