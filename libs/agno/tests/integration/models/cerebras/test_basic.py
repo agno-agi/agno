@@ -43,8 +43,6 @@ def test_basic_stream():
     for response in responses:
         assert response.content is not None
 
-    _assert_metrics(agent.run_response)
-
 
 @pytest.mark.asyncio
 async def test_async_basic():
@@ -62,12 +60,9 @@ async def test_async_basic():
 async def test_async_basic_stream():
     agent = Agent(model=Cerebras(id="llama-4-scout-17b-16e-instruct"), markdown=True, telemetry=False)
 
-    response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
-
-    async for response in response_stream:
-        assert response.content is not None
-
-    _assert_metrics(agent.run_response)
+    response_stream = agent.arun("Share a 2 sentence horror story", stream=True)
+    async for chunk in response_stream:
+        assert chunk.content is not None
 
 
 def test_with_memory():

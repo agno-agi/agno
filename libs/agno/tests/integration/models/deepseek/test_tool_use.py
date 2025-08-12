@@ -9,7 +9,6 @@ from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
 
 
-@pytest.mark.skip(reason="Deepseek is too slow with tool use")
 def test_tool_use():
     agent = Agent(
         model=DeepSeek(id="deepseek-chat"),
@@ -27,7 +26,6 @@ def test_tool_use():
     assert "TSLA" in response.content
 
 
-@pytest.mark.skip(reason="Deepseek is too slow with tool use")
 def test_tool_use_stream():
     agent = Agent(
         model=DeepSeek(id="deepseek-chat"),
@@ -43,8 +41,10 @@ def test_tool_use_stream():
 
     for chunk in response_stream:
         responses.append(chunk)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
+
+        # Check for ToolCallStartedEvent or ToolCallCompletedEvent
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
+            if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -52,7 +52,6 @@ def test_tool_use_stream():
     assert any("TSLA" in r.content for r in responses if r.content)
 
 
-@pytest.mark.skip(reason="Deepseek is too slow with tool use")
 @pytest.mark.asyncio
 async def test_async_tool_use():
     agent = Agent(
@@ -71,7 +70,6 @@ async def test_async_tool_use():
     assert "TSLA" in response.content
 
 
-@pytest.mark.skip(reason="Deepseek is too slow with tool use")
 @pytest.mark.asyncio
 async def test_async_tool_use_stream():
     agent = Agent(
@@ -81,25 +79,20 @@ async def test_async_tool_use_stream():
         telemetry=False,
     )
 
-    response_stream = await agent.arun(
-        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
-    )
-
-    responses = []
-    tool_call_seen = False
-
-    async for chunk in response_stream:
-        responses.append(chunk)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
+    async for response in agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+        if response.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(response, "tool") and response.tool:  # type: ignore
+            if response.tool.tool_name:  # type: ignore
                 tool_call_seen = True
+            if response.content is not None and "TSLA" in response.content:
+                keyword_seen_in_response = True
 
-    assert len(responses) > 0
+    # Asserting we found tool responses in the response stream
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("TSLA" in r.content for r in responses if r.content)
+
+    # Asserting we found the expected keyword in the response stream -> proving the correct tool was called
+    assert keyword_seen_in_response, "Keyword not found in response"
 
 
-@pytest.mark.skip(reason="Deepseek is too slow with tool use")
 def test_parallel_tool_calls():
     agent = Agent(
         model=DeepSeek(id="deepseek-chat"),
@@ -121,7 +114,6 @@ def test_parallel_tool_calls():
     assert "TSLA" in response.content and "AAPL" in response.content
 
 
-@pytest.mark.skip(reason="Deepseek is too slow with tool use")
 def test_multiple_tool_calls():
     agent = Agent(
         model=DeepSeek(id="deepseek-chat"),
@@ -143,7 +135,6 @@ def test_multiple_tool_calls():
     assert "TSLA" in response.content and "latest news" in response.content.lower()
 
 
-@pytest.mark.skip(reason="Deepseek is too slow with tool use")
 def test_tool_call_custom_tool_no_parameters():
     def get_the_weather_in_tokyo():
         """
@@ -167,7 +158,6 @@ def test_tool_call_custom_tool_no_parameters():
     assert "70" in response.content
 
 
-@pytest.mark.skip(reason="Deepseek is too slow with tool use")
 def test_tool_call_custom_tool_optional_parameters():
     def get_the_weather(city: Optional[str] = None):
         """
@@ -197,7 +187,6 @@ def test_tool_call_custom_tool_optional_parameters():
     assert "70" in response.content
 
 
-@pytest.mark.skip(reason="Deepseek is too slow with tool use")
 def test_tool_call_list_parameters():
     agent = Agent(
         model=DeepSeek(id="deepseek-chat"),
@@ -212,6 +201,7 @@ def test_tool_call_list_parameters():
     )
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     tool_calls = []
     for msg in response.messages:

@@ -64,7 +64,7 @@ async def test_async_basic():
 async def test_async_basic_stream():
     agent = Agent(model=DeepSeek(id="deepseek-chat"), markdown=True, telemetry=False)
 
-    response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
+    response_stream = agent.arun("Share a 2 sentence horror story", stream=True)
 
     async for response in response_stream:
         assert response.content is not None
@@ -77,7 +77,6 @@ def test_with_memory():
     agent = Agent(
         model=DeepSeek(id="deepseek-chat"),
         add_history_to_context=True,
-        num_history_responses=5,
         markdown=True,
         telemetry=False,
     )

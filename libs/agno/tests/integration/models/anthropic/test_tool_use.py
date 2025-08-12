@@ -44,7 +44,7 @@ def test_tool_use_stream():
 
         # Check for ToolCallStartedEvent or ToolCallCompletedEvent
         if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
-            if chunk.tool.tool_name:
+            if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
 
     assert len(responses) > 0
