@@ -6,6 +6,8 @@ After each run, user memories are created/updated.
 To enable this, set `enable_user_memories=True` in the Agent config.
 """
 
+from uuid import uuid4
+
 from agno.agent.agent import Agent
 from agno.memory.v2.db.sqlite import SqliteMemoryDb
 from agno.memory.v2.memory import Memory
@@ -22,7 +24,7 @@ memory = Memory(db=memory_db)
 # Reset the memory for this example
 memory.clear()
 
-session_id = "session_1"
+session_id = str(uuid4())
 john_doe_id = "john_doe@example.com"
 
 agent = Agent(
@@ -46,8 +48,8 @@ agent.print_response(
 )
 
 # -*- Print the chat history
-session_run = memory.runs[session_id][-1]
-print_chat_history(session_run)
+session_runs = memory.runs[session_id]
+print_chat_history(session_runs)
 
 memories = memory.get_user_memories(user_id=john_doe_id)
 print("John Doe's memories:")
@@ -61,8 +63,8 @@ agent.print_response(
 )
 
 # -*- Print the chat history
-session_run = memory.runs[session_id][-1]
-print_chat_history(session_run)
+session_runs = memory.runs[session_id]
+print_chat_history(session_runs)
 
 # You can also get the user memories from the agent
 memories = agent.get_user_memories(user_id=john_doe_id)

@@ -13,8 +13,9 @@ from agno.media import Audio, File, ImageArtifact, Video
 from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageMetrics, UrlCitation
 from agno.models.response import ModelResponse
-from agno.utils.gemini import format_function_definitions, format_image_for_message
-from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.gemini import convert_schema, format_function_definitions, format_image_for_message
+from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.models.schema_utils import get_response_schema_for_provider
 
 try:
     from google import genai
@@ -29,6 +30,7 @@ try:
         GoogleSearch,
         GoogleSearchRetrieval,
         Part,
+        ThinkingConfig,
         Tool,
     )
     from google.genai.types import (
@@ -79,6 +81,8 @@ class Gemini(Model):
     response_modalities: Optional[list[str]] = None  # "Text" and/or "Image"
     speech_config: Optional[dict[str, Any]] = None
     cached_content: Optional[Any] = None
+    thinking_budget: Optional[int] = None  # Thinking budget for Gemini 2.5 models
+    include_thoughts: Optional[bool] = None  # Include thought summaries in response
     request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
@@ -134,7 +138,7 @@ class Gemini(Model):
         self.client = genai.Client(**client_params)
         return self.client
 
-    def _get_request_kwargs(
+    def get_request_params(
         self,
         system_message: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -179,7 +183,21 @@ class Gemini(Model):
 
         if response_format is not None and isinstance(response_format, type) and issubclass(response_format, BaseModel):
             config["response_mime_type"] = "application/json"  # type: ignore
-            config["response_schema"] = response_format
+            # Convert Pydantic model to JSON schema, then normalize for Gemini, then convert to Gemini schema format
+
+            # Get the normalized schema for Gemini
+            normalized_schema = get_response_schema_for_provider(response_format, "gemini")
+            gemini_schema = convert_schema(normalized_schema)
+            config["response_schema"] = gemini_schema
+
+        # Add thinking configuration
+        thinking_config_params = {}
+        if self.thinking_budget is not None:
+            thinking_config_params["thinking_budget"] = self.thinking_budget
+        if self.include_thoughts is not None:
+            thinking_config_params["include_thoughts"] = self.include_thoughts
+        if thinking_config_params:
+            config["thinking_config"] = ThinkingConfig(**thinking_config_params)
 
         if self.grounding and self.search:
             log_info("Both grounding and search are enabled. Grounding will take precedence.")
@@ -213,6 +231,8 @@ class Gemini(Model):
         if self.request_params:
             request_params.update(self.request_params)
 
+        if request_params:
+            log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
 
     def invoke(
@@ -226,7 +246,7 @@ class Gemini(Model):
         Invokes the model with a list of messages and returns the response.
         """
         formatted_messages, system_message = self._format_messages(messages)
-        request_kwargs = self._get_request_kwargs(system_message, response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(system_message, response_format=response_format, tools=tools)
         try:
             return self.get_client().models.generate_content(
                 model=self.id,
@@ -258,7 +278,7 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        request_kwargs = self._get_request_kwargs(system_message, response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(system_message, response_format=response_format, tools=tools)
         try:
             yield from self.get_client().models.generate_content_stream(
                 model=self.id,
@@ -289,7 +309,7 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        request_kwargs = self._get_request_kwargs(system_message, response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(system_message, response_format=response_format, tools=tools)
 
         try:
             return await self.get_client().aio.models.generate_content(
@@ -321,7 +341,7 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        request_kwargs = self._get_request_kwargs(system_message, response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(system_message, response_format=response_format, tools=tools)
 
         try:
             async_stream = await self.get_client().aio.models.generate_content_stream(
@@ -691,9 +711,31 @@ class Gemini(Model):
                 if hasattr(part, "text") and part.text is not None:
                     text_content: Optional[str] = getattr(part, "text")
                     if isinstance(text_content, str):
-                        model_response.content = text_content
+                        # Check if this is a thought summary
+                        if hasattr(part, "thought") and part.thought:
+                            # Add all parts as single message
+                            if model_response.reasoning_content is None:
+                                model_response.reasoning_content = text_content
+                            else:
+                                model_response.reasoning_content += text_content
+                        else:
+                            if model_response.content is None:
+                                model_response.content = text_content
+                            else:
+                                model_response.content += text_content
                     else:
-                        model_response.content = str(text_content) if text_content is not None else ""
+                        content_str = str(text_content) if text_content is not None else ""
+                        if hasattr(part, "thought") and part.thought:
+                            # Add all parts as single message
+                            if model_response.reasoning_content is None:
+                                model_response.reasoning_content = content_str
+                            else:
+                                model_response.reasoning_content += content_str
+                        else:
+                            if model_response.content is None:
+                                model_response.content = content_str
+                            else:
+                                model_response.content += content_str
 
                 if hasattr(part, "inline_data") and part.inline_data is not None:
                     model_response.image = ImageArtifact(
@@ -737,9 +779,14 @@ class Gemini(Model):
         # Extract usage metadata if present
         if hasattr(response, "usage_metadata") and response.usage_metadata is not None:
             usage: GenerateContentResponseUsageMetadata = response.usage_metadata
+
+            output_tokens = usage.candidates_token_count or 0
+            if hasattr(usage, "thoughts_token_count") and usage.thoughts_token_count is not None:
+                output_tokens += usage.thoughts_token_count or 0
+
             model_response.response_usage = {
                 "input_tokens": usage.prompt_token_count or 0,
-                "output_tokens": usage.candidates_token_count or 0,
+                "output_tokens": output_tokens,
                 "total_tokens": usage.total_token_count or 0,
                 "cached_tokens": usage.cached_content_token_count or 0,
             }
@@ -767,7 +814,18 @@ class Gemini(Model):
                 for part in response_message.parts:
                     # Extract text if present
                     if hasattr(part, "text") and part.text is not None:
-                        model_response.content = str(part.text) if part.text is not None else ""
+                        text_content = str(part.text) if part.text is not None else ""
+                        # Check if this is a thought summary
+                        if hasattr(part, "thought") and part.thought:
+                            if model_response.reasoning_content is None:
+                                model_response.reasoning_content = text_content
+                            else:
+                                model_response.reasoning_content += text_content
+                        else:
+                            if model_response.content is None:
+                                model_response.content = text_content
+                            else:
+                                model_response.content += text_content
 
                     if hasattr(part, "inline_data") and part.inline_data is not None:
                         model_response.image = ImageArtifact(
@@ -811,9 +869,14 @@ class Gemini(Model):
             # Extract usage metadata if present
             if hasattr(response_delta, "usage_metadata") and response_delta.usage_metadata is not None:
                 usage: GenerateContentResponseUsageMetadata = response_delta.usage_metadata
+
+                output_tokens = usage.candidates_token_count or 0
+                if hasattr(usage, "thoughts_token_count") and usage.thoughts_token_count is not None:
+                    output_tokens += usage.thoughts_token_count or 0
+
                 model_response.response_usage = {
                     "input_tokens": usage.prompt_token_count or 0,
-                    "output_tokens": usage.candidates_token_count or 0,
+                    "output_tokens": output_tokens,
                     "total_tokens": usage.total_token_count or 0,
                     "cached_tokens": usage.cached_content_token_count or 0,
                 }
@@ -855,9 +918,5 @@ class Gemini(Model):
 
         # Explicitly set client to None
         setattr(new_instance, "client", None)
-
-        # Clear the new model to remove any references to the old model
-        if hasattr(new_instance, "clear"):
-            new_instance.clear()
 
         return new_instance

@@ -8,7 +8,7 @@ from agno.exceptions import ModelProviderError
 from agno.models.base import MessageData, Model, _add_usage_metrics_to_assistant_message
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import log_error
+from agno.utils.log import log_debug, log_error
 from agno.utils.models.cohere import format_messages
 
 try:
@@ -83,7 +83,7 @@ class Cohere(Model):
         self.async_client = CohereAsyncClient(**_client_params)
         return self.async_client  # type: ignore
 
-    def get_request_kwargs(
+    def get_request_params(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
@@ -109,8 +109,26 @@ class Cohere(Model):
         if response_format:
             _request_params["response_format"] = response_format
 
+        # Format tools
         if tools is not None and len(tools) > 0:
-            _request_params["tools"] = tools
+            formatted_tools = []
+            for tool in tools:
+                if tool.get("type") == "function" and "function" in tool:
+                    # Extract only the fields that Cohere supports
+                    filtered_tool = {
+                        "type": "function",
+                        "function": {
+                            "name": tool["function"]["name"],
+                            "description": tool["function"]["description"],
+                            "parameters": tool["function"]["parameters"],
+                        },
+                    }
+                    formatted_tools.append(filtered_tool)
+                else:
+                    # For non-function tools, pass them through as-is
+                    formatted_tools.append(tool)
+
+            _request_params["tools"] = formatted_tools
             # Fix optional parameters where the "type" is [type, null]
             for tool in _request_params["tools"]:  # type: ignore
                 if "parameters" in tool["function"] and "properties" in tool["function"]["parameters"]:  # type: ignore
@@ -122,6 +140,9 @@ class Cohere(Model):
 
         if self.request_params:
             _request_params.update(self.request_params)
+
+        if _request_params:
+            log_debug(f"Calling {self.provider} with request parameters: {_request_params}", log_level=2)
         return _request_params
 
     def invoke(
@@ -135,7 +156,7 @@ class Cohere(Model):
         Invoke a non-streamed chat response from the Cohere API.
         """
 
-        request_kwargs = self.get_request_kwargs(response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
             return self.get_client().chat(model=self.id, messages=format_messages(messages), **request_kwargs)  # type: ignore
@@ -153,7 +174,7 @@ class Cohere(Model):
         """
         Invoke a streamed chat response from the Cohere API.
         """
-        request_kwargs = self.get_request_kwargs(response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
             return self.get_client().chat_stream(
@@ -175,7 +196,7 @@ class Cohere(Model):
         """
         Asynchronously invoke a non-streamed chat response from the Cohere API.
         """
-        request_kwargs = self.get_request_kwargs(response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
             return await self.get_async_client().chat(
@@ -197,7 +218,7 @@ class Cohere(Model):
         """
         Asynchronously invoke a streamed chat response from the Cohere API.
         """
-        request_kwargs = self.get_request_kwargs(response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(response_format=response_format, tools=tools)
 
         try:
             async for response in self.get_async_client().chat_stream(

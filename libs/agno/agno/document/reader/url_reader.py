@@ -1,5 +1,3 @@
-import asyncio
-from time import sleep
 from typing import List, Optional
 from urllib.parse import urlparse
 
@@ -7,7 +5,8 @@ import httpx
 
 from agno.document.base import Document
 from agno.document.reader.base import Reader
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.http import async_fetch_with_retry, fetch_with_retry
+from agno.utils.log import log_debug
 
 
 class URLReader(Reader):
@@ -21,31 +20,9 @@ class URLReader(Reader):
         if not url:
             raise ValueError("No url provided")
 
-        log_info(f"Reading: {url}")
+        log_debug(f"Reading: {url}")
         # Retry the request up to 3 times with exponential backoff
-        for attempt in range(3):
-            try:
-                response = httpx.get(url, proxy=self.proxy) if self.proxy else httpx.get(url)
-                break
-            except httpx.RequestError as e:
-                if attempt == 2:  # Last attempt
-                    logger.error(f"Failed to fetch URL after 3 attempts: {e}")
-                    raise
-                wait_time = 2**attempt  # Exponential backoff: 1, 2, 4 seconds
-                logger.warning(f"Request failed, retrying in {wait_time} seconds...")
-                sleep(wait_time)
-
-        try:
-            log_debug(f"Status: {response.status_code}")
-            log_debug(f"Content size: {len(response.content)} bytes")
-        except Exception:
-            pass
-
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
-            raise
+        response = fetch_with_retry(url, proxy=self.proxy)
 
         document = self._create_document(url, response.text)
         if self.chunk:
@@ -57,37 +34,15 @@ class URLReader(Reader):
         if not url:
             raise ValueError("No url provided")
 
-        log_info(f"Reading async: {url}")
+        log_debug(f"Reading async: {url}")
         client_args = {"proxy": self.proxy} if self.proxy else {}
         async with httpx.AsyncClient(**client_args) as client:  # type: ignore
-            for attempt in range(3):
-                try:
-                    response = await client.get(url)
-                    break
-                except httpx.RequestError as e:
-                    if attempt == 2:  # Last attempt
-                        logger.error(f"Failed to fetch URL after 3 attempts: {e}")
-                        raise
-                    wait_time = 2**attempt
-                    logger.warning(f"Request failed, retrying in {wait_time} seconds...")
-                    await asyncio.sleep(wait_time)
+            response = await async_fetch_with_retry(url, client=client)
 
-            try:
-                log_debug(f"Status: {response.status_code}")
-                log_debug(f"Content size: {len(response.content)} bytes")
-            except Exception:
-                pass
-
-            try:
-                response.raise_for_status()
-            except httpx.HTTPStatusError as e:
-                logger.error(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
-                raise
-
-            document = self._create_document(url, response.text)
-            if self.chunk:
-                return await self.chunk_documents_async([document])
-            return [document]
+        document = self._create_document(url, response.text)
+        if self.chunk:
+            return await self.chunk_documents_async([document])
+        return [document]
 
     def _create_document(self, url: str, content: str) -> Document:
         """Helper method to create a document from URL content"""

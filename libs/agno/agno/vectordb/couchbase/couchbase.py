@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Union
 from agno.document import Document
 from agno.embedder import Embedder
 from agno.embedder.openai import OpenAIEmbedder
-from agno.utils.log import logger
+from agno.utils.log import log_debug, logger
 from agno.vectordb.base import VectorDb
 
 try:
@@ -300,7 +300,7 @@ class CouchbaseSearch(VectorDb):
             documents: List of documents to insert
             filters: Optional filters to apply to the documents
         """
-        logger.info(f"Inserting {len(documents)} documents")
+        log_debug(f"Inserting {len(documents)} documents")
 
         docs_to_insert: Dict[str, Any] = {}
         for document in documents:
@@ -331,7 +331,7 @@ class CouchbaseSearch(VectorDb):
             if not batch_docs_to_insert:
                 continue
 
-            logger.info(f"Inserting batch of {len(batch_docs_to_insert)} documents.")
+            log_debug(f"Inserting batch of {len(batch_docs_to_insert)} documents.")
             try:
                 result = self.collection.insert_multi(batch_docs_to_insert)
                 # Check for errors in the batch result

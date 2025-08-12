@@ -35,6 +35,8 @@ app = Playground(
         image_agent,
     ],
     teams=[reasoning_finance_team],
+    app_id="demo-agents-app",
+    name="Demo Agents App",
 ).get_app()
 
 if __name__ == "__main__":

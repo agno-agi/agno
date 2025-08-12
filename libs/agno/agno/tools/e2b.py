@@ -1,6 +1,5 @@
 import base64
 import json
-import re
 import tempfile
 import time
 from os import fdopen, getenv
@@ -12,6 +11,7 @@ from agno.agent import Agent
 from agno.media import ImageArtifact
 from agno.team.team import Team
 from agno.tools import Toolkit
+from agno.utils.code_execution import prepare_python_code
 from agno.utils.log import logger
 
 try:
@@ -102,16 +102,9 @@ class E2BTools(Toolkit):
             str: Execution results or error message
         """
         try:
-            # Execute the code in the sandbox using the correct method name for Python SDK
-            # Fix common Python keywords that require capitalized first letters
-            # This is necessary because users or LLMs sometimes use lowercase versions
-            # of Python keywords that should be capitalized (True, False, None)
-            python_keywords = {"true": "True", "false": "False", "none": "None"}
+            executable_code = prepare_python_code(code)
 
-            for lowercase, capitalized in python_keywords.items():
-                code = re.sub(rf"\b({lowercase})\b", capitalized, code)
-
-            execution = self.sandbox.run_code(code)
+            execution = self.sandbox.run_code(executable_code)
             self.last_execution = execution
 
             # Check for errors

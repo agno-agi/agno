@@ -9,7 +9,7 @@ from typing import Iterator
 
 from agno.agent import Agent, RunResponse
 from agno.models.openai import OpenAIChat
-from agno.run.response import RunEvent
+from agno.run.workflow import WorkflowCompletedEvent
 from agno.storage.workflow.sqlite import SqliteWorkflowStorage
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
@@ -78,9 +78,8 @@ class GameGenerator(Workflow):
             game_code = game_output.content.code
             logger.info(f"Game code: {game_code}")
         else:
-            yield RunResponse(
+            yield WorkflowCompletedEvent(
                 run_id=self.run_id,
-                event=RunEvent.workflow_completed,
                 content="Sorry, could not generate a game.",
             )
             return
@@ -100,15 +99,13 @@ class GameGenerator(Workflow):
             # Store the resulting code
             game_output_path.write_text(game_code)
 
-            yield RunResponse(
+            yield WorkflowCompletedEvent(
                 run_id=self.run_id,
-                event=RunEvent.workflow_completed,
                 content=game_output.content.instructions,
             )
         else:
-            yield RunResponse(
+            yield WorkflowCompletedEvent(
                 run_id=self.run_id,
-                event=RunEvent.workflow_completed,
                 content="Sorry, could not QA the game.",
             )
             return

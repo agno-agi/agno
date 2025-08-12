@@ -39,6 +39,7 @@ class ToolExecution:
 
     requires_user_input: Optional[bool] = None
     user_input_schema: Optional[List[UserInputField]] = None
+    answered: Optional[bool] = None
 
     external_execution_required: Optional[bool] = None
 
@@ -49,7 +50,7 @@ class ToolExecution:
     def to_dict(self) -> Dict[str, Any]:
         _dict = asdict(self)
         if self.metrics is not None:
-            _dict["metrics"] = self.metrics._to_dict()
+            _dict["metrics"] = self.metrics.to_dict()
 
         if self.user_input_schema is not None:
             _dict["user_input_schema"] = [field.to_dict() for field in self.user_input_schema]
@@ -69,9 +70,11 @@ class ToolExecution:
             confirmed=data.get("confirmed"),
             confirmation_note=data.get("confirmation_note"),
             requires_user_input=data.get("requires_user_input"),
-            user_input_schema=[UserInputField.from_dict(field) for field in data.get("user_input_schema") or []],
+            user_input_schema=[UserInputField.from_dict(field) for field in data.get("user_input_schema") or []]
+            if "user_input_schema" in data
+            else None,
             external_execution_required=data.get("external_execution_required"),
-            metrics=MessageMetrics(**data.get("metrics", {})),
+            metrics=MessageMetrics(**(data.get("metrics", {}) or {})),
         )
 
 
@@ -81,7 +84,7 @@ class ModelResponse:
 
     role: Optional[str] = None
 
-    content: Optional[str] = None
+    content: Optional[Any] = None
     parsed: Optional[Any] = None
     audio: Optional[AudioResponse] = None
     image: Optional[ImageArtifact] = None

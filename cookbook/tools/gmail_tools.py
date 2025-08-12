@@ -27,12 +27,14 @@ agent = Agent(
         "Based on user query, you can read, draft and send emails using Gmail.",
         "While showing email contents, you can summarize the email contents, extract key details and dates.",
         "Show the email contents in a structured markdown format.",
+        "Attachments can be added to the email",
     ],
     markdown=True,
     show_tool_calls=False,
     response_model=FindEmailOutput,
 )
 
+# Example 1: Find the last email from a specific sender
 email = "<replace_with_email_address>"
 response: FindEmailOutput = agent.run(
     f"Find the last email from {email} along with the message id, references and in-reply-to",
@@ -47,3 +49,11 @@ agent.print_response(
     markdown=True,
     stream=True,
 )
+
+# Example 2: Send a new email with attachments
+# agent.print_response(
+#     """Send an email to user@example.com with subject 'Subject'
+#     and body 'Body' and Attach the file 'tmp/attachment.pdf'""",
+#     markdown=True,
+#     stream=True,
+# )

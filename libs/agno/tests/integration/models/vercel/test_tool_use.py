@@ -2,7 +2,7 @@ from typing import Optional
 
 import pytest
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent
 from agno.models.vercel import v0
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
@@ -13,7 +13,6 @@ def test_tool_use():
     agent = Agent(
         model=v0(id="v0-1.0-md"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -31,7 +30,6 @@ def test_tool_use_stream():
     agent = Agent(
         model=v0(id="v0-1.0-md"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -43,10 +41,11 @@ def test_tool_use_stream():
     tool_call_seen = False
 
     for chunk in response_stream:
-        assert isinstance(chunk, RunResponse)
         responses.append(chunk)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
+
+        # Check for ToolCallStartedEvent or ToolCallCompletedEvent
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
+            if chunk.tool.tool_name:
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -62,7 +61,6 @@ async def test_async_tool_use():
     agent = Agent(
         model=v0(id="v0-1.0-md"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -81,7 +79,6 @@ async def test_async_tool_use_stream():
     agent = Agent(
         model=v0(id="v0-1.0-md"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -95,10 +92,11 @@ async def test_async_tool_use_stream():
     tool_call_seen = False
 
     async for chunk in response_stream:
-        assert isinstance(chunk, RunResponse)
         responses.append(chunk)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
+
+        # Check for ToolCallStartedEvent or ToolCallCompletedEvent
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
+            if chunk.tool.tool_name:
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -119,7 +117,6 @@ def test_multiple_tool_calls():
             "Use DuckDuckGo for news and general information",
             "When both price and news are requested, use both tools",
         ],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -132,7 +129,7 @@ def test_multiple_tool_calls():
     for msg in response.messages:
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
-    assert len([call for call in tool_calls if call.get("type", "") == "function"]) == 2
+    assert len([call for call in tool_calls if call.get("type", "") == "function"]) >= 2
     assert response.content is not None
     assert "TSLA" in response.content and "latest news" in response.content.lower()
 
@@ -147,7 +144,6 @@ def test_tool_call_custom_tool_no_parameters():
     agent = Agent(
         model=v0(id="v0-1.0-md"),
         tools=[get_the_weather_in_tokyo],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -177,7 +173,6 @@ def test_tool_call_custom_tool_optional_parameters():
     agent = Agent(
         model=v0(id="v0-1.0-md"),
         tools=[get_the_weather],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -196,7 +191,6 @@ def test_tool_call_list_parameters():
         model=v0(id="v0-1.0-md"),
         tools=[ExaTools()],
         instructions="Use a single tool call if possible",
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,

@@ -4,6 +4,7 @@ from agno.eval.accuracy import AccuracyEval, AccuracyResult
 from agno.models.openai import OpenAIChat
 
 evaluation = AccuracyEval(
+    name="Given Answer Evaluation",
     model=OpenAIChat(id="o4-mini"),
     input="What is 10*5 then to the power of 2? do it step by step",
     expected_output="2500",

@@ -7,6 +7,7 @@ from agno.storage.base import Storage
 from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
+from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
 from agno.storage.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, log_info, logger
 
@@ -28,7 +29,7 @@ class DynamoDbStorage(Storage):
         aws_secret_access_key: Optional[str] = None,
         endpoint_url: Optional[str] = None,
         create_table_if_not_exists: bool = True,
-        mode: Optional[Literal["agent", "team", "workflow"]] = "agent",
+        mode: Optional[Literal["agent", "team", "workflow", "workflow_v2"]] = "agent",
     ):
         """
         Initialize the DynamoDbStorage.
@@ -41,7 +42,7 @@ class DynamoDbStorage(Storage):
             aws_secret_access_key (Optional[str]): AWS secret access key.
             endpoint_url (Optional[str]): The complete URL to use for the constructed client.
             create_table_if_not_exists (bool): Whether to create the table if it does not exist.
-            mode (Optional[Literal["agent", "team", "workflow"]]): The mode of the storage.
+            mode (Optional[Literal["agent", "team", "workflow", "workflow_v2"]]): The mode of the storage.
         """
         super().__init__(mode)
         self.table_name = table_name
@@ -79,12 +80,12 @@ class DynamoDbStorage(Storage):
         log_debug(f"Initialized DynamoDbStorage with table '{self.table_name}'")
 
     @property
-    def mode(self) -> Literal["agent", "team", "workflow"]:
+    def mode(self) -> Literal["agent", "team", "workflow", "workflow_v2"]:
         """Get the mode of the storage."""
         return super().mode
 
     @mode.setter
-    def mode(self, value: Optional[Literal["agent", "team", "workflow"]]) -> None:
+    def mode(self, value: Optional[Literal["agent", "team", "workflow", "workflow_v2"]]) -> None:
         """Set the mode and refresh the table if mode changes."""
         super(DynamoDbStorage, type(self)).mode.fset(self, value)  # type: ignore
         if value is not None:
@@ -125,7 +126,13 @@ class DynamoDbStorage(Storage):
                         {"AttributeName": "workflow_id", "AttributeType": "S"},
                         {"AttributeName": "created_at", "AttributeType": "N"},
                     ]
-
+                elif self.mode == "workflow_v2":
+                    attribute_definitions = [
+                        {"AttributeName": "session_id", "AttributeType": "S"},
+                        {"AttributeName": "user_id", "AttributeType": "S"},
+                        {"AttributeName": "workflow_id", "AttributeType": "S"},
+                        {"AttributeName": "created_at", "AttributeType": "N"},
+                    ]
                 secondary_indexes = [
                     {
                         "IndexName": "user_id-index",
@@ -185,7 +192,21 @@ class DynamoDbStorage(Storage):
                             },
                         }
                     )
-
+                elif self.mode == "workflow_v2":
+                    secondary_indexes.append(
+                        {
+                            "IndexName": "workflow_id-index",
+                            "KeySchema": [
+                                {"AttributeName": "workflow_id", "KeyType": "HASH"},
+                                {"AttributeName": "created_at", "KeyType": "RANGE"},
+                            ],
+                            "Projection": {"ProjectionType": "ALL"},
+                            "ProvisionedThroughput": {
+                                "ReadCapacityUnits": 5,
+                                "WriteCapacityUnits": 5,
+                            },
+                        }
+                    )
                 # Create the table
                 self.table = self.dynamodb.create_table(
                     TableName=self.table_name,
@@ -229,6 +250,8 @@ class DynamoDbStorage(Storage):
                     return TeamSession.from_dict(item)
                 elif self.mode == "workflow":
                     return WorkflowSession.from_dict(item)
+                elif self.mode == "workflow_v2":
+                    return WorkflowSessionV2.from_dict(item)
         except Exception as e:
             logger.error(f"Error reading session_id '{session_id}' with user_id '{user_id}': {e}")
         return None
@@ -323,7 +346,13 @@ class DynamoDbStorage(Storage):
                         KeyConditionExpression=Key("user_id").eq(user_id),
                         ProjectionExpression="session_id, workflow_id, user_id, memory, workflow_data, session_data, extra_data, created_at, updated_at",
                     )
-
+                elif self.mode == "workflow_v2":
+                    # Query using user_id index
+                    response = self.table.query(
+                        IndexName="user_id-index",
+                        KeyConditionExpression=Key("user_id").eq(user_id),
+                        ProjectionExpression="session_id, workflow_id, user_id, workflow_name, runs, workflow_data, session_data, extra_data, created_at, updated_at",
+                    )
                 items = response.get("Items", [])  # type: ignore
                 for item in items:
                     item = self._deserialize_item(item)
@@ -356,6 +385,13 @@ class DynamoDbStorage(Storage):
                         KeyConditionExpression=Key("workflow_id").eq(entity_id),
                         ProjectionExpression="session_id, workflow_id, user_id, memory, workflow_data, session_data, extra_data, created_at, updated_at",
                     )
+                elif self.mode == "workflow_v2":
+                    # Query using workflow_id index
+                    response = self.table.query(
+                        IndexName="workflow_id-index",
+                        KeyConditionExpression=Key("workflow_id").eq(entity_id),
+                        ProjectionExpression="session_id, workflow_id, user_id, workflow_name, runs, workflow_data, session_data, extra_data, created_at, updated_at",
+                    )
                 items = response.get("Items", [])  # type: ignore
                 for item in items:
                     item = self._deserialize_item(item)
@@ -378,6 +414,10 @@ class DynamoDbStorage(Storage):
                 elif self.mode == "workflow":
                     response = self.table.scan(
                         ProjectionExpression="session_id, workflow_id, user_id, memory, workflow_data, session_data, extra_data, created_at, updated_at"
+                    )
+                elif self.mode == "workflow_v2":
+                    response = self.table.scan(
+                        ProjectionExpression="session_id, workflow_id, user_id, workflow_name, runs, workflow_data, session_data, extra_data, created_at, updated_at"
                     )
                 items = response.get("Items", [])
                 for item in items:
@@ -437,6 +477,14 @@ class DynamoDbStorage(Storage):
                         ScanIndexForward=False,
                         Limit=limit if limit is not None else None,
                     )
+                elif self.mode == "workflow_v2":
+                    response = self.table.query(
+                        IndexName="user_id-index",
+                        KeyConditionExpression=Key("user_id").eq(user_id),
+                        ProjectionExpression="session_id, workflow_id, user_id, workflow_name, runs, workflow_data, session_data, extra_data, created_at, updated_at",
+                        ScanIndexForward=False,
+                        Limit=limit if limit is not None else None,
+                    )
             elif entity_id is not None:
                 if self.mode == "agent":
                     response = self.table.query(
@@ -462,6 +510,14 @@ class DynamoDbStorage(Storage):
                         ScanIndexForward=False,
                         Limit=limit if limit is not None else None,
                     )
+                elif self.mode == "workflow_v2":
+                    response = self.table.query(
+                        IndexName="workflow_id-index",
+                        KeyConditionExpression=Key("workflow_id").eq(entity_id),
+                        ProjectionExpression="session_id, workflow_id, user_id, workflow_name, runs, workflow_data, session_data, extra_data, created_at, updated_at",
+                        ScanIndexForward=False,
+                        Limit=limit if limit is not None else None,
+                    )
             else:
                 # If no filters, scan the table and sort by created_at
                 if self.mode == "agent":
@@ -479,7 +535,11 @@ class DynamoDbStorage(Storage):
                         ProjectionExpression="session_id, workflow_id, user_id, memory, workflow_data, session_data, extra_data, created_at, updated_at",
                         Limit=limit if limit is not None else None,
                     )
-
+                elif self.mode == "workflow_v2":
+                    response = self.table.scan(
+                        ProjectionExpression="session_id, workflow_id, user_id, workflow_name, runs, workflow_data, session_data, extra_data, created_at, updated_at",
+                        Limit=limit if limit is not None else None,
+                    )
             items = response.get("Items", [])
             for item in items:
                 item = self._deserialize_item(item)
@@ -491,7 +551,8 @@ class DynamoDbStorage(Storage):
                     session = TeamSession.from_dict(item)
                 elif self.mode == "workflow":
                     session = WorkflowSession.from_dict(item)
-
+                elif self.mode == "workflow_v2":
+                    session = WorkflowSessionV2.from_dict(item)
                 if session is not None:
                     sessions.append(session)
 
@@ -511,7 +572,10 @@ class DynamoDbStorage(Storage):
             Optional[Session]: The upserted Session, or None if operation failed.
         """
         try:
-            item = asdict(session)
+            if self.mode == "workflow_v2":
+                item = session.to_dict()
+            else:
+                item = asdict(session)
 
             # Add timestamps
             current_time = int(time.time())
