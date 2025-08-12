@@ -415,8 +415,8 @@ class WatsonX(Model):
         """
         metrics = Metrics()
 
-        metrics.input_tokens = response_usage.get("input_tokens") or 0
-        metrics.output_tokens = response_usage.get("output_tokens") or 0
+        metrics.input_tokens = response_usage.get("prompt_tokens") or 0
+        metrics.output_tokens = response_usage.get("completion_tokens") or 0
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 
         return metrics

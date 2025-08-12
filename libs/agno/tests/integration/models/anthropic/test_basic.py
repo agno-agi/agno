@@ -52,6 +52,9 @@ def test_basic_stream():
     for chunk in run_stream:
         assert chunk.content is not None
 
+    assert agent.run_response is not None
+    _assert_metrics(agent.run_response)
+
 
 @pytest.mark.asyncio
 async def test_async_basic():
