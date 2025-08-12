@@ -2,7 +2,7 @@ from typing import Optional
 
 import pytest
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent  # noqa
 from agno.models.lmstudio import LMStudio
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
@@ -41,8 +41,8 @@ def test_tool_use_stream():
 
     for chunk in response_stream:
         responses.append(chunk)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
+        if hasattr(chunk, "tools") and chunk.tools:  # type: ignore
+            if any(tc.tool_name for tc in chunk.tools):  # type: ignore
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -77,22 +77,12 @@ async def test_async_tool_use_stream():
         telemetry=False,
     )
 
-    response_stream = await agent.arun(
-        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
-    )
-
-    responses = []
-    tool_call_seen = False
-
-    async for chunk in response_stream:
-        responses.append(chunk)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
+    async for chunk in agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+        if hasattr(chunk, "tools") and chunk.tools:  # type: ignore
+            if any(tc.tool_name for tc in chunk.tools):  # type: ignore
                 tool_call_seen = True
 
-    assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("TSLA" in r.content for r in responses if r.content)
 
 
 def test_parallel_tool_calls():

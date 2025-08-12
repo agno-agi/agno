@@ -31,20 +31,15 @@ def test_tool_use_stream():
         telemetry=False,
     )
 
-    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
-
-    responses = []
-    tool_call_seen = False
-
-    for chunk in response_stream:
-        responses.append(chunk)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
+    for chunk in agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:  # type: ignore
+            if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
+        if chunk.content is not None and "TSLA" in chunk.content:
+            keyword_seen_in_response = True
 
-    assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("$" in r.content for r in responses if r.content)
+    assert keyword_seen_in_response, "Keyword not found in response"
 
 
 @pytest.mark.asyncio
@@ -72,22 +67,15 @@ async def test_async_tool_use_stream():
         telemetry=False,
     )
 
-    response_stream = await agent.arun(
-        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
-    )
-
-    responses = []
-    tool_call_seen = False
-
-    async for chunk in response_stream:
-        responses.append(chunk)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
+    async for chunk in agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:  # type: ignore
+            if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
+        if chunk.content is not None and "TSLA" in chunk.content:
+            keyword_seen_in_response = True
 
-    assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("$" in r.content for r in responses if r.content)
+    assert keyword_seen_in_response, "Keyword not found in response"
 
 
 def test_tool_use_with_content():
@@ -147,7 +135,6 @@ def test_multiple_tool_calls():
     assert "TSLA" in response.content
 
 
-@pytest.mark.skip("Llama models do not call tools without any parameters, instead they return tool call as a string")
 def test_tool_call_custom_tool_no_parameters():
     def get_the_weather_in_tokyo():
         """

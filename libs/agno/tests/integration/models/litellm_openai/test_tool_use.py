@@ -12,17 +12,17 @@ def _assert_metrics(response: RunResponse):
     assert response.metrics is not None
 
     # Check that we have some token counts
-    assert "input_tokens" in response.metrics
-    assert "output_tokens" in response.metrics
-    assert "total_tokens" in response.metrics
+    assert response.metrics.input_tokens is not None
+    assert response.metrics.output_tokens is not None
+    assert response.metrics.total_tokens is not None
 
     # Check that we have timing information
-    assert "time" in response.metrics
+    assert response.metrics.duration is not None
 
     # Check that the total tokens is the sum of input and output tokens
-    input_tokens = sum(response.metrics.input_tokens or [])
-    output_tokens = sum(response.metrics.output_tokens or [])
-    total_tokens = sum(response.metrics.total_tokens or [])
+    input_tokens = response.metrics.input_tokens
+    output_tokens = response.metrics.output_tokens
+    total_tokens = response.metrics.total_tokens
 
     # The total should be at least the sum of input and output
     assert total_tokens >= input_tokens + output_tokens - 5  # Allow small margin of error
@@ -70,14 +70,15 @@ def test_tool_use_stream():
     for chunk in response_stream:
         responses.append(chunk)
         print(chunk.content)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:  # type: ignore
+            if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
+        if chunk.content is not None and "TSLA" in chunk.content:
+            keyword_seen_in_response = True
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    all_content = "".join([r.content for r in responses if r.content])
-    assert "TSLA" in all_content
+    assert keyword_seen_in_response, "Keyword not found in response"
 
 
 @pytest.mark.asyncio
@@ -116,23 +117,15 @@ async def test_async_tool_use_streaming():
         telemetry=False,
     )
 
-    response_stream = await agent.arun(
-        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
-    )
-
-    responses = []
-    tool_call_seen = False
-
-    async for chunk in response_stream:
-        responses.append(chunk)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
+    async for response in agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+        if response.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(response, "tool") and response.tool:  # type: ignore
+            if response.tool.tool_name:  # type: ignore
                 tool_call_seen = True
+        if response.content is not None and "TSLA" in response.content:
+            keyword_seen_in_response = True
 
-    assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    all_content = "".join([r.content for r in responses if r.content])
-    assert "TSLA" in all_content
+    assert keyword_seen_in_response, "Keyword not found in response"
 
 
 def test_parallel_tool_calls():

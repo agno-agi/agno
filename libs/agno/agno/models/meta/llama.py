@@ -17,7 +17,7 @@ from agno.utils.models.llama import format_message
 
 try:
     from llama_api_client import AsyncLlamaAPIClient, LlamaAPIClient
-    from llama_api_client.types.create_chat_completion_response import CreateChatCompletionResponse
+    from llama_api_client.types.create_chat_completion_response import CreateChatCompletionResponse, Metric
     from llama_api_client.types.create_chat_completion_response_stream_chunk import (
         CreateChatCompletionResponseStreamChunk,
         EventDeltaTextDelta,
@@ -445,7 +445,7 @@ class Llama(Model):
 
         return model_response
 
-    def _get_metrics(self, response_usage: Any) -> Metrics:
+    def _get_metrics(self, response_usage: List[Metric]) -> Metrics:
         """
         Parse the given Llama usage into an Agno Metrics object.
 
@@ -457,12 +457,12 @@ class Llama(Model):
         """
         metrics = Metrics()
 
-        if isinstance(response_usage, dict):
-            metrics.input_tokens = response_usage.get("num_prompt_tokens") or 0
-            metrics.output_tokens = response_usage.get("num_completion_tokens") or 0
-        else:
-            metrics.input_tokens = response_usage.num_prompt_tokens or 0
-            metrics.output_tokens = response_usage.num_completion_tokens or 0
+        for metric in response_usage:
+            metrics_field = metric.metric
+            if metrics_field == "num_prompt_tokens":
+                metrics.input_tokens = int(metric.value)
+            elif metrics_field == "num_completion_tokens":
+                metrics.output_tokens = int(metric.value)
 
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 

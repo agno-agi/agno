@@ -3,7 +3,7 @@ from typing import Optional
 import pytest
 from pydantic import BaseModel, Field
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent  # noqa
 from agno.models.mistral import MistralChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
@@ -24,7 +24,7 @@ def test_tool_use():
     assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)
     assert response.content is not None
-    assert "TSLA" in response.content or "tesla" in response.content.lower()
+    assert "TSLA" in response.content or "tesla" in response.content.lower()  # type: ignore
 
 
 def test_tool_use_stream():
@@ -35,25 +35,15 @@ def test_tool_use_stream():
         telemetry=False,
     )
 
-    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
-
-    responses = []
-    tool_call_seen = False
-
-    for chunk in response_stream:
-        responses.append(chunk)
-
-        # Check for ToolCallStartedEvent or ToolCallCompletedEvent
-        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
-            if chunk.tool.tool_name:
+    for chunk in agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:  # type: ignore
+            if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
+        if chunk.content is not None and "TSLA" in chunk.content:
+            keyword_seen_in_response = True
 
-    assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    full_content = ""
-    for r in responses:
-        full_content += r.content or ""
-    assert "TSLA" in full_content
+    assert keyword_seen_in_response, "Keyword not found in response"
 
 
 def test_tool_use_with_native_structured_outputs():
