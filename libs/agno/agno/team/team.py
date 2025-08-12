@@ -5910,7 +5910,7 @@ class Team:
             )
 
             # 2. Create the member agent task
-            member_agent_task = self._formate_member_agent_task(
+            member_agent_task = self._format_member_agent_task(
                 task_description, expected_output, team_context_str, team_member_interactions_str
             )
 
@@ -6029,7 +6029,7 @@ class Team:
             )
 
             # 2. Create the member agent task
-            member_agent_task = self._formate_member_agent_task(
+            member_agent_task = self._format_member_agent_task(
                 task_description, expected_output, team_context_str, team_member_interactions_str
             )
 
