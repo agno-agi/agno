@@ -6849,7 +6849,9 @@ class Team:
     # Storage
     ###########################################################################
 
-    def get_team_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[TeamSession]:
+    def get_team_session(
+        self, session_id: str, user_id: Optional[str] = None, create_if_not_found: bool = True
+    ) -> Optional[TeamSession]:
         """Load the TeamSession from storage
 
         Returns:
@@ -6871,6 +6873,9 @@ class Team:
             if self.team_session is not None:
                 self.load_team_session(session=self.team_session)
                 return self.team_session
+
+        if not create_if_not_found:
+            return None
 
         # Create new session if none found
         log_debug(f"Creating new TeamSession: {session_id}")
@@ -6955,7 +6960,9 @@ class Team:
             raise Exception("Session name is not set")
 
         # Read from storage
-        self.get_team_session(session_id=session_id)  # type: ignore
+        self.get_team_session(session_id=session_id, create_if_not_found=False)  # type: ignore
+        if not self.team_session:
+            return None
 
         # -*- Rename session
         self.session_name = session_name

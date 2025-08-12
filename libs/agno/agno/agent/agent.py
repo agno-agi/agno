@@ -3829,6 +3829,7 @@ class Agent:
         self,
         session_id: str,
         user_id: Optional[str] = None,
+        create_if_not_found: bool = True,
     ) -> Optional[AgentSession]:
         """Load an AgentSession from database or create a new one if it does not exist.
 
@@ -3857,6 +3858,9 @@ class Agent:
             if self.agent_session is not None:
                 self.load_agent_session(session=self.agent_session)
                 return self.agent_session
+
+        if not create_if_not_found:
+            return None
 
         # Create new session if none found
         log_debug(f"Creating new AgentSession: {session_id}")
@@ -5003,7 +5007,7 @@ class Agent:
 
     def set_session_name(
         self, session_id: Optional[str] = None, autogenerate: bool = False, session_name: Optional[str] = None
-    ) -> None:
+    ) -> Optional[AgentSession]:
         """Set the session name and save to storage"""
         if self.session_id is None and session_id is None:
             raise Exception("Session ID is not set")
@@ -5015,13 +5019,16 @@ class Agent:
             log_debug(f"Generated Session Name: {session_name}")
         elif session_name is None:
             raise Exception("Session Name is not set")
+
         # -*- Read from storage
-        self.get_agent_session(session_id=session_id)  # type: ignore
+        self.get_agent_session(session_id=session_id, create_if_not_found=False)  # type: ignore
+        if not self.agent_session:
+            return None
+
         # -*- Rename session
         self.session_name = session_name
-
         # -*- Save to storage
-        self.save_session(user_id=self.user_id, session_id=session_id)  # type: ignore
+        return self.save_session(user_id=self.user_id, session_id=session_id)  # type: ignore
 
     def _generate_session_name(self, session_id: str) -> str:
         """Generate a name for the session using the first 6 messages from the memory"""
