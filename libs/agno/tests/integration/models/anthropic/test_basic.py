@@ -95,7 +95,8 @@ def test_with_memory():
 
     # Second interaction should remember the name
     response2 = agent.run("What's my name?")
-    assert response2.content is not None and "John Smith" in response2.content
+    assert response2.content is not None
+    assert "John Smith" in response2.content
 
     # Verify memories were created
     messages = agent.get_messages_for_session()

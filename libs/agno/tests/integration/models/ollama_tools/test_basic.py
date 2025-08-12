@@ -19,7 +19,7 @@ def _assert_metrics(response: RunResponse):
 
 
 def test_basic():
-    agent = Agent(model=OllamaTools(id="mistral"), markdown=True, telemetry=False)
+    agent = Agent(model=OllamaTools(id="llama3.2:latest"), markdown=True, telemetry=False)
 
     response: RunResponse = agent.run("Share a 2 sentence horror story")
 
@@ -32,7 +32,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=OllamaTools(id="mistral"), markdown=True, telemetry=False)
+    agent = Agent(model=OllamaTools(id="llama3.2:latest"), markdown=True, telemetry=False)
 
     for response in agent.run("Share a 2 sentence horror story", stream=True):
         assert response.content is not None
@@ -43,7 +43,7 @@ def test_basic_stream():
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(model=OllamaTools(id="mistral"), markdown=True, telemetry=False)
+    agent = Agent(model=OllamaTools(id="llama3.2:latest"), markdown=True, telemetry=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -56,7 +56,7 @@ async def test_async_basic():
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    agent = Agent(model=OllamaTools(id="mistral"), markdown=True, telemetry=False)
+    agent = Agent(model=OllamaTools(id="llama3.2:latest"), markdown=True, telemetry=False)
 
     async for response in agent.arun("Share a 2 sentence horror story", stream=True):
         assert response.content is not None
@@ -66,7 +66,12 @@ async def test_async_basic_stream():
 
 
 def test_with_memory():
-    agent = Agent(model=OllamaTools(id="mistral"), markdown=True, telemetry=False)
+    agent = Agent(
+        model=OllamaTools(id="llama3.2:latest"),
+        add_history_to_context=True,
+        markdown=True,
+        telemetry=False,
+    )
 
     # First interaction
     response1 = agent.run("My name is John Smith")
@@ -92,7 +97,7 @@ def test_response_model():
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(model=OllamaTools(id="mistral"), markdown=True, telemetry=False, response_model=MovieScript)
+    agent = Agent(model=OllamaTools(id="llama3.2:latest"), markdown=True, telemetry=False, response_model=MovieScript)
 
     response = agent.run("Create a movie about time travel")
 
@@ -110,7 +115,7 @@ def test_json_response_mode():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=OllamaTools(id="mistral"),
+        model=OllamaTools(id="llama3.2:latest"),
         use_json_mode=True,
         telemetry=False,
         response_model=MovieScript,
@@ -127,7 +132,7 @@ def test_json_response_mode():
 
 def test_history():
     agent = Agent(
-        model=OllamaTools(id="mistral"),
+        model=OllamaTools(id="llama3.2:latest"),
         db=SqliteDb(db_file="tmp/ollama_tools/test_basic.db"),
         add_history_to_context=True,
         telemetry=False,
@@ -135,10 +140,10 @@ def test_history():
     agent.run("Hello")
     assert agent.run_response is not None
     assert agent.run_response.messages is not None
-    assert len(agent.run_response.messages) == 2
+    assert len(agent.run_response.messages) == 3
     agent.run("Hello 2")
-    assert len(agent.run_response.messages) == 4
+    assert len(agent.run_response.messages) == 5
     agent.run("Hello 3")
-    assert len(agent.run_response.messages) == 6
+    assert len(agent.run_response.messages) == 7
     agent.run("Hello 4")
-    assert len(agent.run_response.messages) == 8
+    assert len(agent.run_response.messages) == 9

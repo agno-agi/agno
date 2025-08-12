@@ -4,10 +4,11 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, Uni
 
 from pydantic import BaseModel
 
+from agno.agent import RunResponse
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.metrics import Metrics
-from agno.models.response import ModelResponse, RunResponse
+from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_warning
 
 try:
@@ -386,8 +387,5 @@ class Ollama(Model):
         metrics.input_tokens = response.get("prompt_eval_count", 0)
         metrics.output_tokens = response.get("eval_count", 0)
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
-
-        if model_duration := response.get("total_duration") is not None:
-            metrics.model_duration = model_duration
 
         return metrics
