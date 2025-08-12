@@ -24,7 +24,8 @@ basic_agent = Agent(
     add_history_to_context=True,
     num_history_runs=3,
     add_datetime_to_context=True,
-    markdown=True,
+    # markdown=True,
+    debug_mode=True,
 )
 basic_team = Team(
     id="basic-team",
@@ -33,6 +34,7 @@ basic_team = Team(
     db=db,
     members=[basic_agent],
     enable_user_memories=True,
+    debug_mode=True,
 )
 basic_workflow = Workflow(
     id="basic-workflow",
@@ -46,6 +48,7 @@ basic_workflow = Workflow(
             agent=basic_agent,
         )
     ],
+    debug_mode=True,
 )
 
 # Setup our AgentOS app
@@ -61,10 +64,11 @@ app = agent_os.get_app()
 
 
 if __name__ == "__main__":
-    """Run our AgentOS.
+    # """Run our AgentOS.
 
-    You can see the configuration and available apps at:
-    http://localhost:7777/config
+    # You can see the configuration and available apps at:
+    # http://localhost:7777/config
 
-    """
-    agent_os.serve(app="basic:app", reload=True)
+    # """
+    # agent_os.serve(app="basic:app", reload=True)
+    basic_workflow.run("Hello")

@@ -369,7 +369,7 @@ class Workflow:
             step_output=step_output,
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name,
-            workflow_id=workflow_run_response.id,
+            workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
             step_name=step_output.step_name,
             step_index=step_index,
@@ -696,7 +696,7 @@ class Workflow:
         workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name,
-            workflow_id=workflow_run_response.id,
+            workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
         )
         yield self._handle_event(workflow_started_event, workflow_run_response)
@@ -855,7 +855,7 @@ class Workflow:
             run_id=workflow_run_response.run_id or "",
             content=workflow_run_response.content,
             workflow_name=workflow_run_response.workflow_name,
-            workflow_id=workflow_run_response.id,
+            workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
             step_results=workflow_run_response.step_results,  # type: ignore
             metadata=workflow_run_response.metadata,
@@ -1062,7 +1062,7 @@ class Workflow:
         workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name,
-            workflow_id=workflow_run_response.id,
+            workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
         )
         yield self._handle_event(workflow_started_event, workflow_run_response, websocket_handler=websocket_handler)
@@ -1230,7 +1230,7 @@ class Workflow:
             run_id=workflow_run_response.run_id or "",
             content=workflow_run_response.content,
             workflow_name=workflow_run_response.workflow_name,
-            workflow_id=workflow_run_response.id,
+            workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
             step_results=workflow_run_response.step_results,  # type: ignore[arg-type]
             metadata=workflow_run_response.metadata,
