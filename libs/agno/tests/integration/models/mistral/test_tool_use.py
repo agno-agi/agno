@@ -92,19 +92,15 @@ async def test_async_tool_use_stream():
         telemetry=False,
     )
 
-    response_stream = await agent.arun(
-        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
-    )
-
     responses = []
     tool_call_seen = False
 
-    async for chunk in response_stream:
-        responses.append(chunk)
+    async for response in agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+        responses.append(response)
 
         # Check for ToolCallStartedEvent or ToolCallCompletedEvent
-        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
-            if chunk.tool.tool_name:
+        if response.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(response, "tool") and response.tool:  # type: ignore
+            if response.tool.tool_name:  # type: ignore
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -155,7 +151,6 @@ def test_multiple_tool_calls():
     assert response.content is not None
 
 
-@pytest.mark.skip("Mistral struggles with custom tool calls")
 def test_tool_call_custom_tool_no_parameters():
     def get_the_weather_in_tokyo():
         """
@@ -179,7 +174,6 @@ def test_tool_call_custom_tool_no_parameters():
     assert "70" in response.content
 
 
-@pytest.mark.skip("Mistral struggles with custom tool calls")
 def test_tool_call_custom_tool_optional_parameters():
     def get_the_weather(city: Optional[str] = None):
         """

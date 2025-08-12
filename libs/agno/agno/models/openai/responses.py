@@ -10,6 +10,7 @@ from agno.exceptions import ModelProviderError
 from agno.media import File
 from agno.models.base import MessageData, Model
 from agno.models.message import Citations, Message, UrlCitation
+from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.response import RunResponse
 from agno.utils.log import log_debug, log_error, log_warning
@@ -19,6 +20,7 @@ from agno.utils.models.schema_utils import get_response_schema_for_provider
 try:
     from openai import APIConnectionError, APIStatusError, AsyncOpenAI, OpenAI, RateLimitError
     from openai.resources.responses.responses import Response, ResponseStreamEvent
+    from openai.types.responses.response_usage import ResponseUsage
 except (ImportError, ModuleNotFoundError) as e:
     raise ImportError("`openai` not installed. Please install using `pip install openai -U`") from e
 
@@ -691,7 +693,7 @@ class OpenAIResponses(Model):
                 _fc_message.tool_call_id = tool_call_ids[_fc_message_index]
                 messages.append(_fc_message)
 
-    def parse_provider_response(self, response: Response, **kwargs) -> ModelResponse:
+    def _parse_provider_response(self, response: Response, **kwargs) -> ModelResponse:
         """
         Parse the OpenAI response into a ModelResponse.
 
@@ -757,7 +759,7 @@ class OpenAIResponses(Model):
             model_response.reasoning_content = response.output_text
 
         if response.usage is not None:
-            model_response.response_usage = response.usage
+            model_response.response_usage = self._get_metrics(response.usage)
 
         return model_response
 
@@ -846,20 +848,15 @@ class OpenAIResponses(Model):
                 assistant_message.tool_calls = []
             assistant_message.tool_calls.append(tool_use)
 
-            stream_data.extra = stream_data.extra or {}
-            stream_data.extra.setdefault("tool_call_ids", []).append(tool_use["call_id"])
+            stream_data.metadata = stream_data.metadata or {}
+            stream_data.metadata.setdefault("tool_call_ids", []).append(tool_use["call_id"])
             tool_use = {}
 
         elif stream_event.type == "response.completed":
             model_response = ModelResponse()
             # Add usage metrics if present
             if stream_event.response.usage is not None:
-                model_response.response_usage = stream_event.response.usage
-
-            self._add_metrics_to_assistant_message(
-                assistant_message=assistant_message,
-                response_usage=model_response.response_usage,
-            )
+                model_response.response_usage = self._get_metrics(stream_event.response.usage)
 
         return model_response, tool_use
 
@@ -924,5 +921,23 @@ class OpenAIResponses(Model):
             if model_response is not None:
                 yield model_response
 
-    def parse_provider_response_delta(self, response: Any) -> ModelResponse:  # type: ignore
+    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:  # type: ignore
         pass
+
+    def _get_metrics(self, response_usage: ResponseUsage) -> Metrics:
+        """
+        Parse the given OpenAI-specific usage into an Agno Metrics object.
+
+        Args:
+            response: The response from the provider.
+
+        Returns:
+            Metrics: Parsed metrics data
+        """
+        metrics = Metrics()
+
+        metrics.input_tokens = response_usage.input_tokens or 0
+        metrics.output_tokens = response_usage.output_tokens or 0
+        metrics.total_tokens = response_usage.total_tokens or 0
+
+        return metrics
