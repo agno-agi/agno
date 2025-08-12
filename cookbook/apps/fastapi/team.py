@@ -26,7 +26,6 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.media import Image
 from agno.tools.hackernews import HackerNewsTools
 from agno.app.fastapi import FastAPIApp
 
