@@ -1,12 +1,13 @@
 import logging
 from os import getenv
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from rich.logging import RichHandler
 from rich.text import Text
 
 LOGGER_NAME = "agno"
 TEAM_LOGGER_NAME = f"{LOGGER_NAME}-team"
+WORKFLOW_LOGGER_NAME = f"{LOGGER_NAME}-workflow"
 
 # Define custom styles for different log sources
 LOG_STYLES = {
@@ -17,6 +18,10 @@ LOG_STYLES = {
     "team": {
         "debug": "magenta",
         "info": "steel_blue1",
+    },
+    "workflow": {
+        "debug": "sandy_brown",
+        "info": "orange3",
     },
 }
 
@@ -35,6 +40,10 @@ class ColoredRichHandler(RichHandler):
         if self.source_type and self.source_type in LOG_STYLES:
             if level_name in LOG_STYLES[self.source_type]:
                 color = LOG_STYLES[self.source_type][level_name]
+                return Text(record.levelname, style=color)
+        else:
+            if level_name in LOG_STYLES["agent"]:
+                color = LOG_STYLES["agent"][level_name]
                 return Text(record.levelname, style=color)
         return super().get_level_text(record)
 
@@ -88,24 +97,48 @@ def build_logger(logger_name: str, source_type: Optional[str] = None) -> Any:
 
 agent_logger: AgnoLogger = build_logger(LOGGER_NAME, source_type="agent")
 team_logger: AgnoLogger = build_logger(TEAM_LOGGER_NAME, source_type="team")
+workflow_logger: AgnoLogger = build_logger(WORKFLOW_LOGGER_NAME, source_type="workflow")
 
 # Set the default logger to the agent logger
 logger: AgnoLogger = agent_logger
 
 debug_on: bool = False
+debug_level: Literal[1, 2] = 1
 
 
-def set_log_level_to_debug(source_type: Optional[str] = None):
+def set_log_level_to_debug(source_type: Optional[str] = None, level: Literal[1, 2] = 1):
+    if source_type is None:
+        use_agent_logger()
+
     _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
     _logger.setLevel(logging.DEBUG)
 
     global debug_on
     debug_on = True
 
+    global debug_level
+    debug_level = level
+
 
 def set_log_level_to_info(source_type: Optional[str] = None):
     _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
     _logger.setLevel(logging.INFO)
+
+    global debug_on
+    debug_on = False
+
+
+def set_log_level_to_warning(source_type: Optional[str] = None):
+    _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
+    _logger.setLevel(logging.WARNING)
+
+    global debug_on
+    debug_on = False
+
+
+def set_log_level_to_error(source_type: Optional[str] = None):
+    _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
+    _logger.setLevel(logging.ERROR)
 
     global debug_on
     debug_on = False
@@ -135,11 +168,20 @@ def use_agent_logger():
     logger = agent_logger
 
 
-def log_debug(msg, center: bool = False, symbol: str = "*", *args, **kwargs):
+def use_workflow_logger():
+    """Switch the default logger to use workflow_logger"""
+    global logger
+    logger = workflow_logger
+
+
+def log_debug(msg, center: bool = False, symbol: str = "*", log_level: Literal[1, 2] = 1, *args, **kwargs):
     global logger
     global debug_on
+    global debug_level
+
     if debug_on:
-        logger.debug(msg, center, symbol, *args, **kwargs)
+        if debug_level >= log_level:
+            logger.debug(msg, center, symbol, *args, **kwargs)
 
 
 def log_info(msg, center: bool = False, symbol: str = "*", *args, **kwargs):

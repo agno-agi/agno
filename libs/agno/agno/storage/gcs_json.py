@@ -6,6 +6,7 @@ from agno.storage.json import JsonStorage, Storage
 from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
+from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
 from agno.storage.session.workflow import WorkflowSession
 from agno.utils.log import logger
 
@@ -35,7 +36,7 @@ class GCSJsonStorage(JsonStorage):
         self,
         bucket_name: str,
         prefix: Optional[str] = "",
-        mode: Optional[Literal["agent", "team", "workflow"]] = "agent",
+        mode: Optional[Literal["agent", "team", "workflow", "workflow_v2"]] = "agent",
         project: Optional[str] = None,
         location: Optional[str] = None,
         credentials: Optional[Any] = None,
@@ -104,6 +105,8 @@ class GCSJsonStorage(JsonStorage):
             return TeamSession.from_dict(data)
         elif self.mode == "workflow":
             return WorkflowSession.from_dict(data)
+        elif self.mode == "workflow_v2":
+            return WorkflowSessionV2.from_dict(data)
         return None
 
     def get_all_session_ids(self, user_id: Optional[str] = None, entity_id: Optional[str] = None) -> List[str]:
@@ -136,6 +139,8 @@ class GCSJsonStorage(JsonStorage):
                         session = TeamSession.from_dict(data)
                     elif self.mode == "workflow":
                         session = WorkflowSession.from_dict(data)
+                    elif self.mode == "workflow_v2":
+                        session = WorkflowSessionV2.from_dict(data)
                     if session is not None:
                         sessions.append(session)
                 except Exception as e:
@@ -199,7 +204,8 @@ class GCSJsonStorage(JsonStorage):
                     session = TeamSession.from_dict(data)
                 elif self.mode == "workflow":
                     session = WorkflowSession.from_dict(data)
-
+                elif self.mode == "workflow_v2":
+                    session = WorkflowSessionV2.from_dict(data)
                 if session is not None:
                     sessions.append(session)
 
@@ -216,7 +222,7 @@ class GCSJsonStorage(JsonStorage):
         try:
             data = session.to_dict()
             data["updated_at"] = int(time.time())
-            if "created_at" not in data:
+            if "created_at" not in data or data["created_at"] is None:
                 data["created_at"] = data["updated_at"]
             json_data = self.serialize(data)
             blob.upload_from_string(json_data, content_type="application/json")

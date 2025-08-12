@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 import streamlit as st
 from agents import get_mcp_agent
 from agno.agent import Agent
+from agno.models.response import ToolExecution
 from agno.tools.mcp import MCPTools
 from agno.utils.log import logger
 from mcp_client import MCPServerConfig
@@ -119,7 +120,7 @@ def add_message(
     )
 
 
-def display_tool_calls(tool_calls_container, tools):
+def display_tool_calls(tool_calls_container, tools: List[ToolExecution]):
     """Display tool calls in a streamlit container with expandable sections.
 
     Args:
@@ -132,15 +133,15 @@ def display_tool_calls(tool_calls_container, tools):
     try:
         with tool_calls_container.container():
             for tool_call in tools:
-                tool_name = tool_call.get("tool_name", "Unknown Tool")
-                tool_args = tool_call.get("tool_args", {})
-                content = tool_call.get("content")
-                metrics = tool_call.get("metrics", {})
+                tool_name = tool_call.tool_name or "Unknown Tool"
+                tool_args = tool_call.tool_args or {}
+                content = tool_call.result or None
+                metrics = tool_call.metrics or None
 
                 # Add timing information
                 execution_time_str = "N/A"
-                if metrics and isinstance(metrics, dict):
-                    execution_time = metrics.get("time")
+                if metrics and hasattr(metrics, "time"):
+                    execution_time = metrics.time
                     if execution_time is None:
                         execution_time_str = "N/A"
                     else:

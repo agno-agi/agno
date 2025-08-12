@@ -361,9 +361,12 @@ async def test_async_upsert(mock_pinecone_db, mock_embedder):
     to_thread_mock.return_value = prepared_vectors_batch
 
     # Mock async functions
-    with patch.object(mock_pinecone_db, "_prepare_vectors", return_value=prepared_vectors_batch), patch.object(
-        mock_pinecone_db, "_upsert_vectors"
-    ), patch("asyncio.to_thread", to_thread_mock), patch("asyncio.gather", gather_mock):
+    with (
+        patch.object(mock_pinecone_db, "_prepare_vectors", return_value=prepared_vectors_batch),
+        patch.object(mock_pinecone_db, "_upsert_vectors"),
+        patch("asyncio.to_thread", to_thread_mock),
+        patch("asyncio.gather", gather_mock),
+    ):
         # Call the method
         await mock_pinecone_db.async_upsert(docs)
 
@@ -393,9 +396,10 @@ async def test_async_search(mock_pinecone_db):
     query = "test query"
     expected_results = [Document(id="test", content="Test document")]
 
-    with patch.object(mock_pinecone_db, "search", return_value=expected_results), patch(
-        "asyncio.to_thread"
-    ) as mock_to_thread:
+    with (
+        patch.object(mock_pinecone_db, "search", return_value=expected_results),
+        patch("asyncio.to_thread") as mock_to_thread,
+    ):
         mock_to_thread.return_value = expected_results
 
         results = await mock_pinecone_db.async_search(query)

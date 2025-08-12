@@ -24,8 +24,9 @@ def mock_docx():
 
 def test_docx_reader_read_file(mock_docx):
     """Test reading a DOCX file"""
-    with patch("pathlib.Path.exists", return_value=True), patch(
-        "agno.document.reader.docx_reader.DocxDocument", return_value=mock_docx
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("agno.document.reader.docx_reader.DocxDocument", return_value=mock_docx),
     ):
         reader = DocxReader()
         documents = reader.read(Path("test.docx"))
@@ -39,8 +40,9 @@ def test_docx_reader_read_file(mock_docx):
 @pytest.mark.asyncio
 async def test_docx_reader_async_read_file(mock_docx):
     """Test reading a DOCX file asynchronously"""
-    with patch("pathlib.Path.exists", return_value=True), patch(
-        "agno.document.reader.docx_reader.DocxDocument", return_value=mock_docx
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("agno.document.reader.docx_reader.DocxDocument", return_value=mock_docx),
     ):
         reader = DocxReader()
         documents = await reader.async_read(Path("test.docx"))
@@ -63,8 +65,9 @@ def test_docx_reader_with_chunking():
         Document(name="test", id="test_2", content="Chunk 2"),
     ]
 
-    with patch("pathlib.Path.exists", return_value=True), patch(
-        "agno.document.reader.docx_reader.DocxDocument", return_value=mock_doc
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("agno.document.reader.docx_reader.DocxDocument", return_value=mock_doc),
     ):
         reader = DocxReader()
         reader.chunk = True
@@ -103,8 +106,9 @@ def test_docx_reader_invalid_file():
 
 def test_docx_reader_file_error():
     """Test handling of file reading errors"""
-    with patch("pathlib.Path.exists", return_value=True), patch(
-        "agno.document.reader.docx_reader.DocxDocument", side_effect=Exception("File error")
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("agno.document.reader.docx_reader.DocxDocument", side_effect=Exception("File error")),
     ):
         reader = DocxReader()
         documents = reader.read(Path("test.docx"))
@@ -114,8 +118,9 @@ def test_docx_reader_file_error():
 @pytest.mark.asyncio
 async def test_async_docx_processing(mock_docx):
     """Test concurrent async processing"""
-    with patch("pathlib.Path.exists", return_value=True), patch(
-        "agno.document.reader.docx_reader.DocxDocument", return_value=mock_docx
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("agno.document.reader.docx_reader.DocxDocument", return_value=mock_docx),
     ):
         reader = DocxReader()
         tasks = [reader.async_read(Path("test.docx")) for _ in range(3)]
@@ -142,8 +147,9 @@ async def test_docx_reader_async_with_chunking():
         Document(name="test", id="test_2", content="Chunk 2"),
     ]
 
-    with patch("pathlib.Path.exists", return_value=True), patch(
-        "agno.document.reader.docx_reader.DocxDocument", return_value=mock_doc
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("agno.document.reader.docx_reader.DocxDocument", return_value=mock_doc),
     ):
         reader = DocxReader()
         reader.chunk = True
@@ -160,8 +166,9 @@ async def test_docx_reader_async_with_chunking():
 
 def test_docx_reader_metadata(mock_docx):
     """Test document metadata"""
-    with patch("pathlib.Path.exists", return_value=True), patch(
-        "agno.document.reader.docx_reader.DocxDocument", return_value=mock_docx
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("agno.document.reader.docx_reader.DocxDocument", return_value=mock_docx),
     ):
         reader = DocxReader()
         documents = reader.read(Path("test_doc.docx"))

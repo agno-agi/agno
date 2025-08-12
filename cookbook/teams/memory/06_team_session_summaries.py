@@ -69,9 +69,7 @@ if __name__ == "__main__":
         )
     )
 
-    session_summary = memory.get_session_summary(
-        user_id=user_id, session_id=session_id_1
-    )
+    session_summary = team.get_session_summary(user_id=user_id, session_id=session_id_1)
     print("Session Summary: ", session_summary.summary)
 
     session_id_2 = "session_2"

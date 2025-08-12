@@ -79,7 +79,10 @@ class ApifyTools(Toolkit):
             for actor_id in actor_list:
                 tools.append(actor_id)
 
-        super().__init__(name="ApifyTools", tools=tools)
+        super().__init__(name="ApifyTools", tools=[], auto_register=False)
+
+        for actor_id in tools:
+            self.register_actor(actor_id)
 
     def register_actor(self, actor_id: str) -> None:
         """Register an Apify Actor as a function in the toolkit.

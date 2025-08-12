@@ -11,7 +11,7 @@ from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 
 try:
     from huggingface_hub import (
@@ -117,7 +117,7 @@ class HuggingFace(Model):
         self.async_client = AsyncInferenceClient(**_client_params)
         return self.async_client
 
-    def get_request_kwargs(
+    def get_request_params(
         self, tools: Optional[List[Dict[str, Any]]] = None, tool_choice: Optional[Union[str, Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
@@ -157,6 +157,9 @@ class HuggingFace(Model):
                 _request_params["tool_choice"] = tool_choice
         if self.request_params is not None:
             _request_params.update(self.request_params)
+
+        if _request_params:
+            log_debug(f"Calling {self.provider} with request parameters: {_request_params}", log_level=2)
         return _request_params
 
     def to_dict(self) -> Dict[str, Any]:
@@ -236,7 +239,7 @@ class HuggingFace(Model):
             return self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],
-                **self.get_request_kwargs(tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(tools=tools, tool_choice=tool_choice),
             )
         except InferenceTimeoutError as e:
             log_error(f"Error invoking HuggingFace model: {e}")
@@ -260,7 +263,7 @@ class HuggingFace(Model):
                 return await client.chat.completions.create(
                     model=self.id,
                     messages=[self._format_message(m) for m in messages],
-                    **self.get_request_kwargs(tools=tools, tool_choice=tool_choice),
+                    **self.get_request_params(tools=tools, tool_choice=tool_choice),
                 )
         except InferenceTimeoutError as e:
             log_error(f"Error invoking HuggingFace model: {e}")
@@ -285,7 +288,7 @@ class HuggingFace(Model):
                 messages=[self._format_message(m) for m in messages],
                 stream=True,
                 stream_options={"include_usage": True},
-                **self.get_request_kwargs(tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(tools=tools, tool_choice=tool_choice),
             )  # type: ignore
         except InferenceTimeoutError as e:
             log_error(f"Error invoking HuggingFace model: {e}")
@@ -311,7 +314,7 @@ class HuggingFace(Model):
                     messages=[self._format_message(m) for m in messages],
                     stream=True,
                     stream_options={"include_usage": True},
-                    **self.get_request_kwargs(tools=tools, tool_choice=tool_choice),
+                    **self.get_request_params(tools=tools, tool_choice=tool_choice),
                 )
                 async for chunk in stream:
                     yield chunk

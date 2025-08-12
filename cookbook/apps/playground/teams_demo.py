@@ -20,15 +20,16 @@ memory_db = PostgresMemoryDb(table_name="memory", db_url=db_url)
 # No need to set the model, it gets set by the agent to the agent's model
 memory = Memory(db=memory_db)
 
+agent_storage = PostgresStorage(
+    table_name="agent_sessions", db_url=db_url, auto_upgrade_schema=True
+)
 
 file_agent = Agent(
     name="File Upload Agent",
     agent_id="file-upload-agent",
     role="Answer questions about the uploaded files",
     model=Claude(id="claude-3-7-sonnet-latest"),
-    storage=PostgresStorage(
-        table_name="agent_sessions", db_url=db_url, auto_upgrade_schema=True
-    ),
+    storage=agent_storage,
     memory=memory,
     enable_user_memories=True,
     instructions=[
@@ -44,9 +45,7 @@ video_agent = Agent(
     model=Gemini(id="gemini-2.0-flash"),
     agent_id="video-understanding-agent",
     role="Answer questions about video files",
-    storage=PostgresStorage(
-        table_name="agent_sessions", db_url=db_url, auto_upgrade_schema=True
-    ),
+    storage=agent_storage,
     memory=memory,
     enable_user_memories=True,
     add_history_to_messages=True,
@@ -60,9 +59,7 @@ audio_agent = Agent(
     agent_id="audio-understanding-agent",
     role="Answer questions about audio files",
     model=OpenAIChat(id="gpt-4o-audio-preview"),
-    storage=PostgresStorage(
-        table_name="agent_sessions", db_url=db_url, auto_upgrade_schema=True
-    ),
+    storage=agent_storage,
     memory=memory,
     enable_user_memories=True,
     add_history_to_messages=True,
@@ -84,9 +81,7 @@ web_agent = Agent(
     enable_user_memories=True,
     show_tool_calls=True,
     markdown=True,
-    storage=PostgresStorage(
-        table_name="web_agent", db_url=db_url, auto_upgrade_schema=True
-    ),
+    storage=agent_storage,
 )
 
 finance_agent = Agent(
@@ -109,26 +104,30 @@ finance_agent = Agent(
     enable_user_memories=True,
     show_tool_calls=True,
     markdown=True,
+    storage=agent_storage,
 )
 
 simple_agent = Agent(
     name="Simple Agent",
     role="Simple agent",
+    agent_id="simple_agent",
     model=OpenAIChat(id="gpt-4o"),
     instructions=["You are a simple agent"],
     memory=memory,
     enable_user_memories=True,
+    storage=agent_storage,
 )
 
 research_agent = Agent(
     name="Research Agent",
     role="Research agent",
+    agent_id="research_agent",
     model=OpenAIChat(id="gpt-4o"),
     instructions=["You are a research agent"],
     tools=[DuckDuckGoTools(), ExaTools()],
-    agent_id="research_agent",
     memory=memory,
     enable_user_memories=True,
+    storage=agent_storage,
 )
 
 research_team = Team(

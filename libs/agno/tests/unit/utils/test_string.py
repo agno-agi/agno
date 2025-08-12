@@ -2,7 +2,76 @@ from typing import List, Optional
 
 from pydantic import BaseModel
 
-from agno.utils.string import parse_response_model_str, url_safe_string
+from agno.utils.string import parse_response_model_str, safe_content_hash, url_safe_string
+
+
+def test_safe_content_hash_normal_content():
+    """Test safe_content_hash with normal content"""
+    content = "Hello, world!"
+    result = safe_content_hash(content)
+    # Should produce consistent hash
+    assert result == "6cd3556deb0da54bca060b4c39479839"
+    assert len(result) == 32  # MD5 hash length
+
+
+def test_safe_content_hash_null_characters():
+    """Test safe_content_hash with null characters"""
+    content = "Hello\x00world"
+    result = safe_content_hash(content)
+    # Should handle null characters by replacing with replacement character
+    assert result is not None
+    assert len(result) == 32
+    # Should be different from content without null chars
+    normal_result = safe_content_hash("Helloworld")
+    assert result != normal_result
+
+
+def test_safe_content_hash_unicode_surrogates():
+    """Test safe_content_hash with Unicode surrogate characters (PDF mathematical formulas)"""
+    # This is the type of content that causes UnicodeEncodeError in PDFs with math formulas
+    content = "Mathematical formula: \ud835\udc00 = \ud835\udc01 + \ud835\udc02"
+    result = safe_content_hash(content)
+    # Should not raise UnicodeEncodeError and produce valid hash
+    assert result is not None
+    assert len(result) == 32
+    assert isinstance(result, str)
+
+
+def test_safe_content_hash_mixed_problematic_content():
+    """Test safe_content_hash with both null characters and surrogates"""
+    content = "Formula\x00with\ud835\udc00surrogates\x00and\ud835\udc01nulls"
+    result = safe_content_hash(content)
+    # Should handle both types of problematic characters
+    assert result is not None
+    assert len(result) == 32
+
+
+def test_safe_content_hash_empty_content():
+    """Test safe_content_hash with empty content"""
+    content = ""
+    result = safe_content_hash(content)
+    # Should handle empty string
+    assert result == "d41d8cd98f00b204e9800998ecf8427e"  # MD5 of empty string
+    assert len(result) == 32
+
+
+def test_safe_content_hash_consistency():
+    """Test that safe_content_hash produces consistent results"""
+    content = "Test content for consistency"
+    result1 = safe_content_hash(content)
+    result2 = safe_content_hash(content)
+    # Should always produce the same hash for the same content
+    assert result1 == result2
+
+
+def test_safe_content_hash_pdf_mathematical_symbols():
+    """Test with actual mathematical symbols that appear in PDFs"""
+    # These are Unicode characters commonly found in mathematical PDFs that cause issues
+    content = "∑∏∫∂∇∆√∞≠≤≥±∓∈∉∪∩⊂⊃⊆⊇∀∃"
+    result = safe_content_hash(content)
+    # Should handle mathematical symbols without issues
+    assert result is not None
+    assert len(result) == 32
 
 
 def test_url_safe_string_spaces():
@@ -61,6 +130,15 @@ def test_parse_direct_json():
     assert result is not None
     assert result.name == "test"
     assert result.value == "123"
+
+
+def test_parse_already_escaped_string():
+    """Test parsing a clean JSON string directly"""
+    content = '{"name": "test", "value": "Already escaped "quote""}'
+    result = parse_response_model_str(content, MockModel)
+    assert result is not None
+    assert result.name == "test"
+    assert result.value == 'Already escaped "quote"'
 
 
 def test_parse_json_with_markdown_block():
@@ -224,3 +302,116 @@ def test_parse_nested_json():
     assert result.steps[0].description == "Step 1 description"
     assert result.steps[1].step == "2"
     assert result.steps[1].description == "Step 2 description"
+
+
+def test_parse_concatenated_reasoning_steps():
+    """Test concatenated JSON objects."""
+
+    from agno.reasoning.step import ReasoningSteps
+
+    content = (
+        '{"reasoning_steps":[{"title":"Step A","confidence":1.0}]}'
+        '{"reasoning_steps":[{"title":"Step B","confidence":0.9}]}'
+    )
+
+    result = parse_response_model_str(content, ReasoningSteps)
+
+    assert result is not None
+    assert len(result.reasoning_steps) == 2
+    assert result.reasoning_steps[0].title == "Step A"
+    assert result.reasoning_steps[1].title == "Step B"
+
+
+def test_parse_json_with_prefix_suffix_noise():
+    """Test JSON with trailing characters."""
+
+    from agno.reasoning.step import ReasoningSteps
+
+    content = 'Here is my reasoning: {"reasoning_steps":[{"title":"Only Step","confidence":0.8}]} -- end of reasoning'
+
+    result = parse_response_model_str(content, ReasoningSteps)
+
+    assert result is not None
+    assert len(result.reasoning_steps) == 1
+    assert result.reasoning_steps[0].title == "Only Step"
+
+
+def test_parse_preserves_field_name_case():
+    """Test that field names with mixed case are preserved correctly"""
+
+    class MixedCaseModel(BaseModel):
+        Supplier_name: str
+        newData: str
+        camelCase: str
+        UPPER_CASE: str
+
+    content = '{"Supplier_name": "test supplier", "newData": "some data", "camelCase": "camel value", "UPPER_CASE": "upper value"}'
+    result = parse_response_model_str(content, MixedCaseModel)
+
+    assert result is not None
+    assert result.Supplier_name == "test supplier"
+    assert result.newData == "some data"
+    assert result.camelCase == "camel value"
+    assert result.UPPER_CASE == "upper value"
+
+
+def test_parse_preserves_field_name_case_with_cleanup_path():
+    """Test that field names with mixed case are preserved when going through the cleanup path"""
+
+    class MixedCaseModel(BaseModel):
+        Supplier_name: str
+        newData: str
+
+    content = '{"Supplier_name": "test \\"quoted\\" supplier", "newData": "some \\"quoted\\" data"}'
+    result = parse_response_model_str(content, MixedCaseModel)
+
+    assert result is not None
+    assert result.Supplier_name == 'test "quoted" supplier'
+    assert result.newData == 'some "quoted" data'
+
+
+def test_parse_preserves_field_name_case_with_markdown():
+    """Test that field names with mixed case are preserved when parsing from markdown blocks with special formatting"""
+
+    class MixedCaseModel(BaseModel):
+        Supplier_name: str
+        newData: str
+
+    content = """```json
+    {
+        "Supplier_name": "test "quoted" supplier",
+        "newData": "some "quoted" data"
+    }
+    ```"""
+    result = parse_response_model_str(content, MixedCaseModel)
+
+    assert result is not None
+    assert result.Supplier_name == 'test "quoted" supplier'
+    assert result.newData == 'some "quoted" data'
+
+
+def test_parse_json_with_python_code_in_value():
+    """Test parsing JSON with valid Python code containing # and * characters as a value"""
+
+    class CodeModel(BaseModel):
+        function_name: str
+        code: str
+        description: str
+
+    content = """```json
+    {
+        "function_name": "calculate_factorial",
+        "code": "def factorial(n):\n    # Calculate factorial of n\n    if n <= 1:\n        return 1\n    return n * factorial(n - 1)",
+        "description": "A recursive factorial function with comments and multiplication"
+    }
+    ```"""
+
+    result = parse_response_model_str(content, CodeModel)
+
+    assert result is not None
+    assert result.function_name == "calculate_factorial"
+    assert (
+        result.code
+        == "def factorial(n):     # Calculate factorial of n     if n <= 1:         return 1     return n * factorial(n - 1)"
+    )
+    assert result.description == "A recursive factorial function with comments and multiplication"
