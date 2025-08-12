@@ -35,7 +35,7 @@ def sample_agent_session() -> AgentSession:
     """Fixture returning a sample AgentSession"""
     agent_run = RunResponse(
         run_id="test_agent_run_1",
-        agent_id="test_agent_1",
+        id="test_agent_1",
         user_id="test_user_1",
         status=RunStatus.completed,
         messages=[],
@@ -62,7 +62,7 @@ def sample_team_session() -> TeamSession:
     """Fixture returning a sample TeamSession"""
     team_run = TeamRunResponse(
         run_id="test_team_run_1",
-        team_id="test_team_1",
+        id="test_team_1",
         status=RunStatus.completed,
         messages=[],
         created_at=int(time.time()),
@@ -580,7 +580,7 @@ def test_upsert_session_handles_all_agent_session_fields(postgres_db_real: Postg
     # Create comprehensive AgentSession with all possible fields populated
     agent_run = RunResponse(
         run_id="test_run_comprehensive",
-        agent_id="comprehensive_agent",
+        id="comprehensive_agent",
         user_id="comprehensive_user",
         status=RunStatus.completed,
         messages=[],
@@ -639,7 +639,7 @@ def test_upsert_session_handles_all_team_session_fields(postgres_db_real: Postgr
     # Create comprehensive TeamSession with all possible fields populated
     team_run = TeamRunResponse(
         run_id="test_team_run_comprehensive",
-        team_id="comprehensive_team",
+        id="comprehensive_team",
         status=RunStatus.completed,
         messages=[],
         created_at=int(time.time()),

@@ -109,7 +109,7 @@ EXPECTED_OUTPUT_TEMPLATE = dedent("""\
 
 sage = Agent(
     name="Sage",
-    agent_id="sage",
+    id="sage",
     model=Claude(id="claude-3-7-sonnet-latest"),
     db=PostgresDb(db_url=db_url, session_table="sage_sessions"),
     tools=[

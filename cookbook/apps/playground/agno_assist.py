@@ -133,7 +133,7 @@ agent_knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-fu
 # Create the agent
 agno_support = Agent(
     name="Agno_Assist",
-    agent_id="agno_assist",
+    id="agno_assist",
     model=OpenAIChat(id="gpt-4o"),
     description=_description,
     instructions=_instructions,
@@ -159,7 +159,7 @@ agno_support = Agent(
 
 agno_support_voice = Agent(
     name="Agno_Assist_Voice",
-    agent_id="agno-assist-voice",
+    id="agno-assist-voice",
     model=OpenAIChat(
         id="gpt-4o-audio-preview",
         modalities=["text", "audio"],

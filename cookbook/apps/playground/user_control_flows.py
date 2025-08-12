@@ -100,7 +100,7 @@ class EmailTools(Toolkit):
 
 
 double_confirmation_agent = Agent(
-    agent_id="double-confirmation-agent",
+    id="double-confirmation-agent",
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[
         get_top_hackernews_stories,
@@ -112,7 +112,7 @@ double_confirmation_agent = Agent(
     ),
 )
 user_input_required_agent = Agent(
-    agent_id="user-input-required-agent",
+    id="user-input-required-agent",
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[send_email],
     markdown=True,
@@ -122,7 +122,7 @@ user_input_required_agent = Agent(
 )
 agentic_user_input_agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    agent_id="agentic-user-input-agent",
+    id="agentic-user-input-agent",
     tools=[EmailTools(), UserControlFlowTools()],
     markdown=True,
     storage=PostgresStorage(
@@ -132,7 +132,7 @@ agentic_user_input_agent = Agent(
 
 confirmation_required_agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    agent_id="confirmation-required-agent",
+    id="confirmation-required-agent",
     tools=[
         get_top_hackernews_stories,
         YFinanceTools(requires_confirmation_tools=["get_current_stock_price"]),
@@ -144,7 +144,7 @@ confirmation_required_agent = Agent(
 )
 combined_agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    agent_id="combined-agent",
+    id="combined-agent",
     tools=[
         EmailTools(),
         UserControlFlowTools(),

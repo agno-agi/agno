@@ -22,7 +22,7 @@ memory = Memory(db=memory_db)
 simple_agent = Agent(
     name="Simple Agent",
     role="Answer basic questions",
-    agent_id="simple-agent",
+    id="simple-agent",
     model=OpenAIChat(id="gpt-4o-mini"),
     storage=SqliteStorage(
         table_name="simple_agent", db_file=agent_storage_file, auto_upgrade_schema=True
@@ -38,7 +38,7 @@ simple_agent = Agent(
 web_agent = Agent(
     name="Web Agent",
     role="Search the web for information",
-    agent_id="web-agent",
+    id="web-agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[DuckDuckGoTools()],
     instructions=[
@@ -59,7 +59,7 @@ web_agent = Agent(
 finance_agent = Agent(
     name="Finance Agent",
     role="Get financial data",
-    agent_id="finance-agent",
+    id="finance-agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[
         YFinanceTools(
@@ -87,7 +87,7 @@ research_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     instructions=["You are a research agent"],
     tools=[DuckDuckGoTools(), ExaTools()],
-    agent_id="research_agent",
+    id="research_agent",
     memory=memory,
     storage=SqliteStorage(
         table_name="research_agent",
@@ -103,7 +103,7 @@ research_team = Team(
     members=[research_agent, simple_agent],
     model=OpenAIChat(id="gpt-4o"),
     mode="coordinate",
-    team_id="research-team",
+    id="research-team",
     instructions=[
         "You are the lead researcher of a research team! 🔍",
     ],

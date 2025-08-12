@@ -62,7 +62,7 @@ def test_route_team_multiple_response_models():
     assert response.content.company_name is not None
     assert response.content.analysis is not None
     assert len(response.member_responses) == 1
-    assert response.member_responses[0].agent_id == stock_searcher.agent_id
+    assert response.member_responses[0].id == stock_searcher.id
 
     # This should route to the company_info_agent
     response = team.run("What is in the news about NVDA?")
@@ -72,7 +72,7 @@ def test_route_team_multiple_response_models():
     assert response.content.company_name is not None
     assert response.content.analysis is not None
     assert len(response.member_responses) == 1
-    assert response.member_responses[0].agent_id == company_info_agent.agent_id
+    assert response.member_responses[0].id == company_info_agent.id
 
 
 def test_route_team_mixed_structured_output():
@@ -111,7 +111,7 @@ def test_route_team_mixed_structured_output():
     assert isinstance(response.content, StockInfo)
     assert response.content.symbol == "AAPL"
     assert len(response.member_responses) == 1
-    assert response.member_responses[0].agent_id == stock_agent.agent_id
+    assert response.member_responses[0].id == stock_agent.id
 
     # This should route to the news_agent and return unstructured output
     response = team.run("Tell me the latest news about AAPL")
@@ -120,4 +120,4 @@ def test_route_team_mixed_structured_output():
     assert isinstance(response.content, str)
     assert len(response.content) > 0
     assert len(response.member_responses) == 1
-    assert response.member_responses[0].agent_id == news_agent.agent_id
+    assert response.member_responses[0].id == news_agent.id

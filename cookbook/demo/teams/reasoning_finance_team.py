@@ -26,7 +26,7 @@ memory = Memory(
 web_agent = Agent(
     name="Web Search Agent",
     role="Handle web search requests and general research",
-    agent_id="web_agent",
+    id="web_agent",
     model=OpenAIChat(id="gpt-4.1"),
     tools=[DuckDuckGoTools()],
     storage=PostgresAgentStorage(
@@ -46,7 +46,7 @@ web_agent = Agent(
 finance_agent = Agent(
     name="Finance Agent",
     role="Handle financial data requests and market analysis",
-    agent_id="finance_agent",
+    id="finance_agent",
     model=OpenAIChat(id="gpt-4.1"),
     tools=[
         YFinanceTools(
@@ -79,7 +79,7 @@ def get_reasoning_finance_team():
     return Team(
         name="Reasoning Finance Team",
         mode="coordinate",
-        team_id="reasoning_finance_team",
+        id="reasoning_finance_team",
         model=Claude(id="claude-sonnet-4-20250514"),
         members=[
             web_agent,

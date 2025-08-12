@@ -48,7 +48,7 @@ class AgentSummaryResponse(BaseModel):
 
     @classmethod
     def from_agent(cls, agent: Agent) -> "AgentSummaryResponse":
-        return cls(agent_id=agent.agent_id, name=agent.name, description=agent.description)
+        return cls(agent_id=agent.id, name=agent.name, description=agent.description)
 
 
 class TeamSummaryResponse(BaseModel):
@@ -86,7 +86,7 @@ class ModelResponse(BaseModel):
 
 
 class AgentResponse(BaseModel):
-    agent_id: Optional[str] = None
+    id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
     instructions: Optional[Union[List[str], str]] = None
@@ -133,7 +133,7 @@ class AgentResponse(BaseModel):
         knowledge_table = agent.db.knowledge_table_name if agent.db and agent.knowledge else None
 
         return AgentResponse(
-            agent_id=agent.agent_id,
+            id=agent.id,
             name=agent.name,
             description=agent.description,
             instructions=str(agent.instructions) if agent.instructions else None,
@@ -152,7 +152,7 @@ class AgentResponse(BaseModel):
 
 
 class TeamResponse(BaseModel):
-    team_id: Optional[str] = None
+    id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
     mode: Optional[str] = None
@@ -216,7 +216,7 @@ class TeamResponse(BaseModel):
         )
 
         return TeamResponse(
-            team_id=team.team_id,
+            id=team.id,
             name=team.name,
             model=ModelResponse(
                 name=team.model.name or team.model.__class__.__name__ if team.model else None,
@@ -247,7 +247,7 @@ class TeamResponse(BaseModel):
 
 
 class WorkflowResponse(BaseModel):
-    workflow_id: Optional[str] = None
+    id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
     input_schema: Optional[Dict[str, Any]] = None
@@ -268,7 +268,7 @@ class WorkflowResponse(BaseModel):
                     step["team"] = TeamResponse.from_team(step["team"])
 
         return cls(
-            workflow_id=workflow.workflow_id,
+            id=workflow.id,
             name=workflow.name,
             description=workflow.description,
             steps=steps,

@@ -332,7 +332,7 @@ async def test_correct_sessions_in_db(route_team, team_storage, agent_storage):
         session_id=session_id,
     )
 
-    team_sessions = team_storage.get_all_sessions(entity_id=route_team.team_id)
+    team_sessions = team_storage.get_all_sessions(entity_id=route_team.id)
     assert len(team_sessions) == 1
     assert team_sessions[0].session_id == session_id
     assert team_sessions[0].user_id == user_id

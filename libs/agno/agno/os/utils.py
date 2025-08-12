@@ -137,7 +137,7 @@ def get_agent_by_id(agent_id: str, agents: Optional[List[Agent]] = None) -> Opti
         return None
 
     for agent in agents:
-        if agent.agent_id == agent_id:
+        if agent.id == agent_id:
             return agent
     return None
 
@@ -147,7 +147,7 @@ def get_team_by_id(team_id: str, teams: Optional[List[Team]] = None) -> Optional
         return None
 
     for team in teams:
-        if team.team_id == team_id:
+        if team.id == team_id:
             return team
     return None
 
@@ -157,7 +157,7 @@ def get_workflow_by_id(workflow_id: str, workflows: Optional[List[Workflow]] = N
         return None
 
     for workflow in workflows:
-        if workflow.workflow_id == workflow_id:
+        if workflow.id == workflow_id:
             return workflow
     return None
 

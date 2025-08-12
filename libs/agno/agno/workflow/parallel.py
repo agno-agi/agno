@@ -296,7 +296,7 @@ class Parallel:
             yield ParallelExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
                 workflow_name=workflow_run_response.workflow_name or "",
-                workflow_id=workflow_run_response.workflow_id or "",
+                workflow_id=workflow_run_response.id or "",
                 session_id=workflow_run_response.session_id or "",
                 step_name=self.name,
                 step_index=step_index,
@@ -414,7 +414,7 @@ class Parallel:
             yield ParallelExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
                 workflow_name=workflow_run_response.workflow_name or "",
-                workflow_id=workflow_run_response.workflow_id or "",
+                workflow_id=workflow_run_response.id or "",
                 session_id=workflow_run_response.session_id or "",
                 step_name=self.name,
                 step_index=step_index,
@@ -533,7 +533,7 @@ class Parallel:
             yield ParallelExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
                 workflow_name=workflow_run_response.workflow_name or "",
-                workflow_id=workflow_run_response.workflow_id or "",
+                workflow_id=workflow_run_response.id or "",
                 session_id=workflow_run_response.session_id or "",
                 step_name=self.name,
                 step_index=step_index,
@@ -649,7 +649,7 @@ class Parallel:
             yield ParallelExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
                 workflow_name=workflow_run_response.workflow_name or "",
-                workflow_id=workflow_run_response.workflow_id or "",
+                workflow_id=workflow_run_response.id or "",
                 session_id=workflow_run_response.session_id or "",
                 step_name=self.name,
                 step_index=step_index,

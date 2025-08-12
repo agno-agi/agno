@@ -225,7 +225,7 @@ class Loop:
             yield LoopExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
                 workflow_name=workflow_run_response.workflow_name or "",
-                workflow_id=workflow_run_response.workflow_id or "",
+                workflow_id=workflow_run_response.id or "",
                 session_id=workflow_run_response.session_id or "",
                 step_name=self.name,
                 step_index=step_index,
@@ -244,7 +244,7 @@ class Loop:
                 yield LoopIterationStartedEvent(
                     run_id=workflow_run_response.run_id or "",
                     workflow_name=workflow_run_response.workflow_name or "",
-                    workflow_id=workflow_run_response.workflow_id or "",
+                    workflow_id=workflow_run_response.id or "",
                     session_id=workflow_run_response.session_id or "",
                     step_name=self.name,
                     step_index=step_index,
@@ -333,7 +333,7 @@ class Loop:
                 yield LoopIterationCompletedEvent(
                     run_id=workflow_run_response.run_id or "",
                     workflow_name=workflow_run_response.workflow_name or "",
-                    workflow_id=workflow_run_response.workflow_id or "",
+                    workflow_id=workflow_run_response.id or "",
                     session_id=workflow_run_response.session_id or "",
                     step_name=self.name,
                     step_index=step_index,
@@ -356,7 +356,7 @@ class Loop:
             yield LoopExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
                 workflow_name=workflow_run_response.workflow_name or "",
-                workflow_id=workflow_run_response.workflow_id or "",
+                workflow_id=workflow_run_response.id or "",
                 session_id=workflow_run_response.session_id or "",
                 step_name=self.name,
                 step_index=step_index,
@@ -474,7 +474,7 @@ class Loop:
             yield LoopExecutionStartedEvent(
                 run_id=workflow_run_response.run_id or "",
                 workflow_name=workflow_run_response.workflow_name or "",
-                workflow_id=workflow_run_response.workflow_id or "",
+                workflow_id=workflow_run_response.id or "",
                 session_id=workflow_run_response.session_id or "",
                 step_name=self.name,
                 step_index=step_index,
@@ -493,7 +493,7 @@ class Loop:
                 yield LoopIterationStartedEvent(
                     run_id=workflow_run_response.run_id or "",
                     workflow_name=workflow_run_response.workflow_name or "",
-                    workflow_id=workflow_run_response.workflow_id or "",
+                    workflow_id=workflow_run_response.id or "",
                     session_id=workflow_run_response.session_id or "",
                     step_name=self.name,
                     step_index=step_index,
@@ -585,7 +585,7 @@ class Loop:
                 yield LoopIterationCompletedEvent(
                     run_id=workflow_run_response.run_id or "",
                     workflow_name=workflow_run_response.workflow_name or "",
-                    workflow_id=workflow_run_response.workflow_id or "",
+                    workflow_id=workflow_run_response.id or "",
                     session_id=workflow_run_response.session_id or "",
                     step_name=self.name,
                     step_index=step_index,
@@ -608,7 +608,7 @@ class Loop:
             yield LoopExecutionCompletedEvent(
                 run_id=workflow_run_response.run_id or "",
                 workflow_name=workflow_run_response.workflow_name or "",
-                workflow_id=workflow_run_response.workflow_id or "",
+                workflow_id=workflow_run_response.id or "",
                 session_id=workflow_run_response.session_id or "",
                 step_name=self.name,
                 step_index=step_index,

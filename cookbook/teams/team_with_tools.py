@@ -43,7 +43,7 @@ team_id = str(uuid4())
 company_info_team = Team(
     name="Company Info Team",
     mode="coordinate",
-    team_id=team_id,
+    id=team_id,
     user_id=user_id,
     model=Claude(id="claude-3-7-sonnet-latest"),
     tools=[AgentQLTools(agentql_query=custom_query)],

@@ -110,7 +110,7 @@ knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt
 # Create the agent
 agno_assist = Agent(
     name="Agno Assist",
-    agent_id="agno-assist",
+    id="agno-assist",
     model=OpenAIChat(id="gpt-4o"),
     description=description,
     instructions=instructions,

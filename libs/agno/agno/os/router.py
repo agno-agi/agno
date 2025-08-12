@@ -368,21 +368,18 @@ def get_base_router(
             ],
             apps=apps_response,
             agents=[
-                AgentSummaryResponse(agent_id=agent.agent_id, name=agent.name, description=agent.description)
+                AgentSummaryResponse(agent_id=agent.id, name=agent.name, description=agent.description)
                 for agent in os.agents
             ]
             if os.agents
             else [],
             teams=[
-                TeamSummaryResponse(team_id=team.team_id, name=team.name, description=team.description)
-                for team in os.teams
+                TeamSummaryResponse(team_id=team.id, name=team.name, description=team.description) for team in os.teams
             ]
             if os.teams
             else [],
             workflows=[
-                WorkflowSummaryResponse(
-                    workflow_id=workflow.workflow_id, name=workflow.name, description=workflow.description
-                )
+                WorkflowSummaryResponse(workflow_id=workflow.id, name=workflow.name, description=workflow.description)
                 for workflow in os.workflows
             ]
             if os.workflows
@@ -1018,7 +1015,7 @@ def get_base_router(
 
         return [
             WorkflowResponse(
-                workflow_id=str(workflow.workflow_id),
+                id=str(workflow.id),
                 name=workflow.name,
                 description=workflow.description,
                 input_schema=get_workflow_input_schema_dict(workflow),

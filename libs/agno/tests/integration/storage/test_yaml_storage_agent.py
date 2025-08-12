@@ -109,9 +109,9 @@ def test_session_deletion(agent_with_storage, agent_storage):
 def test_get_all_session_ids(agent_storage):
     """Test retrieving all session IDs."""
     # Create multiple sessions with different user IDs and agent IDs
-    agent_1 = Agent(storage=agent_storage, user_id="user1", agent_id="agent1", add_history_to_context=True)
-    agent_2 = Agent(storage=agent_storage, user_id="user1", agent_id="agent2", add_history_to_context=True)
-    agent_3 = Agent(storage=agent_storage, user_id="user2", agent_id="agent3", add_history_to_context=True)
+    agent_1 = Agent(storage=agent_storage, user_id="user1", id="agent1", add_history_to_context=True)
+    agent_2 = Agent(storage=agent_storage, user_id="user1", id="agent2", add_history_to_context=True)
+    agent_3 = Agent(storage=agent_storage, user_id="user2", id="agent3", add_history_to_context=True)
 
     agent_1.run("Question 1")
     agent_2.run("Question 2")

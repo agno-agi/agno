@@ -20,7 +20,7 @@ async def test_basic_background_execution(simple_workflow):
     assert response.status == RunStatus.pending
     assert response.run_id is not None
     assert response.session_id is not None
-    assert response.workflow_id is not None
+    assert response.id is not None
 
     # Poll for completion
     max_polls = 30  # 30 seconds timeout
