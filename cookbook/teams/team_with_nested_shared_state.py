@@ -76,6 +76,7 @@ shopping_list_agent = Agent(
 # Shopping management team - new layer for handling all shopping list modifications
 shopping_mgmt_team = Team(
     name="Shopping Management Team",
+    role="Execute shopping list operations",
     team_id="shopping_management",
     mode="coordinate",
     model=OpenAIChat(id="gpt-4o-mini"),
@@ -136,6 +137,7 @@ def list_items(team: Team) -> str:
 # Create meal planning subteam
 meal_planning_team = Team(
     name="Meal Planning Team",
+    role="Plan meals based on shopping list items",
     team_id="meal_planning",
     mode="coordinate",
     model=OpenAIChat(id="gpt-4o-mini"),
@@ -185,7 +187,7 @@ def add_chore(team: Team, chore: str, priority: str = "medium") -> str:
 # Orchestrates the entire shopping and meal planning ecosystem
 shopping_team = Team(
     name="Shopping List Team",
-    role="Orchestrate comprehensive shopping list management and meal planning by coordinating specialized teams to deliver seamless grocery and culinary experiences",
+    role="Orchestrate shopping list management and meal planning",
     mode="coordinate",
     model=OpenAIChat(id="gpt-4o-mini"),
     team_session_state={"shopping_list": []},
