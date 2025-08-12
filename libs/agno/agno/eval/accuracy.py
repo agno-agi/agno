@@ -213,7 +213,7 @@ class AccuracyEval:
         """Check if the evaluator agent is using a custom response model"""
         if not self.evaluator_agent:
             return False
-        return self.evaluator_agent.response_model is not AccuracyAgentResponse
+        return not isinstance(self.evaluator_agent.response_model, AccuracyAgentResponse)
 
     def _warn_configuration_conflicts(self):
         """Handle validation of the evaluation configuration and warnings."""
@@ -649,7 +649,7 @@ class AccuracyEval:
 
         if result is not None:
             if self._using_custom_response():
-                print(f"Evaluator Agent response: {result}")
+                logger.info(f"Evaluator Agent response: {result}")
                 return None
 
             self.result.results.append(result)  # type: ignore
