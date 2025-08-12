@@ -719,7 +719,7 @@ def get_base_router(
             raise HTTPException(status_code=404, detail="Agent has no database. Sessions are unavailable.")
 
         session = agent.set_session_name(session_id=session_id, session_name=session_name)
-        if not session:
+        if session is None:
             raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
 
         return AgentSessionDetailSchema.from_session(session)  # type: ignore
