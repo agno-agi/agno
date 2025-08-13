@@ -2,7 +2,7 @@ from pathlib import Path
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteStorage
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools.python import PythonTools
 from agno_assist import agent_knowledge
@@ -30,10 +30,7 @@ agno_assist_voice = Agent(
     instructions=_instructions,
     knowledge=agent_knowledge,
     tools=[PythonTools(base_dir=tmp_dir.joinpath("agents"), read_files=True)],
-    storage=SqliteStorage(
-        table_name="agno_assist_voice_sessions",
-        db_file=str(tmp_dir.joinpath("agents.db")),
-    ),
+    db=SqliteDb(db_file=str(tmp_dir.joinpath("agents.db"))),
     add_history_to_context=True,
     add_datetime_to_context=True,
     markdown=True,

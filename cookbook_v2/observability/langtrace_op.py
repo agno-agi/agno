@@ -12,9 +12,6 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.yfinance import YFinanceTools
 from langtrace_python_sdk import langtrace  # type: ignore
-from langtrace_python_sdk.utils.with_root_span import (
-    with_langtrace_root_span,  # type: ignore
-)
 
 langtrace.init()
 

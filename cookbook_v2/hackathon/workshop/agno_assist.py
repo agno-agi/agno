@@ -4,7 +4,7 @@ from pathlib import Path
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteStorage
+from agno.db.sqlite import SqliteDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
@@ -53,9 +53,7 @@ agno_support = Agent(
         ),
         DalleTools(model="dall-e-3", size="1792x1024", quality="hd", style="vivid"),
     ],
-    storage=SqliteStorage(
-        table_name="agno_assist_sessions", db_file=str(tmp_dir.joinpath("agents.db"))
-    ),
+    db=SqliteDb(db_file=str(tmp_dir.joinpath("agents.db"))),
     markdown=True,
     search_knowledge=True,
     debug_mode=True,

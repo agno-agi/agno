@@ -7,7 +7,6 @@ This example shows how to instrument your agno agent with OpenInference and send
   - export ARIZE_PHOENIX_API_KEY=<your-key>
 """
 
-import asyncio
 import os
 
 from agno.agent import Agent
