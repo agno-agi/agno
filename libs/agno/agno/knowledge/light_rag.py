@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Iterator, List, Optional, Union
 
-import textract
+from agno.document.reader.universal_reader import UniversalDocumentReader
 from pydantic import Field
 
 from agno.document import Document
@@ -65,22 +65,30 @@ class LightRagKnowledgeBase(AgentKnowledge):
 
     def _process_single_path(self, path: Path) -> Iterator[List[str]]:
         """Process a single path (file or directory)."""
+        reader = UniversalDocumentReader()
+
         if path.is_dir():
             for file_path in path.glob("**/*"):
                 if file_path.is_file():
-                    text_str = textract.process(str(file_path)).decode("utf-8")
-                    yield [text_str]
+                    documents = reader.read(file_path)
+                    if documents:
+                        text_str = "\n".join([doc.content for doc in documents])
+                        yield [text_str]
         elif path.exists() and path.is_file():
             if path.suffix == ".md":
                 documents = self.markdown_reader.read(file=path)
                 text_contents = [doc.content for doc in documents]
                 yield text_contents
             elif path.suffix == ".pdf":
-                text_str = textract.process(str(path)).decode("utf-8")
-                yield [text_str]
+                documents = reader.read(path)
+                if documents:
+                    text_str = "\n".join([doc.content for doc in documents])
+                    yield [text_str]
             else:
-                text_str = textract.process(str(path)).decode("utf-8")
-                yield [text_str]
+                documents = reader.read(path)
+                if documents:
+                    text_str = "\n".join([doc.content for doc in documents])
+                    yield [text_str]
 
     def _process_urls(self) -> Iterator[List[str]]:
         """Process URL-based documents."""
