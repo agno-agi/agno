@@ -14,6 +14,7 @@ from typing import (
     Optional,
     Union,
     overload,
+    MutableMapping,
 )
 from uuid import uuid4
 
@@ -110,7 +111,7 @@ class Workflow:
     session_name: Optional[str] = None
     user_id: Optional[str] = None
     workflow_session_id: Optional[str] = None
-    workflow_session_state: Optional[Dict[str, Any]] = None
+    workflow_session_state: Optional[MutableMapping[str, Any]] = None
 
     # Runtime state
     run_id: Optional[str] = None
@@ -138,7 +139,7 @@ class Workflow:
         steps: Optional[WorkflowSteps] = None,
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
-        workflow_session_state: Optional[Dict[str, Any]] = None,
+        workflow_session_state: Optional[MutableMapping[str, Any]] = None,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = False,
         stream: Optional[bool] = None,
@@ -1132,7 +1133,9 @@ class Workflow:
             self.workflow_session_state = ThreadSafeSessionState(self.workflow_session_state or {})
 
         # Minimal metadata kept up to date
-        self.workflow_session_state.update(
+        state = self.workflow_session_state
+        assert state is not None
+        state.update(
             {
                 "workflow_id": self.workflow_id,
                 "run_id": self.run_id,
@@ -1141,9 +1144,9 @@ class Workflow:
             }
         )
         if self.name:
-            self.workflow_session_state["workflow_name"] = self.name
+            state["workflow_name"] = self.name
 
-        return self.workflow_session_state
+        return state
 
     async def _arun_background(
         self,
