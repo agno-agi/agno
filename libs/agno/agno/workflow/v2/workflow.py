@@ -3266,8 +3266,8 @@ class Workflow:
           - Any primitive exposing a 'steps' list (Steps/Parallel/Loop/Condition/Router after prepare)
           - Router before prepare: also recurse its 'choices'
         """
-        from agno.agent.agent import Agent
-        from agno.team.team import Team
+        # from agno.agent.agent import Agent
+        # from agno.team.team import Team
         from agno.workflow.v2.step import Step
         from agno.workflow.v2.router import Router
 
