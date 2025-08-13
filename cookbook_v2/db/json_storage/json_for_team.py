@@ -1,6 +1,8 @@
 """
-1. Run: `pip install openai duckduckgo-search newspaper4k lxml_html_clean agno` to install the dependencies
-2. Run: `python cookbook/storage/json_storage/json_storage_for_team.py` to run the team
+Use JSON files as the database for a Team.
+Useful for simple demos where performance is not critical.
+
+Run `pip install openai duckduckgo-search newspaper4k lxml_html_clean agno` to install the dependencies
 """
 
 from typing import List
@@ -13,6 +15,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from pydantic import BaseModel
 
+# Setup the JSON database
 db = JsonDb(db_path="tmp/json_db")
 
 

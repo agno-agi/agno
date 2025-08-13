@@ -318,8 +318,8 @@ class AgentSessionDetailSchema(BaseModel):
     session_summary: Optional[dict]
     session_state: Optional[dict]
     agent_id: Optional[str]
-    agent_data: Optional[dict]
     total_tokens: Optional[int]
+    agent_data: Optional[dict]
     metrics: Optional[dict]
     chat_history: Optional[List[dict]]
     created_at: Optional[datetime]
@@ -356,7 +356,6 @@ class TeamSessionDetailSchema(BaseModel):
     session_state: Optional[dict]
     metrics: Optional[dict]
     team_data: Optional[dict]
-    total_tokens: Optional[int]
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
 

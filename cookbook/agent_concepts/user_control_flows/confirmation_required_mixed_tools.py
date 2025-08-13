@@ -89,7 +89,7 @@ if run_response.is_paused:  # Or agent.run_response.is_paused
                 tool.confirmed = True
         else:
             console.print(
-                f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] was completed in [bold green]{tool.metrics.time:.2f}[/] seconds."
+                f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] was completed in [bold green]{tool.metrics.duration:.2f}[/] seconds."
             )
 
     run_response = agent.continue_run()

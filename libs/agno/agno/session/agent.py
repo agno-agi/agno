@@ -96,7 +96,7 @@ class AgentSession:
         messages = run.messages
         for m in messages:
             if m.metrics is not None:
-                m.metrics.timer = None
+                m.metrics.durationr = None
 
         if not self.runs:
             self.runs = []
@@ -198,6 +198,9 @@ class AgentSession:
 
         final_messages: List[Message] = []
         session_runs = self.runs
+        if not session_runs:
+            return []
+
         for run_response in session_runs:
             if run_response and run_response.messages:
                 user_message_from_run = None

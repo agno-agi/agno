@@ -141,7 +141,7 @@ def display_tool_calls(tool_calls_container, tools: List[ToolExecution]):
                 # Add timing information
                 execution_time_str = "N/A"
                 if metrics and hasattr(metrics, "time"):
-                    execution_time = metrics.time
+                    execution_time = metrics.duration
                     if execution_time is None:
                         execution_time_str = "N/A"
                     else:

@@ -13,6 +13,9 @@ def print_chat_history(session_runs: List[RunResponse]):
     # -*- Print history
     messages = []
     for run in session_runs:
+        if run.messages is None:
+            continue
+
         for m in run.messages:
             if m.role == "system" and len(messages) > 0:
                 # Skip system after the first one

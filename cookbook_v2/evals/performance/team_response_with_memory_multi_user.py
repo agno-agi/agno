@@ -3,11 +3,9 @@ import random
 import uuid
 
 from agno.agent import Agent
+from agno.db.postgres import PostgresDb
 from agno.eval.performance import PerformanceEval
-from agno.memory.v2.db.postgres import PostgresMemoryDb
-from agno.memory.v2.memory import Memory
 from agno.models.openai import OpenAIChat
-from agno.storage.postgres import PostgresStorage
 from agno.team.team import Team
 
 users = [
@@ -34,18 +32,9 @@ cities = [
 ]
 
 
+# Setup the database
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-
-agent_storage = PostgresStorage(
-    table_name="agent_sessions", db_url=db_url, auto_upgrade_schema=True
-)
-
-team_storage = PostgresStorage(
-    table_name="team_sessions", db_url=db_url, auto_upgrade_schema=True
-)
-
-memory_db = PostgresMemoryDb(table_name="memory", db_url=db_url)
-memory = Memory(db=memory_db)
+db = PostgresDb(db_url=db_url)
 
 
 def get_weather(city: str) -> str:
@@ -75,8 +64,8 @@ weather_agent = Agent(
     description="You are a helpful assistant that can answer questions about the weather.",
     instructions="Be concise, reply with one sentence.",
     tools=[get_weather],
-    memory=memory,
-    storage=agent_storage,
+    db=db,
+    enable_user_memories=True,
     add_history_to_context=True,
 )
 
@@ -86,8 +75,8 @@ activities_agent = Agent(
     description="You are a helpful assistant that can answer questions about activities in a city.",
     instructions="Be concise, reply with one sentence.",
     tools=[get_activities],
-    memory=memory,
-    storage=agent_storage,
+    db=db,
+    enable_user_memories=True,
     add_history_to_context=True,
 )
 
@@ -95,10 +84,9 @@ team = Team(
     members=[weather_agent, activities_agent],
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions="Be concise, reply with one sentence.",
-    memory=memory,
-    storage=team_storage,
-    markdown=True,
+    db=db,
     enable_user_memories=True,
+    markdown=True,
     add_history_to_context=True,
 )
 
@@ -117,11 +105,7 @@ async def run_team():
     # Run all 5 users concurrently
     for user in users:
         tasks.append(run_team_for_user(user))
-
     await asyncio.gather(*tasks)
-
-    print("Team memory runs:", sum(len(runs) for runs in team.memory.runs.values()))
-    print("Team memory memories:", len(team.memory.memories))
 
     return "Successfully ran team"
 

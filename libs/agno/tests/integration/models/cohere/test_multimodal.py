@@ -25,6 +25,7 @@ def test_image_input():
 
     # Just check it doesn't break on subsequent messages
     response = agent.run("Where can I find more information?")
+    assert response.messages is not None
     assert [message.role for message in response.messages] == ["system", "user", "assistant", "user", "assistant"]
 
 

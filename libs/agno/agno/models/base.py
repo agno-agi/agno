@@ -26,7 +26,7 @@ from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
-from agno.run.response import RunResponseContentEvent, RunResponseEvent
+from agno.run.response import RunResponse, RunResponseContentEvent, RunResponseEvent
 from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
 from agno.run.team import TeamRunResponseEvent
 from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
@@ -60,132 +60,6 @@ def _log_messages(messages: List[Message]) -> None:
     for m in messages:
         # Don't log metrics for input messages
         m.log(metrics=False)
-
-
-def _add_usage_metrics_to_assistant_message(assistant_message: Message, response_usage: Any) -> None:
-    """
-    Add usage metrics from the model provider to the assistant message.
-
-    Args:
-        assistant_message: Message to update with metrics
-        response_usage: Usage data from model provider
-    """
-
-    # Standard token metrics
-    if isinstance(response_usage, dict):
-        if "input_tokens" in response_usage and response_usage.get("input_tokens") is not None:
-            assistant_message.metrics.input_tokens = response_usage.get("input_tokens", 0)
-        if "output_tokens" in response_usage and response_usage.get("output_tokens") is not None:
-            assistant_message.metrics.output_tokens = response_usage.get("output_tokens", 0)
-        if "prompt_tokens" in response_usage and response_usage.get("prompt_tokens") is not None:
-            assistant_message.metrics.input_tokens = response_usage.get("prompt_tokens", 0)
-        if "completion_tokens" in response_usage and response_usage.get("completion_tokens") is not None:
-            assistant_message.metrics.output_tokens = response_usage.get("completion_tokens", 0)
-        if "cached_tokens" in response_usage and response_usage.get("cached_tokens") is not None:
-            assistant_message.metrics.cached_tokens = response_usage.get("cached_tokens", 0)
-        if "cache_write_tokens" in response_usage and response_usage.get("cache_write_tokens") is not None:
-            assistant_message.metrics.cache_write_tokens = response_usage.get("cache_write_tokens", 0)
-        if "total_tokens" in response_usage and response_usage.get("total_tokens") is not None:
-            assistant_message.metrics.total_tokens = response_usage.get("total_tokens", 0)
-        else:
-            assistant_message.metrics.total_tokens = (
-                assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
-            )
-    else:
-        if hasattr(response_usage, "input_tokens") and response_usage.input_tokens:
-            assistant_message.metrics.input_tokens = response_usage.input_tokens
-        if hasattr(response_usage, "output_tokens") and response_usage.output_tokens:
-            assistant_message.metrics.output_tokens = response_usage.output_tokens
-        if hasattr(response_usage, "prompt_tokens") and response_usage.prompt_tokens is not None:
-            assistant_message.metrics.input_tokens = response_usage.prompt_tokens
-            assistant_message.metrics.prompt_tokens = response_usage.prompt_tokens
-        if hasattr(response_usage, "completion_tokens") and response_usage.completion_tokens is not None:
-            assistant_message.metrics.output_tokens = response_usage.completion_tokens
-            assistant_message.metrics.completion_tokens = response_usage.completion_tokens
-        if hasattr(response_usage, "total_tokens") and response_usage.total_tokens is not None:
-            assistant_message.metrics.total_tokens = response_usage.total_tokens
-        if hasattr(response_usage, "cached_tokens") and response_usage.cached_tokens is not None:
-            assistant_message.metrics.cached_tokens = response_usage.cached_tokens
-        if hasattr(response_usage, "cache_write_tokens") and response_usage.cache_write_tokens is not None:
-            assistant_message.metrics.cache_write_tokens = response_usage.cache_write_tokens
-
-    # If you didn't capture any total tokens
-    if not assistant_message.metrics.total_tokens:
-        if assistant_message.metrics.input_tokens is None:
-            assistant_message.metrics.input_tokens = 0
-        if assistant_message.metrics.output_tokens is None:
-            assistant_message.metrics.output_tokens = 0
-
-        assistant_message.metrics.total_tokens = (
-            assistant_message.metrics.input_tokens + assistant_message.metrics.output_tokens
-        )
-
-    # Additional metrics (e.g., from Groq, Ollama)
-    if isinstance(response_usage, dict) and "additional_metrics" in response_usage:
-        assistant_message.metrics.additional_metrics = response_usage["additional_metrics"]
-
-    # Token details (e.g., from OpenAI)
-    if hasattr(response_usage, "prompt_tokens_details"):
-        if isinstance(response_usage.prompt_tokens_details, dict):
-            assistant_message.metrics.prompt_tokens_details = response_usage.prompt_tokens_details
-            if (
-                "audio_tokens" in response_usage.prompt_tokens_details
-                and response_usage.prompt_tokens_details["audio_tokens"] is not None
-            ):
-                assistant_message.metrics.input_audio_tokens = response_usage.prompt_tokens_details["audio_tokens"]
-            if (
-                "cached_tokens" in response_usage.prompt_tokens_details
-                and response_usage.prompt_tokens_details["cached_tokens"] is not None
-            ):
-                assistant_message.metrics.cached_tokens = response_usage.prompt_tokens_details["cached_tokens"]
-        elif hasattr(response_usage.prompt_tokens_details, "model_dump"):
-            assistant_message.metrics.prompt_tokens_details = response_usage.prompt_tokens_details.model_dump(
-                exclude_none=True
-            )
-            if (
-                hasattr(response_usage.prompt_tokens_details, "audio_tokens")
-                and response_usage.prompt_tokens_details.audio_tokens is not None
-            ):
-                assistant_message.metrics.input_audio_tokens = response_usage.prompt_tokens_details.audio_tokens
-            if (
-                hasattr(response_usage.prompt_tokens_details, "cached_tokens")
-                and response_usage.prompt_tokens_details.cached_tokens is not None
-            ):
-                assistant_message.metrics.cached_tokens = response_usage.prompt_tokens_details.cached_tokens
-
-    if hasattr(response_usage, "completion_tokens_details"):
-        if isinstance(response_usage.completion_tokens_details, dict):
-            assistant_message.metrics.completion_tokens_details = response_usage.completion_tokens_details
-            if (
-                "audio_tokens" in response_usage.completion_tokens_details
-                and response_usage.completion_tokens_details["audio_tokens"] is not None
-            ):
-                assistant_message.metrics.output_audio_tokens = response_usage.completion_tokens_details["audio_tokens"]
-            if (
-                "reasoning_tokens" in response_usage.completion_tokens_details
-                and response_usage.completion_tokens_details["reasoning_tokens"] is not None
-            ):
-                assistant_message.metrics.reasoning_tokens = response_usage.completion_tokens_details[
-                    "reasoning_tokens"
-                ]
-        elif hasattr(response_usage.completion_tokens_details, "model_dump"):
-            assistant_message.metrics.completion_tokens_details = response_usage.completion_tokens_details.model_dump(
-                exclude_none=True
-            )
-            if (
-                hasattr(response_usage.completion_tokens_details, "audio_tokens")
-                and response_usage.completion_tokens_details.audio_tokens is not None
-            ):
-                assistant_message.metrics.output_audio_tokens = response_usage.completion_tokens_details.audio_tokens
-            if (
-                hasattr(response_usage.completion_tokens_details, "reasoning_tokens")
-                and response_usage.completion_tokens_details.reasoning_tokens is not None
-            ):
-                assistant_message.metrics.reasoning_tokens = response_usage.completion_tokens_details.reasoning_tokens
-
-    assistant_message.metrics.audio_tokens = (
-        assistant_message.metrics.input_audio_tokens + assistant_message.metrics.output_audio_tokens
-    )
 
 
 def _handle_agent_exception(a_exc: AgentRunException, additional_messages: Optional[List[Message]] = None) -> None:
@@ -287,7 +161,7 @@ class Model(ABC):
         pass
 
     @abstractmethod
-    def parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
+    def _parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
         """
         Parse the raw response from the model provider into a ModelResponse.
 
@@ -300,7 +174,7 @@ class Model(ABC):
         pass
 
     @abstractmethod
-    def parse_provider_response_delta(self, response: Any) -> ModelResponse:
+    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
         """
         Parse the streaming response from the model provider into ModelResponse objects.
 
@@ -320,6 +194,7 @@ class Model(ABC):
         functions: Optional[Dict[str, Function]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -343,6 +218,7 @@ class Model(ABC):
                 response_format=response_format,
                 tools=tools,
                 tool_choice=tool_choice or self._tool_choice,
+                run_response=run_response,
             )
 
             # Add assistant message to messages
@@ -542,6 +418,7 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> None:
         """
         Process a single model response and return the assistant message and whether to continue.
@@ -550,21 +427,14 @@ class Model(ABC):
             Tuple[Message, bool]: (assistant_message, should_continue)
         """
         # Generate response
-        assistant_message.metrics.start_timer()
-        response = self.invoke(
+        provider_response = self.invoke(
+            assistant_message=assistant_message,
             messages=messages,
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
+            run_response=run_response,
         )
-        assistant_message.metrics.stop_timer()
-
-        # Parse provider response
-        provider_response: ModelResponse = self.parse_provider_response(response, response_format=response_format)
-
-        # Add parsed data to model response
-        if provider_response.parsed is not None:
-            model_response.parsed = provider_response.parsed
 
         # Populate the assistant message
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
@@ -598,6 +468,7 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> None:
         """
         Process a single async model response and return the assistant message and whether to continue.
@@ -606,21 +477,14 @@ class Model(ABC):
             Tuple[Message, bool]: (assistant_message, should_continue)
         """
         # Generate response
-        assistant_message.metrics.start_timer()
-        response = await self.ainvoke(
+        provider_response = await self.ainvoke(
             messages=messages,
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
+            assistant_message=assistant_message,
+            run_response=run_response,
         )
-        assistant_message.metrics.stop_timer()
-
-        # Parse provider response
-        provider_response: ModelResponse = self.parse_provider_response(response, response_format=response_format)
-
-        # Add parsed data to model response
-        if provider_response.parsed is not None:
-            model_response.parsed = provider_response.parsed
 
         # Populate the assistant message
         self._populate_assistant_message(assistant_message=assistant_message, provider_response=provider_response)
@@ -703,9 +567,7 @@ class Model(ABC):
 
         # Add usage metrics if provided
         if provider_response.response_usage is not None:
-            _add_usage_metrics_to_assistant_message(
-                assistant_message=assistant_message, response_usage=provider_response.response_usage
-            )
+            assistant_message.metrics += provider_response.response_usage
 
         return assistant_message
 
@@ -717,22 +579,28 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> Iterator[ModelResponse]:
         """
         Process a streaming response from the model.
         """
-        assistant_message.metrics.start_timer()
+
         for response_delta in self.invoke_stream(
             messages=messages,
+            assistant_message=assistant_message,
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
+            run_response=run_response,
         ):
-            model_response_delta = self.parse_provider_response_delta(response_delta)
             yield from self._populate_stream_data_and_assistant_message(
-                stream_data=stream_data, assistant_message=assistant_message, model_response_delta=model_response_delta
+                stream_data=stream_data,
+                assistant_message=assistant_message,
+                model_response_delta=response_delta,
             )
-        assistant_message.metrics.stop_timer()
+
+        # Add final metrics to assistant message
+        self._populate_assistant_message(assistant_message=assistant_message, provider_response=response_delta)
 
     def response_stream(
         self,
@@ -743,6 +611,7 @@ class Model(ABC):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         stream_model_response: bool = True,
+        run_response: Optional[RunResponse] = None,
     ) -> Iterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
         """
         Generate a streaming response from the model.
@@ -767,6 +636,7 @@ class Model(ABC):
                     response_format=response_format,
                     tools=tools,
                     tool_choice=tool_choice or self._tool_choice,
+                    run_response=run_response,
                 )
 
                 # Populate assistant message from stream data
@@ -864,23 +734,28 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Process a streaming response from the model.
         """
-        assistant_message.metrics.start_timer()
         async for response_delta in self.ainvoke_stream(
             messages=messages,
+            assistant_message=assistant_message,
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice or self._tool_choice,
+            run_response=run_response,
         ):  # type: ignore
-            model_response_delta = self.parse_provider_response_delta(response_delta)
             for model_response in self._populate_stream_data_and_assistant_message(
-                stream_data=stream_data, assistant_message=assistant_message, model_response_delta=model_response_delta
+                stream_data=stream_data,
+                assistant_message=assistant_message,
+                model_response_delta=response_delta,
             ):
                 yield model_response
-        assistant_message.metrics.stop_timer()
+
+        # Populate the assistant message
+        self._populate_assistant_message(assistant_message=assistant_message, provider_response=model_response)
 
     async def aresponse_stream(
         self,
@@ -891,6 +766,7 @@ class Model(ABC):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         stream_model_response: bool = True,
+        run_response: Optional[RunResponse] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -915,6 +791,7 @@ class Model(ABC):
                     response_format=response_format,
                     tools=tools,
                     tool_choice=tool_choice or self._tool_choice,
+                    run_response=run_response,
                 ):
                     yield response
 
@@ -941,6 +818,7 @@ class Model(ABC):
                     response_format=response_format,
                     tools=tools,
                     tool_choice=tool_choice or self._tool_choice,
+                    run_response=run_response,
                 )
                 yield model_response
 
@@ -1007,11 +885,6 @@ class Model(ABC):
         self, stream_data: MessageData, assistant_message: Message, model_response_delta: ModelResponse
     ) -> Iterator[ModelResponse]:
         """Update the stream data and assistant message with the model response."""
-
-        # Update metrics
-        if not assistant_message.metrics.time_to_first_token:
-            assistant_message.metrics.set_time_to_first_token()
-
         # Add role to assistant message
         if model_response_delta.role is not None:
             assistant_message.role = model_response_delta.role
@@ -1074,11 +947,6 @@ class Model(ABC):
             if stream_data.metadata is None:
                 stream_data.metadata = {}
             stream_data.metadata.update(model_response_delta.extra)
-
-        if model_response_delta.response_usage is not None:
-            _add_usage_metrics_to_assistant_message(
-                assistant_message=assistant_message, response_usage=model_response_delta.response_usage
-            )
 
         if should_yield:
             yield model_response_delta
@@ -1143,7 +1011,7 @@ class Model(ABC):
         """Create a function call result message."""
         kwargs = {}
         if timer is not None:
-            kwargs["metrics"] = Metrics(time=timer.elapsed)
+            kwargs["metrics"] = Metrics(duration=timer.elapsed)
         return Message(
             role=self.tool_message_role,
             content=output if success else function_call.error,

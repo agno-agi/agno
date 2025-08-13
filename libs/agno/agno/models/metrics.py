@@ -6,31 +6,43 @@ from agno.utils.timer import Timer
 
 @dataclass
 class Metrics:
+    """All relevant metrics for a session, run or message."""
+
+    # Main token consumption values
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
 
-    audio_tokens: int = 0
-    input_audio_tokens: int = 0
-    output_audio_tokens: int = 0
-    cached_tokens: int = 0
+    # Audio token usage
+    audio_input_tokens: int = 0
+    audio_output_tokens: int = 0
+    audio_total_tokens: int = 0
+
+    # Cache token usage
+    cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+
+    # Tokens employed in reasoning
     reasoning_tokens: int = 0
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    prompt_tokens_details: Optional[dict] = None
-    completion_tokens_details: Optional[dict] = None
 
-    additional_metrics: Optional[dict] = None
-
-    time: Optional[float] = None
-    time_to_first_token: Optional[float] = None
-
+    # Time metrics
+    # Internal timer utility for tracking execution time
     timer: Optional[Timer] = None
+    # Time from run start to first token generation, in seconds
+    time_to_first_token: Optional[float] = None
+    # Total run time, in seconds
+    duration: Optional[float] = None
+
+    # Provider-specific metrics
+    provider_metrics: Optional[dict] = None
+
+    # Any additional metrics
+    additional_metrics: Optional[dict] = None
 
     def to_dict(self) -> Dict[str, Any]:
         metrics_dict = asdict(self)
-        metrics_dict.pop("timer")
+        # Remove the timer util if present
+        metrics_dict.pop("timer", None)
         metrics_dict = {
             k: v
             for k, v in metrics_dict.items()
@@ -38,56 +50,28 @@ class Metrics:
         }
         return metrics_dict
 
-    def start_timer(self):
-        if self.timer is None:
-            self.timer = Timer()
-        self.timer.start()
-
-    def stop_timer(self, set_time: bool = True):
-        if self.timer is not None:
-            self.timer.stop()
-            if set_time:
-                self.time = self.timer.elapsed
-
-    def set_time_to_first_token(self):
-        if self.timer is not None:
-            self.time_to_first_token = self.timer.elapsed
-
     def __add__(self, other: "Metrics") -> "Metrics":
-        # Create new instance with summed basic metrics
-        result = Metrics(
+        # Create new instance of the same type as self
+        result_class = type(self)
+        result = result_class(
             input_tokens=self.input_tokens + other.input_tokens,
             output_tokens=self.output_tokens + other.output_tokens,
             total_tokens=self.total_tokens + other.total_tokens,
-            prompt_tokens=self.prompt_tokens + other.prompt_tokens,
-            completion_tokens=self.completion_tokens + other.completion_tokens,
-            audio_tokens=self.audio_tokens + other.audio_tokens,
-            input_audio_tokens=self.input_audio_tokens + other.input_audio_tokens,
-            output_audio_tokens=self.output_audio_tokens + other.output_audio_tokens,
-            cached_tokens=self.cached_tokens + other.cached_tokens,
+            audio_total_tokens=self.audio_total_tokens + other.audio_total_tokens,
+            audio_input_tokens=self.audio_input_tokens + other.audio_input_tokens,
+            audio_output_tokens=self.audio_output_tokens + other.audio_output_tokens,
+            cache_read_tokens=self.cache_read_tokens + other.cache_read_tokens,
             cache_write_tokens=self.cache_write_tokens + other.cache_write_tokens,
             reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
         )
 
-        # Handle prompt_tokens_details
-        if self.prompt_tokens_details or other.prompt_tokens_details:
-            result.prompt_tokens_details = {}
-            # Merge from self
-            if self.prompt_tokens_details:
-                result.prompt_tokens_details.update(self.prompt_tokens_details)
-            # Add values from other
-            if other.prompt_tokens_details:
-                for key, value in other.prompt_tokens_details.items():
-                    result.prompt_tokens_details[key] = result.prompt_tokens_details.get(key, 0) + value
-
-        # Handle completion_tokens_details similarly
-        if self.completion_tokens_details or other.completion_tokens_details:
-            result.completion_tokens_details = {}
-            if self.completion_tokens_details:
-                result.completion_tokens_details.update(self.completion_tokens_details)
-            if other.completion_tokens_details:
-                for key, value in other.completion_tokens_details.items():
-                    result.completion_tokens_details[key] = result.completion_tokens_details.get(key, 0) + value
+        # Handle provider_metrics
+        if self.provider_metrics or other.provider_metrics:
+            result.provider_metrics = {}
+            if self.provider_metrics:
+                result.provider_metrics.update(self.provider_metrics)
+            if other.provider_metrics:
+                result.provider_metrics.update(other.provider_metrics)
 
         # Handle additional metrics
         if self.additional_metrics or other.additional_metrics:
@@ -97,16 +81,21 @@ class Metrics:
             if other.additional_metrics:
                 result.additional_metrics.update(other.additional_metrics)
 
-        # Sum times if both exist
-        if self.time is not None and other.time is not None:
-            result.time = self.time + other.time
-        elif self.time is not None:
-            result.time = self.time
-        elif other.time is not None:
-            result.time = other.time
+        # Sum durations if both exist
+        if self.duration is not None and other.duration is not None:
+            result.duration = self.duration + other.duration
+        elif self.duration is not None:
+            result.duration = self.duration
+        elif other.duration is not None:
+            result.duration = other.duration
 
-        # Handle time_to_first_token (take the first non-None value)
-        result.time_to_first_token = self.time_to_first_token or other.time_to_first_token
+        # Sum time to first token if both exist
+        if self.time_to_first_token is not None and other.time_to_first_token is not None:
+            result.time_to_first_token = self.time_to_first_token + other.time_to_first_token
+        elif self.time_to_first_token is not None:
+            result.time_to_first_token = self.time_to_first_token
+        elif other.time_to_first_token is not None:
+            result.time_to_first_token = other.time_to_first_token
 
         return result
 
@@ -114,3 +103,18 @@ class Metrics:
         if other == 0:  # Handle sum() starting value
             return self
         return self + other
+
+    def start_timer(self):
+        if self.timer is None:
+            self.timer = Timer()
+        self.timer.start()
+
+    def stop_timer(self, set_duration: bool = True):
+        if self.timer is not None:
+            self.timer.stop()
+            if set_duration:
+                self.duration = self.timer.elapsed
+
+    def set_time_to_first_token(self):
+        if self.timer is not None:
+            self.time_to_first_token = self.timer.elapsed

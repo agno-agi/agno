@@ -2,20 +2,21 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.db.sqlite import SqliteStorage
+from agno.db.sqlite import SqliteDb
 from agno.exceptions import ModelProviderError
 from agno.models.huggingface import HuggingFace
 
 
 def _assert_metrics(response: RunResponse):
-    input_tokens = response.metrics.get("input_tokens", [])
-    output_tokens = response.metrics.get("output_tokens", [])
-    total_tokens = response.metrics.get("total_tokens", [])
+    assert response.metrics is not None
+    input_tokens = response.metrics.input_tokens
+    output_tokens = response.metrics.output_tokens
+    total_tokens = response.metrics.total_tokens
 
-    assert sum(input_tokens) > 0
-    assert sum(output_tokens) > 0
-    assert sum(total_tokens) > 0
-    assert sum(total_tokens) == sum(input_tokens) + sum(output_tokens)
+    assert input_tokens > 0
+    assert output_tokens > 0
+    assert total_tokens > 0
+    assert total_tokens == input_tokens + output_tokens
 
 
 def test_basic():
@@ -23,6 +24,7 @@ def test_basic():
 
     response: RunResponse = agent.run("Share a 2 sentence horror story")
     assert response.content is not None
+    assert response.messages is not None
     assert len(response.messages) >= 2
     assert response.messages[1].role == "user"
 
@@ -33,15 +35,10 @@ def test_basic_stream():
     agent = Agent(model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"), markdown=True, telemetry=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
+    for chunk in response_stream:
+        assert chunk.content is not None
 
-    # Verify it's an iterator
-    assert hasattr(response_stream, "__iter__")
-
-    responses = list(response_stream)
-    assert len(responses) > 0
-    for response in responses:
-        assert response.content is not None
-
+    assert agent.run_response is not None
     _assert_metrics(agent.run_response)
 
 
@@ -52,6 +49,7 @@ async def test_async_basic():
     response = await agent.arun("Share a 2 sentence horror story")
 
     assert response.content is not None
+    assert response.messages is not None
     assert len(response.messages) >= 2
     assert response.messages[1].role == "user"
     _assert_metrics(response)
@@ -61,10 +59,12 @@ async def test_async_basic():
 async def test_async_basic_stream():
     agent = Agent(model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"), markdown=True, telemetry=False)
 
-    response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
+    response_stream = agent.arun("Share a 2 sentence horror story", stream=True)
 
     async for response in response_stream:
         assert response.content is not None
+
+    assert agent.run_response is not None
     _assert_metrics(agent.run_response)
 
 
@@ -83,7 +83,6 @@ def test_with_memory():
     agent = Agent(
         model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),
         add_history_to_context=True,
-        num_history_responses=5,
         markdown=True,
         telemetry=False,
     )
@@ -150,15 +149,23 @@ def test_json_response_mode():
 def test_history():
     agent = Agent(
         model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),
-        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
+        db=SqliteDb(db_file="tmp/huggingface_agent_storage.db"),
         add_history_to_context=True,
         telemetry=False,
     )
     agent.run("Hello")
+    assert agent.run_response is not None
+    assert agent.run_response.messages is not None
     assert len(agent.run_response.messages) == 2
     agent.run("Hello 2")
+    assert agent.run_response is not None
+    assert agent.run_response.messages is not None
     assert len(agent.run_response.messages) == 4
     agent.run("Hello 3")
+    assert agent.run_response is not None
+    assert agent.run_response.messages is not None
     assert len(agent.run_response.messages) == 6
     agent.run("Hello 4")
+    assert agent.run_response is not None
+    assert agent.run_response.messages is not None
     assert len(agent.run_response.messages) == 8

@@ -22,9 +22,10 @@ def test_thinking():
 
     assert response.content is not None
     assert response.thinking is not None
+    assert response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
-    assert response.messages[2].thinking is not None
+    assert response.messages[2].thinking is not None if response.messages is not None else False
 
 
 def test_thinking_stream():
@@ -67,9 +68,10 @@ async def test_async_thinking():
 
     assert response.content is not None
     assert response.thinking is not None
+    assert response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
-    assert response.messages[2].thinking is not None
+    assert response.messages[2].thinking is not None if response.messages is not None else False
 
 
 @pytest.mark.asyncio
@@ -85,15 +87,8 @@ async def test_async_thinking_stream():
     )
 
     # Print the response in the terminal
-    response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
-
-    # Verify it's an async iterator
-    assert hasattr(response_stream, "__aiter__")
-
-    responses = [response async for response in response_stream]
-    assert len(responses) > 0
-    for response in responses:
-        assert response.content is not None or response.thinking is not None
+    async for response in agent.arun("Share a 2 sentence horror story", stream=True):
+        assert response.content is not None or response.thinking is not None  # type: ignore
 
 
 def test_redacted_thinking():
@@ -127,6 +122,7 @@ def test_thinking_with_tool_calls():
     response = agent.run("What is the current price of TSLA?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
     assert "TSLA" in response.content
@@ -152,6 +148,7 @@ def test_redacted_thinking_with_tool_calls():
     response = agent.run("What is the current price of TSLA?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
     assert "TSLA" in response.content

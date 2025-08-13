@@ -15,7 +15,8 @@ def test_tool_use():
     response = agent.run("What's happening in France?")
 
     # Verify tool usage
-    assert any(msg.tool_calls for msg in response.messages)
+    assert response.messages is not None
+    assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)
     assert response.content is not None
     assert "France" in response.content
 
@@ -97,6 +98,7 @@ def test_tool_use_with_content():
     response = agent.run("What's happening in France? Summarize the key events.")
 
     # Verify tool usage
-    assert any(msg.tool_calls for msg in response.messages)
+    assert response.messages is not None
+    assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)
     assert response.content is not None
     assert "France" in response.content

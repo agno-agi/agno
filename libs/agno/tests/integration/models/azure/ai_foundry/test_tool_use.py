@@ -20,7 +20,7 @@ def test_tool_use():
     response = agent.run("What is the current price of TSLA?")
 
     # Verify tool usage
-    assert any(msg.tool_calls for msg in response.messages)
+    assert any(msg.tool_calls for msg in response.messages) if response.messages else False
     assert response.content is not None
 
 
@@ -59,6 +59,7 @@ async def test_async_tool_use():
     response = await agent.arun("What is the current price of TSLA?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages if msg.role == "assistant")
     assert response.content is not None
 
