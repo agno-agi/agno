@@ -31,9 +31,8 @@ class AgentKnowledge(BaseModel):
 
     @model_validator(mode="after")
     def update_reader(self) -> "AgentKnowledge":
-        self.chunking_strategy = FixedSizeChunking()
         if self.reader is not None and self.reader.chunking_strategy is None:
-            self.reader.chunking_strategy = self.chunking_strategy
+            self.reader.chunking_strategy = self.chunking_strategy or FixedSizeChunking()
         return self
 
     @property
