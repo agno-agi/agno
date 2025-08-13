@@ -31,9 +31,6 @@ class TrafilaturaTools(Toolkit):
     TrafilaturaTools is a toolkit for web scraping and text extraction.
 
     Args:
-        include_tools (Optional[List[str]]): List of tools to include. If None, all available tools are included.
-            Available tools: 'extract_text', 'extract_metadata_only', 'crawl_website', 'html_to_text', 'extract_batch'.
-        exclude_tools (Optional[List[str]]): List of tools to exclude from the toolkit.
         output_format (str): Default output format for extractions. Options: 'txt', 'json', 'xml', 'markdown', 'csv', 'html', 'xmltei'.
         include_comments (bool): Whether to extract comments along with main text by default.
         include_tables (bool): Whether to include table content by default.
@@ -52,8 +49,6 @@ class TrafilaturaTools(Toolkit):
 
     def __init__(
         self,
-        include_tools: Optional[List[str]] = None,
-        exclude_tools: Optional[List[str]] = None,
         output_format: str = "txt",
         include_comments: bool = True,
         include_tables: bool = True,
@@ -85,30 +80,14 @@ class TrafilaturaTools(Toolkit):
         self.max_crawl_urls = max_crawl_urls
         self.max_known_urls = max_known_urls
 
-        all_tools = {
-            "extract_text": self.extract_text,
-            "extract_metadata_only": self.extract_metadata_only,
-            "crawl_website": self.crawl_website if SPIDER_AVAILABLE else None,
-            "html_to_text": self.html_to_text,
-            "extract_batch": self.extract_batch,
-        }
+        tools = [self.extract_text, self.extract_metadata_only, self.html_to_text, self.extract_batch]
 
-        # Filter tools based on include/exclude lists
-        selected_tools: List[Any] = []
-
-        if include_tools is not None:
-            selected_tools = [all_tools[tool] for tool in include_tools if tool in all_tools and all_tools[tool] is not None]
-        else:
-            selected_tools = [tool for tool in all_tools.values() if tool is not None]
-
-        if exclude_tools is not None:
-            excluded_methods = [all_tools[tool] for tool in exclude_tools if tool in all_tools]
-            selected_tools = [tool for tool in selected_tools if tool not in excluded_methods]
-
-        if include_tools and "crawl_website" in include_tools and not SPIDER_AVAILABLE:
+        if not SPIDER_AVAILABLE:
             logger.warning("Web crawling requested but spider module not available. Skipping crawler tool.")
+        else:
+            tools.append(self.crawl_website)
 
-        super().__init__(name="trafilatura_tools", tools=selected_tools, **kwargs)
+        super().__init__(name="trafilatura_tools", tools=tools, **kwargs)
 
     def _get_extraction_params(
         self,

@@ -1,4 +1,3 @@
-"""Unit tests for TrafilaturaTools class."""
 
 import json
 from unittest.mock import Mock, patch
@@ -39,7 +38,6 @@ def trafilatura_tools(mock_trafilatura_modules):
 def custom_trafilatura_tools(mock_trafilatura_modules):
     """Create a TrafilaturaTools instance with custom settings."""
     return TrafilaturaTools(
-        include_tools=["extract_text", "extract_metadata_only", "crawl_website", "html_to_text", "extract_batch"],
         output_format="json",
         include_comments=False,
         include_tables=True,
@@ -145,7 +143,7 @@ class TestTrafilaturaToolsInitialization:
     @patch("agno.tools.trafilatura.SPIDER_AVAILABLE", False)
     def test_initialization_without_spider(self, mock_trafilatura_modules):
         """Test initialization when spider module is not available."""
-        tools = TrafilaturaTools(include_tools=["crawl_website"])
+        tools = TrafilaturaTools()
         function_names = [func.name for func in tools.functions.values()]
         # crawl_website should not be in functions when spider is not available
         assert "crawl_website" not in function_names
