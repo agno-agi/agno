@@ -4,8 +4,7 @@ from agno.models.anthropic import Claude
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 
-from cookbook.agent_concepts.memory import db
-
+# Setup the database
 db = SqliteDb(db_file="tmp/level_three_agents")
 
 agent = Agent(
