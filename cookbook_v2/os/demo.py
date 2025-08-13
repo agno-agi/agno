@@ -8,6 +8,13 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.eval.accuracy import AccuracyEval
 from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.reader.csv_reader import CSVReader
+from agno.knowledge.reader.docx_reader import DocxReader
+from agno.knowledge.reader.pdf_reader import PDFReader
+from agno.knowledge.reader.json_reader import JSONReader
+from agno.knowledge.reader.text_reader import TextReader
+from agno.knowledge.reader.url_reader import URLReader
+from agno.knowledge.reader.website_reader import WebsiteReader
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.os.interfaces.whatsapp import Whatsapp
@@ -31,6 +38,15 @@ knowledge = Knowledge(
     name="Agno Docs",
     contents_db=db,
     vector_db=vector_db,
+    readers={
+        "pdf": PDFReader(),
+        "csv": CSVReader(),
+        "docx": DocxReader(),
+        "json": JSONReader(),
+        "text": TextReader(),
+        "url": URLReader(),
+        "website": WebsiteReader(),
+    },
 )
 
 # Create an Agent
