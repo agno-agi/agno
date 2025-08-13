@@ -4,7 +4,7 @@ import google.auth
 from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.db.gcs_json import GcsJsonDb
-from agno.tools import DuckDuckGoTools
+from agno.tools.duckduckgo import DuckDuckGoTools
 
 DEBUG_MODE = False
 # Obtain the default credentials and project id from your gcloud CLI session.
