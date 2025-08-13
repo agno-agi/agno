@@ -96,8 +96,8 @@ class AgentOS:
             for workflow in self.workflows:
                 if not workflow.os_id:
                     workflow.os_id = self.os_id
-                if not workflow.workflow_id:
-                    workflow.workflow_id = generate_id(workflow.name)
+                if not workflow.id:
+                    workflow.id = generate_id(workflow.name)
 
     def _auto_discover_apps(self) -> List[BaseApp]:
         """Auto-discover apps from agents, teams, and workflows."""

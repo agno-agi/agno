@@ -13,7 +13,7 @@ db = JsonDb(db_path="./agno_json_data")
 # Setup a basic agent and a basic team
 agent = Agent(
     name="JSON Demo Agent",
-    agent_id="basic-agent",
+    id="basic-agent",
     model=OpenAIChat(id="gpt-4o"),
     db=db,
     enable_user_memories=True,
@@ -25,7 +25,7 @@ agent = Agent(
 )
 
 team = Team(
-    team_id="basic-team",
+    id="basic-team",
     name="JSON Demo Team",
     model=OpenAIChat(id="gpt-4o"),
     db=db,

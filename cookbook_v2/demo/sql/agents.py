@@ -195,7 +195,7 @@ def get_sql_agent(
         name=name,
         model=model,
         user_id=user_id,
-        agent_id=name,
+        id=name,
         session_id=session_id,
         db=db,
         enable_user_memories=True,

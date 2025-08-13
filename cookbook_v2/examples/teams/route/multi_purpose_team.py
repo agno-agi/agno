@@ -125,7 +125,7 @@ reasoning_agent = Agent(
 
 code_execution_agent = Agent(
     name="Code Execution Sandbox",
-    agent_id="e2b-sandbox",
+    id="e2b-sandbox",
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[E2BTools()],
     markdown=True,

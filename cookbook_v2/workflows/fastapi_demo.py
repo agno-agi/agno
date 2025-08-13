@@ -83,7 +83,7 @@ def customer_support_execution(workflow: Workflow, query: str) -> str:
 
 # Create the customer support workflow
 customer_support_workflow = Workflow(
-    workflow_id="customer-support-resolution-pipeline",
+    id="customer-support-resolution-pipeline",
     name="Customer Support Resolution Pipeline",
     description="AI-powered customer support with intelligent caching",
     steps=customer_support_execution,

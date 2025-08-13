@@ -122,7 +122,7 @@ def test_update_team_session_state_from_nested_team():
 
 def test_session_state_in_storage(team_with_session_state):
     """Test that team_session_state is saved and loaded from storage"""
-    session_data = team_with_session_state._get_session_data()
+    session_data = team_with_session_state.get_team_session_data()
 
     assert "session_state" in session_data
     assert "team_session_state" in session_data

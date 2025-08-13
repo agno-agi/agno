@@ -39,7 +39,7 @@ _instructions = dedent("""\
 
 agno_support = Agent(
     name="Agno_Assist",
-    agent_id="agno_assist",
+    id="agno_assist",
     model=OpenAIChat(id="gpt-4o"),
     description=_description,
     instructions=_instructions,

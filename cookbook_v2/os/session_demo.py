@@ -13,10 +13,10 @@ db = PostgresDb(db_url=db_url)
 basic_agent = Agent(
     db=db,
     enable_user_memories=True,
-    agent_id="basic",
+    id="basic",
 )
 basic_team = Team(
-    team_id="basic",
+    id="basic",
     members=[basic_agent],
     db=db,
     enable_user_memories=True,

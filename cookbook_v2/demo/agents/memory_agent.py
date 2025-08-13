@@ -18,7 +18,7 @@ def get_memory_agent(
 ) -> Agent:
     return Agent(
         name="Memory Agent",
-        agent_id="memory-agent",
+        id="memory-agent",
         session_id=session_id,
         user_id=user_id,
         model=OpenAIChat(id="gpt-4.1"),

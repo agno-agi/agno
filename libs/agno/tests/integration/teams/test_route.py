@@ -37,7 +37,7 @@ def test_route_team_basic():
     assert isinstance(response.content, str)
     assert len(response.content) > 0
     assert len(response.member_responses) == 1
-    assert response.member_responses[0].agent_id == finance_agent.agent_id
+    assert response.member_responses[0].id == finance_agent.id
     assert team.session_id is not None
     assert team.session_id == finance_agent.team_session_id
 
@@ -81,7 +81,7 @@ def test_route_team_structured_output():
     assert response.content.price is not None
     member_responses = response.member_responses
     assert len(member_responses) == 1
-    assert response.member_responses[0].agent_id == finance_agent.agent_id
+    assert response.member_responses[0].id == finance_agent.id
 
 
 def test_route_team_with_multiple_agents():
@@ -143,7 +143,7 @@ def test_route_team_with_expected_output():
     assert isinstance(response.content, str)
     assert len(response.content) > 0
     assert len(response.member_responses) == 1
-    assert response.member_responses[0].agent_id == math_agent.agent_id
+    assert response.member_responses[0].id == math_agent.id
 
 
 def test_route_team_multiple_calls():
@@ -157,7 +157,7 @@ def test_route_team_multiple_calls():
 
     web_agent = Agent(
         name="Weather Agent",
-        agent_id="web-agent",
+        id="web-agent",
         model=OpenAIChat("gpt-4o"),
         role="Search the web for weather information",
         tools=[get_weather],
@@ -165,7 +165,7 @@ def test_route_team_multiple_calls():
 
     finance_agent = Agent(
         name="Finance Agent",
-        agent_id="finance-agent",
+        id="finance-agent",
         model=OpenAIChat("gpt-4o"),
         role="Get financial data",
         tools=[get_stock_price],
@@ -176,14 +176,14 @@ def test_route_team_multiple_calls():
     # This should route to the finance agent
     response = team.run("What is the current stock price of AAPL?")
     assert response.tools[0].tool_name == "forward_task_to_member"
-    assert response.tools[0].tool_args["member_id"] == finance_agent.agent_id
+    assert response.tools[0].tool_args["member_id"] == finance_agent.id
 
-    assert response.member_responses[0].agent_id == finance_agent.agent_id
+    assert response.member_responses[0].id == finance_agent.id
     assert "What is the current stock price of AAPL?" in response.member_responses[0].messages[1].content
 
     # This should route to the weather agent
     response = team.run("What is the weather in Tokyo?")
     assert response.tools[0].tool_name == "forward_task_to_member"
-    assert response.tools[0].tool_args["member_id"] == web_agent.agent_id
-    assert response.member_responses[0].agent_id == web_agent.agent_id
+    assert response.tools[0].tool_args["member_id"] == web_agent.id
+    assert response.member_responses[0].id == web_agent.id
     assert "What is the weather in Tokyo?" in response.member_responses[0].messages[1].content

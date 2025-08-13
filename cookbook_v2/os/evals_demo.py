@@ -14,7 +14,7 @@ db = PostgresDb(db_url=db_url)
 
 # Setup the agent
 basic_agent = Agent(
-    agent_id="basic-agent",
+    id="basic-agent",
     name="Calculator Agent",
     model=OpenAIChat(id="gpt-4o"),
     db=db,

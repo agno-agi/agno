@@ -25,7 +25,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 finance_agent = Agent(
     name="Finance Agent",
     role="Get financial data",
-    agent_id="finance-agent",
+    id="finance-agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[
         YFinanceTools(
@@ -48,7 +48,7 @@ finance_agent = Agent(
 cot_agent = Agent(
     name="Chain-of-Thought Agent",
     role="Answer basic questions",
-    agent_id="cot-agent",
+    id="cot-agent",
     model=OpenAIChat(id="gpt-4o-mini"),
     storage=SqliteStorage(
         table_name="cot_agent", db_file=agent_storage_file, auto_upgrade_schema=True
@@ -63,7 +63,7 @@ cot_agent = Agent(
 reasoning_model_agent = Agent(
     name="Reasoning Model Agent",
     role="Reasoning about Math",
-    agent_id="reasoning-model-agent",
+    id="reasoning-model-agent",
     model=OpenAIChat(id="gpt-4o"),
     reasoning_model=OpenAIChat(id="o3-mini"),
     instructions=["You are a reasoning agent that can reason about math."],
@@ -79,7 +79,7 @@ reasoning_model_agent = Agent(
 reasoning_tool_agent = Agent(
     name="Reasoning Tool Agent",
     role="Answer basic questions",
-    agent_id="reasoning-tool-agent",
+    id="reasoning-tool-agent",
     model=OpenAIChat(id="gpt-4o-mini"),
     storage=SqliteStorage(
         table_name="reasoning_tool_agent",
@@ -98,7 +98,7 @@ web_agent = Agent(
     name="Web Search Agent",
     role="Handle web search requests",
     model=OpenAIChat(id="gpt-4o-mini"),
-    agent_id="web_agent",
+    id="web_agent",
     tools=[DuckDuckGoTools()],
     instructions="Always include sources",
     add_datetime_to_context=True,
@@ -111,7 +111,7 @@ web_agent = Agent(
 
 thinking_tool_agent = Agent(
     name="Thinking Tool Agent",
-    agent_id="thinking_tool_agent",
+    id="thinking_tool_agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[ThinkingTools(add_instructions=True), YFinanceTools(enable_all=True)],
     instructions=dedent("""\
@@ -177,7 +177,7 @@ knowledge_tools = KnowledgeTools(
     add_few_shot=True,
 )
 knowledge_agent = Agent(
-    agent_id="knowledge_agent",
+    id="knowledge_agent",
     name="Knowledge Agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[knowledge_tools],
@@ -201,7 +201,7 @@ reasoning_finance_team = Team(
     tools=[ReasoningTools(add_instructions=True)],
     # uncomment it to use knowledge tools
     # tools=[knowledge_tools],
-    team_id="reasoning_finance_team",
+    id="reasoning_finance_team",
     debug_mode=True,
     instructions=[
         "Only output the final answer, no other text.",

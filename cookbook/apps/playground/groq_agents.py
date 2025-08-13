@@ -19,7 +19,7 @@ common_instructions = [
 web_agent = Agent(
     name="Web Agent",
     role="Search the web for information",
-    agent_id="web-agent",
+    id="web-agent",
     model=Groq(id="llama-3.3-70b-versatile"),
     tools=[DuckDuckGoTools()],
     instructions=[
@@ -40,7 +40,7 @@ web_agent = Agent(
 finance_agent = Agent(
     name="Finance Agent",
     role="Get financial data",
-    agent_id="finance-agent",
+    id="finance-agent",
     model=Groq(id="llama-3.3-70b-versatile"),
     tools=[
         YFinanceTools(
@@ -66,7 +66,7 @@ finance_agent = Agent(
 youtube_agent = Agent(
     name="YouTube Agent",
     role="Understand YouTube videos and answer questions",
-    agent_id="youtube-agent",
+    id="youtube-agent",
     model=Groq(id="llama-3.3-70b-versatile"),
     tools=[YouTubeTools()],
     description="You are a YouTube agent that has the special skill of understanding YouTube videos and answering questions about them.",

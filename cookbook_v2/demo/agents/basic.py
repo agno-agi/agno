@@ -19,7 +19,7 @@ db = SqliteDb(db_file=db_file)
 simple_agent = Agent(
     name="Simple Agent",
     role="Answer basic questions",
-    agent_id="simple-agent",
+    id="simple-agent",
     model=OpenAIChat(id="gpt-4o-mini"),
     db=db,
     enable_user_memories=True,
@@ -31,7 +31,7 @@ simple_agent = Agent(
 web_agent = Agent(
     name="Web Agent",
     role="Search the web for information",
-    agent_id="web-agent",
+    id="web-agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[DuckDuckGoTools()],
     instructions=[
@@ -48,7 +48,7 @@ web_agent = Agent(
 finance_agent = Agent(
     name="Finance Agent",
     role="Get financial data",
-    agent_id="finance-agent",
+    id="finance-agent",
     model=Claude(id="claude-sonnet-4-20250514"),
     tools=[
         ReasoningTools(add_instructions=True),
@@ -64,7 +64,7 @@ finance_agent = Agent(
 
 image_agent = Agent(
     name="Image Agent",
-    agent_id="image_agent",
+    id="image_agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[DalleTools(model="dall-e-3", size="1792x1024", quality="hd", style="vivid")],
     description="You are an AI agent that can generate images using DALL-E.",
@@ -82,7 +82,7 @@ image_agent = Agent(
 research_agent = Agent(
     name="Research Agent",
     role="Write research reports for the New York Times",
-    agent_id="research-agent",
+    id="research-agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[
         ExaTools(
@@ -129,7 +129,7 @@ research_agent = Agent(
 
 youtube_agent = Agent(
     name="YouTube Agent",
-    agent_id="youtube-agent",
+    id="youtube-agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[YouTubeTools()],
     description="You are a YouTube agent that has the special skill of understanding YouTube videos and answering questions about them.",

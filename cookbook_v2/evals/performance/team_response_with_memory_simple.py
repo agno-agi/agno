@@ -33,7 +33,7 @@ def get_weather(city: str) -> str:
 
 
 weather_agent = Agent(
-    agent_id="weather_agent",
+    id="weather_agent",
     model=OpenAIChat(id="gpt-4o-mini"),
     role="Weather Agent",
     description="You are a helpful assistant that can answer questions about the weather.",

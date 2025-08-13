@@ -59,7 +59,7 @@ def get_activities(city: str) -> str:
 
 
 weather_agent = Agent(
-    agent_id="weather_agent",
+    id="weather_agent",
     model=OpenAIChat(id="gpt-4o-mini"),
     description="You are a helpful assistant that can answer questions about the weather.",
     instructions="Be concise, reply with one sentence.",
@@ -70,7 +70,7 @@ weather_agent = Agent(
 )
 
 activities_agent = Agent(
-    agent_id="activities_agent",
+    id="activities_agent",
     model=OpenAIChat(id="gpt-4o-mini"),
     description="You are a helpful assistant that can answer questions about activities in a city.",
     instructions="Be concise, reply with one sentence.",

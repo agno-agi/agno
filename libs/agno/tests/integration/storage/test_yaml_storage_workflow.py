@@ -134,9 +134,9 @@ def test_session_deletion(workflow_with_storage, workflow_storage):
 def test_get_all_session_ids(workflow_storage):
     """Test retrieving all session IDs."""
     # Create multiple sessions with different user IDs and workflow IDs
-    workflow_1 = SimpleWorkflow(storage=workflow_storage, user_id="user1", workflow_id="workflow1", name="Workflow1")
-    workflow_2 = SimpleWorkflow(storage=workflow_storage, user_id="user1", workflow_id="workflow2", name="Workflow2")
-    workflow_3 = SimpleWorkflow(storage=workflow_storage, user_id="user2", workflow_id="workflow3", name="Workflow3")
+    workflow_1 = SimpleWorkflow(storage=workflow_storage, user_id="user1", id="workflow1", name="Workflow1")
+    workflow_2 = SimpleWorkflow(storage=workflow_storage, user_id="user1", id="workflow2", name="Workflow2")
+    workflow_3 = SimpleWorkflow(storage=workflow_storage, user_id="user2", id="workflow3", name="Workflow3")
 
     workflow_1.run(query="Question 1")
     workflow_2.run(query="Question 2")

@@ -11,7 +11,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 
 wikipedia_agent = Agent(
-    agent_id="hacker-news-agent",
+    id="hacker-news-agent",
     name="Hacker News Agent",
     role="Search Hacker News for information",
     model=MistralChat(id="mistral-large-latest"),
@@ -22,7 +22,7 @@ wikipedia_agent = Agent(
 )
 
 website_agent = Agent(
-    agent_id="website-agent",
+    id="website-agent",
     name="Website Agent",
     role="Search the website for information",
     model=OpenAIChat(id="gpt-4o"),
@@ -38,7 +38,7 @@ team_id = str(uuid4())
 company_info_team = Team(
     name="Company Info Team",
     mode="coordinate",
-    team_id=team_id,
+    id=team_id,
     user_id=user_id,
     model=Claude(id="claude-3-7-sonnet-latest"),
     members=[
