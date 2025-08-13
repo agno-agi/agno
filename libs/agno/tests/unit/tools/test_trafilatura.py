@@ -39,10 +39,7 @@ def trafilatura_tools(mock_trafilatura_modules):
 def custom_trafilatura_tools(mock_trafilatura_modules):
     """Create a TrafilaturaTools instance with custom settings."""
     return TrafilaturaTools(
-        extract_text=True,
-        extract_metadata_only=True,
-        crawl_website=True,
-        html_to_text=True,
+        include_tools=["extract_text", "extract_metadata_only", "crawl_website", "html_to_text", "extract_batch"],
         output_format="json",
         include_comments=False,
         include_tables=True,
@@ -95,9 +92,11 @@ class TestTrafilaturaToolsInitialization:
         assert trafilatura_tools.max_crawl_urls == 10
         assert trafilatura_tools.max_known_urls == 100000
 
-        # Check registered functions - default includes extract_text and extract_batch
+        # Check registered functions - all tools included by default
         function_names = [func.name for func in trafilatura_tools.functions.values()]
         assert "extract_text" in function_names
+        assert "extract_metadata_only" in function_names
+        assert "html_to_text" in function_names
         assert "extract_batch" in function_names
 
     def test_initialization_custom(self, custom_trafilatura_tools):
@@ -124,10 +123,29 @@ class TestTrafilaturaToolsInitialization:
         assert "html_to_text" in function_names
         assert "extract_batch" in function_names
 
+    def test_initialization_include_tools(self, mock_trafilatura_modules):
+        """Test initialization with include_tools parameter."""
+        tools = TrafilaturaTools(include_tools=["extract_text", "extract_batch"])
+        function_names = [func.name for func in tools.functions.values()]
+        assert "extract_text" in function_names
+        assert "extract_batch" in function_names
+        assert "extract_metadata_only" not in function_names
+        assert "html_to_text" not in function_names
+
+    def test_initialization_exclude_tools(self, mock_trafilatura_modules):
+        """Test initialization with exclude_tools parameter."""
+        tools = TrafilaturaTools(exclude_tools=["crawl_website", "html_to_text"])
+        function_names = [func.name for func in tools.functions.values()]
+        assert "extract_text" in function_names
+        assert "extract_metadata_only" in function_names
+        assert "extract_batch" in function_names
+        assert "crawl_website" not in function_names
+        assert "html_to_text" not in function_names
+
     @patch("agno.tools.trafilatura.SPIDER_AVAILABLE", False)
     def test_initialization_without_spider(self, mock_trafilatura_modules):
         """Test initialization when spider module is not available."""
-        tools = TrafilaturaTools(crawl_website=True)
+        tools = TrafilaturaTools(include_tools=["crawl_website"])
         function_names = [func.name for func in tools.functions.values()]
         # crawl_website should not be in functions when spider is not available
         assert "crawl_website" not in function_names
@@ -165,23 +183,19 @@ class TestExtractTextMethod:
         mock_trafilatura_modules["extract"].assert_not_called()
 
     def test_extract_text_with_custom_params(self, trafilatura_tools, mock_trafilatura_modules):
-        """Test extract_text with custom parameters."""
+        """Test extract_text with custom output format."""
         # Setup mocks
         mock_trafilatura_modules["fetch_url"].return_value = "<html><body>Test content</body></html>"
         mock_trafilatura_modules["extract"].return_value = "Extracted text"
 
-        # Execute with custom parameters
-        result = trafilatura_tools.extract_text(
-            "https://example.com", output_format="json", include_comments=False, with_metadata=True
-        )
+        # Execute with custom output format
+        result = trafilatura_tools.extract_text("https://example.com", output_format="json")
 
         # Assert
         assert result == "Extracted text"
-        # Verify extract was called with parameters
+        # Verify extract was called with output format
         call_args = mock_trafilatura_modules["extract"].call_args
         assert call_args[1]["output_format"] == "json"
-        assert call_args[1]["include_comments"] is False
-        assert call_args[1]["with_metadata"] is True
 
     def test_extract_text_exception_handling(self, trafilatura_tools, mock_trafilatura_modules):
         """Test extract_text exception handling."""
@@ -446,13 +460,12 @@ class TestToolkitIntegration:
     def test_toolkit_registration_default(self, trafilatura_tools):
         """Test that tools are registered correctly with default configuration."""
         function_names = [func.name for func in trafilatura_tools.functions.values()]
-        # Default configuration should include extract_text and extract_batch
+        # Default configuration should include all available tools
         assert "extract_text" in function_names
+        assert "extract_metadata_only" in function_names
+        assert "html_to_text" in function_names
         assert "extract_batch" in function_names
-        # Should not include metadata_only, crawl, or html_to_text by default
-        assert "extract_metadata_only" not in function_names
-        assert "crawl_website" not in function_names
-        assert "html_to_text" not in function_names
+        # crawl_website should be included if spider is available
 
     def test_toolkit_registration_custom(self, custom_trafilatura_tools):
         """Test that tools are registered correctly with custom configuration."""

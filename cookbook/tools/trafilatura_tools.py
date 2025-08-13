@@ -113,8 +113,7 @@ def metadata_only_extraction():
     agent = Agent(
         tools=[
             TrafilaturaTools(
-                extract_text=False,  # Disable main text extraction
-                extract_metadata_only=True,
+                include_tools=["extract_metadata_only"], 
             )
         ],
         show_tool_calls=True,
@@ -232,7 +231,7 @@ def website_crawling():
     agent = Agent(
         tools=[
             TrafilaturaTools(
-                crawl_website=True,
+                include_tools=["crawl_website"],
                 max_crawl_urls=5,  # Limit for demo
                 output_format="json",
                 with_metadata=True,
@@ -262,8 +261,7 @@ def html_to_text_conversion():
     agent = Agent(
         tools=[
             TrafilaturaTools(
-                html_to_text=True,
-                extract_text=False,  # Only enable HTML conversion
+                include_tools=["html_to_text"],
             )
         ],
         show_tool_calls=True,

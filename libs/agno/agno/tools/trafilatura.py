@@ -31,10 +31,9 @@ class TrafilaturaTools(Toolkit):
     TrafilaturaTools is a toolkit for web scraping and text extraction.
 
     Args:
-        extract_text (bool): Whether to extract main text content from URLs.
-        extract_metadata_only (bool): Whether to extract only metadata from URLs.
-        crawl_website (bool): Whether to enable web crawling functionality.
-        html_to_text (bool): Whether to enable basic HTML to text conversion.
+        include_tools (Optional[List[str]]): List of tools to include. If None, all available tools are included.
+            Available tools: 'extract_text', 'extract_metadata_only', 'crawl_website', 'html_to_text', 'extract_batch'.
+        exclude_tools (Optional[List[str]]): List of tools to exclude from the toolkit.
         output_format (str): Default output format for extractions. Options: 'txt', 'json', 'xml', 'markdown', 'csv', 'html', 'xmltei'.
         include_comments (bool): Whether to extract comments along with main text by default.
         include_tables (bool): Whether to include table content by default.
@@ -53,10 +52,8 @@ class TrafilaturaTools(Toolkit):
 
     def __init__(
         self,
-        extract_text: bool = True,
-        extract_metadata_only: bool = False,
-        crawl_website: bool = False,
-        html_to_text: bool = False,
+        include_tools: Optional[List[str]] = None,
+        exclude_tools: Optional[List[str]] = None,
         output_format: str = "txt",
         include_comments: bool = True,
         include_tables: bool = True,
@@ -88,22 +85,30 @@ class TrafilaturaTools(Toolkit):
         self.max_crawl_urls = max_crawl_urls
         self.max_known_urls = max_known_urls
 
-        tools: List[Any] = []
-        if extract_text:
-            tools.append(self.extract_text)
-        if extract_metadata_only:
-            tools.append(self.extract_metadata_only)
-        if crawl_website and SPIDER_AVAILABLE:
-            tools.append(self.crawl_website)
-        elif crawl_website and not SPIDER_AVAILABLE:
+        all_tools = {
+            "extract_text": self.extract_text,
+            "extract_metadata_only": self.extract_metadata_only,
+            "crawl_website": self.crawl_website if SPIDER_AVAILABLE else None,
+            "html_to_text": self.html_to_text,
+            "extract_batch": self.extract_batch,
+        }
+
+        # Filter tools based on include/exclude lists
+        selected_tools: List[Any] = []
+
+        if include_tools is not None:
+            selected_tools = [all_tools[tool] for tool in include_tools if tool in all_tools and all_tools[tool] is not None]
+        else:
+            selected_tools = [tool for tool in all_tools.values() if tool is not None]
+
+        if exclude_tools is not None:
+            excluded_methods = [all_tools[tool] for tool in exclude_tools if tool in all_tools]
+            selected_tools = [tool for tool in selected_tools if tool not in excluded_methods]
+
+        if include_tools and "crawl_website" in include_tools and not SPIDER_AVAILABLE:
             logger.warning("Web crawling requested but spider module not available. Skipping crawler tool.")
-        if html_to_text:
-            tools.append(self.html_to_text)
 
-        # Add batch processing
-        tools.append(self.extract_batch)
-
-        super().__init__(name="trafilatura_tools", tools=tools, **kwargs)
+        super().__init__(name="trafilatura_tools", tools=selected_tools, **kwargs)
 
     def _get_extraction_params(
         self,
@@ -144,19 +149,6 @@ class TrafilaturaTools(Toolkit):
         self,
         url: str,
         output_format: Optional[str] = None,
-        include_comments: Optional[bool] = None,
-        include_tables: Optional[bool] = None,
-        include_images: Optional[bool] = None,
-        include_formatting: Optional[bool] = None,
-        include_links: Optional[bool] = None,
-        with_metadata: Optional[bool] = None,
-        favor_precision: Optional[bool] = None,
-        favor_recall: Optional[bool] = None,
-        target_language: Optional[str] = None,
-        deduplicate: Optional[bool] = None,
-        max_tree_size: Optional[int] = None,
-        url_blacklist: Optional[Set[str]] = None,
-        author_blacklist: Optional[Set[str]] = None,
     ) -> str:
         """
         Extract main text content from a web page URL using Trafilatura.
@@ -164,19 +156,6 @@ class TrafilaturaTools(Toolkit):
         Args:
             url (str): The URL to extract content from.
             output_format (Optional[str]): Output format. Options: 'txt', 'json', 'xml', 'markdown', 'csv', 'html', 'xmltei'.
-            include_comments (Optional[bool]): Whether to extract comments along with main text.
-            include_tables (Optional[bool]): Whether to include table content.
-            include_images (Optional[bool]): Whether to include image information (experimental).
-            include_formatting (Optional[bool]): Whether to preserve formatting.
-            include_links (Optional[bool]): Whether to preserve links (experimental).
-            with_metadata (Optional[bool]): Whether to include metadata in the output.
-            favor_precision (Optional[bool]): Prefer less text but more accurate extraction.
-            favor_recall (Optional[bool]): Prefer more text even when uncertain.
-            target_language (Optional[str]): Target language filter (ISO 639-1 format, e.g., 'en', 'fr').
-            deduplicate (Optional[bool]): Whether to remove duplicate segments.
-            max_tree_size (Optional[int]): Maximum tree size for processing.
-            url_blacklist (Optional[Set[str]]): Set of URLs to filter out.
-            author_blacklist (Optional[Set[str]]): Set of author names to filter out.
 
         Returns:
             str: Extracted content in the specified format, or error message if extraction fails.
@@ -190,22 +169,7 @@ class TrafilaturaTools(Toolkit):
                 return f"Error: Could not fetch content from URL: {url}"
 
             # Get extraction parameters
-            params = self._get_extraction_params(
-                output_format=output_format,
-                include_comments=include_comments,
-                include_tables=include_tables,
-                include_images=include_images,
-                include_formatting=include_formatting,
-                include_links=include_links,
-                with_metadata=with_metadata,
-                favor_precision=favor_precision,
-                favor_recall=favor_recall,
-                target_language=target_language,
-                deduplicate=deduplicate,
-                max_tree_size=max_tree_size,
-                url_blacklist=url_blacklist,
-                author_blacklist=author_blacklist,
-            )
+            params = self._get_extraction_params(output_format=output_format)
 
             result = extract(html_content, url=url, **params)
 
@@ -224,8 +188,6 @@ class TrafilaturaTools(Toolkit):
     def extract_metadata_only(
         self,
         url: str,
-        extensive: bool = True,
-        author_blacklist: Optional[Set[str]] = None,
         as_json: bool = True,
     ) -> str:
         """
@@ -233,8 +195,6 @@ class TrafilaturaTools(Toolkit):
 
         Args:
             url (str): The URL to extract metadata from.
-            extensive (bool): Whether to perform extensive metadata extraction.
-            author_blacklist (Optional[Set[str]]): Set of author names to filter out.
             as_json (bool): Whether to return metadata as JSON string.
 
         Returns:
@@ -252,8 +212,8 @@ class TrafilaturaTools(Toolkit):
             metadata_doc = extract_metadata(
                 html_content,
                 default_url=url,
-                extensive=extensive,
-                author_blacklist=author_blacklist,
+                extensive=True,  # default
+                author_blacklist=None,
             )
 
             if metadata_doc is None:
@@ -276,24 +236,14 @@ class TrafilaturaTools(Toolkit):
     def crawl_website(
         self,
         homepage_url: str,
-        max_seen_urls: Optional[int] = None,
-        max_known_urls: Optional[int] = None,
-        target_language: Optional[str] = None,
         extract_content: bool = False,
-        output_format: Optional[str] = None,
-        include_metadata: bool = True,
     ) -> str:
         """
         Crawl a website and optionally extract content from discovered pages.
 
         Args:
             homepage_url (str): The starting URL (preferably homepage) to crawl from.
-            max_seen_urls (Optional[int]): Maximum number of pages to visit. Defaults to instance setting.
-            max_known_urls (Optional[int]): Maximum number of pages to "know" about. Defaults to instance setting.
-            target_language (Optional[str]): Target language for link filtering (ISO 639-1 format).
             extract_content (bool): Whether to extract content from discovered URLs.
-            output_format (Optional[str]): Output format for content extraction if enabled.
-            include_metadata (bool): Whether to include metadata when extracting content.
 
         Returns:
             str: JSON containing crawl results and optionally extracted content.
@@ -304,10 +254,10 @@ class TrafilaturaTools(Toolkit):
         try:
             log_debug(f"Starting website crawl from: {homepage_url}")
 
-            # Use instance defaults if not specified
-            max_seen = max_seen_urls if max_seen_urls is not None else self.max_crawl_urls
-            max_known = max_known_urls if max_known_urls is not None else self.max_known_urls
-            lang = target_language if target_language is not None else self.target_language
+            # Use instance configuration
+            max_seen = self.max_crawl_urls
+            max_known = self.max_known_urls
+            lang = self.target_language
 
             # Perform focused crawling
             to_visit, known_links = focused_crawler(
@@ -337,10 +287,7 @@ class TrafilaturaTools(Toolkit):
 
                 for url in urls_to_extract:
                     try:
-                        params = self._get_extraction_params(
-                            output_format=output_format,
-                            with_metadata=include_metadata,
-                        )
+                        params = self._get_extraction_params()
 
                         html_content = fetch_url(url)
                         if html_content:
@@ -393,16 +340,12 @@ class TrafilaturaTools(Toolkit):
     def extract_batch(
         self,
         urls: List[str],
-        output_format: Optional[str] = None,
-        include_metadata: bool = True,
     ) -> str:
         """
         Extract content from multiple URLs in batch.
 
         Args:
             urls (List[str]): List of URLs to extract content from.
-            output_format (Optional[str]): Output format for extractions.
-            include_metadata (bool): Whether to include metadata in extractions.
 
         Returns:
             str: JSON containing batch extraction results.
@@ -415,10 +358,7 @@ class TrafilaturaTools(Toolkit):
 
             for url in urls:
                 try:
-                    params = self._get_extraction_params(
-                        output_format=output_format,
-                        with_metadata=include_metadata,
-                    )
+                    params = self._get_extraction_params()
 
                     html_content = fetch_url(url)
                     if html_content:
