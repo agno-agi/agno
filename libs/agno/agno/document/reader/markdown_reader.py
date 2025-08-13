@@ -1,11 +1,9 @@
 import asyncio
 import uuid
 from pathlib import Path
-from typing import IO, Any, List, Optional, Union
+from typing import IO, Any, List, Union
 
 from agno.document.base import Document
-from agno.document.chunking.markdown import MarkdownChunking
-from agno.document.chunking.strategy import ChunkingStrategy
 from agno.document.reader.base import Reader
 from agno.utils.log import log_info, logger
 

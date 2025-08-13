@@ -24,14 +24,14 @@ Local Development Setup:
 3. Remember to set `local=True` on the Weaviate instantiation.
 """
 
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
-from agno.knowledge.document import DocumentKnowledgeBase
 from agno.document import Document
+from agno.embedder.sentence_transformer import SentenceTransformerEmbedder
+from agno.knowledge.document import DocumentKnowledgeBase
+from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.utils.log import set_log_level_to_debug
 from agno.vectordb.search import SearchType
 from agno.vectordb.weaviate import Distance, VectorIndex, Weaviate
-from agno.utils.log import set_log_level_to_debug
 
-from agno.embedder.sentence_transformer import SentenceTransformerEmbedder
 embedder = SentenceTransformerEmbedder()
 
 vector_db = Weaviate(
@@ -53,7 +53,9 @@ set_log_level_to_debug()
 
 knowledge_base.load(recreate=False, upsert=True)
 
-print("Knowledge base loaded with PDF content. Loading the same data again will not recreate it.")
+print(
+    "Knowledge base loaded with PDF content. Loading the same data again will not recreate it."
+)
 knowledge_base.load(recreate=False, upsert=True)
 
 print("First example finished. Now dropping the knowledge base.")

@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Set, Tuple
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from agno.document import Document
 from agno.document.chunking.fixed import FixedSizeChunking
