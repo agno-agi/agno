@@ -3,12 +3,12 @@ from agno.db.postgres import PostgresDb
 from agno.memory.manager import MemoryManager  # noqa: F401
 from agno.models.openai import OpenAIChat
 
+# Set up Postgres database
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-
 db = PostgresDb(
     db_url=db_url,
     session_table="sessions",
-    user_memory_table="user_memories",
+    memory_table="memories",
 )
 
 # 1. Using the default memory manager by setting enable_user_memories=True

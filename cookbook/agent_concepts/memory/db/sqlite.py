@@ -1,18 +1,17 @@
 from agno.agent.agent import Agent
-from agno.db.sqlite import SqliteStorage
-from agno.memory.db.sqlite import SqliteMemoryDb
-from agno.memory.memory import Memory
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 
-memory = Memory(db=SqliteMemoryDb(table_name="agent_memories", db_file="tmp/memory.db"))
+# Set up SQLite database
+db_url = "sqlite:///tmp/memory.db"
+db = SqliteDb(db_url=db_url)
 
 session_id = "sqlite_memories"
 user_id = "sqlite_user"
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    memory=memory,
-    storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/memory.db"),
+    db=db,
     enable_user_memories=True,
     enable_session_summaries=True,
 )

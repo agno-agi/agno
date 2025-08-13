@@ -2,8 +2,8 @@ from agno.agent.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 
+# Set up Postgres database
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-
 db = PostgresDb(db_url=db_url, session_table="sessions")
 
 agent = Agent(

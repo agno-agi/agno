@@ -1,20 +1,17 @@
 from agno.agent.agent import Agent
-from agno.db.mongodb import MongoDbStorage
-from agno.memory.db.mongodb import MongoMemoryDb
-from agno.memory.memory import Memory
+from agno.db.mongo import MongoDb
 from agno.models.openai import OpenAIChat
 
+# Set up MongoDB database
 db_url = "mongodb://mongoadmin:secret@localhost:27017"
-
-memory = Memory(db=MongoMemoryDb(collection_name="agent_memories", db_url=db_url))
+db = MongoDb(db_url=db_url)
 
 session_id = "mongodb_memories"
 user_id = "mongodb_user"
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    memory=memory,
-    storage=MongoDbStorage(collection_name="agent_sessions", db_url=db_url),
+    db=db,
     enable_user_memories=True,
     enable_session_summaries=True,
 )

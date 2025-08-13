@@ -41,7 +41,7 @@ def sync_demo():
     )
 
     # Create agent and query synchronously
-    agent = Agent(knowledge=knowledge, show_tool_calls=True)
+    agent = Agent(knowledge=knowledge)
     agent.print_response(
         "What are the 3 categories of Thai SELECT is given to restaurants overseas?",
         markdown=True,

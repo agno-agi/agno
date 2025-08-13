@@ -1,18 +1,17 @@
 from agno.agent.agent import Agent
-from agno.db.redis import RedisStorage
-from agno.memory.db.redis import RedisMemoryDb
-from agno.memory.memory import Memory
+from agno.db.redis import RedisDb
 from agno.models.openai import OpenAIChat
 
-memory = Memory(db=RedisMemoryDb(prefix="agno_memory", host="localhost", port=6379))
+# Set up Redis database
+db_url = "redis://localhost:6379"
+db = RedisDb(db_url=db_url)
 
 session_id = "redis_memories"
 user_id = "redis_user"
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    memory=memory,
-    storage=RedisStorage(prefix="agno_test", host="localhost", port=6379),
+    db=db,
     enable_user_memories=True,
     enable_session_summaries=True,
 )

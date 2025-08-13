@@ -1,46 +1,53 @@
 import asyncio
+from os import getenv
 
 from agno.agent import Agent
-from agno.knowledge.light_rag import LightRagKnowledgeBase, lightrag_knowledge_retriever
-from agno.models.anthropic import Claude
+from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.reader.wikipedia_reader import WikipediaReader
+from agno.vectordb.lightrag import LightRag
 
-# Create a knowledge base, loaded with documents from a URL
-knowledge_base = LightRagKnowledgeBase(
-    lightrag_server_url="http://localhost:9621",
-    path="tmp/",  # Load documents from a local directory
-    urls=["https://docs.agno.com/introduction/agents.md"],  # Load documents from a URL
+vector_db = LightRag(
+    api_key=getenv("LIGHTRAG_API_KEY"),
 )
 
-# Load the knowledge base with the documents from the local directory and the URL
-asyncio.run(knowledge_base.load())
-
-# Load the knowledge base with the text
-asyncio.run(
-    knowledge_base.load_text(text="Dogs and cats are not pets, they are friends.")
+knowledge = Knowledge(
+    name="My Pinecone Knowledge Base",
+    description="This is a knowledge base that uses a Pinecone Vector DB",
+    vector_db=vector_db,
 )
 
 
-# Create an agent with the knowledge base and the knowledge retriever
+knowledge.add_content(
+    name="Recipes",
+    path="cookbook_v2/knowledge/data/filters/cv_4.pdf",
+    metadata={"doc_type": "recipe_book"},
+)
+
+knowledge.add_content(
+    name="Recipes",
+    topics=["Manchester United"],
+    reader=WikipediaReader(),
+)
+
+knowledge.add_content(
+    name="Recipes",
+    url="https://en.wikipedia.org/wiki/Manchester_United_F.C.",
+)
+
+
 agent = Agent(
-    model=Claude(id="claude-3-7-sonnet-latest"),
-    # Agentic RAG is enabled by default when `knowledge` is provided to the Agent.
-    knowledge=knowledge_base,
-    knowledge_retriever=lightrag_knowledge_retriever,
-    # search_knowledge=True gives the Agent the ability to search on demand
-    # search_knowledge is True by default
+    knowledge=knowledge,
     search_knowledge=True,
-    instructions=[
-        "Include sources in your response.",
-        "Always search your knowledge before answering the question.",
-        "Use the async_search method to search the knowledge base.",
-    ],
-    markdown=True,
+    read_chat_history=False,
 )
 
+
+asyncio.run(
+    agent.aprint_response("What skills does Jordan Mitchell have?", markdown=True)
+)
 
 asyncio.run(
     agent.aprint_response(
-        "Which candidates are available for the role of a Senior Software Engineer?"
+        "In what year did Manchester United change their name?", markdown=True
     )
 )
-asyncio.run(agent.aprint_response("What are Agno Agents?"))

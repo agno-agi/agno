@@ -43,7 +43,7 @@ async def async_demo():
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
     )
 
-    agent = Agent(knowledge=knowledge, show_tool_calls=True)
+    agent = Agent(knowledge=knowledge)
     await agent.aprint_response(
         "What are the 3 categories of Thai SELECT is given to restaurants overseas?",
         markdown=True,
