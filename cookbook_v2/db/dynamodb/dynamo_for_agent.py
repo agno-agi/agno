@@ -8,14 +8,14 @@ Set the following environment variables to connect to your DynamoDb instance:
 Run `pip install boto3` to install dependencies."""
 
 from agno.agent import Agent
-from agno.db.dynamo import DynamoDb
+from agno.db import DynamoDb
 
+# Setup the DynamoDB database
 db = DynamoDb()
 
-agent = Agent(
-    db=db,
-    enable_user_memories=True,
-)
+# Setup a basic agent with the DynamoDB database
+agent = Agent(db=db)
 
+# The Agent sessions and runs will now be stored in DynamoDB
 agent.print_response("How many people live in Canada?")
 agent.print_response("What is their national anthem called?")

@@ -1,4 +1,14 @@
-"""Example showing how to use AgentOS with a DynamoDB database"""
+"""Example showing how to use AgentOS with a DynamoDB database
+
+Set the following environment variables to connect to your DynamoDb instance:
+- AWS_REGION
+- AWS_ACCESS_KEY_ID
+- AWS_SECRET_ACCESS_KEY
+
+Or pass those parameters when initializing the DynamoDb instance.
+
+Run `pip install boto3` to install dependencies.
+"""
 
 from agno.agent import Agent
 from agno.db.dynamo import DynamoDb

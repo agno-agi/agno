@@ -1,24 +1,29 @@
-"""Use SQLite as the database for an Agent.
+"""Use SQLite as the database for an Agent, selecting custom names for the tables.
 
 Run `pip install duckduckgo-search sqlalchemy openai` to install dependencies.
 """
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.tools.duckduckgo import DuckDuckGoTools
 
 # Setup the SQLite database
-db = SqliteDb(db_file="tmp/data.db")
+db = SqliteDb(
+    db_file="tmp/data.db",
+    # Selecting which tables to use
+    session_table="agent_sessions",
+    memory_table="agent_memories",
+    metrics_table="agent_metrics",
+)
 
 # Setup a basic agent with the SQLite database
 agent = Agent(
     db=db,
-    tools=[DuckDuckGoTools()],
+    enable_user_memories=True,
     add_history_to_context=True,
     add_datetime_to_context=True,
 )
 
 # The Agent sessions and runs will now be stored in SQLite
 agent.print_response("How many people live in Canada?")
-agent.print_response("What is their national anthem?")
+agent.print_response("And in Mexico?")
 agent.print_response("List my messages one by one")

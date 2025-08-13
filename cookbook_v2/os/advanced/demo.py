@@ -4,8 +4,8 @@ AgentOS Demo
 Set the OS_SECURITY_KEY environment variable to your OS security key to enable authentication.
 """
 
-from _agents import agno_assist, sage
-from _teams import finance_reasoning_team
+from _agents import agno_assist, sage  # type: ignore[import-not-found]
+from _teams import finance_reasoning_team  # type: ignore[import-not-found]
 from agno.db.postgres.postgres import PostgresDb  # noqa: F401
 from agno.eval.accuracy import AccuracyEval
 from agno.models.anthropic.claude import Claude

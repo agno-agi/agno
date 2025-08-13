@@ -3,8 +3,8 @@ import uuid
 import google.auth
 from agno.agent import Agent
 from agno.db.base import SessionType
-from agno.db.gcs import GCSJsonDb
-from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.db.gcs_json import GcsJsonDb
+from agno.tools import DuckDuckGoTools
 
 DEBUG_MODE = False
 # Obtain the default credentials and project id from your gcloud CLI session.
@@ -16,13 +16,12 @@ unique_bucket_name = f"{base_bucket_name}-{uuid.uuid4().hex[:12]}"
 print(f"Using bucket: {unique_bucket_name}")
 
 # Initialize GCSJsonStorage with explicit credentials, unique bucket name, and project.
-db = GCSJsonDb(
+db = GcsJsonDb(
     bucket_name=unique_bucket_name,
     prefix="agent/",
     project=project_id,
     credentials=credentials,
 )
-
 
 # Initialize the Agno agent1 with the new storage backend and a DuckDuckGo search tool.
 agent1 = Agent(
@@ -53,5 +52,5 @@ if DEBUG_MODE:
     print(f"\nBucket {db.bucket_name} contents:")
     sessions = db.get_sessions(session_type=SessionType.AGENT)
     for session in sessions:
-        print(f"Session {session.session_id}:\n\t{session.memory}")
+        print(f"Session {session.session_id}:\n\t{session.memory}")  # type: ignore
         print("-" * 40)
