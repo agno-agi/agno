@@ -27,7 +27,8 @@ from typing import List, Optional
 import inquirer
 import typer
 from agno.agent import Agent
-from agno.db.agent.sqlite import SqliteAgentStorage
+from agno.db.base import SessionType
+from agno.db.sqlite import SqliteDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
@@ -74,11 +75,9 @@ def initialize_knowledge(load_knowledge: bool = False):
     return agent_knowledge
 
 
-def get_agent_storage():
+def get_agent_db():
     """Return agent storage for session management"""
-    return SqliteAgentStorage(
-        table_name="agno_assist_sessions", db_file="tmp/agents.db"
-    )
+    return SqliteDb(session_table="agno_assist_sessions", db_file="tmp/agents.db")
 
 
 def create_agent(
@@ -86,7 +85,7 @@ def create_agent(
 ) -> Agent:
     """Create and return a configured Agno Support agent."""
     agent_knowledge = initialize_knowledge(load_knowledge)
-    agent_storage = get_agent_storage()
+    agent_db = get_agent_db()
 
     return Agent(
         name="AgnoAssist",
@@ -191,9 +190,9 @@ def create_agent(
         - Save code examples to files when they would be useful to run"""),
         knowledge=agent_knowledge,
         tools=[PythonTools(base_dir=tmp_dir.joinpath("agno_assist"), read_files=True)],
-        storage=agent_storage,
+        db=agent_db,
         add_history_to_context=True,
-        num_history_responses=3,
+        num_history_runs=3,
         read_chat_history=True,
         markdown=True,
     )
@@ -212,13 +211,13 @@ def get_example_topics() -> List[str]:
 
 def handle_session_selection() -> Optional[str]:
     """Handle session selection and return the selected session ID."""
-    agent_storage = get_agent_storage()
+    agent_db = get_agent_db()
 
     new = typer.confirm("Do you want to start a new session?", default=True)
     if new:
         return None
 
-    existing_sessions: List[str] = agent_storage.get_all_session_ids()
+    existing_sessions: List[str] = agent_db.get_sessions(session_type=SessionType.AGENT)
     if not existing_sessions:
         print("No existing sessions found. Starting a new session.")
         return None
