@@ -1,4 +1,3 @@
-
 import json
 from unittest.mock import Mock, patch
 
@@ -415,25 +414,6 @@ class TestExtractBatchMethod:
 
 class TestUtilityMethods:
     """Test class for utility methods."""
-
-    def test_get_supported_formats(self, trafilatura_tools):
-        """Test get_supported_formats method."""
-        formats = trafilatura_tools.get_supported_formats()
-        expected_formats = ["txt", "json", "xml", "markdown", "csv", "html", "xmltei"]
-        assert formats == expected_formats
-
-    def test_validate_language_code_valid(self, trafilatura_tools):
-        """Test validate_language_code with valid codes."""
-        assert trafilatura_tools.validate_language_code("en") is True
-        assert trafilatura_tools.validate_language_code("fr") is True
-        assert trafilatura_tools.validate_language_code("de") is True
-
-    def test_validate_language_code_invalid(self, trafilatura_tools):
-        """Test validate_language_code with invalid codes."""
-        assert trafilatura_tools.validate_language_code("english") is False
-        assert trafilatura_tools.validate_language_code("123") is False
-        assert trafilatura_tools.validate_language_code("") is False
-        assert trafilatura_tools.validate_language_code("e") is False
 
     def test_get_extraction_params_defaults(self, trafilatura_tools):
         """Test _get_extraction_params with default values."""

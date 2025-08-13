@@ -370,25 +370,3 @@ class TrafilaturaTools(Toolkit):
         except Exception as e:
             logger.warning(f"Error in batch extraction: {e}")
             return f"Error in batch extraction: {e}"
-
-    def get_supported_formats(self) -> List[str]:
-        """
-        Get list of supported output formats.
-
-        Returns:
-            List[str]: List of supported output formats.
-        """
-        return ["txt", "json", "xml", "markdown", "csv", "html", "xmltei"]
-
-    def validate_language_code(self, language_code: str) -> bool:
-        """
-        Validate if language code is in ISO 639-1 format.
-
-        Args:
-            language_code (str): Language code to validate.
-
-        Returns:
-            bool: True if valid, False otherwise.
-        """
-        # Basic validation for ISO 639-1 (2-letter codes)
-        return len(language_code) == 2 and language_code.isalpha()

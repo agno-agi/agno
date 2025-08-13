@@ -113,7 +113,7 @@ def metadata_only_extraction():
     agent = Agent(
         tools=[
             TrafilaturaTools(
-                include_tools=["extract_metadata_only"], 
+                include_tools=["extract_metadata_only"],
             )
         ],
         show_tool_calls=True,
