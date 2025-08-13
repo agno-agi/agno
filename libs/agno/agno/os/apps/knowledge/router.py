@@ -96,25 +96,6 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
             file_data=file_data,
             size=file.size if file else None if text_content else None,
         )
-
-        # If reader_id is provided, resolve and set it; else auto-detection will occur later
-        if reader_id and reader_id.strip():
-            resolved_reader = None
-            if knowledge.readers and reader_id in knowledge.readers:
-                resolved_reader = knowledge.readers[reader_id]
-            else:
-                key = reader_id.lower().strip().replace("-", "_").replace(" ", "_")
-                candidates = [key] + ([key[:-6]] if key.endswith("reader") else [])
-                for cand in candidates:
-                    try:
-                        resolved_reader = ReaderFactory.create_reader(cand)
-                        break
-                    except Exception:
-                        continue
-            if resolved_reader is None:
-                raise HTTPException(status_code=400, detail=f"Invalid reader_id: {reader_id}")
-            content.reader = resolved_reader
-
         background_tasks.add_task(process_content, knowledge, content_id, content, reader_id)
 
         response = ContentResponseSchema(
@@ -296,18 +277,14 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
     @router.get("/config", status_code=200)
     def get_config() -> ConfigResponseSchema:
         readers = knowledge.get_readers() 
-        if isinstance(readers, dict):
-            reader_schemas = [ReaderSchema(id=k, name=v.name, description=v.description if v.description else None) for k, v in readers.items()]
-        else:
-            # Handle case where readers is a list - use reader name or class name as id
-            reader_schemas = []
-            for reader in readers:
-                reader_id = reader.name if hasattr(reader, 'name') and reader.name else reader.__class__.__name__
-                reader_schemas.append(ReaderSchema(
-                    id=reader_id, 
-                    name=reader.name if hasattr(reader, 'name') else None, 
-                    description=reader.description if hasattr(reader, 'description') and reader.description else None
-                ))
+        reader_schemas = []
+        for reader in readers:
+            reader_id = reader.name if hasattr(reader, 'name') and reader.name else reader.__class__.__name__
+            reader_schemas.append(ReaderSchema(
+                id=reader_id, 
+                name=reader.name if hasattr(reader, 'name') else None, 
+                description=reader.description if hasattr(reader, 'description') and reader.description else None
+            ))
         
         return ConfigResponseSchema(
             readers=reader_schemas,
