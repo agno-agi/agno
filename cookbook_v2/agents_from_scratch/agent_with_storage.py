@@ -7,7 +7,7 @@ from pathlib import Path
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteStorage
+from agno.db.sqlite import SqliteDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
@@ -29,10 +29,7 @@ agent_knowledge = Knowledge(
 )
 agent_knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt")
 
-agent_storage = SqliteStorage(
-    table_name="agno_assist_sessions",
-    db_file=str(tmp_dir.joinpath("agent_sessions.db")),
-)
+agent_storage = SqliteDb(db_file=str(tmp_dir.joinpath("agent_sessions.db")))
 
 agent_with_storage = Agent(
     name="Agent with Storage",
@@ -87,7 +84,7 @@ agent_with_storage = Agent(
     - Model support and configuration
     - Best practices and common patterns"""),
     knowledge=agent_knowledge,
-    storage=agent_storage,
+    db=agent_storage,
     # To provide the agent with the chat history
     # We can either:
     # 1. Provide the agent with a tool to read the chat history
@@ -98,7 +95,7 @@ agent_with_storage = Agent(
     # 2. Automatically add the chat history to the messages sent to the model
     add_history_to_context=True,
     # Number of historical runs to add to the messages.
-    num_history_responses=3,
+    num_history_runs=3,
     markdown=True,
 )
 
