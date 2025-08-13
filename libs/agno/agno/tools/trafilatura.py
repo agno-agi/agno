@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -80,7 +80,7 @@ class TrafilaturaTools(Toolkit):
         self.max_crawl_urls = max_crawl_urls
         self.max_known_urls = max_known_urls
 
-        tools = [self.extract_text, self.extract_metadata_only, self.html_to_text, self.extract_batch]
+        tools: List[Callable] = [self.extract_text, self.extract_metadata_only, self.html_to_text, self.extract_batch]
 
         if not SPIDER_AVAILABLE:
             logger.warning("Web crawling requested but spider module not available. Skipping crawler tool.")
