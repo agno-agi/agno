@@ -13,9 +13,6 @@ from agno.utils.log import log_info, logger
 class MarkdownReader(Reader):
     """Reader for Markdown files"""
 
-    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = MarkdownChunking()) -> None:
-        super().__init__(chunking_strategy=chunking_strategy)
-
     def read(self, file: Union[Path, IO[Any]]) -> List[Document]:
         try:
             if isinstance(file, Path):

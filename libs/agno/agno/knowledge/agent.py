@@ -24,14 +24,14 @@ class AgentKnowledge(BaseModel):
     # Number of documents to optimize the vector db on
     optimize_on: Optional[int] = 1000
 
-    chunking_strategy: ChunkingStrategy = Field(default_factory=FixedSizeChunking)
-
+    chunking_strategy: Optional[ChunkingStrategy] = None
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     valid_metadata_filters: Set[str] = None  # type: ignore
 
     @model_validator(mode="after")
     def update_reader(self) -> "AgentKnowledge":
+        self.chunking_strategy = FixedSizeChunking()
         if self.reader is not None and self.reader.chunking_strategy is None:
             self.reader.chunking_strategy = self.chunking_strategy
         return self
@@ -237,7 +237,7 @@ class AgentKnowledge(BaseModel):
         self._load_init(recreate=False, upsert=upsert)
         if self.vector_db is None:
             return
-        
+
         log_info("Loading knowledge base")
         # Upsert documents if upsert is True
         if upsert and self.vector_db.upsert_available():

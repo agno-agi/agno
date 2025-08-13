@@ -1,7 +1,10 @@
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union
 
+from pydantic import model_validator
+
 from agno.document import Document
+from agno.document.chunking.markdown import MarkdownChunking
 from agno.document.reader.markdown_reader import MarkdownReader
 from agno.knowledge.agent import AgentKnowledge
 from agno.utils.log import log_info, logger
@@ -10,8 +13,16 @@ from agno.utils.log import log_info, logger
 class MarkdownKnowledgeBase(AgentKnowledge):
     path: Optional[Union[str, Path, List[Dict[str, Union[str, Dict[str, Any]]]]]] = None
     formats: List[str] = [".md"]
-    reader: MarkdownReader = MarkdownReader()
+    reader: Optional[MarkdownReader] = None
 
+    @model_validator(mode="after")
+    def set_reader(self) -> "MarkdownKnowledgeBase":
+        if self.reader is None:
+            self.reader = MarkdownReader(
+                chunking_strategy=self.chunking_strategy or MarkdownChunking()
+            )
+        return self
+    
     @property
     def document_lists(self) -> Iterator[List[Document]]:
         """Iterate over text files and yield lists of documents."""
