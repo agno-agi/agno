@@ -236,7 +236,9 @@ print()
 # Example 3: Adding more ingredients
 print("Example 3: Adding Fresh Ingredients")
 print("-" * 50)
-shopping_team.print_response("I need apples and oranges for my fruit salad", stream=True)
+shopping_team.print_response(
+    "I need apples and oranges for my fruit salad", stream=True
+)
 print(f"Session state: {shopping_team.team_session_state}")
 print()
 
