@@ -3227,14 +3227,19 @@ class Workflow:
                     if hasattr(executor, "workflow_session_state") and executor.workflow_session_state:
                         # Merge the agent's session state back into workflow session state
                         from agno.utils.merge_dict import merge_dictionaries
-
-                        merge_dictionaries(self.workflow_session_state, executor.workflow_session_state)
+                        if isinstance(self.workflow_session_state, ThreadSafeSessionState):
+                            self.workflow_session_state.merge(executor.workflow_session_state)
+                        else:
+                            merge_dictionaries(self.workflow_session_state, executor.workflow_session_state)
 
                     # If it's a team, collect from all members
                     if hasattr(executor, "members"):
                         for member in executor.members:
                             if hasattr(member, "workflow_session_state") and member.workflow_session_state:
-                                merge_dictionaries(self.workflow_session_state, member.workflow_session_state)
+                                if isinstance(self.workflow_session_state, ThreadSafeSessionState):
+                                    self.workflow_session_state.merge(member.workflow_session_state)
+                                else:
+                                    merge_dictionaries(self.workflow_session_state, member.workflow_session_state)
 
     def _update_executor_workflow_session_state(self, executor) -> None:
         """Update executor with workflow_session_state"""
