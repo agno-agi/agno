@@ -21,7 +21,6 @@ reasoning_agent = Agent(
     ],
     instructions="Use tables where possible. Think about the problem step by step.",
     markdown=True,
-    debug_mode=True,
 )
 reasoning_agent.print_response(
     "Write a report comparing NVDA to TSLA.",

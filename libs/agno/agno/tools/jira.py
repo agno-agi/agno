@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Optional, cast
+from typing import Any, List, Optional, cast
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -20,8 +20,6 @@ class JiraTools(Toolkit):
         token: Optional[str] = None,
         **kwargs,
     ):
-        super().__init__(name="jira_tools", **kwargs)
-
         self.server_url = server_url or os.getenv("JIRA_SERVER_URL")
         self.username = username or os.getenv("JIRA_USERNAME")
         self.password = password or os.getenv("JIRA_PASSWORD")
@@ -43,12 +41,13 @@ class JiraTools(Toolkit):
         else:
             self.jira = JIRA(server=self.server_url)
 
-        # Register methods
-        self.register(self.get_issue)
-        self.register(self.create_issue)
-        self.register(self.search_issues)
-        self.register(self.add_comment)
-        # You can register more methods here
+        tools: List[Any] = []
+        tools.append(self.get_issue)
+        tools.append(self.create_issue)
+        tools.append(self.search_issues)
+        tools.append(self.add_comment)
+
+        super().__init__(name="jira_tools", tools=tools, **kwargs)
 
     def get_issue(self, issue_key: str) -> str:
         """

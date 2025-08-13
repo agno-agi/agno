@@ -272,21 +272,33 @@ def test_distance_setting(mock_embedder, mock_milvus_client):
 def test_build_expr(milvus_db):
     """Test the _build_expr method for constructing query filters"""
     # Test with None filters
-    assert milvus_db._build_expr(None) == ""
+    assert milvus_db._build_expr(None) is None
 
     # Test with string value
     filters = {"name": "test_name"}
-    assert milvus_db._build_expr(filters) == "(name == 'test_name')"
+    assert milvus_db._build_expr(filters) == 'meta_data["name"] == "test_name"'
 
     # Test with numeric value
     filters = {"count": 42}
-    assert milvus_db._build_expr(filters) == "(count == 42)"
+    assert milvus_db._build_expr(filters) == 'meta_data["count"] == 42'
+
+    # Test with boolean value
+    filters = {"active": True}
+    assert milvus_db._build_expr(filters) == 'meta_data["active"] == true'
+
+    # Test with list value
+    filters = {"tags": ["tag1", "tag2"]}
+    assert milvus_db._build_expr(filters) == 'json_contains_any(meta_data, ["tag1", "tag2"], "tags")'
+
+    # Test with None value
+    filters = {"field": None}
+    assert milvus_db._build_expr(filters) == 'meta_data["field"] is null'
 
     # Test with multiple filters
     filters = {"name": "test_name", "count": 42}
     expr = milvus_db._build_expr(filters)
-    assert "(name == 'test_name')" in expr
-    assert "(count == 42)" in expr
+    assert 'meta_data["name"] == "test_name"' in expr
+    assert 'meta_data["count"] == 42' in expr
     assert " and " in expr
 
 

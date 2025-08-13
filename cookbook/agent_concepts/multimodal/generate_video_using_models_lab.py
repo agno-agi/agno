@@ -12,7 +12,6 @@ video_agent = Agent(
         "Politely and courteously let the user know that the video has been generated and will be displayed below as soon as its ready.",
     ],
     markdown=True,
-    debug_mode=True,
     show_tool_calls=True,
 )
 

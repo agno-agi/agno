@@ -30,8 +30,6 @@ class SQLTools(Toolkit):
         run_sql_query: bool = True,
         **kwargs,
     ):
-        super().__init__(name="sql_tools", **kwargs)
-
         # Get the database engine
         _engine: Optional[Engine] = db_engine
         if _engine is None and db_url is not None:
@@ -54,13 +52,15 @@ class SQLTools(Toolkit):
         # Tables this toolkit can access
         self.tables: Optional[Dict[str, Any]] = tables
 
-        # Register functions in the toolkit
+        tools: List[Any] = []
         if list_tables:
-            self.register(self.list_tables)
+            tools.append(self.list_tables)
         if describe_table:
-            self.register(self.describe_table)
+            tools.append(self.describe_table)
         if run_sql_query:
-            self.register(self.run_sql_query)
+            tools.append(self.run_sql_query)
+
+        super().__init__(name="sql_tools", tools=tools, **kwargs)
 
     def list_tables(self) -> str:
         """Use this function to get a list of table names in the database.

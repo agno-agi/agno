@@ -52,7 +52,6 @@ hn_team = Team(
     response_model=Article,
     show_tool_calls=True,
     markdown=True,
-    debug_mode=True,
     show_members_responses=True,
 )
 

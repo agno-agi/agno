@@ -6,7 +6,7 @@ This example demonstrates how to create an Agno agent that interacts with the St
 Setup:
 2. Install Python dependencies:
    ```bash
-   pip install agno mcp-sdk
+   pip install agno mcp
    ```
 3. Set Environment Variable: export STRIPE_SECRET_KEY=***.
 

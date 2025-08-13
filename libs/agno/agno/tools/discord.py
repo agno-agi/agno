@@ -2,7 +2,7 @@
 
 import json
 from os import getenv
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -20,9 +20,6 @@ class DiscordTools(Toolkit):
         enable_message_management: bool = True,
         **kwargs,
     ):
-        """Initialize Discord tools."""
-        super().__init__(name="discord", **kwargs)
-
         self.bot_token = bot_token or getenv("DISCORD_BOT_TOKEN")
         if not self.bot_token:
             logger.error("Discord bot token is required")
@@ -34,16 +31,18 @@ class DiscordTools(Toolkit):
             "Content-Type": "application/json",
         }
 
-        # Register tools based on enabled features
+        tools: List[Any] = []
         if enable_messaging:
-            self.register(self.send_message)
+            tools.append(self.send_message)
         if enable_history:
-            self.register(self.get_channel_messages)
+            tools.append(self.get_channel_messages)
         if enable_channel_management:
-            self.register(self.get_channel_info)
-            self.register(self.list_channels)
+            tools.append(self.get_channel_info)
+            tools.append(self.list_channels)
         if enable_message_management:
-            self.register(self.delete_message)
+            tools.append(self.delete_message)
+
+        super().__init__(name="discord", tools=tools, **kwargs)
 
     def _make_request(self, method: str, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Make a request to Discord API."""

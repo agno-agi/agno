@@ -1,5 +1,4 @@
 import asyncio
-from hashlib import md5
 from math import sqrt
 from typing import Any, Dict, List, Optional, Union, cast
 
@@ -23,6 +22,7 @@ from agno.document import Document
 from agno.embedder import Embedder
 from agno.reranker.base import Reranker
 from agno.utils.log import log_debug, log_info, logger
+from agno.utils.string import safe_content_hash
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.pgvector.index import HNSW, Ivfflat
@@ -239,8 +239,7 @@ class PgVector(VectorDb):
         Returns:
             bool: True if the document exists, False otherwise.
         """
-        cleaned_content = document.content.replace("\x00", "\ufffd")
-        content_hash = md5(cleaned_content.encode()).hexdigest()
+        content_hash = safe_content_hash(document.content)
         return self._record_exists(self.table.c.content_hash, content_hash)
 
     async def async_doc_exists(self, document: Document) -> bool:
@@ -313,8 +312,13 @@ class PgVector(VectorDb):
                             try:
                                 doc.embed(embedder=self.embedder)
                                 cleaned_content = self._clean_content(doc.content)
-                                content_hash = md5(cleaned_content.encode()).hexdigest()
+                                content_hash = safe_content_hash(doc.content)
                                 _id = doc.id or content_hash
+
+                                meta_data = doc.meta_data or {}
+                                if filters:
+                                    meta_data.update(filters)
+
                                 record = {
                                     "id": _id,
                                     "name": doc.name,
@@ -381,10 +385,14 @@ class PgVector(VectorDb):
                             try:
                                 doc.embed(embedder=self.embedder)
                                 cleaned_content = self._clean_content(doc.content)
-                                content_hash = md5(cleaned_content.encode()).hexdigest()
-                                _id = doc.id or content_hash
+                                content_hash = safe_content_hash(doc.content)
+
+                                meta_data = doc.meta_data or {}
+                                if filters:
+                                    meta_data.update(filters)
+
                                 record = {
-                                    "id": _id,
+                                    "id": content_hash,  # use content_hash as a reproducible id to avoid duplicates while upsert
                                     "name": doc.name,
                                     "meta_data": doc.meta_data,
                                     "filters": filters,
@@ -401,15 +409,15 @@ class PgVector(VectorDb):
                         insert_stmt = postgresql.insert(self.table).values(batch_records)
                         upsert_stmt = insert_stmt.on_conflict_do_update(
                             index_elements=["id"],
-                            set_=dict(
-                                name=insert_stmt.excluded.name,
-                                meta_data=insert_stmt.excluded.meta_data,
-                                filters=insert_stmt.excluded.filters,
-                                content=insert_stmt.excluded.content,
-                                embedding=insert_stmt.excluded.embedding,
-                                usage=insert_stmt.excluded.usage,
-                                content_hash=insert_stmt.excluded.content_hash,
-                            ),
+                            set_={
+                                "name": insert_stmt.excluded.name,
+                                "meta_data": insert_stmt.excluded.meta_data,
+                                "filters": insert_stmt.excluded.filters,
+                                "content": insert_stmt.excluded.content,
+                                "embedding": insert_stmt.excluded.embedding,
+                                "usage": insert_stmt.excluded.usage,
+                                "content_hash": insert_stmt.excluded.content_hash,
+                            },
                         )
                         sess.execute(upsert_stmt)
                         sess.commit()  # Commit batch independently
@@ -486,9 +494,9 @@ class PgVector(VectorDb):
             # Build the base statement
             stmt = select(*columns)
 
-            # # Apply filters if provided
-            # if filters is not None:
-            #     stmt = stmt.where(self.table.c.filters.contains(filters))
+            # Apply filters if provided
+            if filters is not None:
+                stmt = stmt.where(self.table.c.meta_data.contains(filters))
 
             # Order the results based on the distance metric
             if self.distance == Distance.l2:
@@ -540,6 +548,7 @@ class PgVector(VectorDb):
             if self.reranker:
                 search_results = self.reranker.rerank(query=query, documents=search_results)
 
+            log_info(f"Found {len(search_results)} documents")
             return search_results
         except Exception as e:
             logger.error(f"Error during vector search: {e}")
@@ -595,9 +604,9 @@ class PgVector(VectorDb):
             text_rank = func.ts_rank_cd(ts_vector, ts_query)
 
             # Apply filters if provided
-            # if filters is not None:
-            #     # Use the contains() method for JSONB columns to check if the filters column contains the specified filters
-            #     stmt = stmt.where(self.table.c.filters.contains(filters))
+            if filters is not None:
+                # Use the contains() method for JSONB columns to check if the filters column contains the specified filters
+                stmt = stmt.where(self.table.c.meta_data.contains(filters))
 
             # Order by the relevance rank
             stmt = stmt.order_by(text_rank.desc())
@@ -633,6 +642,7 @@ class PgVector(VectorDb):
                     )
                 )
 
+            log_info(f"Found {len(search_results)} documents")
             return search_results
         except Exception as e:
             logger.error(f"Error during keyword search: {e}")
@@ -715,9 +725,9 @@ class PgVector(VectorDb):
             # Add the full-text search condition
             # stmt = stmt.where(ts_vector.op("@@")(ts_query))
 
-            # # Apply filters if provided
-            # if filters is not None:
-            #     stmt = stmt.where(self.table.c.filters.contains(filters))
+            # Apply filters if provided
+            if filters is not None:
+                stmt = stmt.where(self.table.c.meta_data.contains(filters))
 
             # Order the results by the hybrid score in descending order
             stmt = stmt.order_by(desc("hybrid_score"))
@@ -756,6 +766,10 @@ class PgVector(VectorDb):
                     )
                 )
 
+            if self.reranker:
+                search_results = self.reranker.rerank(query=query, documents=search_results)
+
+            log_info(f"Found {len(search_results)} documents")
             return search_results
         except Exception as e:
             logger.error(f"Error during hybrid search: {e}")

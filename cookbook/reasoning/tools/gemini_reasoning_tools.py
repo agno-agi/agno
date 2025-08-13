@@ -22,7 +22,6 @@ reasoning_agent = Agent(
     stream_intermediate_steps=True,
     show_tool_calls=True,
     markdown=True,
-    debug_mode=True,
 )
 reasoning_agent.print_response(
     "Write a report comparing NVDA to TSLA.", show_full_reasoning=True

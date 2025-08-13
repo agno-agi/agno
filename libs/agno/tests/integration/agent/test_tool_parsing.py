@@ -13,7 +13,6 @@ def test_tool_call_custom_tool_no_parameters():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -43,7 +42,6 @@ def test_tool_call_custom_tool_optional_parameters():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -73,7 +71,6 @@ def test_tool_call_custom_tool_untyped_parameters():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -104,7 +101,6 @@ def test_tool_call_list_parameters():
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather],
         instructions="Use a single tool call if possible",
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -142,7 +138,6 @@ def test_tool_call_custom_tool_union_parameters():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,

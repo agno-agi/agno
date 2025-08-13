@@ -63,6 +63,7 @@ def deploy_playground_archive(name: str, tar_path: Path) -> bool:
 
     # Build headers
     headers = {}
+    token = read_auth_token()
     if token := read_auth_token():
         headers[agno_cli_settings.auth_token_header] = token
     if agno_api_key := getenv(AGNO_API_KEY_ENV_VAR):

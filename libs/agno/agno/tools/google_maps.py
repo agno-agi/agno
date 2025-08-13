@@ -14,7 +14,7 @@ Prerequisites:
 import json
 from datetime import datetime
 from os import getenv
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 
@@ -39,8 +39,6 @@ class GoogleMapTools(Toolkit):
         get_timezone: bool = True,
         **kwargs,
     ):
-        super().__init__(name="google_maps", **kwargs)
-
         self.api_key = key or getenv("GOOGLE_MAPS_API_KEY")
         if not self.api_key:
             raise ValueError("GOOGLE_MAPS_API_KEY is not set in the environment variables.")
@@ -48,22 +46,25 @@ class GoogleMapTools(Toolkit):
 
         self.places_client = places_v1.PlacesClient()
 
+        tools: List[Any] = []
         if search_places:
-            self.register(self.search_places)
+            tools.append(self.search_places)
         if get_directions:
-            self.register(self.get_directions)
+            tools.append(self.get_directions)
         if validate_address:
-            self.register(self.validate_address)
+            tools.append(self.validate_address)
         if geocode_address:
-            self.register(self.geocode_address)
+            tools.append(self.geocode_address)
         if reverse_geocode:
-            self.register(self.reverse_geocode)
+            tools.append(self.reverse_geocode)
         if get_distance_matrix:
-            self.register(self.get_distance_matrix)
+            tools.append(self.get_distance_matrix)
         if get_elevation:
-            self.register(self.get_elevation)
+            tools.append(self.get_elevation)
         if get_timezone:
-            self.register(self.get_timezone)
+            tools.append(self.get_timezone)
+
+        super().__init__(name="google_maps", tools=tools, **kwargs)
 
     def search_places(self, query: str) -> str:
         """

@@ -142,7 +142,7 @@ class ChromaDb(VectorDb):
 
         Args:
             documents (List[Document]): List of documents to insert
-            filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
+            filters (Optional[Dict[str, Any]]): Filters to merge with document metadata
         """
         log_debug(f"Inserting {len(documents)} documents")
         ids: List = []
@@ -157,11 +157,17 @@ class ChromaDb(VectorDb):
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = md5(cleaned_content.encode()).hexdigest()
+
+            # Handle metadata and filters
+            metadata = document.meta_data or {}
+            if filters:
+                metadata.update(filters)
+
             docs_embeddings.append(document.embedding)
             docs.append(cleaned_content)
             ids.append(doc_id)
-            docs_metadata.append(document.meta_data)
-            log_debug(f"Inserted document: {document.id} | {document.name} | {document.meta_data}")
+            docs_metadata.append(metadata)
+            log_debug(f"Prepared document: {document.id} | {document.name} | {metadata}")
 
         if self._collection is None:
             logger.warning("Collection does not exist")
@@ -222,6 +228,11 @@ class ChromaDb(VectorDb):
             query (str): Query to search for.
             limit (int): Number of results to return.
             filters (Optional[Dict[str, Any]]): Filters to apply while searching.
+                Supports ChromaDB's filtering operators:
+                - $eq, $ne: Equality/Inequality
+                - $gt, $gte, $lt, $lte: Numeric comparisons
+                - $in, $nin: List inclusion/exclusion
+                - $and, $or: Logical operators
         Returns:
             List[Document]: List of search results.
         """
@@ -233,34 +244,37 @@ class ChromaDb(VectorDb):
         if not self._collection:
             self._collection = self.client.get_collection(name=self.collection_name)
 
+        # Convert simple filters to ChromaDB's format if needed
+        where_filter = self._convert_filters(filters) if filters else None
+
         result: QueryResult = self._collection.query(
             query_embeddings=query_embedding,
             n_results=limit,
-            include=["metadatas", "documents", "embeddings", "distances", "uris"],  # type: ignore
+            where=where_filter,  # Add where filter
+            include=["metadatas", "documents", "embeddings", "distances", "uris"],
         )
 
         # Build search results
         search_results: List[Document] = []
 
         ids = result.get("ids", [[]])[0]
-        metadata = result.get("metadatas", [{}])[0]  # type: ignore
-        documents = result.get("documents", [[]])[0]  # type: ignore
-        embeddings = result.get("embeddings")[0]  # type: ignore
-        embeddings = [e.tolist() if hasattr(e, "tolist") else e for e in embeddings]  # type: ignore
-        distances = result.get("distances", [[]])[0]  # type: ignore
+        metadata = result.get("metadatas", [{}])[0]
+        documents = result.get("documents", [[]])[0]
+        embeddings = result.get("embeddings")[0]
+        embeddings = [e.tolist() if hasattr(e, "tolist") else e for e in embeddings]
+        distances = result.get("distances", [[]])[0]
 
         for idx, distance in enumerate(distances):
-            metadata[idx]["distances"] = distance  # type: ignore
+            metadata[idx]["distances"] = distance
 
         try:
-            # Use zip to iterate over multiple lists simultaneously
             for idx, (id_, metadata, document) in enumerate(zip(ids, metadata, documents)):
                 search_results.append(
                     Document(
                         id=id_,
                         meta_data=metadata,
                         content=document,
-                        embedding=embeddings[idx],  # type: ignore
+                        embedding=embeddings[idx],
                     )
                 )
         except Exception as e:
@@ -269,7 +283,33 @@ class ChromaDb(VectorDb):
         if self.reranker:
             search_results = self.reranker.rerank(query=query, documents=search_results)
 
+        log_info(f"Found {len(search_results)} documents")
         return search_results
+
+    def _convert_filters(self, filters: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert simple filters to ChromaDB's filter format.
+
+        Handles conversion of simple key-value filters to ChromaDB's operator format
+        when needed.
+        """
+        if not filters:
+            return {}
+
+        # If filters already use ChromaDB operators ($eq, $ne, etc.), return as is
+        if any(key.startswith("$") for key in filters.keys()):
+            return filters
+
+        # Convert simple key-value pairs to ChromaDB's format
+        converted = {}
+        for key, value in filters.items():
+            if isinstance(value, (list, tuple)):
+                # Convert lists to $in operator
+                converted[key] = {"$in": list(value)}
+            else:
+                # Convert simple equality to $eq
+                converted[key] = {"$eq": value}
+
+        return converted
 
     async def async_search(
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None

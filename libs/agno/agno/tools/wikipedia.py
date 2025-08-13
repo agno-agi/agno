@@ -9,13 +9,15 @@ from agno.utils.log import log_debug, log_info
 
 class WikipediaTools(Toolkit):
     def __init__(self, knowledge_base: Optional[WikipediaKnowledgeBase] = None, **kwargs):
-        super().__init__(name="wikipedia_tools", **kwargs)
-        self.knowledge_base: Optional[WikipediaKnowledgeBase] = knowledge_base
+        tools = []
 
+        self.knowledge_base: Optional[WikipediaKnowledgeBase] = knowledge_base
         if self.knowledge_base is not None and isinstance(self.knowledge_base, WikipediaKnowledgeBase):
-            self.register(self.search_wikipedia_and_update_knowledge_base)
+            tools.append(self.search_wikipedia_and_update_knowledge_base)
         else:
-            self.register(self.search_wikipedia)
+            tools.append(self.search_wikipedia)  # type: ignore
+
+        super().__init__(name="wikipedia_tools", tools=tools, **kwargs)
 
     def search_wikipedia_and_update_knowledge_base(self, topic: str) -> str:
         """This function searches wikipedia for a topic, adds the results to the knowledge base and returns them.

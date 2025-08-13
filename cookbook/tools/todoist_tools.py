@@ -30,7 +30,6 @@ todoist_agent = Agent(
     model=Gemini("gemini-2.0-flash-exp"),
     tools=[TodoistTools()],
     markdown=True,
-    debug_mode=True,
     show_tool_calls=True,
 )
 

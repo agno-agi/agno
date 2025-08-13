@@ -7,21 +7,19 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.models.anthropic import Claude as AnthropicClaude
 from agno.models.message import Message
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.aws_claude import format_messages
 
 try:
     from anthropic import AnthropicBedrock, APIConnectionError, APIStatusError, AsyncAnthropicBedrock, RateLimitError
     from anthropic.types import Message as AnthropicMessage
 except ImportError:
-    log_error("`anthropic[bedrock]` not installed. Please install it via `pip install anthropic[bedrock]`.")
-    raise
+    raise ImportError("`anthropic[bedrock]` not installed. Please install using `pip install anthropic[bedrock]`")
 
 try:
     from boto3.session import Session
 except ImportError:
-    log_error("`boto3` not installed. Please install it via `pip install boto3`.")
-    raise
+    raise ImportError("`boto3` not installed. Please install using `pip install boto3`")
 
 
 @dataclass
@@ -141,8 +139,7 @@ class Claude(AnthropicClaude):
         )
         return self.async_client
 
-    @property
-    def request_kwargs(self) -> Dict[str, Any]:
+    def get_request_params(self) -> Dict[str, Any]:
         """
         Generate keyword arguments for API requests.
 
@@ -162,6 +159,9 @@ class Claude(AnthropicClaude):
             _request_params["top_k"] = self.top_k
         if self.request_params:
             _request_params.update(self.request_params)
+
+        if _request_params:
+            log_debug(f"Calling {self.provider} with request parameters: {_request_params}", log_level=2)
         return _request_params
 
     def invoke(

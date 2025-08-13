@@ -379,7 +379,7 @@ class Milvus(VectorDb):
 
     def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents based on search type."""
-        log_info(f"Inserting {len(documents)} documents")
+        log_debug(f"Inserting {len(documents)} documents")
 
         if self.search_type == SearchType.hybrid:
             for document in documents:
@@ -389,11 +389,16 @@ class Milvus(VectorDb):
                 document.embed(embedder=self.embedder)
                 cleaned_content = document.content.replace("\x00", "\ufffd")
                 doc_id = md5(cleaned_content.encode()).hexdigest()
+
+                meta_data = document.meta_data or {}
+                if filters:
+                    meta_data.update(filters)
+
                 data = {
                     "id": doc_id,
                     "vector": document.embedding,
                     "name": document.name,
-                    "meta_data": document.meta_data,
+                    "meta_data": meta_data,
                     "content": cleaned_content,
                     "usage": document.usage,
                 }
@@ -401,13 +406,13 @@ class Milvus(VectorDb):
                     collection_name=self.collection,
                     data=data,
                 )
-                log_debug(f"Inserted document: {document.name} ({document.meta_data})")
+                log_debug(f"Inserted document: {document.name} ({meta_data})")
 
         log_info(f"Inserted {len(documents)} documents")
 
     async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents asynchronously based on search type."""
-        log_info(f"Inserting {len(documents)} documents asynchronously")
+        log_debug(f"Inserting {len(documents)} documents asynchronously")
 
         if self.search_type == SearchType.hybrid:
             await asyncio.gather(*[self._async_insert_hybrid_document(doc) for doc in documents])
@@ -417,11 +422,16 @@ class Milvus(VectorDb):
                 document.embed(embedder=self.embedder)
                 cleaned_content = document.content.replace("\x00", "\ufffd")
                 doc_id = md5(cleaned_content.encode()).hexdigest()
+
+                meta_data = document.meta_data or {}
+                if filters:
+                    meta_data.update(filters)
+
                 data = {
                     "id": doc_id,
                     "vector": document.embedding,
                     "name": document.name,
-                    "meta_data": document.meta_data,
+                    "meta_data": meta_data,
                     "content": cleaned_content,
                     "usage": document.usage,
                 }
@@ -531,7 +541,7 @@ class Milvus(VectorDb):
         results = self.client.search(
             collection_name=self.collection,
             data=[query_embedding],
-            # filter=self._build_expr(filters),
+            filter=self._build_expr(filters),
             output_fields=["*"],
             limit=limit,
         )
@@ -558,7 +568,7 @@ class Milvus(VectorDb):
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
         if self.search_type == SearchType.hybrid:
-            return self.hybrid_search(query, limit, filters)
+            return await self.async_hybrid_search(query, limit, filters)
 
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
@@ -568,7 +578,7 @@ class Milvus(VectorDb):
         results = await self.async_client.search(
             collection_name=self.collection,
             data=[query_embedding],
-            # filter=self._build_expr(filters),
+            filter=self._build_expr(filters),
             output_fields=["*"],
             limit=limit,
         )
@@ -680,6 +690,92 @@ class Milvus(VectorDb):
         except Exception as e:
             logger.error(f"Error during hybrid search: {e}")
             return []
+    
+    async def async_hybrid_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+        """
+        Perform an asynchronous hybrid search combining dense and sparse vector similarity.
+
+        Args:
+            query (str): Query string to search for
+            limit (int): Maximum number of results to return
+            filters (Optional[Dict[str, Any]]): Filters to apply to the search
+
+        Returns:
+            List[Document]: List of matching documents
+        """
+        from pymilvus import AnnSearchRequest, RRFRanker
+
+        # Get query embeddings
+        dense_vector = self.embedder.get_embedding(query)
+        sparse_vector = self._get_sparse_vector(query)
+
+        if dense_vector is None:
+            logger.error(f"Error getting dense embedding for Query: {query}")
+            return []
+
+        try:
+            # Refer to docs for details- https://milvus.io/docs/multi-vector-search.md
+
+            # Create search request for dense vectors
+            dense_search_param = {
+                "data": [dense_vector],
+                "anns_field": "dense_vector",
+                "param": {"metric_type": self._get_metric_type(), "params": {"nprobe": 10}},
+                "limit": limit
+                * 2,  # Fetch more candidates for better reranking quality - each vector search returns 2x results which are then merged and reranked
+            }
+
+            # Create search request for sparse vectors
+            sparse_search_param = {
+                "data": [sparse_vector],
+                "anns_field": "sparse_vector",
+                "param": {"metric_type": "IP", "params": {"drop_ratio_build": 0.2}},
+                "limit": limit * 2,  # Match dense search limit to ensure balanced candidate pool for reranking
+            }
+
+            # Create search requests
+            dense_request = AnnSearchRequest(**dense_search_param)
+            sparse_request = AnnSearchRequest(**sparse_search_param)
+            reqs = [dense_request, sparse_request]
+
+            # Use RRFRanker for balanced importance between vectors
+            ranker = RRFRanker(60)  # Default k=60
+
+            log_info("Performing async hybrid search")
+            results = await self.async_client.hybrid_search(
+                collection_name=self.collection, reqs=reqs, ranker=ranker, limit=limit, output_fields=["*"]
+            )
+
+            # Build search results
+            search_results: List[Document] = []
+            for hits in results:
+                for hit in hits:
+                    entity = hit.get("entity", {})
+                    meta_data = json.loads(entity.get("meta_data", "{}")) if entity.get("meta_data") else {}
+                    usage = json.loads(entity.get("usage", "{}")) if entity.get("usage") else None
+
+                    search_results.append(
+                        Document(
+                            id=hit.get("id"),
+                            name=entity.get("name", None),
+                            meta_data=meta_data,  # Now a dictionary
+                            content=entity.get("content", ""),
+                            embedder=self.embedder,
+                            embedding=entity.get("dense_vector", None),
+                            usage=usage,  # Now a dictionary or None
+                        )
+                    )
+
+            # Apply additional reranking if custom reranker is provided
+            if self.reranker and search_results:
+                search_results = self.reranker.rerank(query=query, documents=search_results)
+
+            log_info(f"Found {len(search_results)} documents")
+            return search_results
+
+        except Exception as e:
+            logger.error(f"Error during async hybrid search: {e}")
+            return []
 
     def drop(self) -> None:
         if self.exists():
@@ -720,18 +816,38 @@ class Milvus(VectorDb):
             return True
         return False
 
-    def _build_expr(self, filters: Optional[Dict[str, Any]]) -> str:
-        if filters:
-            kv_list = []
-            for k, v in filters.items():
-                if not isinstance(v, str):
-                    kv_list.append(f"({k} == {v})")
-                else:
-                    kv_list.append(f"({k} == '{v}')")
-            expr = " and ".join(kv_list)
-        else:
-            expr = ""
-        return expr
+    def _build_expr(self, filters: Optional[Dict[str, Any]]) -> Optional[str]:
+        """Build Milvus expression from filters."""
+        if not filters:
+            return None
+
+        expressions = []
+        for k, v in filters.items():
+            if isinstance(v, (list, tuple)):
+                # For array values, use json_contains_any
+                values_str = json.dumps(v)
+                expr = f'json_contains_any(meta_data, {values_str}, "{k}")'
+            elif isinstance(v, str):
+                # For string values
+                expr = f'meta_data["{k}"] == "{v}"'
+            elif isinstance(v, bool):
+                # For boolean values
+                expr = f'meta_data["{k}"] == {str(v).lower()}'
+            elif isinstance(v, (int, float)):
+                # For numeric values
+                expr = f'meta_data["{k}"] == {v}'
+            elif v is None:
+                # For null values
+                expr = f'meta_data["{k}"] is null'
+            else:
+                # For other types, convert to string
+                expr = f'meta_data["{k}"] == "{str(v)}"'
+
+            expressions.append(expr)
+
+        if expressions:
+            return " and ".join(expressions)
+        return None
 
     def async_name_exists(self, name: str) -> bool:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")

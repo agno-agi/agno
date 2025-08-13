@@ -4,8 +4,22 @@ from agno.agent import Message
 from agno.utils.log import log_warning
 from agno.utils.openai import process_image
 
+ROLE_MAP = {
+    "user": "user",
+    "assistant": "assistant",
+    "system": "system",
+    "tool": "tool",
+}
 
-def format_message(message: Message, openai_like: bool = False) -> Dict[str, Any]:
+TOOL_CALL_ROLE_MAP = {
+    "user": "user",
+    "assistant": "assistant",
+    "system": "user",
+    "tool": "tool",
+}
+
+
+def format_message(message: Message, openai_like: bool = False, tool_calls: bool = False) -> Dict[str, Any]:
     """
     Format a message into the format expected by Llama API.
 
@@ -17,7 +31,7 @@ def format_message(message: Message, openai_like: bool = False) -> Dict[str, Any
         Dict[str, Any]: The formatted message.
     """
     message_dict: Dict[str, Any] = {
-        "role": message.role,
+        "role": ROLE_MAP[message.role] if not tool_calls else TOOL_CALL_ROLE_MAP[message.role],
         "content": [{"type": "text", "text": message.content or " "}],
         "name": message.name,
         "tool_call_id": message.tool_call_id,
@@ -45,19 +59,16 @@ def format_message(message: Message, openai_like: bool = False) -> Dict[str, Any
         }
 
     if message.role == "assistant":
+        text_content = {"type": "text", "text": message.content or " "}
+
         if message.tool_calls is not None and len(message.tool_calls) > 0:
             message_dict = {
-                "content": {
-                    "type": "text",
-                    "text": message.content or " ",
-                },
+                "content": [text_content] if openai_like else text_content,
                 "role": "assistant",
                 "tool_calls": message.tool_calls,
                 "stop_reason": "tool_calls",
             }
         else:
-            text_content = {"type": "text", "text": message.content or " "}
-
             message_dict = {
                 "role": "assistant",
                 "content": [text_content] if openai_like else text_content,

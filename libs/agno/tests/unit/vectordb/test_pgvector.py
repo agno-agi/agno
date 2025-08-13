@@ -96,11 +96,15 @@ def test_initialization():
     embedder.dimensions = 1024
 
     # More complete patching to prevent SQLAlchemy from validating the mock objects
-    with patch("agno.vectordb.pgvector.pgvector.scoped_session"), patch(
-        "agno.vectordb.pgvector.pgvector.Vector"
-    ), patch("agno.vectordb.pgvector.pgvector.Table"), patch("agno.vectordb.pgvector.pgvector.Column"), patch(
-        "agno.vectordb.pgvector.pgvector.Index"
-    ), patch("agno.vectordb.pgvector.pgvector.MetaData"), patch.object(PgVector, "get_table"):
+    with (
+        patch("agno.vectordb.pgvector.pgvector.scoped_session"),
+        patch("agno.vectordb.pgvector.pgvector.Vector"),
+        patch("agno.vectordb.pgvector.pgvector.Table"),
+        patch("agno.vectordb.pgvector.pgvector.Column"),
+        patch("agno.vectordb.pgvector.pgvector.Index"),
+        patch("agno.vectordb.pgvector.pgvector.MetaData"),
+        patch.object(PgVector, "get_table"),
+    ):
         # Skip the actual table creation by patching get_table to return a mock
         PgVector.get_table = MagicMock(return_value=MagicMock())
 
@@ -345,9 +349,10 @@ async def test_async_search(mock_pgvector):
     """Test async_search method."""
     expected_results = [Document(id="test", content="Test document")]
 
-    with patch.object(mock_pgvector, "search", return_value=expected_results), patch(
-        "asyncio.to_thread"
-    ) as mock_to_thread:
+    with (
+        patch.object(mock_pgvector, "search", return_value=expected_results),
+        patch("asyncio.to_thread") as mock_to_thread,
+    ):
         mock_to_thread.return_value = expected_results
 
         results = await mock_pgvector.async_search("test query")

@@ -71,8 +71,6 @@ knowledge_base.load(recreate=True)
 # Step 2: Query the knowledge base with different filter combinations
 # ------------------------------------------------------------------------------
 
-# Option 1: Filters on the Agent
-# Initialize the Agent with the knowledge base and filters
 agent = Agent(
     knowledge=knowledge_base,
     search_knowledge=True,

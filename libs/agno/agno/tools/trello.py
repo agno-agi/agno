@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
@@ -26,8 +26,6 @@ class TrelloTools(Toolkit):
         list_boards: bool = True,
         **kwargs,
     ):
-        super().__init__(name="trello", **kwargs)
-
         self.api_key = api_key or getenv("TRELLO_API_KEY")
         self.api_secret = api_secret or getenv("TRELLO_API_SECRET")
         self.token = token or getenv("TRELLO_TOKEN")
@@ -41,20 +39,23 @@ class TrelloTools(Toolkit):
             logger.error(f"Error initializing Trello client: {e}")
             self.client = None
 
+        tools: List[Any] = []
         if create_card:
-            self.register(self.create_card)
+            tools.append(self.create_card)
         if get_board_lists:
-            self.register(self.get_board_lists)
+            tools.append(self.get_board_lists)
         if move_card:
-            self.register(self.move_card)
+            tools.append(self.move_card)
         if get_cards:
-            self.register(self.get_cards)
+            tools.append(self.get_cards)
         if create_board:
-            self.register(self.create_board)
+            tools.append(self.create_board)
         if create_list:
-            self.register(self.create_list)
+            tools.append(self.create_list)
         if list_boards:
-            self.register(self.list_boards)
+            tools.append(self.list_boards)
+
+        super().__init__(name="trello", tools=tools, **kwargs)
 
     def create_card(self, board_id: str, list_name: str, card_title: str, description: str = "") -> str:
         """

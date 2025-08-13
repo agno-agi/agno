@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from typing import List
 
@@ -49,3 +50,14 @@ class S3TextReader(Reader):
         except Exception as e:
             logger.error(f"Error reading: {s3_object.uri}: {e}")
         return []
+
+    async def async_read(self, s3_object: S3Object) -> List[Document]:
+        """Asynchronously read text files from S3 by running the synchronous read operation in a thread.
+
+        Args:
+            s3_object (S3Object): The S3 object to read
+
+        Returns:
+            List[Document]: List of documents from the text file
+        """
+        return await asyncio.to_thread(self.read, s3_object)

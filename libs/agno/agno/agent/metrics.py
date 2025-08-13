@@ -15,6 +15,7 @@ class SessionMetrics:
     input_audio_tokens: int = 0
     output_audio_tokens: int = 0
     cached_tokens: int = 0
+    cache_write_tokens: int = 0
     reasoning_tokens: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
@@ -55,6 +56,7 @@ class SessionMetrics:
             input_audio_tokens=self.input_audio_tokens + other.input_audio_tokens,
             output_audio_tokens=self.output_audio_tokens + other.output_audio_tokens,
             cached_tokens=self.cached_tokens + other.cached_tokens,
+            cache_write_tokens=self.cache_write_tokens + other.cache_write_tokens,
             reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
         )
 

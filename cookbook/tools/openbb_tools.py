@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.tools.openbb import OpenBBTools
 
-agent = Agent(tools=[OpenBBTools()], debug_mode=True, show_tool_calls=True)
+agent = Agent(tools=[OpenBBTools()], show_tool_calls=True)
 
 # Example usage showing stock analysis
 agent.print_response(

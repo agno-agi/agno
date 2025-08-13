@@ -3,7 +3,8 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from agno.agent.agent import Agent
-from agno.run.response import RunEvent, RunResponse
+from agno.run.response import RunResponse
+from agno.run.workflow import WorkflowCompletedEvent
 from agno.storage.postgres import PostgresStorage
 from agno.tools.linear import LinearTools
 from agno.tools.slack import SlackTools
@@ -128,9 +129,8 @@ class ProductManagerWorkflow(Workflow):
             tasks = self.get_tasks_from_meeting_notes(meeting_notes)
 
         if tasks is None or len(tasks.tasks) == 0:
-            return RunResponse(
+            yield WorkflowCompletedEvent(
                 run_id=self.run_id,
-                event=RunEvent.workflow_completed,
                 content="Sorry, could not generate tasks from meeting notes.",
             )
 

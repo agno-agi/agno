@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_info, logger
@@ -18,15 +18,16 @@ class SerpApiTools(Toolkit):
         search_youtube: bool = False,
         **kwargs,
     ):
-        super().__init__(name="serpapi_tools", **kwargs)
-
         self.api_key = api_key or getenv("SERP_API_KEY")
         if not self.api_key:
             logger.warning("No Serpapi API key provided")
 
-        self.register(self.search_google)
+        tools: List[Any] = []
+        tools.append(self.search_google)
         if search_youtube:
-            self.register(self.search_youtube)
+            tools.append(self.search_youtube)
+
+        super().__init__(name="serpapi_tools", tools=tools, **kwargs)
 
     def search_google(self, query: str, num_results: int = 10) -> str:
         """

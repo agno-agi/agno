@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_info
@@ -13,20 +13,20 @@ except ImportError:
 
 class AgentQLTools(Toolkit):
     def __init__(self, api_key: Optional[str] = None, scrape: bool = True, agentql_query: str = "", **kwargs):
-        super().__init__(name="agentql_tools", **kwargs)
-
         self.api_key = api_key or getenv("AGENTQL_API_KEY")
         if not self.api_key:
             raise ValueError("AGENTQL_API_KEY not set. Please set the AGENTQL_API_KEY environment variable.")
 
         self.agentql_query = agentql_query
 
+        tools: List[Any] = []
         if scrape:
-            self.register(self.scrape_website)
-
+            tools.append(self.scrape_website)
         if agentql_query:
             log_info("Custom AgentQL query provided. Registering custom scrape function.")
-            self.register(self.custom_scrape_website)
+            tools.append(self.custom_scrape_website)
+
+        super().__init__(name="agentql_tools", tools=tools, **kwargs)
 
     def scrape_website(self, url: str) -> str:
         """

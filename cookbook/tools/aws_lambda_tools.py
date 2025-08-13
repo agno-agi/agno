@@ -2,10 +2,13 @@
 
 from agno.agent import Agent
 from agno.tools.aws_lambda import AWSLambdaTools
+from agno.models.aws.bedrock import AwsBedrock
 
 # Create an Agent with the AWSLambdaTool
 agent = Agent(
-    tools=[AWSLambdaTools(region_name="us-east-1")],
+    model=AwsBedrock(id="amazon.nova-lite-v1:0"),
+    tools=[AWSLambdaTools(region_name="us-east-1"),
+           ],
     name="AWS Lambda Agent",
     show_tool_calls=True,
 )

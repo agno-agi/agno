@@ -1,6 +1,6 @@
 import json
 from textwrap import dedent
-from typing import List, Optional, Union
+from typing import Any, List, Optional, Union
 
 from agno.agent import Agent
 from agno.document import Document
@@ -26,13 +26,6 @@ class KnowledgeTools(Toolkit):
         if knowledge is None:
             raise ValueError("knowledge must be provided when using KnowledgeTools")
 
-        super().__init__(
-            name="knowledge_tools",
-            instructions=instructions,
-            add_instructions=add_instructions,
-            **kwargs,
-        )
-
         # Add instructions for using this toolkit
         if instructions is None:
             self.instructions = self.DEFAULT_INSTRUCTIONS
@@ -41,16 +34,27 @@ class KnowledgeTools(Toolkit):
                     self.instructions += "\n" + few_shot_examples
                 else:
                     self.instructions += "\n" + self.FEW_SHOT_EXAMPLES
+        else:
+            self.instructions = instructions
 
         # The knowledge to search
         self.knowledge: AgentKnowledge = knowledge
-        # Register tools
+
+        tools: List[Any] = []
         if think:
-            self.register(self.think)
+            tools.append(self.think)
         if search:
-            self.register(self.search)
+            tools.append(self.search)
         if analyze:
-            self.register(self.analyze)
+            tools.append(self.analyze)
+
+        super().__init__(
+            name="knowledge_tools",
+            instructions=self.instructions,
+            add_instructions=add_instructions,
+            tools=tools,
+            **kwargs,
+        )
 
     def think(self, agent: Union[Agent, Team], thought: str) -> str:
         """Use this tool as a scratchpad to reason about the question, refine your approach, brainstorm search terms, or revise your plan.

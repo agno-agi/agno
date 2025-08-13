@@ -19,7 +19,7 @@ class OpenAILike(OpenAIChat):
     name: str = "OpenAILike"
     api_key: Optional[str] = "not-provided"
 
-    role_map = {
+    default_role_map = {
         "system": "system",
         "user": "user",
         "assistant": "assistant",

@@ -5,7 +5,7 @@ from agno.eval.performance import PerformanceEval
 from agno.models.openai import OpenAIChat
 
 
-def simple_response():
+def run_agent():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         system_message="Be concise, reply with one sentence.",
@@ -16,7 +16,10 @@ def simple_response():
 
 
 simple_response_perf = PerformanceEval(
-    func=simple_response, num_iterations=1, warmup_runs=0
+    name="Simple Performance Evaluation",
+    func=run_agent,
+    num_iterations=1,
+    warmup_runs=0,
 )
 
 if __name__ == "__main__":
