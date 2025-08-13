@@ -81,6 +81,7 @@ class FastAPIApp(BaseAPIApp):
                     workflow.app_id = self.app_id
                 if not workflow.workflow_id:
                     workflow.workflow_id = generate_id(workflow.name)
+                workflow.initialize_workflow()
 
     def get_router(self) -> APIRouter:
         return get_sync_router(agents=self.agents, teams=self.teams, workflows=self.workflows)
