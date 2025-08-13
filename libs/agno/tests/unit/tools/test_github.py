@@ -177,7 +177,7 @@ def test_get_pull_request_with_details(mock_github):
     assert result_data["data"][0]["state"] == "open"
     assert result_data["data"][1]["number"] == 2
     assert result_data["data"][1]["state"] == "closed"
-    
+
     # Check pagination metadata
     assert result_data["meta"]["current_page"] == 1
     assert result_data["meta"]["per_page"] == 20
