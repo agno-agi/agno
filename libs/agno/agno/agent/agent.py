@@ -535,26 +535,26 @@ class Agent:
 
         self._formatter: Optional[SafeFormatter] = None
 
-    def set_id(self) -> str:
+    def _set_id(self) -> str:
         if self.id is None:
             self.id = str(uuid4())
         return self.id
 
-    def set_debug(self, debug_mode: Optional[bool] = None) -> None:
+    def _set_debug_mode(self, debug_mode: Optional[bool] = None) -> None:
         # If the default debug mode is set, or passed on run, or via environment variable, set the debug mode to True
         if self.debug_mode or debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
             set_log_level_to_debug(level=self.debug_level)
         else:
             set_log_level_to_info()
 
-    def set_telemetry(self) -> None:
+    def _set_telemetry(self) -> None:
         """Override telemetry settings based on environment variables."""
 
         telemetry_env = getenv("AGNO_TELEMETRY")
         if telemetry_env is not None:
             self.telemetry = telemetry_env.lower() == "true"
 
-    def set_default_model(self) -> None:
+    def _set_default_mode(self) -> None:
         # Use the default Model (OpenAIChat) if no model is provided
         if self.model is None:
             try:
@@ -570,7 +570,7 @@ class Agent:
             log_info("Setting default model to OpenAI Chat")
             self.model = OpenAIChat(id="gpt-4o")
 
-    def set_memory_manager(self) -> None:
+    def _set_memory_manager(self) -> None:
         if self.db is None:
             log_warning("Database not provided. Memories will not be stored.")
 
@@ -587,7 +587,7 @@ class Agent:
                 self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None
             )
 
-    def set_session_summary_manager(self) -> None:
+    def _set_session_summary_manager(self) -> None:
         if self.enable_session_summaries and self.session_summary_manager is None:
             self.session_summary_manager = SessionSummaryManager(model=self.model)
 
@@ -600,7 +600,8 @@ class Agent:
                 self.enable_session_summaries or self.session_summary_manager is not None
             )
 
-    def reset_session(self) -> None:
+    def _reset_session(self) -> None:
+        """Reset all relevant Agent fields strictly related to the session."""
         self.session_state = None
         self.session_name = None
         self.session_metrics = None
@@ -610,20 +611,22 @@ class Agent:
         self.files = None
         self.agent_session = None
 
-    def reset_run_state(self) -> None:
+    def _reset_run_state(self) -> None:
+        """Reset all relevant Agent fields strictly related to the run."""
         self.run_id = None
         self.run_input = None
         self.run_messages = None
         self.run_response = None
 
     def initialize_agent(self, debug_mode: Optional[bool] = None) -> None:
-        self.set_default_model()
-        self.set_debug(debug_mode=debug_mode)
-        self.set_id()
+        self._set_default_mode()
+        self._set_debug_mode(debug_mode=debug_mode)
+        self._set_id()
+
         if self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None:
-            self.set_memory_manager()
+            self._set_memory_manager()
         if self.enable_session_summaries or self.session_summary_manager is not None:
-            self.set_session_summary_manager()
+            self._set_session_summary_manager()
 
         log_debug(f"Agent ID: {self.id}", center=True)
 
@@ -637,7 +640,7 @@ class Agent:
         return False
 
     @property
-    def should_parse_structured_output(self) -> bool:
+    def _should_parse_structured_output(self) -> bool:
         return self.response_model is not None and self.parse_response and self.parser_model is None
 
     def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
@@ -682,14 +685,14 @@ class Agent:
     ) -> Tuple[str, Optional[str]]:
         """Initialize the session for the agent."""
 
-        self.reset_run_state()
+        self._reset_run_state()
 
         # Determine the session_id
         if session_id is not None and session_id != "":
             # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
             # Only reset session state if the session_id is different from the current session_id
             if self.session_id is not None and session_id != self.session_id:
-                self.reset_session()
+                self._reset_session()
 
             self.session_id = session_id
         else:
@@ -773,7 +776,7 @@ class Agent:
         deque(response_iterator, maxlen=0)
 
         # 5. Calculate session metrics
-        self.set_session_metrics(run_response)
+        self._set_session_metrics(run_response)
 
         self.run_response = cast(RunOutput, self.run_response)
         self.run_response.status = RunStatus.completed
@@ -862,7 +865,7 @@ class Agent:
         )
 
         # 4. Calculate session metrics
-        self.set_session_metrics(run_response)
+        self._set_session_metrics(run_response)
 
         self.run_response = cast(RunOutput, self.run_response)
         self.run_response.status = RunStatus.completed
@@ -992,10 +995,10 @@ class Agent:
 
         # Resolve dependencies
         if self.dependencies is not None:
-            self.resolve_run_dependencies()
+            self._resolve_run_dependencies()
 
         # Prepare arguments for the model
-        self.set_default_model()
+        self._set_default_mode()
         response_format = self._get_response_format() if self.parser_model is None else None
         self.model = cast(Model, self.model)
 
@@ -1185,7 +1188,7 @@ class Agent:
             pass
 
         # 5. Calculate session metrics
-        self.set_session_metrics(run_response)
+        self._set_session_metrics(run_response)
 
         self.run_response = cast(RunOutput, self.run_response)
         self.run_response.status = RunStatus.completed
@@ -1277,7 +1280,7 @@ class Agent:
             yield event
 
         # 4. Calculate session metrics
-        self.set_session_metrics(run_response)
+        self._set_session_metrics(run_response)
 
         self.run_response = cast(RunOutput, self.run_response)
         self.run_response.status = RunStatus.completed
@@ -1402,10 +1405,10 @@ class Agent:
 
         # Resolve dependencies
         if self.dependencies is not None:
-            self.resolve_run_dependencies()
+            self._resolve_run_dependencies()
 
         # Prepare arguments for the model
-        self.set_default_model()
+        self._set_default_mode()
         response_format = self._get_response_format() if self.parser_model is None else None
         self.model = cast(Model, self.model)
 
@@ -1599,9 +1602,9 @@ class Agent:
         self.initialize_agent(debug_mode=debug_mode)
 
         if session_id is not None:
-            self.reset_run_state()
+            self._reset_run_state()
             # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
-            self.reset_session()
+            self._reset_session()
             # Only reset session state if the session_id is different from the current session_id
             if self.session_id is not None and session_id != self.session_id:
                 self.session_state = None
@@ -1682,10 +1685,10 @@ class Agent:
 
         # Read existing session from storage
         if self.dependencies is not None:
-            self.resolve_run_dependencies()
+            self._resolve_run_dependencies()
 
         # Prepare arguments for the model
-        self.set_default_model()
+        self._set_default_mode()
         response_format = self._get_response_format()
         self.model = cast(Model, self.model)
 
@@ -1833,7 +1836,7 @@ class Agent:
         deque(response_iterator, maxlen=0)
 
         # 4. Calculate session metrics
-        self.set_session_metrics(run_response)
+        self._set_session_metrics(run_response)
 
         self.run_response = cast(RunOutput, self.run_response)
         self.run_response.status = RunStatus.completed
@@ -1852,7 +1855,7 @@ class Agent:
         self._log_agent_run(user_id=user_id, session_id=session_id)
 
         # 6. Add the run to memory
-        self.add_run_to_session(run_response=run_response)
+        self._add_run_to_session(run_response=run_response)
 
         # 7. Save session to storage
         self.save_session(user_id=user_id, session_id=session_id)
@@ -1912,7 +1915,7 @@ class Agent:
         )
 
         # 4. Calculate session metrics
-        self.set_session_metrics(run_response)
+        self._set_session_metrics(run_response)
 
         self.run_response = cast(RunOutput, self.run_response)
         self.run_response.status = RunStatus.completed
@@ -1928,7 +1931,7 @@ class Agent:
         self.save_run_response_to_file(message=run_messages.user_message, session_id=session_id)
 
         # 6. Add the run to memory
-        self.add_run_to_session(run_response=run_response)
+        self._add_run_to_session(run_response=run_response)
 
         # 7. Save session to storage
         self.save_session(user_id=user_id, session_id=session_id)
@@ -1998,9 +2001,9 @@ class Agent:
         self.initialize_agent(debug_mode=debug_mode)
 
         if session_id is not None:
-            self.reset_run_state()
+            self._reset_run_state()
             # Reset session state if a session_id is provided. Session name and session state will be loaded from storage.
-            self.reset_session()
+            self._reset_session()
             # Only reset session state if the session_id is different from the current session_id
             if self.session_id is not None and session_id != self.session_id:
                 self.session_state = None
@@ -2080,10 +2083,10 @@ class Agent:
 
         # Read existing session from storage
         if self.dependencies is not None:
-            self.resolve_run_dependencies()
+            self._resolve_run_dependencies()
 
         # Prepare arguments for the model
-        self.set_default_model()
+        self._set_default_mode()
         response_format = self._get_response_format()
         self.model = cast(Model, self.model)
 
@@ -2223,7 +2226,7 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # 3. Add the run to memory
-        self.add_run_to_session(
+        self._add_run_to_session(
             run_response=run_response,
         )
 
@@ -2242,7 +2245,7 @@ class Agent:
             pass
 
         # 5. Calculate session metrics
-        self.set_session_metrics(run_response)
+        self._set_session_metrics(run_response)
 
         self.run_response = cast(RunOutput, self.run_response)
         self.run_response.status = RunStatus.completed
@@ -2303,7 +2306,7 @@ class Agent:
             yield event
 
         # 3. Add the run to memory
-        self.add_run_to_session(
+        self._add_run_to_session(
             run_response=run_response,
         )
 
@@ -2324,7 +2327,7 @@ class Agent:
             yield event
 
         # 5. Calculate session metrics
-        self.set_session_metrics(run_response)
+        self._set_session_metrics(run_response)
 
         self.run_response = cast(RunOutput, self.run_response)
         self.run_response.status = RunStatus.completed
@@ -2404,7 +2407,7 @@ class Agent:
                     # Update RunOutput
                     if structured_output is not None:
                         run_response.content = structured_output
-                        if hasattr(run_response, "content_type"):
+                        if isinstance(run_response, RunResponse):
                             run_response.content_type = self.response_model.__name__
                     else:
                         log_warning("Failed to convert response to response_model")
@@ -2814,7 +2817,7 @@ class Agent:
         model_response = ModelResponse(content="")
 
         stream_model_response = True
-        if self.should_parse_structured_output:
+        if self._should_parse_structured_output:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
@@ -2833,7 +2836,7 @@ class Agent:
                 model_response=model_response,
                 model_response_event=model_response_event,
                 reasoning_state=reasoning_state,
-                parse_structured_output=self.should_parse_structured_output,
+                parse_structured_output=self._should_parse_structured_output,
                 stream_intermediate_steps=stream_intermediate_steps,
                 workflow_context=workflow_context,
             )
@@ -2886,7 +2889,7 @@ class Agent:
         model_response = ModelResponse(content="")
 
         stream_model_response = True
-        if self.should_parse_structured_output:
+        if self._should_parse_structured_output:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
@@ -2907,7 +2910,7 @@ class Agent:
                 model_response=model_response,
                 model_response_event=model_response_event,
                 reasoning_state=reasoning_state,
-                parse_structured_output=self.should_parse_structured_output,
+                parse_structured_output=self._should_parse_structured_output,
                 stream_intermediate_steps=stream_intermediate_steps,
                 workflow_context=workflow_context,
             ):
@@ -3646,7 +3649,7 @@ class Agent:
                 log_debug("Model does not support structured or JSON schema outputs.")
                 return json_response_format
 
-    def resolve_run_dependencies(self) -> None:
+    def _resolve_run_dependencies(self) -> None:
         from inspect import signature
 
         log_debug("Resolving dependencies")
@@ -3666,7 +3669,7 @@ class Agent:
             else:
                 self.dependencies[key] = value
 
-    async def aresolve_run_dependencies(self) -> None:
+    async def _aresolve_run_dependencies(self) -> None:
         from inspect import iscoroutine, signature
 
         log_debug("Resolving context (async)")
@@ -4189,7 +4192,7 @@ class Agent:
             if not user_id:
                 user_id = "default"
             if self.memory_manager is None:
-                self.set_memory_manager()
+                self._set_memory_manager()
                 _memory_manager_not_set = True
             user_memories = self.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
             if user_memories and len(user_memories) > 0:
@@ -7345,7 +7348,7 @@ class Agent:
     ###########################################################################
 
     def _log_agent_run(self, session_id: str, user_id: Optional[str] = None) -> None:
-        self.set_telemetry()
+        self._set_telemetry()
 
         if not self.telemetry:
             return
@@ -7367,7 +7370,7 @@ class Agent:
         #     log_debug(f"Could not create agent event: {e}")
 
     async def _alog_agent_run(self, session_id: str, user_id: Optional[str] = None) -> None:
-        self.set_telemetry()
+        self._set_telemetry()
 
         if not self.telemetry:
             return

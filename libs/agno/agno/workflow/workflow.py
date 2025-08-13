@@ -375,7 +375,7 @@ class Workflow:
             step_index=step_index,
         )
 
-    def _set_debug(self) -> None:
+    def _set_debug_mode(self) -> None:
         """Set debug mode and configure logging"""
         if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
             use_workflow_logger()
@@ -1488,7 +1488,7 @@ class Workflow:
         if background:
             raise RuntimeError("Background execution is not supported for sync run()")
 
-        self._set_debug()
+        self._set_debug_mode()
 
         log_debug(f"Workflow Run Start: {self.name}", center=True)
 
@@ -1646,7 +1646,7 @@ class Workflow:
                     **kwargs,
                 )
 
-        self._set_debug()
+        self._set_debug_mode()
 
         log_debug(f"Async Workflow Run Start: {self.name}", center=True)
 

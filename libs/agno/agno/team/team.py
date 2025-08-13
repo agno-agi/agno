@@ -508,7 +508,7 @@ class Team:
         self._formatter: Optional[SafeFormatter] = None
 
     @property
-    def should_parse_structured_output(self) -> bool:
+    def _should_parse_structured_output(self) -> bool:
         return self.response_model is not None and self.parse_response and self.parser_model is None
 
     def _set_id(self) -> str:
@@ -516,7 +516,7 @@ class Team:
             self.id = str(uuid4())
         return self.id
 
-    def _set_debug(self) -> None:
+    def _set_debug_mode(self) -> None:
         if self.debug_mode or getenv("AGNO_DEBUG", "false").lower() == "true":
             self.debug_mode = True
             set_log_level_to_debug(source_type="team", level=self.debug_level)
@@ -598,7 +598,7 @@ class Team:
                 self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None
             )
 
-    def set_session_summary_manager(self) -> None:
+    def _set_session_summary_manager(self) -> None:
         if self.enable_session_summaries and self.session_summary_manager is None:
             self.session_summary_manager = SessionSummaryManager(model=self.model)
 
@@ -699,7 +699,7 @@ class Team:
         self._set_default_model()
 
         # Set debug mode
-        self._set_debug()
+        self._set_debug_mode()
 
         # Set the team ID if not set
         self._set_id()
@@ -708,7 +708,7 @@ class Team:
         if self.enable_user_memories or self.enable_agentic_memory or self.memory_manager is not None:
             self.set_memory_manager()
         if self.enable_session_summaries or self.session_summary_manager is not None:
-            self.set_session_summary_manager()
+            self._set_session_summary_manager()
 
         log_debug(f"Team ID: {self.id}", center=True)
 
@@ -768,7 +768,7 @@ class Team:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # 3. Add the run to memory
-        self.add_run_to_session(run_response=run_response)
+        self._add_run_to_session(run_response=run_response)
 
         # 4. Update Team Memory
         response_iterator = self._update_memory(
@@ -830,7 +830,7 @@ class Team:
         )
 
         # 3. Add the run to memory
-        self.add_run_to_session(run_response=run_response)
+        self._add_run_to_session(run_response=run_response)
 
         # 4. Update Team Memory
         yield from self._update_memory(
@@ -1168,7 +1168,7 @@ class Team:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         # 3. Add the run to memory
-        self.add_run_to_session(run_response=run_response)
+        self._add_run_to_session(run_response=run_response)
 
         # 4. Update Team Memory
         async for _ in self._aupdate_memory(
@@ -1239,7 +1239,7 @@ class Team:
             yield event
 
         # 3. Add the run to memory
-        self.add_run_to_session(run_response=run_response)
+        self._add_run_to_session(run_response=run_response)
 
         # 4. Update Team Memory
         async for event in self._aupdate_memory(
@@ -1580,7 +1580,7 @@ class Team:
                 tool_args = tool_call.get("tool_args", {})
                 self.update_reasoning_content_from_tool_call(run_response, tool_name, tool_args)
 
-    def add_run_to_session(
+    def _add_run_to_session(
         self,
         run_response: TeamRunOutput,
     ):
@@ -1603,7 +1603,7 @@ class Team:
         }
 
         stream_model_response = True
-        if self.should_parse_structured_output:
+        if self._should_parse_structured_output:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
@@ -1623,7 +1623,7 @@ class Team:
                 model_response_event=model_response_event,
                 reasoning_state=reasoning_state,
                 stream_intermediate_steps=stream_intermediate_steps,
-                parse_structured_output=self.should_parse_structured_output,
+                parse_structured_output=self._should_parse_structured_output,
                 workflow_context=workflow_context,
             )
 
@@ -1685,7 +1685,7 @@ class Team:
         }
 
         stream_model_response = True
-        if self.should_parse_structured_output:
+        if self._should_parse_structured_output:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
@@ -1706,7 +1706,7 @@ class Team:
                 model_response_event=model_response_event,
                 reasoning_state=reasoning_state,
                 stream_intermediate_steps=stream_intermediate_steps,
-                parse_structured_output=self.should_parse_structured_output,
+                parse_structured_output=self._should_parse_structured_output,
                 workflow_context=workflow_context,
             ):
                 yield chunk
@@ -4151,17 +4151,6 @@ class Team:
                 metrics += m.metrics
 
         return metrics if for_session else metrics.to_dict()
-
-    def set_session_metrics(self, run_messages: RunMessages) -> None:
-        """Calculate session metrics"""
-
-        # If the session metrics are not set yet, set them to the first run metrics
-        if self.session_metrics is None:
-            self.session_metrics = self.calculate_metrics(run_messages.messages, for_session=True)  # type: ignore
-
-        # If the session metrics are set, add the new run metrics to them
-        else:
-            self.session_metrics += self.calculate_metrics(run_messages.messages, for_session=True)  # type: ignore
 
     def update_session_metrics(self):
         """Calculate session metrics"""
