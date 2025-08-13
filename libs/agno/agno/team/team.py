@@ -310,6 +310,7 @@ class Team:
         model: Optional[Model] = None,
         name: Optional[str] = None,
         team_id: Optional[str] = None,
+        role: Optional[str] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -390,6 +391,7 @@ class Team:
 
         self.name = name
         self.team_id = team_id
+        self.role = role
 
         self.user_id = user_id
         self.session_id = session_id
@@ -5453,6 +5455,10 @@ class Team:
         if self.description is not None:
             system_message_content += f"<description>\n{self.description}\n</description>\n\n"
 
+        # 3.3.4 Then add the Team role if provided
+        if self.role is not None:
+            system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
+
         # 3.3.5 Then add instructions for the Agent
         if len(instructions) > 0:
             system_message_content += "<instructions>"
@@ -5645,7 +5651,7 @@ class Team:
                 if isinstance(message, str):
                     user_message_content = message
                 else:
-                    user_message_content = "\n".join(message)
+                    user_message_content = "\n".join(str(message))
 
             # Add references to user message
             if (
@@ -7152,9 +7158,10 @@ class Team:
                     # If the team_session_state is already set, merge the team_session_state from the database with the current team_session_state
                     if self.team_session_state is not None and len(self.team_session_state) > 0:
                         # This updates team_session_state_from_db
-                        merge_dictionaries(team_session_state_from_db, self.team_session_state)
-                    # Update the current team_session_state
-                    self.team_session_state = team_session_state_from_db
+                        merge_dictionaries(self.team_session_state, team_session_state_from_db)
+                    else:
+                        # Update the current team_session_state
+                        self.team_session_state = team_session_state_from_db
 
             if "workflow_session_state" in session.session_data:
                 workflow_session_state_from_db = session.session_data.get("workflow_session_state")
@@ -7166,9 +7173,10 @@ class Team:
                     # If the workflow_session_state is already set, merge the workflow_session_state from the database with the current workflow_session_state
                     if self.workflow_session_state is not None and len(self.workflow_session_state) > 0:
                         # This updates workflow_session_state_from_db
-                        merge_dictionaries(workflow_session_state_from_db, self.workflow_session_state)
-                    # Update the current workflow_session_state
-                    self.workflow_session_state = workflow_session_state_from_db
+                        merge_dictionaries(self.workflow_session_state, workflow_session_state_from_db)
+                    else:
+                        # Update the current workflow_session_state
+                        self.workflow_session_state = workflow_session_state_from_db
 
             # Get the session_metrics from the database
             if "session_metrics" in session.session_data:
