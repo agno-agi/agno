@@ -16,8 +16,6 @@ knowledge.add_content(
 )
 
 agent = Agent(
-    model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
-    knowledge=knowledge,
-    show_tool_calls=True,
+    model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"), knowledge=knowledge
 )
 agent.print_response("How to make Thai curry?", markdown=True)

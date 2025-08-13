@@ -23,7 +23,6 @@ knowledge.add_content(
 agent = Agent(
     model=Claude(id="claude-sonnet-4-20250514"),
     knowledge=knowledge,
-    show_tool_calls=True,
     debug_mode=True,
 )
 agent.print_response("How to make Thai curry?", markdown=True)

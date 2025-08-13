@@ -16,8 +16,6 @@ knowledge.add_content(
 )
 
 agent = Agent(
-    model=Claude(id="anthropic.claude-3-5-sonnet-20240620-v1:0"),
-    knowledge=knowledge,
-    show_tool_calls=True,
+    model=Claude(id="anthropic.claude-3-5-sonnet-20240620-v1:0"), knowledge=knowledge
 )
 agent.print_response("How to make Thai curry?", markdown=True)

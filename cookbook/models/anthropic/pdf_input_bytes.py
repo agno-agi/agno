@@ -26,5 +26,6 @@ agent.print_response(
     ],
 )
 
-print("Citations:")
-print(agent.run_response.citations)
+if agent.run_response:
+    print("Citations:")
+    print(agent.run_response.citations)

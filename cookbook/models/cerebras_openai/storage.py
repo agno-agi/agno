@@ -1,15 +1,17 @@
 """Run `pip install duckduckgo-search sqlalchemy cerebras_cloud_sdk` to install dependencies."""
 
 from agno.agent import Agent
-from agno.db.postgres import PostgresStorage
+from agno.db.postgres import PostgresDb
 from agno.models.cerebras import CerebrasOpenAI
 from agno.tools.duckduckgo import DuckDuckGoTools
 
+# Setup the database
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url=db_url)
 
 agent = Agent(
     model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
-    storage=PostgresStorage(table_name="agent_sessions", db_url=db_url),
+    db=db,
     tools=[DuckDuckGoTools()],
     debug_mode=True,
     add_history_to_context=True,

@@ -20,9 +20,5 @@ knowledge.add_content(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
 )
 
-agent = Agent(
-    model=Gemini(id="gemini-2.0-flash-001"),
-    knowledge=knowledge,
-    show_tool_calls=True,
-)
+agent = Agent(model=Gemini(id="gemini-2.0-flash-001"), knowledge=knowledge)
 agent.print_response("How to make Thai curry?", markdown=True)
