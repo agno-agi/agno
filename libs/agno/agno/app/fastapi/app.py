@@ -96,6 +96,7 @@ class FastAPIApp(BaseAPIApp):
         host: str = "localhost",
         port: int = 7777,
         reload: bool = False,
+        workers: Optional[int] = None,
         **kwargs,
     ):
         self.set_app_id()
@@ -103,4 +104,4 @@ class FastAPIApp(BaseAPIApp):
 
         log_info(f"Starting API on {host}:{port}")
 
-        uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)
+        uvicorn.run(app=app, host=host, port=port, reload=reload, workers=workers, **kwargs)
