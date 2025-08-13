@@ -66,4 +66,4 @@ if __name__ == "__main__":
     http://localhost:7777/config
 
     """
-    agent_os.serve(app="basic:app", reload=True)
+    agent_os.serve(app="os:app", reload=True)

@@ -2,9 +2,7 @@ from datetime import datetime
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteStorage
-from agno.memory import Memory
-from agno.memory.db.postgres import PostgresMemoryDb
+from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.tools.dalle import DalleTools
@@ -14,32 +12,18 @@ from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 from agno.tools.youtube import YouTubeTools
 
-agent_storage_file: str = "tmp/agents.db"
-memory_storage_file: str = "tmp/memory.db"
-image_agent_storage_file: str = "tmp/image_agent.db"
-
-db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-
-# No need to set the model, it gets set by the agent to the agent's model
-memory = Memory(
-    model=OpenAIChat(id="gpt-4.1"),
-    db=PostgresMemoryDb(table_name="user_memories", db_url=db_url),
-    delete_memories=True,
-    clear_memories=True,
-)
+# Setup the database
+db_file: str = "tmp/agents.db"
+db = SqliteDb(db_file=db_file)
 
 simple_agent = Agent(
     name="Simple Agent",
     role="Answer basic questions",
     agent_id="simple-agent",
     model=OpenAIChat(id="gpt-4o-mini"),
-    storage=SqliteStorage(
-        table_name="simple_agent", db_file=agent_storage_file, auto_upgrade_schema=True
-    ),
-    memory=memory,
-    enable_agentic_memory=True,
+    db=db,
+    enable_user_memories=True,
     add_history_to_context=True,
-    num_history_responses=5,
     add_datetime_to_context=True,
     markdown=True,
 )
@@ -54,13 +38,9 @@ web_agent = Agent(
         "Break down the users request into 2-3 different searches.",
         "Always include sources",
     ],
-    storage=SqliteStorage(
-        table_name="web_agent", db_file=agent_storage_file, auto_upgrade_schema=True
-    ),
-    memory=memory,
-    enable_agentic_memory=True,
+    db=db,
+    enable_user_memories=True,
     add_history_to_context=True,
-    num_history_responses=5,
     add_datetime_to_context=True,
     markdown=True,
 )
@@ -75,13 +55,9 @@ finance_agent = Agent(
         YFinanceTools(enable_all=True),
     ],
     instructions="Always use tables to display data.",
-    storage=SqliteStorage(
-        table_name="finance_agent", db_file=agent_storage_file, auto_upgrade_schema=True
-    ),
-    memory=memory,
-    enable_agentic_memory=True,
+    db=db,
+    enable_user_memories=True,
     add_history_to_context=True,
-    num_history_responses=5,
     add_datetime_to_context=True,
     markdown=True,
 )
@@ -96,16 +72,11 @@ image_agent = Agent(
         "When the user asks you to create an image, use the `create_image` tool to create the image.",
         "Don't provide the URL of the image in the response. Only describe what image was generated.",
     ],
-    memory=memory,
+    db=db,
+    enable_user_memories=True,
     markdown=True,
-    enable_agentic_memory=True,
     add_history_to_context=True,
     add_datetime_to_context=True,
-    storage=SqliteStorage(
-        table_name="image_agent",
-        db_file=image_agent_storage_file,
-        auto_upgrade_schema=True,
-    ),
 )
 
 research_agent = Agent(
@@ -149,13 +120,8 @@ research_agent = Agent(
     - [Reference 1](link)
     - [Reference 2](link)
     """),
-    memory=memory,
-    enable_agentic_memory=True,
-    storage=SqliteStorage(
-        table_name="research_agent",
-        db_file=agent_storage_file,
-        auto_upgrade_schema=True,
-    ),
+    db=db,
+    enable_user_memories=True,
     add_history_to_context=True,
     add_datetime_to_context=True,
     markdown=True,
@@ -173,13 +139,9 @@ youtube_agent = Agent(
         "If you cannot find the answer in the video, say so and ask the user to provide more details.",
         "Keep your answers concise and engaging.",
     ],
-    memory=memory,
-    enable_agentic_memory=True,
+    db=db,
+    enable_user_memories=True,
     add_history_to_context=True,
-    num_history_responses=5,
     add_datetime_to_context=True,
-    storage=SqliteStorage(
-        table_name="youtube_agent", db_file=agent_storage_file, auto_upgrade_schema=True
-    ),
     markdown=True,
 )
