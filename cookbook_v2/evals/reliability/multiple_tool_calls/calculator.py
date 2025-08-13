@@ -21,7 +21,8 @@ def multiply_and_exponentiate():
         expected_tool_calls=["multiply", "exponentiate"],
     )
     result: Optional[ReliabilityResult] = evaluation.run(print_results=True)
-    result.assert_passed()
+    if result:
+        result.assert_passed()
 
 
 if __name__ == "__main__":

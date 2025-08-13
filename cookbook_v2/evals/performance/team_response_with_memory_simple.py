@@ -2,11 +2,9 @@ import asyncio
 import random
 
 from agno.agent import Agent
+from agno.db.postgres import PostgresDb
 from agno.eval.performance import PerformanceEval
-from agno.memory.v2.db.postgres import PostgresMemoryDb
-from agno.memory.v2.memory import Memory
 from agno.models.openai import OpenAIChat
-from agno.storage.postgres import PostgresStorage
 from agno.team.team import Team
 
 cities = [
@@ -25,18 +23,9 @@ cities = [
 ]
 
 
+# Setup the database
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-
-agent_storage = PostgresStorage(
-    table_name="agent_sessions", db_url=db_url, auto_upgrade_schema=True
-)
-
-team_storage = PostgresStorage(
-    table_name="team_sessions", db_url=db_url, auto_upgrade_schema=True
-)
-
-memory_db = PostgresMemoryDb(table_name="memory", db_url=db_url)
-memory = Memory(db=memory_db)
+db = PostgresDb(db_url=db_url)
 
 
 def get_weather(city: str) -> str:
@@ -50,8 +39,8 @@ weather_agent = Agent(
     description="You are a helpful assistant that can answer questions about the weather.",
     instructions="Be concise, reply with one sentence.",
     tools=[get_weather],
-    memory=memory,
-    storage=agent_storage,
+    db=db,
+    enable_user_memories=True,
     add_history_to_context=True,
 )
 
@@ -59,8 +48,7 @@ team = Team(
     members=[weather_agent],
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions="Be concise, reply with one sentence.",
-    memory=memory,
-    storage=team_storage,
+    db=db,
     markdown=True,
     enable_user_memories=True,
     add_history_to_context=True,
@@ -69,7 +57,7 @@ team = Team(
 
 async def run_team():
     random_city = random.choice(cities)
-    await team.arun(
+    _ = team.arun(
         message=f"I love {random_city}! What weather can I expect in {random_city}?",
         stream=True,
         stream_intermediate_steps=True,

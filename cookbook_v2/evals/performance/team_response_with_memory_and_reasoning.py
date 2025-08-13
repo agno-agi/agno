@@ -8,7 +8,6 @@ from agno.eval.performance import PerformanceEval
 from agno.models.openai import OpenAIResponses
 from agno.team.team import Team
 from agno.tools.reasoning import ReasoningTools
-from agno.utils.pprint import apprint_run_response
 
 users = [
     "abel@example.com",
@@ -1041,45 +1040,23 @@ async def run_team_for_user(user: str, print_responses: bool = False):
     # Make four requests to the team, to build up history
     random_city = random.choice(cities)
     session_id = f"session_{user}_{uuid.uuid4()}"
-    response_iterator = await team.arun(
-        message=f"I love {random_city}!",
-        user_id=user,
-        session_id=session_id,
-    )
-    if print_responses:
-        await apprint_run_response(response_iterator)
-    else:
-        pass
 
-    response_iterator = await team.arun(
+    _ = team.arun(message=f"I love {random_city}!", user_id=user, session_id=session_id)
+    _ = team.arun(
         message=f"Create a report on the activities and weather in {random_city}.",
         user_id=user,
         session_id=session_id,
     )
-    if print_responses:
-        await apprint_run_response(response_iterator)
-    else:
-        pass
-
-    response_iterator = await team.arun(
+    _ = team.arun(
         message=f"What else can you tell me about {random_city}?",
         user_id=user,
         session_id=session_id,
     )
-    if print_responses:
-        await apprint_run_response(response_iterator)
-    else:
-        pass
-
-    response_iterator = await team.arun(
+    _ = team.arun(
         message=f"What other cities are similar to {random_city}?",
         user_id=user,
         session_id=session_id,
     )
-    if print_responses:
-        await apprint_run_response(response_iterator)
-    else:
-        pass
 
 
 async def run_team():

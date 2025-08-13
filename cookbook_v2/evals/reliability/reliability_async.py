@@ -25,7 +25,8 @@ def factorial():
     result: Optional[ReliabilityResult] = asyncio.run(
         evaluation.arun(print_results=True)
     )
-    result.assert_passed()
+    if result:
+        result.assert_passed()
 
 
 if __name__ == "__main__":

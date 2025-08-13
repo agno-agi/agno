@@ -4167,6 +4167,9 @@ class Team:
         """Calculate session metrics"""
 
         session_messages: List[Message] = []
+        if self.team_session and self.team_session.runs is None:
+            return
+
         for run in self.team_session.runs:  # type: ignore
             if run.messages is not None:
                 for m in run.messages:
@@ -5841,16 +5844,22 @@ class Team:
                 merge_dictionaries(self.workflow_session_state, member_state)
 
     def _get_history_for_member_agent(self, member_agent: Union[Agent, "Team"], session_id: str) -> List[Message]:
+        if not self.team_session:
+            return []
+
         from copy import deepcopy
 
         log_info(f"Adding messages from history for {member_agent.name}")
+
+        member_agent_id = member_agent.agent_id if isinstance(member_agent, Agent) else None
+        member_team_id = member_agent.team_id if isinstance(member_agent, Team) else None
 
         history = self.team_session.get_messages_from_last_n_runs(
             session_id=session_id,
             last_n=member_agent.num_history_runs or self.num_history_runs,
             skip_role=self.system_message_role,
-            agent_id=member_agent.agent_id,
-            team_id=member_agent.team_id if member_agent.agent_id is None else None,
+            agent_id=member_agent_id,
+            team_id=member_team_id,
             member_runs=True,
         )
 

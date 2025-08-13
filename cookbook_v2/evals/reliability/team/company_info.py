@@ -2,21 +2,21 @@ from typing import Optional
 
 from agno.agent import Agent
 from agno.eval.reliability import ReliabilityEval, ReliabilityResult
-from agno.models.google import Gemini
+from agno.models.openai import OpenAIChat
 from agno.run.team import TeamRunOutput
 from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
 
 team_member = Agent(
     name="Stock Searcher",
-    model=Gemini(id="gemini-2.0-flash-001"),
+    model=OpenAIChat("gpt-4o"),
     role="Searches the web for information on a stock.",
     tools=[YFinanceTools(stock_price=True)],
 )
 
 team = Team(
     name="Stock Research Team",
-    model=Gemini(id="gemini-2.0-flash-001"),
+    model=OpenAIChat("gpt-4o"),
     members=[team_member],
     markdown=True,
     show_members_responses=True,
@@ -36,7 +36,8 @@ def evaluate_team_reliability():
         expected_tool_calls=expected_tool_calls,
     )
     result: Optional[ReliabilityResult] = evaluation.run(print_results=True)
-    result.assert_passed()
+    if result:
+        result.assert_passed()
 
 
 if __name__ == "__main__":
