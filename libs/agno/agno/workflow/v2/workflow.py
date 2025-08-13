@@ -67,6 +67,7 @@ from agno.workflow.v2.types import (
     WorkflowExecutionInput,
     WorkflowMetrics,
 )
+from agno.workflow.v2.session_state import ThreadSafeSessionState
 
 WorkflowSteps = Union[
     Callable[
@@ -445,6 +446,10 @@ class Workflow:
 
         workflow_run_response.status = RunStatus.running
 
+        # Ensure session state exists and is bound for all nested steps before execution
+        self._update_workflow_session_state()
+        self.update_agents_and_teams_session_info()
+
         if callable(self.steps):
             if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
                 raise ValueError("Cannot use async function with synchronous execution")
@@ -570,6 +575,10 @@ class Workflow:
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
+
+        # Ensure session state exists and is bound for all nested steps before execution
+        self._update_workflow_session_state()
+        self.update_agents_and_teams_session_info()
 
         workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
@@ -797,6 +806,10 @@ class Workflow:
 
         workflow_run_response.status = RunStatus.running
 
+        # Ensure session state exists and is bound for all nested steps before execution
+        self._update_workflow_session_state()
+        self.update_agents_and_teams_session_info()
+
         if callable(self.steps):
             # Execute the workflow with the custom executor
             content = ""
@@ -928,6 +941,11 @@ class Workflow:
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
+
+        # Ensure session state exists and is bound for all nested steps before execution
+        self._update_workflow_session_state()
+        self.update_agents_and_teams_session_info()
+
         workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name,
@@ -1109,9 +1127,11 @@ class Workflow:
         self._save_run_to_storage(workflow_run_response)
 
     def _update_workflow_session_state(self):
-        if not self.workflow_session_state:
-            self.workflow_session_state = {}
+        # Ensure a single shared, thread-safe mapping instance
+        if not isinstance(self.workflow_session_state, ThreadSafeSessionState):
+            self.workflow_session_state = ThreadSafeSessionState(self.workflow_session_state or {})
 
+        # Minimal metadata kept up to date
         self.workflow_session_state.update(
             {
                 "workflow_id": self.workflow_id,
@@ -3234,26 +3254,72 @@ class Workflow:
         # Initialize steps - only if steps is iterable (not callable)
         if self.steps and not callable(self.steps):
             steps_list = self.steps.steps if isinstance(self.steps, Steps) else self.steps
-            for step in steps_list:
-                # TODO: Handle properly steps inside other primitives
-                if isinstance(step, Step):
-                    active_executor = step.active_executor
+            for root in steps_list:
+                self._recursively_bind_session_state(root)
 
-                    if hasattr(active_executor, "workflow_session_id"):
-                        active_executor.workflow_session_id = self.session_id
-                    if hasattr(active_executor, "workflow_id"):
-                        active_executor.workflow_id = self.workflow_id
+    def _recursively_bind_session_state(self, node):
+        """Bind shared workflow_session_state to all nested executors
 
-                    # Set workflow_session_state on agents and teams
-                    self._update_executor_workflow_session_state(active_executor)
+        Handles:
+          - Step: bind its active executor (Agent/Team) and members
+          - Agent/Team objects directly
+          - Any primitive exposing a 'steps' list (Steps/Parallel/Loop/Condition/Router after prepare)
+          - Router before prepare: also recurse its 'choices'
+        """
+        from agno.agent.agent import Agent
+        from agno.team.team import Team
+        from agno.workflow.v2.step import Step
+        from agno.workflow.v2.router import Router
 
-                    # If it's a team, update all members
-                    if hasattr(active_executor, "members"):
-                        for member in active_executor.members:
-                            if hasattr(member, "workflow_session_id"):
-                                member.workflow_session_id = self.session_id
-                            if hasattr(member, "workflow_id"):
-                                member.workflow_id = self.workflow_id
+        # 1) Direct executors via Step
+        if isinstance(node, Step):
+            active_executor = getattr(node, "active_executor", None)
+            if active_executor is not None:
 
-                            # Set workflow_session_state on team members
-                            self._update_executor_workflow_session_state(member)
+                if hasattr(active_executor, "workflow_session_id"):
+                    active_executor.workflow_session_id = self.session_id
+                if hasattr(active_executor, "workflow_id"):
+                    active_executor.workflow_id = self.workflow_id
+                
+                #Set workflow_session_state on agents and teams
+                self._update_executor_workflow_session_state(active_executor)
+               
+                # If it's a team, update all members
+                if hasattr(active_executor, "members"):
+                    for member in active_executor.members:
+                        if hasattr(member, "workflow_session_id"):
+                            member.workflow_session_id = self.session_id
+                        if hasattr(member, "workflow_id"):
+                            member.workflow_id = self.workflow_id
+
+                        # Set workflow_session_state on team members
+                        self._update_executor_workflow_session_state(member)
+            return
+
+        # 2) Agent/Team objects bound directly (pre-prepare cases)
+        # if isinstance(node, (Agent, Team)):
+        #     if hasattr(node, "workflow_session_id"):
+        #         node.workflow_session_id = self.session_id
+        #     if hasattr(node, "workflow_id"):
+        #         node.workflow_id = self.workflow_id
+        #     self._update_executor_workflow_session_state(node)
+        #     members = getattr(node, "members", None)
+        #     if members:
+        #         for m in members:
+        #             if hasattr(m, "workflow_session_id"):
+        #                 m.workflow_session_id = self.session_id
+        #             if hasattr(m, "workflow_id"):
+        #                 m.workflow_id = self.workflow_id
+        #             self._update_executor_workflow_session_state(m)
+        #     return
+
+        # 3) Recurse any composite exposing 'steps'
+        children = getattr(node, "steps", None)
+        if isinstance(children, list):
+            for child in children:
+                self._recursively_bind_session_state(child)
+
+        # 4) Router pre-prepare: also recurse choices
+        if isinstance(node, Router):
+            for choice in getattr(node, "choices", []) or []:
+                self._recursively_bind_session_state(choice)
