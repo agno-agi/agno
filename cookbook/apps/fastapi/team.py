@@ -56,10 +56,10 @@ hackernews_researcher = Agent(
 )
 
 
-agent_team = Team(
+discussion_team = Team(
     name="Discussion Team",
     mode="collaborate",
-    team_id="ok",
+    team_id="discussion_team",
     model=OpenAIChat("gpt-4o"),
     members=[
         reddit_researcher,
@@ -71,16 +71,11 @@ agent_team = Team(
     ],
     success_criteria="The team has reached a consensus.",
     enable_agentic_context=True,
-    show_tool_calls=True,
     markdown=True,
-    show_members_responses=True,
-    debug_mode=True
 )
 fastapi_app = FastAPIApp(
-    teams=[agent_team],
-    name="Basic Agent",
-    app_id="basic_agent",
-    description="A basic agent that can answer questions and help with tasks.",
+    teams=[discussion_team],
+    name="Team Example",
 )
 app = fastapi_app.get_app()
 
