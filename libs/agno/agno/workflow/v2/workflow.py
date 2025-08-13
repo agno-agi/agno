@@ -14,7 +14,6 @@ from typing import (
     Optional,
     Union,
     overload,
-    MutableMapping,
 )
 from uuid import uuid4
 
@@ -111,7 +110,7 @@ class Workflow:
     session_name: Optional[str] = None
     user_id: Optional[str] = None
     workflow_session_id: Optional[str] = None
-    workflow_session_state: Optional[MutableMapping[str, Any]] = None
+    workflow_session_state: Optional[Union[Dict[str, Any], ThreadSafeSessionState]] = None
 
     # Runtime state
     run_id: Optional[str] = None
@@ -139,7 +138,7 @@ class Workflow:
         steps: Optional[WorkflowSteps] = None,
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
-        workflow_session_state: Optional[MutableMapping[str, Any]] = None,
+        workflow_session_state: Optional[Union[Dict[str, Any], ThreadSafeSessionState]] = None,
         user_id: Optional[str] = None,
         debug_mode: Optional[bool] = False,
         stream: Optional[bool] = None,
@@ -1133,9 +1132,7 @@ class Workflow:
             self.workflow_session_state = ThreadSafeSessionState(self.workflow_session_state or {})
 
         # Minimal metadata kept up to date
-        state = self.workflow_session_state
-        assert state is not None
-        state.update(
+        self.workflow_session_state.update(
             {
                 "workflow_id": self.workflow_id,
                 "run_id": self.run_id,
@@ -1144,9 +1141,9 @@ class Workflow:
             }
         )
         if self.name:
-            state["workflow_name"] = self.name
+            self.workflow_session_state["workflow_name"] = self.name
 
-        return state
+        return self.workflow_session_state
 
     async def _arun_background(
         self,
@@ -3269,8 +3266,8 @@ class Workflow:
           - Any primitive exposing a 'steps' list (Steps/Parallel/Loop/Condition/Router after prepare)
           - Router before prepare: also recurse its 'choices'
         """
-        # from agno.agent.agent import Agent
-        # from agno.team.team import Team
+        from agno.agent.agent import Agent
+        from agno.team.team import Team
         from agno.workflow.v2.step import Step
         from agno.workflow.v2.router import Router
 
