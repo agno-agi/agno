@@ -10,11 +10,15 @@ pip install -U fastapi uvicorn sqlalchemy pgvector psycopg openai duckduckgo-sea
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.eval.accuracy import AccuracyEval
+from agno.knowledge.chunking.agentic import AgenticChunking
+from agno.knowledge.chunking.document import DocumentChunking
+from agno.knowledge.chunking.recursive import RecursiveChunking
+from agno.knowledge.chunking.semantic import SemanticChunking
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.csv_reader import CSVReader
 from agno.knowledge.reader.docx_reader import DocxReader
-from agno.knowledge.reader.pdf_reader import PDFReader
 from agno.knowledge.reader.json_reader import JSONReader
+from agno.knowledge.reader.pdf_reader import PDFReader
 from agno.knowledge.reader.text_reader import TextReader
 from agno.knowledge.reader.url_reader import URLReader
 from agno.knowledge.reader.website_reader import WebsiteReader
@@ -40,15 +44,21 @@ knowledge = Knowledge(
     name="Agno Docs",
     contents_db=db,
     vector_db=vector_db,
-    readers={
-        "pdf": PDFReader(),
-        "csv": CSVReader(),
-        "docx": DocxReader(),
-        "json": JSONReader(),
-        "text": TextReader(),
-        "url": URLReader(),
-        "website": WebsiteReader(),
-    },
+    # readers={
+    #     PDFReader(
+    #         chunking_strategy=AgenticChunking(max_chunk_size=1000),
+    #     ),
+    #      CSVReader(
+    #         chunking_strategy=RecursiveChunking(chunk_size=500),
+    #     ),
+    #     DocxReader(),
+    #     JSONReader(),
+    #     TextReader(
+    #         chunking_strategy=SemanticChunking(chunk_size=800),
+    #     ),
+    #     URLReader(),
+    #     WebsiteReader(),
+    # },
 )
 
 # Create an Agent

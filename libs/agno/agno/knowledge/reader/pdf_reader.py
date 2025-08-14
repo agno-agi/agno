@@ -4,8 +4,9 @@ from pathlib import Path
 from typing import IO, Any, List, Optional, Tuple, Union
 from uuid import uuid4
 
-from agno.knowledge.document import Document
-from agno.knowledge.reader import Reader
+from agno.knowledge.chunking.strategy import ChunkingStrategy
+from agno.knowledge.document.base import Document
+from agno.knowledge.reader.base import Reader
 from agno.utils.http import async_fetch_with_retry, fetch_with_retry
 from agno.utils.log import log_error, log_info, logger
 
@@ -190,7 +191,15 @@ class BasePDFReader(Reader):
         self.page_end_numbering_format = page_end_numbering_format
         self.password = password
 
+        if self.chunking_strategy is None:
+            from agno.knowledge.chunking.document import DocumentChunking
+
+            self.chunking_strategy = DocumentChunking(chunk_size=5000)
         super().__init__(**kwargs)
+
+    def get_supported_chunking_strategies(self) -> List[str]:
+        """Get the list of supported chunking strategies for PDF readers."""
+        return ["AgenticChunking", "DocumentChunking", "RecursiveChunking"]
 
     def _build_chunked_documents(self, documents: List[Document]) -> List[Document]:
         chunked_documents: List[Document] = []
@@ -380,7 +389,11 @@ class PDFUrlReader(BasePDFReader):
         super().__init__(password=password, **kwargs)
         self.proxy = proxy
 
-    def read(self, url: str, name: Optional[str] = None, password: Optional[str] = None) -> List[Document]:
+    def get_supported_chunking_strategies(self) -> List[str]:
+        """Get the list of supported chunking strategies for PDF URL readers."""
+        return ["AgenticChunking", "DocumentChunking", "RecursiveChunking", "RowChunking", "SemanticChunking"]
+
+    def read(self, url: str, name: Optional[str] = None) -> List[Document]:
         if not url:
             raise ValueError("No url provided")
 

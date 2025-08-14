@@ -31,6 +31,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         file: Optional[UploadFile] = File(None),
         text_content: Optional[str] = Form(None),
         reader_id: Optional[str] = Form(None),
+        chunker: Optional[str] = Form(None),
     ):
         content_id = str(uuid4())
         log_info(f"Adding content: {name}, {description}, {url}, {metadata} with ID: {content_id}")
@@ -96,7 +97,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
             file_data=file_data,
             size=file.size if file else None if text_content else None,
         )
-        background_tasks.add_task(process_content, knowledge, content_id, content, reader_id)
+        background_tasks.add_task(process_content, knowledge, content_id, content, reader_id, chunker)
 
         response = ContentResponseSchema(
             id=content_id,
@@ -276,25 +277,33 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
 
     @router.get("/config", status_code=200)
     def get_config() -> ConfigResponseSchema:
-        readers = knowledge.get_readers() 
+        readers_info = ReaderFactory.get_all_readers_info()
         reader_schemas = []
-        for reader in readers:
-            reader_id = reader.name if hasattr(reader, 'name') and reader.name else reader.__class__.__name__
-            reader_schemas.append(ReaderSchema(
-                id=reader_id, 
-                name=reader.name if hasattr(reader, 'name') else None, 
-                description=reader.description if hasattr(reader, 'description') and reader.description else None
-            ))
-        
+        for reader_info in readers_info:
+            reader_schemas.append(
+                ReaderSchema(
+                    id=reader_info["id"],
+                    name=reader_info["name"],
+                    description=reader_info.get("description"),
+                    chunking_strategies=reader_info.get("chunking_strategies", []),
+                )
+            )
+
         return ConfigResponseSchema(
             readers=reader_schemas,
             filters=knowledge.get_filters(),
         )
 
-    return router 
+    return router
 
 
-async def process_content(knowledge: Knowledge, content_id: str, content: Content, reader_id: Optional[str] = None):
+async def process_content(
+    knowledge: Knowledge,
+    content_id: str,
+    content: Content,
+    reader_id: Optional[str] = None,
+    chunker: Optional[str] = None,
+):
     """Background task to process the content"""
     log_info(f"Processing content {content_id}")
     try:
@@ -315,8 +324,15 @@ async def process_content(knowledge: Knowledge, content_id: str, content: Conten
                         continue
             if reader:
                 content.reader = reader
-        if getattr(content, "reader", None) is not None:
-            log_debug(f"Using reader: {content.reader.__class__.__name__}")
+        if chunker and content.reader:
+            # Set the chunker name on the reader - let the reader handle it internally
+            if hasattr(content.reader, "set_chunking_strategy_from_string"):
+                content.reader.set_chunking_strategy_from_string(chunker)
+                log_debug(f"Set chunking strategy: {chunker}")
+            else:
+                log_debug(f"Reader does not support chunking strategy: {chunker}")
+
+        log_debug(f"Using reader: {content.reader.__class__.__name__}")
         await knowledge._load_content(content, upsert=False, skip_if_exists=True)
         log_info(f"Content {content_id} processed successfully")
     except Exception as e:
