@@ -4,7 +4,7 @@ from typing import AsyncIterator, Union
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.run.workflow import WorkflowRunResponseEvent
+from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import Team
 from agno.tools.googlesearch import GoogleSearchTools
 from agno.tools.hackernews import HackerNewsTools
@@ -46,7 +46,7 @@ content_planner = Agent(
 
 async def custom_content_planning_function(
     step_input: StepInput,
-) -> AsyncIterator[Union[WorkflowRunResponseEvent, StepOutput]]:
+) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
     """
     Custom function that does intelligent content planning with context awareness
     """

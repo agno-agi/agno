@@ -6,7 +6,7 @@ from agno.run.workflow import (
     LoopExecutionCompletedEvent,
     LoopExecutionStartedEvent,
     WorkflowCompletedEvent,
-    WorkflowRunResponse,
+    WorkflowRunOutput,
 )
 from agno.workflow import Loop, Parallel, Workflow
 from agno.workflow.types import StepInput, StepOutput
@@ -78,7 +78,7 @@ async def test_loop_direct_aexecute():
 
 def test_loop_direct_execute_stream():
     """Test Loop.execute_stream() directly without workflow."""
-    from agno.run.workflow import LoopIterationCompletedEvent, LoopIterationStartedEvent, WorkflowRunResponse
+    from agno.run.workflow import LoopIterationCompletedEvent, LoopIterationStartedEvent, WorkflowRunOutput
 
     def simple_end_condition(outputs):
         return len(outputs) >= 1
@@ -87,7 +87,7 @@ def test_loop_direct_execute_stream():
     step_input = StepInput(message="direct stream test")
 
     # Mock workflow response for streaming
-    mock_response = WorkflowRunResponse(
+    mock_response = WorkflowRunOutput(
         run_id="test-run",
         workflow_name="test-workflow",
         workflow_id="test-id",
@@ -189,7 +189,7 @@ def test_basic_loop(workflow_db):
     )
 
     response = workflow.run(message="test")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 1
     assert find_content_in_steps(response.step_results[0], "AI trends")
 
@@ -217,7 +217,7 @@ def test_loop_with_parallel(workflow_db):
     )
 
     response = workflow.run(message="test")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
 
     # Check the loop step output in step_results
     loop_step_output = response.step_results[0]  # First step (Loop)
@@ -297,7 +297,8 @@ async def test_async_loop(workflow_db):
     )
 
     response = await workflow.arun(message="test")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
+    assert "AI trends" in response.content
     assert find_content_in_steps(response.step_results[0], "AI trends")
 
 
@@ -325,5 +326,6 @@ async def test_async_parallel_loop(workflow_db):
     )
 
     response = await workflow.arun(message="test")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
+    assert "AI trends" in response.content
     assert find_content_in_steps(response.step_results[0], "AI trends")

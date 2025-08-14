@@ -26,9 +26,9 @@ from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
-from agno.run.response import RunResponse, RunResponseContentEvent, RunResponseEvent
-from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
-from agno.run.team import TeamRunResponseEvent
+from agno.run.response import RunContentEvent, RunOutput, RunOutputEvent
+from agno.run.team import RunContentEvent as TeamRunContentEvent
+from agno.run.team import TeamRunOutputEvent
 from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.timer import Timer
@@ -194,7 +194,7 @@ class Model(ABC):
         functions: Optional[Dict[str, Function]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
-        run_response: Optional[RunResponse] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -418,7 +418,7 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunResponse] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> None:
         """
         Process a single model response and return the assistant message and whether to continue.
@@ -468,7 +468,7 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunResponse] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> None:
         """
         Process a single async model response and return the assistant message and whether to continue.
@@ -579,7 +579,7 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunResponse] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> Iterator[ModelResponse]:
         """
         Process a streaming response from the model.
@@ -611,8 +611,8 @@ class Model(ABC):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         stream_model_response: bool = True,
-        run_response: Optional[RunResponse] = None,
-    ) -> Iterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
+        run_response: Optional[RunOutput] = None,
+    ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
         """
@@ -734,7 +734,7 @@ class Model(ABC):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunResponse] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Process a streaming response from the model.
@@ -766,8 +766,8 @@ class Model(ABC):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_call_limit: Optional[int] = None,
         stream_model_response: bool = True,
-        run_response: Optional[RunResponse] = None,
-    ) -> AsyncIterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
+        run_response: Optional[RunOutput] = None,
+    ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
         """
@@ -1038,7 +1038,7 @@ class Model(ABC):
         function_call: FunctionCall,
         function_call_results: List[Message],
         additional_messages: Optional[List[Message]] = None,
-    ) -> Iterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
+    ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         # Start function call
         function_call_timer = Timer()
         function_call_timer.start()
@@ -1078,11 +1078,11 @@ class Model(ABC):
         if isinstance(function_call.result, (GeneratorType, collections.abc.Iterator)):
             for item in function_call.result:
                 # This function yields agent/team run events
-                if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(
-                    item, tuple(get_args(TeamRunResponseEvent))
+                if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
+                    item, tuple(get_args(TeamRunOutputEvent))
                 ):
                     # We only capture content events
-                    if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
+                    if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                         if item.content is not None and isinstance(item.content, BaseModel):
                             function_call_output += item.content.model_dump_json()
                         else:
@@ -1134,7 +1134,7 @@ class Model(ABC):
         additional_messages: Optional[List[Message]] = None,
         current_function_call_count: int = 0,
         function_call_limit: Optional[int] = None,
-    ) -> Iterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
+    ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         # Additional messages from function calls that will be added to the function call results
         if additional_messages is None:
             additional_messages = []
@@ -1277,7 +1277,7 @@ class Model(ABC):
         current_function_call_count: int = 0,
         function_call_limit: Optional[int] = None,
         skip_pause_check: bool = False,
-    ) -> AsyncIterator[Union[ModelResponse, RunResponseEvent, TeamRunResponseEvent]]:
+    ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         # Additional messages from function calls that will be added to the function call results
         if additional_messages is None:
             additional_messages = []
@@ -1428,11 +1428,11 @@ class Model(ABC):
             if isinstance(fc.result, (GeneratorType, collections.abc.Iterator)):
                 for item in fc.result:
                     # This function yields agent/team run events
-                    if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(
-                        item, tuple(get_args(TeamRunResponseEvent))
+                    if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
+                        item, tuple(get_args(TeamRunOutputEvent))
                     ):
                         # We only capture content events
-                        if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
+                        if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                             if item.content is not None and isinstance(item.content, BaseModel):
                                 function_call_output += item.content.model_dump_json()
                             else:
@@ -1452,11 +1452,11 @@ class Model(ABC):
             elif isinstance(fc.result, (AsyncGeneratorType, collections.abc.AsyncIterator)):
                 async for item in fc.result:
                     # This function yields agent/team run events
-                    if isinstance(item, tuple(get_args(RunResponseEvent))) or isinstance(
-                        item, tuple(get_args(TeamRunResponseEvent))
+                    if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
+                        item, tuple(get_args(TeamRunOutputEvent))
                     ):
                         # We only capture content events
-                        if isinstance(item, RunResponseContentEvent) or isinstance(item, TeamRunResponseContentEvent):
+                        if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                             if item.content is not None and isinstance(item.content, BaseModel):
                                 function_call_output += item.content.model_dump_json()
                             else:

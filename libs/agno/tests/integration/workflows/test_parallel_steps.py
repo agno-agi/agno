@@ -2,7 +2,7 @@
 
 import pytest
 
-from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunResponse
+from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutput
 from agno.workflow import Workflow
 from agno.workflow.parallel import Parallel
 from agno.workflow.step import Step
@@ -78,13 +78,13 @@ async def test_parallel_direct_aexecute():
 
 def test_parallel_direct_execute_stream():
     """Test Parallel.execute_stream() directly without workflow."""
-    from agno.run.workflow import ParallelExecutionCompletedEvent, ParallelExecutionStartedEvent, WorkflowRunResponse
+    from agno.run.workflow import ParallelExecutionCompletedEvent, ParallelExecutionStartedEvent, WorkflowRunOutput
 
     parallel = Parallel(step_a, step_b, name="Direct Stream Parallel")
     step_input = StepInput(message="direct stream test")
 
     # Mock workflow response for streaming
-    mock_response = WorkflowRunResponse(
+    mock_response = WorkflowRunOutput(
         run_id="test-run",
         workflow_name="test-workflow",
         workflow_id="test-id",
@@ -145,7 +145,7 @@ def test_basic_parallel(workflow_db):
     )
 
     response = workflow.run(message="test")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 2
 
     # Check parallel output
@@ -191,7 +191,7 @@ def test_parallel_with_agent(workflow_db, test_agent):
     )
 
     response = workflow.run(message="test")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     parallel_output = response.step_results[0]
     assert isinstance(parallel_output, StepOutput)
     assert parallel_output.step_type == "Parallel"
@@ -213,7 +213,7 @@ async def test_async_parallel(workflow_db):
     )
 
     response = await workflow.arun(message="test")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 2
 
     # Check parallel output structure

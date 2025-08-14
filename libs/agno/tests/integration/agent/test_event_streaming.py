@@ -25,9 +25,9 @@ def test_basic_events():
     for run_response in response_generator:
         event_counts[run_response.event] = event_counts.get(run_response.event, 0) + 1
 
-    assert event_counts.keys() == {RunEvent.run_response_content}
+    assert event_counts.keys() == {RunEvent.run_content}
 
-    assert event_counts[RunEvent.run_response_content] > 1
+    assert event_counts[RunEvent.run_content] > 1
 
 
 @pytest.mark.asyncio
@@ -41,9 +41,9 @@ async def test_async_basic_events():
     async for run_response in agent.arun("Hello, how are you?", stream=True, stream_intermediate_steps=False):
         event_counts[run_response.event] = event_counts.get(run_response.event, 0) + 1
 
-    assert event_counts.keys() == {RunEvent.run_response_content}
+    assert event_counts.keys() == {RunEvent.run_content}
 
-    assert event_counts[RunEvent.run_response_content] > 1
+    assert event_counts[RunEvent.run_content] > 1
 
 
 def test_basic_intermediate_steps_events():
@@ -61,16 +61,16 @@ def test_basic_intermediate_steps_events():
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
 
-    assert events.keys() == {RunEvent.run_started, RunEvent.run_response_content, RunEvent.run_completed}
+    assert events.keys() == {RunEvent.run_started, RunEvent.run_content, RunEvent.run_completed}
 
     assert len(events[RunEvent.run_started]) == 1
-    assert events[RunEvent.run_started][0].model == "gpt-4o-mini"  # type: ignore
-    assert events[RunEvent.run_started][0].model_provider == "OpenAI"  # type: ignore
-    assert events[RunEvent.run_started][0].session_id is not None  # type: ignore
-    assert events[RunEvent.run_started][0].agent_id is not None  # type: ignore
-    assert events[RunEvent.run_started][0].run_id is not None  # type: ignore
-    assert events[RunEvent.run_started][0].created_at is not None  # type: ignore
-    assert len(events[RunEvent.run_response_content]) > 1
+    assert events[RunEvent.run_started][0].model == "gpt-4o-mini"
+    assert events[RunEvent.run_started][0].model_provider == "OpenAI"
+    assert events[RunEvent.run_started][0].session_id is not None
+    assert events[RunEvent.run_started][0].agent_id is not None
+    assert events[RunEvent.run_started][0].run_id is not None
+    assert events[RunEvent.run_started][0].created_at is not None
+    assert len(events[RunEvent.run_content]) > 1
     assert len(events[RunEvent.run_completed]) == 1
 
 
@@ -91,7 +91,7 @@ def test_basic_intermediate_steps_events_persisted(agent_db):
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
 
-    assert events.keys() == {RunEvent.run_started, RunEvent.run_response_content, RunEvent.run_completed}
+    assert events.keys() == {RunEvent.run_started, RunEvent.run_content, RunEvent.run_completed}
 
     run_response_from_storage = agent_db.get_sessions(session_type=SessionType.AGENT)[0].runs[0]  # type: ignore
 
@@ -121,12 +121,12 @@ def test_intermediate_steps_with_tools():
         RunEvent.run_started,
         RunEvent.tool_call_started,
         RunEvent.tool_call_completed,
-        RunEvent.run_response_content,
+        RunEvent.run_content,
         RunEvent.run_completed,
     }
 
     assert len(events[RunEvent.run_started]) == 1
-    assert len(events[RunEvent.run_response_content]) > 1
+    assert len(events[RunEvent.run_content]) > 1
     assert len(events[RunEvent.run_completed]) == 1
     assert len(events[RunEvent.tool_call_started]) == 1
     assert events[RunEvent.tool_call_started][0].tool.tool_name == "get_current_stock_price"  # type: ignore
@@ -157,7 +157,7 @@ def test_intermediate_steps_with_tools_events_persisted(agent_db):
         RunEvent.run_started,
         RunEvent.tool_call_started,
         RunEvent.tool_call_completed,
-        RunEvent.run_response_content,
+        RunEvent.run_content,
         RunEvent.run_completed,
     }
 
@@ -201,12 +201,12 @@ def test_intermediate_steps_with_reasoning():
         RunEvent.reasoning_started,
         RunEvent.reasoning_completed,
         RunEvent.reasoning_step,
-        RunEvent.run_response_content,
+        RunEvent.run_content,
         RunEvent.run_completed,
     }
 
     assert len(events[RunEvent.run_started]) == 1
-    assert len(events[RunEvent.run_response_content]) > 1
+    assert len(events[RunEvent.run_content]) > 1
     assert len(events[RunEvent.run_completed]) == 1
     assert len(events[RunEvent.tool_call_started]) > 1
     assert len(events[RunEvent.tool_call_completed]) > 1
@@ -284,7 +284,7 @@ def test_intermediate_steps_with_user_confirmation(agent_db):
         RunEvent.run_continued,
         RunEvent.tool_call_started,
         RunEvent.tool_call_completed,
-        RunEvent.run_response_content,
+        RunEvent.run_content,
         RunEvent.run_completed,
     }
 
@@ -292,9 +292,9 @@ def test_intermediate_steps_with_user_confirmation(agent_db):
     assert len(events[RunEvent.tool_call_started]) == 1
     assert events[RunEvent.tool_call_started][0].tool.tool_name == "get_the_weather"  # type: ignore
     assert len(events[RunEvent.tool_call_completed]) == 1
-    assert events[RunEvent.tool_call_completed][0].content is not None  # type: ignore
-    assert events[RunEvent.tool_call_completed][0].tool.result is not None  # type: ignore
-    assert len(events[RunEvent.run_response_content]) > 1
+    assert events[RunEvent.tool_call_completed][0].content is not None
+    assert events[RunEvent.tool_call_completed][0].tool.result is not None
+    assert len(events[RunEvent.run_content]) > 1
     assert len(events[RunEvent.run_completed]) == 1
 
     assert agent.run_response is not None
@@ -331,14 +331,14 @@ def test_intermediate_steps_with_memory(agent_db):
 
     assert events.keys() == {
         RunEvent.run_started,
-        RunEvent.run_response_content,
+        RunEvent.run_content,
         RunEvent.run_completed,
         RunEvent.memory_update_started,
         RunEvent.memory_update_completed,
     }
 
     assert len(events[RunEvent.run_started]) == 1
-    assert len(events[RunEvent.run_response_content]) > 1
+    assert len(events[RunEvent.run_content]) > 1
     assert len(events[RunEvent.run_completed]) == 1
     assert len(events[RunEvent.memory_update_started]) == 1
     assert len(events[RunEvent.memory_update_completed]) == 1
@@ -369,18 +369,18 @@ def test_intermediate_steps_with_structured_output(agent_db):
 
     assert events.keys() == {
         RunEvent.run_started,
-        RunEvent.run_response_content,
+        RunEvent.run_content,
         RunEvent.run_completed,
     }
 
     assert len(events[RunEvent.run_started]) == 1
-    assert len(events[RunEvent.run_response_content]) == 1
+    assert len(events[RunEvent.run_content]) == 1
     assert len(events[RunEvent.run_completed]) == 1
 
-    assert events[RunEvent.run_response_content][0].content is not None  # type: ignore
-    assert events[RunEvent.run_response_content][0].content_type == "Person"  # type: ignore
-    assert events[RunEvent.run_response_content][0].content.name == "Elon Musk"  # type: ignore
-    assert len(events[RunEvent.run_response_content][0].content.description) > 1  # type: ignore
+    assert events[RunEvent.run_content][0].content is not None
+    assert events[RunEvent.run_content][0].content_type == "Person"
+    assert events[RunEvent.run_content][0].content.name == "Elon Musk"
+    assert len(events[RunEvent.run_content][0].content.description) > 1
 
     assert events[RunEvent.run_completed][0].content is not None  # type: ignore
     assert events[RunEvent.run_completed][0].content_type == "Person"  # type: ignore
@@ -421,7 +421,7 @@ def test_intermediate_steps_with_parser_model(agent_db):
         RunEvent.run_started,
         RunEvent.parser_model_response_started,
         RunEvent.parser_model_response_completed,
-        RunEvent.run_response_content,
+        RunEvent.run_content,
         RunEvent.run_completed,
     }
 
@@ -429,14 +429,14 @@ def test_intermediate_steps_with_parser_model(agent_db):
     assert len(events[RunEvent.parser_model_response_started]) == 1
     assert len(events[RunEvent.parser_model_response_completed]) == 1
     assert (
-        len(events[RunEvent.run_response_content]) >= 2
+        len(events[RunEvent.run_content]) >= 2
     )  # The first model streams, then the parser model has a single content event
     assert len(events[RunEvent.run_completed]) == 1
 
-    assert events[RunEvent.run_response_content][-1].content is not None  # type: ignore
-    assert events[RunEvent.run_response_content][-1].content_type == "Person"  # type: ignore
-    assert events[RunEvent.run_response_content][-1].content.name == "Elon Musk"  # type: ignore
-    assert len(events[RunEvent.run_response_content][-1].content.description) > 1  # type: ignore
+    assert events[RunEvent.run_content][-1].content is not None
+    assert events[RunEvent.run_content][-1].content_type == "Person"
+    assert events[RunEvent.run_content][-1].content.name == "Elon Musk"
+    assert len(events[RunEvent.run_content][-1].content.description) > 1
 
     assert events[RunEvent.run_completed][0].content is not None  # type: ignore
     assert events[RunEvent.run_completed][0].content_type == "Person"  # type: ignore

@@ -2,8 +2,8 @@
 How to add, get, delete, and replace user memories manually
 """
 
-from agno.memory import MemoryManager, UserMemory
 from agno.db.postgres import PostgresDb
+from agno.memory import MemoryManager, UserMemory
 from rich.pretty import pprint
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"

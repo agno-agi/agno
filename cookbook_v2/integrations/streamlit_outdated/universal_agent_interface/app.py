@@ -167,9 +167,9 @@ async def body() -> None:
                         if resp_chunk.tool:
                             display_tool_calls(tool_calls_container, [resp_chunk.tool])
 
-                        # Display response if available and event is RunResponse
+                        # Display response if available and event is RunOutput
                         if (
-                            resp_chunk.event == RunEvent.run_response_content
+                            resp_chunk.event == RunEvent.run_content
                             and resp_chunk.content is not None
                         ):
                             response += resp_chunk.content

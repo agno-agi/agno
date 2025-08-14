@@ -1,7 +1,7 @@
 import random
 from typing import Iterator, List
 
-from agno.agent import Agent, RunResponseEvent
+from agno.agent import Agent, RunOutputEvent
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from pydantic import BaseModel, Field
@@ -78,7 +78,7 @@ national_parks = [
 ]
 
 # Get the response in a variable
-run_events: Iterator[RunResponseEvent] = agent.run(
+run_events: Iterator[RunOutputEvent] = agent.run(
     national_parks[random.randint(0, len(national_parks) - 1)], stream=True
 )
 for event in run_events:

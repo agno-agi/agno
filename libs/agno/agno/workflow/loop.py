@@ -3,15 +3,15 @@ from dataclasses import dataclass
 from typing import AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
-from agno.run.response import RunResponseEvent
-from agno.run.team import TeamRunResponseEvent
+from agno.run.response import RunOutputEvent
+from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import (
     LoopExecutionCompletedEvent,
     LoopExecutionStartedEvent,
     LoopIterationCompletedEvent,
     LoopIterationStartedEvent,
-    WorkflowRunResponse,
-    WorkflowRunResponseEvent,
+    WorkflowRunOutput,
+    WorkflowRunOutputEvent,
 )
 from agno.utils.log import log_debug, logger
 from agno.workflow.step import Step
@@ -129,7 +129,7 @@ class Loop:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        workflow_run_response: Optional[WorkflowRunResponse] = None,
+        workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_responses: bool = True,
     ) -> StepOutput:
         """Execute loop steps with iteration control - mirrors workflow execution logic"""
@@ -218,11 +218,11 @@ class Loop:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
-        workflow_run_response: Optional[WorkflowRunResponse] = None,
+        workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_responses: bool = True,
         parent_step_id: Optional[str] = None,
-    ) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
+    ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute loop steps with streaming support - mirrors workflow execution logic"""
         log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
 
@@ -403,7 +403,7 @@ class Loop:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        workflow_run_response: Optional[WorkflowRunResponse] = None,
+        workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_responses: bool = True,
     ) -> StepOutput:
         """Execute loop steps asynchronously with iteration control - mirrors workflow execution logic"""
@@ -497,11 +497,11 @@ class Loop:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
-        workflow_run_response: Optional[WorkflowRunResponse] = None,
+        workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_responses: bool = True,
         parent_step_id: Optional[str] = None,
-    ) -> AsyncIterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
+    ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute loop steps with async streaming support - mirrors workflow execution logic"""
         log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
 

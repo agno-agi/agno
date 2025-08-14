@@ -16,6 +16,7 @@ from agno.utils.pprint import pprint_run_response
 
 class StockAnalysis(BaseModel):
     """Stock analysis data structure."""
+
     symbol: str
     company_name: str
     analysis: str
@@ -23,6 +24,7 @@ class StockAnalysis(BaseModel):
 
 class CompanyAnalysis(BaseModel):
     """Company analysis data structure."""
+
     company_name: str
     analysis: str
 

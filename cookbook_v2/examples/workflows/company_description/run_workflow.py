@@ -9,7 +9,7 @@ from agents import (
 )
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.run.response import RunResponse
+from agno.run.response import RunOutput
 from agno.utils.log import log_error, log_info
 from agno.workflow import Parallel, Step, Workflow
 from agno.workflow.types import StepInput, StepOutput
@@ -72,7 +72,7 @@ def generate_supplier_profile(step_input: StepInput) -> StepOutput:
             + "Format to adhere to: "
             + value,
         )
-        response: RunResponse = agent.run(
+        response: RunOutput = agent.run(
             "Write the response in markdown format for the title: "
             + key
             + " using the following information: "

@@ -3,13 +3,13 @@ from dataclasses import dataclass
 from typing import AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
-from agno.run.response import RunResponseEvent
-from agno.run.team import TeamRunResponseEvent
+from agno.run.response import RunOutputEvent
+from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import (
     ConditionExecutionCompletedEvent,
     ConditionExecutionStartedEvent,
-    WorkflowRunResponse,
-    WorkflowRunResponseEvent,
+    WorkflowRunOutput,
+    WorkflowRunOutputEvent,
 )
 from agno.utils.log import log_debug, logger
 from agno.workflow.step import Step
@@ -150,7 +150,7 @@ class Condition:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        workflow_run_response: Optional[WorkflowRunResponse] = None,
+        workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_responses: bool = True,
     ) -> StepOutput:
         """Execute the condition and its steps with sequential chaining if condition is true"""
@@ -248,11 +248,11 @@ class Condition:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
-        workflow_run_response: Optional[WorkflowRunResponse] = None,
+        workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_responses: bool = True,
         parent_step_id: Optional[str] = None,
-    ) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
+    ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the condition with streaming support - mirrors Loop logic"""
         log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
 
@@ -400,7 +400,7 @@ class Condition:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        workflow_run_response: Optional[WorkflowRunResponse] = None,
+        workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_responses: bool = True,
     ) -> List[StepOutput]:
         """Async execute the condition and its steps with sequential chaining"""
@@ -497,11 +497,11 @@ class Condition:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
-        workflow_run_response: Optional[WorkflowRunResponse] = None,
+        workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_responses: bool = True,
         parent_step_id: Optional[str] = None,
-    ) -> AsyncIterator[Union[WorkflowRunResponseEvent, TeamRunResponseEvent, RunResponseEvent, StepOutput]]:
+    ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Async execute the condition with streaming support - mirrors Loop logic"""
         log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
 

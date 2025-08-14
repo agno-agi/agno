@@ -92,7 +92,7 @@ async def test_steps_direct_aexecute():
 
 def test_steps_direct_execute_stream():
     """Test Steps.execute_stream() directly without workflow."""
-    from agno.run.workflow import WorkflowRunResponse
+    from agno.run.workflow import WorkflowRunOutput
 
     step1 = Step(name="step1", executor=step1_function)
     step2 = Step(name="step2", executor=step2_function)
@@ -101,7 +101,7 @@ def test_steps_direct_execute_stream():
     step_input = StepInput(message="direct stream test")
 
     # Mock workflow response for streaming
-    mock_response = WorkflowRunResponse(
+    mock_response = WorkflowRunOutput(
         run_id="test-run",
         workflow_name="test-workflow",
         workflow_id="test-id",

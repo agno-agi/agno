@@ -2,7 +2,7 @@
 
 import pytest
 
-from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunResponse
+from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutput
 from agno.workflow import Parallel, Workflow
 from agno.workflow.types import StepInput, StepOutput
 
@@ -82,7 +82,7 @@ def test_basic_access(workflow_db):
     workflow = Workflow(name="Basic Access", db=workflow_db, steps=[research_step, analysis_step, report_step])
 
     response = workflow.run(message="test topic")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 3
 
     # Verify report contains data from previous steps
@@ -111,7 +111,7 @@ async def test_async_access(workflow_db):
     workflow = Workflow(name="Async Access", db=workflow_db, steps=[research_step, analysis_step, report_step])
 
     response = await workflow.arun(message="test topic")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 3
     assert "Report:" in response.content
 
@@ -140,7 +140,7 @@ def test_parallel_step_access(workflow_db):
     )
 
     response = workflow.run(message="test data")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 2
 
     # Verify the aggregator step received parallel data correctly
@@ -164,7 +164,7 @@ async def test_async_parallel_step_access(workflow_db):
     )
 
     response = await workflow.arun(message="async test data")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 2
 
     # Verify the aggregator step received parallel data correctly
@@ -185,7 +185,7 @@ def test_single_parallel_step_access(workflow_db):
     )
 
     response = workflow.run(message="single test")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 2
 
     # Verify even single parallel steps return dict structure

@@ -68,14 +68,14 @@ company_info_team = Team(
 async def run_team_with_events(prompt: str):
     """
     Run the team and capture all events for monitoring and debugging.
-    
+
     This function demonstrates how to handle different types of events:
     - Team-level events (run start/completion, tool calls)
     - Member-level events (agent tool calls)
     - Content generation events
     """
     content_started = False
-    
+
     async for run_response_event in company_info_team.arun(
         prompt,
         stream=True,
@@ -106,7 +106,9 @@ async def run_team_with_events(prompt: str):
         if run_response_event.event in [RunEvent.tool_call_completed]:
             print(f"\n✅ MEMBER TOOL COMPLETED: {run_response_event.agent_id}")
             print(f"   Tool: {run_response_event.tool.tool_name}")
-            print(f"   Result: {run_response_event.tool.result[:100]}...")  # Truncate for readability
+            print(
+                f"   Result: {run_response_event.tool.result[:100]}..."
+            )  # Truncate for readability
 
         # Handle content generation
         if run_response_event.event in [TeamRunEvent.run_response_content]:

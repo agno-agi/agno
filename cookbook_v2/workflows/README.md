@@ -591,7 +591,7 @@ workflow = Workflow(
 
 ### Event Storage and Filtering
 
-Workflows can automatically store all events for later analysis, debugging, or audit purposes. You can also filter out specific event types to reduce noise and storage overhead. You can access these events on the `WorkflowRunResponse` and in the `runs` column in your `Workflow's Session DB`
+Workflows can automatically store all events for later analysis, debugging, or audit purposes. You can also filter out specific event types to reduce noise and storage overhead. You can access these events on the `WorkflowRunOutput` and in the `runs` column in your `Workflow's Session DB`
 
 **Key Features:**
 

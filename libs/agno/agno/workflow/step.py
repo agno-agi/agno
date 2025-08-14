@@ -8,13 +8,13 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.media import Audio, AudioArtifact, Image, ImageArtifact, Video, VideoArtifact
 from agno.models.metrics import Metrics
-from agno.run.response import RunResponse
-from agno.run.team import TeamRunResponse
+from agno.run.response import RunOutput
+from agno.run.team import TeamRunOutput
 from agno.run.workflow import (
     StepCompletedEvent,
     StepStartedEvent,
-    WorkflowRunResponse,
-    WorkflowRunResponseEvent,
+    WorkflowRunOutput,
+    WorkflowRunOutputEvent,
 )
 from agno.team import Team
 from agno.utils.log import log_debug, logger, use_agent_logger, use_team_logger, use_workflow_logger
@@ -156,7 +156,7 @@ class Step:
         else:
             raise ValueError("No executor configured")
 
-    def _extract_metrics_from_response(self, response: Union[RunResponse, TeamRunResponse]) -> Optional[Metrics]:
+    def _extract_metrics_from_response(self, response: Union[RunOutput, TeamRunOutput]) -> Optional[Metrics]:
         """Extract metrics from agent or team response"""
         if hasattr(response, "metrics") and response.metrics:
             return response.metrics
@@ -167,7 +167,7 @@ class Step:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        workflow_run_response: Optional["WorkflowRunResponse"] = None,
+        workflow_run_response: Optional["WorkflowRunOutput"] = None,
         store_executor_responses: bool = True,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
@@ -179,7 +179,7 @@ class Step:
         # Execute with retries
         for attempt in range(self.max_retries + 1):
             try:
-                response: Union[RunResponse, TeamRunResponse, StepOutput]
+                response: Union[RunOutput, TeamRunOutput, StepOutput]
                 if self._executor_type == "function":
                     if inspect.iscoroutinefunction(self.active_executor) or inspect.isasyncgenfunction(
                         self.active_executor
@@ -288,11 +288,11 @@ class Step:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
-        workflow_run_response: Optional["WorkflowRunResponse"] = None,
+        workflow_run_response: Optional["WorkflowRunOutput"] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_responses: bool = True,
         parent_step_id: Optional[str] = None,
-    ) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
+    ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
         if step_input.previous_step_outputs:
@@ -461,7 +461,7 @@ class Step:
         step_input: StepInput,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
-        workflow_run_response: Optional["WorkflowRunResponse"] = None,
+        workflow_run_response: Optional["WorkflowRunOutput"] = None,
         store_executor_responses: bool = True,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
@@ -599,11 +599,11 @@ class Step:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
-        workflow_run_response: Optional["WorkflowRunResponse"] = None,
+        workflow_run_response: Optional["WorkflowRunOutput"] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_responses: bool = True,
         parent_step_id: Optional[str] = None,
-    ) -> AsyncIterator[Union[WorkflowRunResponseEvent, StepOutput]]:
+    ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
         if step_input.previous_step_outputs:
@@ -784,7 +784,7 @@ class Step:
 
         return
 
-    def _store_executor_response(self, workflow_run_response: "WorkflowRunResponse") -> None:
+    def _store_executor_response(self, workflow_run_response: "WorkflowRunOutput") -> None:
         """Store agent/team responses in step_executor_runs if enabled"""
         if self._executor_type in ["agent", "team"]:
             # propogate the workflow run id as parent run id to the executor response
@@ -793,7 +793,7 @@ class Step:
 
             # Get the raw response from the step's active executor
             raw_response = self.active_executor.run_response
-            if raw_response and isinstance(raw_response, (RunResponse, TeamRunResponse)):
+            if raw_response and isinstance(raw_response, (RunOutput, TeamRunOutput)):
                 if workflow_run_response.step_executor_runs is None:
                     workflow_run_response.step_executor_runs = []
 
@@ -802,11 +802,11 @@ class Step:
                 workflow_run_response.step_executor_runs.append(raw_response)
 
                 # Add direct member agent runs (in case of a team we force store_member_responses=True here)
-                if isinstance(raw_response, TeamRunResponse) and getattr(
+                if isinstance(raw_response, TeamRunOutput) and getattr(
                     self.active_executor, "store_member_responses", False
                 ):
                     for mr in raw_response.member_responses or []:
-                        if isinstance(mr, RunResponse):
+                        if isinstance(mr, RunOutput):
                             workflow_run_response.step_executor_runs.append(mr)
 
     def _get_deepest_content_from_step_output(self, step_output: "StepOutput") -> Optional[str]:
@@ -841,7 +841,7 @@ class Step:
         # If no previous step outputs, return the original message unchanged
         return message
 
-    def _process_step_output(self, response: Union[RunResponse, TeamRunResponse, StepOutput]) -> StepOutput:
+    def _process_step_output(self, response: Union[RunOutput, TeamRunOutput, StepOutput]) -> StepOutput:
         """Create StepOutput from execution response"""
         if isinstance(response, StepOutput):
             response.step_name = self.name or "unnamed_step"
@@ -873,19 +873,19 @@ class Step:
             metrics=metrics,
         )
 
-    def _convert_function_result_to_response(self, result: Any) -> RunResponse:
-        """Convert function execution result to RunResponse"""
-        if isinstance(result, RunResponse):
+    def _convert_function_result_to_response(self, result: Any) -> RunOutput:
+        """Convert function execution result to RunOutput"""
+        if isinstance(result, RunOutput):
             return result
         elif isinstance(result, str):
-            return RunResponse(content=result)
+            return RunOutput(content=result)
         elif isinstance(result, dict):
             # If it's a dict, try to extract content
             content = result.get("content", str(result))
-            return RunResponse(content=content)
+            return RunOutput(content=content)
         else:
             # Convert any other type to string
-            return RunResponse(content=str(result))
+            return RunOutput(content=str(result))
 
     def _convert_audio_artifacts_to_audio(self, audio_artifacts: List[AudioArtifact]) -> List[Audio]:
         """Convert AudioArtifact objects to Audio objects"""

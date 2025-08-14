@@ -104,5 +104,6 @@ async def main():
     #     "Come stai?", stream=True  # Italian
     # )
 
+
 if __name__ == "__main__":
     asyncio.run(main())

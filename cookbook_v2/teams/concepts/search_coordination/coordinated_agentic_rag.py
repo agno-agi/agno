@@ -5,7 +5,7 @@ and analysis tasks across team members.
 
 Team Composition:
 - Knowledge Searcher: Searches knowledge base for relevant information
-- Content Analyzer: Analyzes and synthesizes retrieved content  
+- Content Analyzer: Analyzes and synthesizes retrieved content
 - Response Synthesizer: Creates final comprehensive response with sources
 
 Setup:
@@ -54,7 +54,7 @@ knowledge_searcher = Agent(
 
 # Content Analyzer Agent - Specialized in analyzing retrieved content
 content_analyzer = Agent(
-    name="Content Analyzer", 
+    name="Content Analyzer",
     model=Claude(id="claude-3-7-sonnet-latest"),
     role="Analyze and extract key insights from retrieved content",
     instructions=[
@@ -69,7 +69,7 @@ content_analyzer = Agent(
 # Response Synthesizer Agent - Specialized in creating comprehensive responses
 response_synthesizer = Agent(
     name="Response Synthesizer",
-    model=Claude(id="claude-3-7-sonnet-latest"), 
+    model=Claude(id="claude-3-7-sonnet-latest"),
     role="Create comprehensive final response with proper citations",
     instructions=[
         "Synthesize information from team members into a comprehensive response.",
@@ -101,16 +101,14 @@ coordinated_rag_team = Team(
 def main():
     """Run the coordinated agentic RAG team example."""
     print("🤖 Coordinated Agentic RAG Team Demo")
-    print("="*50)
-    
+    print("=" * 50)
+
     # Example query that benefits from coordinated search and analysis
     query = "What are Agents and how do they work with tools and knowledge?"
-        
+
     # Run the coordinated team
     coordinated_rag_team.print_response(
-        query,
-        stream=True,
-        stream_intermediate_steps=True
+        query, stream=True, stream_intermediate_steps=True
     )
 
 

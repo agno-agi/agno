@@ -1,7 +1,7 @@
 import random
 from typing import Iterator, List  # noqa
 
-from agno.agent import Agent, RunResponse, RunResponseEvent  # noqa
+from agno.agent import Agent, RunOutput, RunOutputEvent  # noqa
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.team import Team
@@ -90,12 +90,12 @@ national_parks = [
     "Rocky National Park",
 ]
 # Get the response in a variable
-run: RunResponse = national_park_expert.run(
+run: RunOutput = national_park_expert.run(
     f"What is the best season to visit {national_parks[random.randint(0, len(national_parks) - 1)]}? Please provide a detailed one week itinerary for a visit to the park."
 )
 pprint(run.content)
 
 # Stream the response
-# run_events: Iterator[RunResponseEvent] = national_park_expert.run(f"What is the best season to visit {national_parks[random.randint(0, len(national_parks) - 1)]}? Please provide a detailed one week itinerary for a visit to the park.", stream=True)
+# run_events: Iterator[RunOutputEvent] = national_park_expert.run(f"What is the best season to visit {national_parks[random.randint(0, len(national_parks) - 1)]}? Please provide a detailed one week itinerary for a visit to the park.", stream=True)
 # for event in run_events:
 #     pprint(event)

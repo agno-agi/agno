@@ -1,4 +1,4 @@
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent, RunOutput
 from agno.models.openai import OpenAIChat
 from agno.utils.pprint import pprint_run_response
 
@@ -25,7 +25,7 @@ agent = Agent(
     dependencies={"memory": client.get_all(user_id=user_id)},
     add_dependencies_to_context=True,
 )
-run: RunResponse = agent.run("What do you know about me?")
+run: RunOutput = agent.run("What do you know about me?")
 
 pprint_run_response(run)
 

@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.openai import OpenAIChat
 from agno.tools.decorator import tool
 

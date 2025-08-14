@@ -57,46 +57,46 @@ company_info_team = Team(
 
 async def run_team_with_events(prompt: str):
     content_started = False
-    async for run_response_event in company_info_team.arun(
+    async for run_output_event in company_info_team.arun(
         prompt,
         stream=True,
         stream_intermediate_steps=True,
     ):
-        if run_response_event.event in [
+        if run_output_event.event in [
             TeamRunEvent.run_started,
             TeamRunEvent.run_completed,
         ]:
-            print(f"\nTEAM EVENT: {run_response_event.event}")
+            print(f"\nTEAM EVENT: {run_output_event.event}")
 
-        if run_response_event.event in [TeamRunEvent.tool_call_started]:
-            print(f"\nTEAM EVENT: {run_response_event.event}")
-            print(f"TOOL CALL: {run_response_event.tool.tool_name}")
-            print(f"TOOL CALL ARGS: {run_response_event.tool.tool_args}")
+        if run_output_event.event in [TeamRunEvent.tool_call_started]:
+            print(f"\nTEAM EVENT: {run_output_event.event}")
+            print(f"TOOL CALL: {run_output_event.tool.tool_name}")
+            print(f"TOOL CALL ARGS: {run_output_event.tool.tool_args}")
 
-        if run_response_event.event in [TeamRunEvent.tool_call_completed]:
-            print(f"\nTEAM EVENT: {run_response_event.event}")
-            print(f"TOOL CALL: {run_response_event.tool.tool_name}")
-            print(f"TOOL CALL RESULT: {run_response_event.tool.result}")
+        if run_output_event.event in [TeamRunEvent.tool_call_completed]:
+            print(f"\nTEAM EVENT: {run_output_event.event}")
+            print(f"TOOL CALL: {run_output_event.tool.tool_name}")
+            print(f"TOOL CALL RESULT: {run_output_event.tool.result}")
 
         # Member events
-        if run_response_event.event in [RunEvent.tool_call_started]:
-            print(f"\nMEMBER EVENT: {run_response_event.event}")
-            print(f"AGENT ID: {run_response_event.agent_id}")
-            print(f"TOOL CALL: {run_response_event.tool.tool_name}")
-            print(f"TOOL CALL ARGS: {run_response_event.tool.tool_args}")
+        if run_output_event.event in [RunEvent.tool_call_started]:
+            print(f"\nMEMBER EVENT: {run_output_event.event}")
+            print(f"AGENT ID: {run_output_event.agent_id}")
+            print(f"TOOL CALL: {run_output_event.tool.tool_name}")
+            print(f"TOOL CALL ARGS: {run_output_event.tool.tool_args}")
 
-        if run_response_event.event in [RunEvent.tool_call_completed]:
-            print(f"\nMEMBER EVENT: {run_response_event.event}")
-            print(f"AGENT ID: {run_response_event.agent_id}")
-            print(f"TOOL CALL: {run_response_event.tool.tool_name}")
-            print(f"TOOL CALL RESULT: {run_response_event.tool.result}")
+        if run_output_event.event in [RunEvent.tool_call_completed]:
+            print(f"\nMEMBER EVENT: {run_output_event.event}")
+            print(f"AGENT ID: {run_output_event.agent_id}")
+            print(f"TOOL CALL: {run_output_event.tool.tool_name}")
+            print(f"TOOL CALL RESULT: {run_output_event.tool.result}")
 
-        if run_response_event.event in [TeamRunEvent.run_response_content]:
+        if run_output_event.event in [TeamRunEvent.run_content]:
             if not content_started:
                 print("CONTENT")
                 content_started = True
             else:
-                print(run_response_event.content, end="")
+                print(run_output_event.content, end="")
 
 
 if __name__ == "__main__":

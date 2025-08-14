@@ -12,7 +12,7 @@ from agno.utils.log import log_error
 
 
 @dataclass
-class BaseRunResponseEvent:
+class BaseRunOutputEvent:
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
             k: v
@@ -35,7 +35,7 @@ class BaseRunResponseEvent:
 
         if hasattr(self, "metadata") and self.metadata is not None:
             _dict["metadata"] = (
-                self.metadata.to_dict() if isinstance(self.metadata, RunResponseMetaData) else self.metadata
+                self.metadata.to_dict() if isinstance(self.metadata, RunOutputMetaData) else self.metadata
             )
 
         if hasattr(self, "member_responses") and self.member_responses:
@@ -141,7 +141,7 @@ class BaseRunResponseEvent:
 
         metadata = data.pop("metadata", None)
         if metadata:
-            data["metadata"] = RunResponseMetaData.from_dict(metadata)
+            data["metadata"] = RunOutputMetaData.from_dict(metadata)
 
         # To make it backwards compatible
         if "event" in data:
@@ -159,7 +159,7 @@ class BaseRunResponseEvent:
 
 
 @dataclass
-class RunResponseMetaData:
+class RunOutputMetaData:
     references: Optional[List[MessageReferences]] = None
     additional_messages: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
@@ -178,7 +178,7 @@ class RunResponseMetaData:
         return _dict
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "RunResponseMetaData":
+    def from_dict(cls, data: Dict[str, Any]) -> "RunOutputMetaData":
         additional_messages = data.pop("additional_messages", None)
         if additional_messages is not None:
             additional_messages = [Message.model_validate(message) for message in additional_messages]

@@ -51,22 +51,20 @@ team = Team(
     show_members_responses=True,
 )
 
+
 async def streaming_with_arun():
     """Demonstrate async streaming using arun() method."""
-    await apprint_run_response(team.arun(
-        message="What is the current stock price of NVDA?", 
-        stream=True
-    ))
+    await apprint_run_response(
+        team.arun(message="What is the current stock price of NVDA?", stream=True)
+    )
+
 
 async def streaming_with_aprint_response():
     """Demonstrate async streaming using aprint_response() method."""
-    await team.aprint_response(
-        "What is the current stock price of NVDA?", 
-        stream=True
-    )
+    await team.aprint_response("What is the current stock price of NVDA?", stream=True)
 
 
 if __name__ == "__main__":
     asyncio.run(streaming_with_arun())
-    
+
     asyncio.run(streaming_with_aprint_response())
