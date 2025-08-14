@@ -154,18 +154,18 @@ def test_parallel_tool_calls():
 def test_multiple_tool_calls():
     """Test multiple different tool types with the responses API."""
     agent = Agent(
-        model=OpenAIResponses(id="gpt-4o-mini"),
+        model=OpenAIResponses(id="gpt-4.1-mini"),
         tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
         markdown=True,
         telemetry=False,
         monitoring=False,
     )
 
-    response = agent.run("What is the current price of TSLA and what is the latest news about it?")
+    response = agent.run("Find the latest price of TSLA. Then, based on the price, find the latest news about it.")
 
     # Verify tool usage
     tool_calls = [msg.tool_calls for msg in response.messages if msg.tool_calls]
-    assert len(tool_calls) >= 1  # At least one message has tool calls
+    assert len(tool_calls) >= 2  # At least two messages have tool calls
     assert sum(len(calls) for calls in tool_calls) >= 2  # Total of 2 tool calls made
     assert response.content is not None
     assert "TSLA" in response.content and "latest news" in response.content.lower()
