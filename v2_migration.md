@@ -4,7 +4,7 @@ This guide walks you through all the changes needed to migrate your Agno applica
 
 If you have questions during your migration, we're here to help! Reach out to us on [Discord](https://discord.gg/4MtYHHrgA8) or [Discourse](https://community.agno.com/).
 
-# 1. Migrating your Agno DB
+## 1. Migrating your Agno DB
 
 If you used our `Storage` or `Memory` functionalities to store Agent sessions and memories in your database, you can start by migrating your tables.
 
@@ -16,11 +16,11 @@ Notice:
 - The script won't cleanup the old tables, in case you still need them.
 - The script is idempotent. If something goes wrong or if you stop it mid-run, you can run it again.
 
-# 2. Migrating your Agno code
+## 2. Migrating your Agno code
 
 Each section covers a specific framework domain, with before and after examples and detailed explanations where needed.
 
-## Agents and Teams
+### Agents and Teams
 
 Agents and Teams are the main building blocks in the Agno framework.
 
@@ -76,7 +76,7 @@ run_output: RunOutput = agent.run(...)
 - `show_tool_calls`
 
 
-## Storage
+### Storage
 
 Storage is used to persist Agent sessions, state and memories in a database.
 
@@ -139,7 +139,7 @@ team_session.runs
 
 You can find examples for all other databases and advanced scenarios in the `/cookbook` folder.
 
-## Memory
+### Memory
 
 Memory gives an Agent the ability to recall relevant information.
 
@@ -183,13 +183,13 @@ agent.db.get_user_memories(user_id="123")
 
 You can find examples for other all other databases and advanced scenarios in the `/cookbook` folder.
 
-## [wip] Knowledge
+### [wip] Knowledge
 
 **Renamed**
 - `retriever` -> `knowledge_retriever`
 - `add_references` -> `add_knowledge_to_context`
 
-## Metrics
+### Metrics
 
 Metrics are used to understand the usage and consumption related to a Session, a Run or a Message.
 
@@ -199,14 +199,14 @@ These are the changes we have made for v2:
 2. Provider-specific metrics fields are now to be found inside the `provider_metrics` field.
 3. A new `additional_metrics` field has been added for you to add any extra fields you need.
 
-## Workflows
+### Workflows
 
 We have heavily updated our Workflows, aiming to provide top-of-the-line tooling to build agentic systems.
 
 You can check a comprehensive migration guide for Workflows here: https://docs.agno.com/workflows_2/migration
 
 
-## Playground
+### Playground
 
 Our `Playground` has been deprecated. Our new platform offering will substitute all usage cases. More information coming soon!
 
