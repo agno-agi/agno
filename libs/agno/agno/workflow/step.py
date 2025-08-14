@@ -241,7 +241,7 @@ class Step:
                         )
                         audios = self._convert_audio_artifacts_to_audio(step_input.audio) if step_input.audio else None
 
-                        kwargs = {}
+                        kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
@@ -255,7 +255,7 @@ class Step:
                             **kwargs,
                         )
 
-                        if store_executor_responses:
+                        if store_executor_responses and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response)
 
                         # Switch back to workflow logger after execution
@@ -378,7 +378,7 @@ class Step:
                         )
                         audios = self._convert_audio_artifacts_to_audio(step_input.audio) if step_input.audio else None
 
-                        kwargs = {}
+                        kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
@@ -402,7 +402,7 @@ class Step:
                             **kwargs,
                         )
 
-                        if store_executor_responses:
+                        if store_executor_responses and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response)
 
                         for event in response_stream:
@@ -552,7 +552,7 @@ class Step:
                         )
                         audios = self._convert_audio_artifacts_to_audio(step_input.audio) if step_input.audio else None
 
-                        kwargs = {}
+                        kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
@@ -566,7 +566,7 @@ class Step:
                             **kwargs,
                         )
 
-                        if store_executor_responses:
+                        if store_executor_responses and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response)
 
                         # Switch back to workflow logger after execution
@@ -707,7 +707,7 @@ class Step:
                         )
                         audios = self._convert_audio_artifacts_to_audio(step_input.audio) if step_input.audio else None
 
-                        kwargs = {}
+                        kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
@@ -731,7 +731,7 @@ class Step:
                             **kwargs,
                         )
 
-                        if store_executor_responses:
+                        if store_executor_responses and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response)
 
                         async for event in response_stream:
@@ -788,8 +788,8 @@ class Step:
         """Store agent/team responses in step_executor_runs if enabled"""
         if self._executor_type in ["agent", "team"]:
             # propogate the workflow run id as parent run id to the executor response
-            self.active_executor.run_response.parent_run_id = workflow_run_response.run_id
-            self.active_executor.run_response.workflow_step_id = self.step_id
+            self.active_executor.run_response.parent_run_id = workflow_run_response.run_id # type: ignore
+            self.active_executor.run_response.workflow_step_id = self.step_id # type: ignore
 
             # Get the raw response from the step's active executor
             raw_response = self.active_executor.run_response
@@ -822,7 +822,7 @@ class Step:
             return self._get_deepest_content_from_step_output(step_output.steps[-1])
 
         # For regular steps, return their content
-        return step_output.content
+        return step_output.content # type: ignore
 
     def _prepare_message(
         self,
