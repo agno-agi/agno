@@ -1285,20 +1285,17 @@ class MongoDb(VectorDb):
         """
         try:
             collection = self.client[self.database_name][self.collection_name]
-            
+
             # Create query filter for content_id
             filter_query = {"content_id": content_id}
-            
+
             update_operations = {}
             for key, value in metadata.items():
                 update_operations[f"meta_data.{key}"] = value
                 update_operations[f"filters.{key}"] = value
-            
+
             # Update documents
-            result = collection.update_many(
-                filter_query,
-                {"$set": update_operations}
-            )
+            result = collection.update_many(filter_query, {"$set": update_operations})
 
             if result.matched_count == 0:
                 logger.debug(f"No documents found with content_id: {content_id}")

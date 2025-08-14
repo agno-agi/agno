@@ -517,7 +517,7 @@ class SurrealDb(VectorDb):
                 doc_id = doc["id"]
                 current_metadata = doc.get("meta_data", {})
                 current_filters = doc.get("filters", {})
-                
+
                 # Merge existing metadata with new metadata
                 if isinstance(current_metadata, dict):
                     updated_metadata = current_metadata.copy()

@@ -909,11 +909,11 @@ class Weaviate(VectorDb):
         """
         try:
             collection = self.get_client().collections.get(self.collection)
-            
+
             # Query for objects with the given content_id
             query_result = collection.query.fetch_objects(
                 where={"path": ["content_id"], "operator": "Equal", "valueText": content_id},
-                limit=1000  # Get all matching objects
+                limit=1000,  # Get all matching objects
             )
 
             if not query_result.objects:
@@ -925,10 +925,10 @@ class Weaviate(VectorDb):
             for obj in query_result.objects:
                 # Get current properties
                 current_properties = obj.properties or {}
-                
+
                 # Merge existing metadata with new metadata
                 updated_properties = current_properties.copy()
-                
+
                 # Handle nested metadata updates
                 if "meta_data" in updated_properties and isinstance(updated_properties["meta_data"], dict):
                     updated_properties["meta_data"].update(metadata)
@@ -942,10 +942,7 @@ class Weaviate(VectorDb):
                     updated_properties["filters"] = metadata
 
                 # Update the object
-                collection.data.update(
-                    uuid=obj.uuid,
-                    properties=updated_properties
-                )
+                collection.data.update(uuid=obj.uuid, properties=updated_properties)
                 updated_count += 1
 
             logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")

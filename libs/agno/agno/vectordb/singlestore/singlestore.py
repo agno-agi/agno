@@ -17,7 +17,6 @@ except ImportError:
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.reranker.base import Reranker
-
 from agno.utils.log import log_debug, log_error, log_info
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
@@ -635,22 +634,22 @@ class SingleStore(VectorDb):
             metadata (Dict[str, Any]): The metadata to update
         """
         import json
-        
+
         try:
             with self.Session.begin() as sess:
                 # Find documents with the given content_id
                 stmt = select(self.table).where(self.table.c.content_id == content_id)
                 result = sess.execute(stmt)
-                
+
                 updated_count = 0
                 for row in result:
                     # Parse existing metadata
                     current_metadata = json.loads(row.meta_data) if row.meta_data else {}
-                    
+
                     # Merge existing metadata with new metadata
                     updated_metadata = current_metadata.copy()
                     updated_metadata.update(metadata)
-                    
+
                     # Also update filters field within the metadata JSON
                     if "filters" not in updated_metadata:
                         updated_metadata["filters"] = {}
@@ -658,7 +657,7 @@ class SingleStore(VectorDb):
                         updated_metadata["filters"].update(metadata)
                     else:
                         updated_metadata["filters"] = metadata
-                    
+
                     # Update the document (only meta_data column exists)
                     update_stmt = (
                         update(self.table)

@@ -818,7 +818,7 @@ class LanceDb(VectorDb):
             metadata (Dict[str, Any]): The metadata to update
         """
         import json
-        
+
         try:
             # Search for documents with the given content_id
             query_filter = f"payload->>'content_id' = '{content_id}'"
@@ -833,7 +833,7 @@ class LanceDb(VectorDb):
             for _, row in results.iterrows():
                 row_id = row["id"]
                 current_payload = json.loads(row["payload"])
-                
+
                 # Merge existing metadata with new metadata
                 if "meta_data" in current_payload:
                     current_payload["meta_data"].update(metadata)
@@ -849,16 +849,13 @@ class LanceDb(VectorDb):
                     current_payload["filters"] = metadata
 
                 # Update the document
-                update_data = {
-                    "id": row_id,
-                    "payload": json.dumps(current_payload)
-                }
-                
+                update_data = {"id": row_id, "payload": json.dumps(current_payload)}
+
                 # LanceDB doesn't have a direct update, so we need to delete and re-insert
                 # First, get all the existing data
                 vector_data = row["vector"] if "vector" in row else None
                 text_data = row["text"] if "text" in row else None
-                
+
                 # Create complete update record
                 if vector_data is not None:
                     update_data["vector"] = vector_data

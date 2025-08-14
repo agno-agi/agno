@@ -4,6 +4,7 @@ from math import sqrt
 from typing import Any, Dict, List, Optional, Union, cast
 
 try:
+    from sqlalchemy import update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.inspection import inspect
@@ -11,7 +12,6 @@ try:
     from sqlalchemy.schema import Column, Index, MetaData, Table
     from sqlalchemy.sql.expression import bindparam, desc, func, select, text
     from sqlalchemy.types import DateTime, String
-    from sqlalchemy import update
 
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install using `pip install sqlalchemy psycopg`")

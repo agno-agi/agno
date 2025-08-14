@@ -1314,7 +1314,7 @@ class CouchbaseSearch(VectorDb):
                 doc_id = row.get("doc_id")
                 current_metadata = row.get("meta_data", {})
                 current_filters = row.get("filters", {})
-                
+
                 # Merge existing metadata with new metadata
                 if isinstance(current_metadata, dict):
                     updated_metadata = current_metadata.copy()
@@ -1335,7 +1335,7 @@ class CouchbaseSearch(VectorDb):
                     doc_content = doc.content_as[dict]
                     doc_content["meta_data"] = updated_metadata
                     doc_content["filters"] = updated_filters
-                    
+
                     self.collection.upsert(doc_id, doc_content)
                     updated_count += 1
                 except Exception as doc_error:

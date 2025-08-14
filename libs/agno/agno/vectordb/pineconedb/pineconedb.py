@@ -631,7 +631,7 @@ class PineconeDb(VectorDb):
                 filter={"content_id": {"$eq": content_id}},
                 top_k=10000,  # Get all matching vectors
                 include_metadata=True,
-                namespace=self.namespace
+                namespace=self.namespace,
             )
 
             if not query_response.matches:
@@ -643,11 +643,11 @@ class PineconeDb(VectorDb):
             for match in query_response.matches:
                 vector_id = match.id
                 current_metadata = match.metadata or {}
-                
+
                 # Merge existing metadata with new metadata
                 updated_metadata = current_metadata.copy()
                 updated_metadata.update(metadata)
-                
+
                 if "filters" not in updated_metadata:
                     updated_metadata["filters"] = {}
                 if isinstance(updated_metadata["filters"], dict):
@@ -655,19 +655,13 @@ class PineconeDb(VectorDb):
                 else:
                     updated_metadata["filters"] = metadata
 
-                update_data.append({
-                    "id": vector_id,
-                    "metadata": updated_metadata
-                })
+                update_data.append({"id": vector_id, "metadata": updated_metadata})
 
             # Update vectors in batches
             batch_size = 100
             for i in range(0, len(update_data), batch_size):
-                batch = update_data[i:i + batch_size]
-                self.index.update(
-                    vectors=batch,
-                    namespace=self.namespace
-                )
+                batch = update_data[i : i + batch_size]
+                self.index.update(vectors=batch, namespace=self.namespace)
 
             logger.debug(f"Updated metadata for {len(update_data)} documents with content_id: {content_id}")
 

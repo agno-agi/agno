@@ -939,10 +939,7 @@ class Milvus(VectorDb):
 
             # Search for documents with the given content_id
             search_expr = f'content_id == "{content_id}"'
-            results = self.collection.query(
-                expr=search_expr,
-                output_fields=["id", "meta_data", "filters"]
-            )
+            results = self.collection.query(expr=search_expr, output_fields=["id", "meta_data", "filters"])
 
             if not results:
                 logger.debug(f"No documents found with content_id: {content_id}")
@@ -954,7 +951,7 @@ class Milvus(VectorDb):
                 doc_id = result["id"]
                 current_metadata = result.get("meta_data", {})
                 current_filters = result.get("filters", {})
-                
+
                 # Merge existing metadata with new metadata
                 if isinstance(current_metadata, dict):
                     updated_metadata = current_metadata.copy()
@@ -969,11 +966,7 @@ class Milvus(VectorDb):
                     updated_filters = metadata
 
                 # Update the document
-                self.collection.upsert([{
-                    "id": doc_id,
-                    "meta_data": updated_metadata,
-                    "filters": updated_filters
-                }])
+                self.collection.upsert([{"id": doc_id, "meta_data": updated_metadata, "filters": updated_filters}])
                 updated_count += 1
 
             logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")

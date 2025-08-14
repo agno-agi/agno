@@ -14,7 +14,6 @@ from agno.utils.models.aws_claude import format_messages
 
 try:
     from anthropic import AnthropicBedrock, APIConnectionError, APIStatusError, AsyncAnthropicBedrock, RateLimitError
-    from anthropic.types import Message as AnthropicMessage
 except ImportError:
     raise ImportError("`anthropic[bedrock]` not installed. Please install using `pip install anthropic[bedrock]`")
 

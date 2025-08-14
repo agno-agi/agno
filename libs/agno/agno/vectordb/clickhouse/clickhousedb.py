@@ -719,15 +719,15 @@ class Clickhouse(VectorDb):
             metadata (Dict[str, Any]): The metadata to update
         """
         import json
-        
+
         try:
             parameters = self._get_base_parameters()
             parameters["content_id"] = content_id
-            
+
             # First, get existing documents with their current metadata and filters
             result = self.client.query(
                 "SELECT id, meta_data, filters FROM {database_name:Identifier}.{table_name:Identifier} WHERE content_id = {content_id:String}",
-                parameters=parameters
+                parameters=parameters,
             )
 
             if not result.result_rows:
@@ -738,36 +738,36 @@ class Clickhouse(VectorDb):
             updated_count = 0
             for row in result.result_rows:
                 doc_id, current_meta_json, current_filters_json = row
-                
+
                 # Parse existing metadata
                 try:
                     current_metadata = json.loads(current_meta_json) if current_meta_json else {}
                 except (json.JSONDecodeError, TypeError):
                     current_metadata = {}
-                
+
                 # Parse existing filters
                 try:
                     current_filters = json.loads(current_filters_json) if current_filters_json else {}
                 except (json.JSONDecodeError, TypeError):
                     current_filters = {}
-                
+
                 # Merge existing metadata with new metadata
                 updated_metadata = current_metadata.copy()
                 updated_metadata.update(metadata)
-                
+
                 # Merge existing filters with new metadata
                 updated_filters = current_filters.copy()
                 updated_filters.update(metadata)
-                
+
                 # Update the document
                 update_params = parameters.copy()
                 update_params["doc_id"] = doc_id
                 update_params["metadata_json"] = json.dumps(updated_metadata)
                 update_params["filters_json"] = json.dumps(updated_filters)
-                
+
                 self.client.command(
                     "ALTER TABLE {database_name:Identifier}.{table_name:Identifier} UPDATE meta_data = {metadata_json:String}, filters = {filters_json:String} WHERE id = {doc_id:String}",
-                    parameters=update_params
+                    parameters=update_params,
                 )
                 updated_count += 1
 

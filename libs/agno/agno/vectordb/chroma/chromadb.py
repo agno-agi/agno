@@ -695,11 +695,11 @@ class ChromaDb(VectorDb):
                 return
 
             collection: Collection = self.client.get_collection(name=self.collection_name)
-            
+
             # Find documents with the given content_id
             try:
                 result = collection.get(where={"content_id": {"$eq": content_id}})
-                
+
                 # Extract IDs and current metadata
                 if hasattr(result, "get") and callable(result.get):
                     ids = result.get("ids", [])
@@ -732,16 +732,15 @@ class ChromaDb(VectorDb):
                     updated_metadatas.append(updated_meta)
 
                 # Update the documents
-                collection.update(
-                    ids=ids,
-                    metadatas=updated_metadatas
-                )
-                
+                collection.update(ids=ids, metadatas=updated_metadatas)
+
                 logger.debug(f"Updated metadata for {len(ids)} documents with content_id: {content_id}")
 
             except TypeError as te:
                 if "object of type 'int' has no len()" in str(te):
-                    logger.warning(f"ChromaDB internal error (version 0.5.0 bug): {te}. Cannot update metadata for content_id '{content_id}'.")
+                    logger.warning(
+                        f"ChromaDB internal error (version 0.5.0 bug): {te}. Cannot update metadata for content_id '{content_id}'."
+                    )
                     return
                 else:
                     raise te

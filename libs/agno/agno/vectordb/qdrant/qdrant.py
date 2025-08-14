@@ -975,12 +975,7 @@ class Qdrant(VectorDb):
 
             # Create filter for content_id
             filter_condition = models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="content_id",
-                        match=models.MatchValue(value=content_id)
-                    )
-                ]
+                must=[models.FieldCondition(key="content_id", match=models.MatchValue(value=content_id))]
             )
 
             # Search for points with the given content_id
@@ -989,7 +984,7 @@ class Qdrant(VectorDb):
                 scroll_filter=filter_condition,
                 limit=10000,  # Get all matching points
                 with_payload=True,
-                with_vectors=False
+                with_vectors=False,
             )
 
             if not search_result[0]:  # search_result is a tuple (points, next_page_offset)
@@ -1003,11 +998,11 @@ class Qdrant(VectorDb):
             for point in points:
                 point_id = point.id
                 current_payload = point.payload or {}
-                
+
                 # Merge existing metadata with new metadata
                 updated_payload = current_payload.copy()
                 updated_payload.update(metadata)
-                
+
                 if "filters" not in updated_payload:
                     updated_payload["filters"] = {}
                 if isinstance(updated_payload["filters"], dict):
@@ -1016,19 +1011,12 @@ class Qdrant(VectorDb):
                     updated_payload["filters"] = metadata
 
                 # Create set payload operation
-                update_operations.append(
-                    models.SetPayload(
-                        payload=updated_payload,
-                        points=[point_id]
-                    )
-                )
+                update_operations.append(models.SetPayload(payload=updated_payload, points=[point_id]))
 
             # Execute all updates
             for operation in update_operations:
                 self.client.set_payload(
-                    collection_name=self.collection_name,
-                    payload=operation.payload,
-                    points=operation.points
+                    collection_name=self.collection_name, payload=operation.payload, points=operation.points
                 )
 
             log_debug(f"Updated metadata for {len(update_operations)} documents with content_id: {content_id}")

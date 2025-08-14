@@ -614,24 +614,24 @@ class UpstashVectorDb(VectorDb):
                 filter=f'content_id = "{content_id}"',
                 top_k=1000,  # Get all matching vectors
                 include_metadata=True,
-                namespace=self.namespace
+                namespace=self.namespace,
             )
 
-            if not query_response or not hasattr(query_response, '__iter__'):
+            if not query_response or not hasattr(query_response, "__iter__"):
                 logger.debug(f"No documents found with content_id: {content_id}")
                 return
 
             # Update each matching vector
             updated_count = 0
             for result in query_response:
-                if hasattr(result, 'id') and hasattr(result, 'metadata'):
+                if hasattr(result, "id") and hasattr(result, "metadata"):
                     vector_id = result.id
                     current_metadata = result.metadata or {}
-                    
+
                     # Merge existing metadata with new metadata
                     updated_metadata = current_metadata.copy()
                     updated_metadata.update(metadata)
-                    
+
                     if "filters" not in updated_metadata:
                         updated_metadata["filters"] = {}
                     if isinstance(updated_metadata["filters"], dict):
@@ -640,11 +640,7 @@ class UpstashVectorDb(VectorDb):
                         updated_metadata["filters"] = metadata
 
                     # Update the vector metadata
-                    self.index.update(
-                        id=vector_id,
-                        metadata=updated_metadata,
-                        namespace=self.namespace
-                    )
+                    self.index.update(id=vector_id, metadata=updated_metadata, namespace=self.namespace)
                     updated_count += 1
 
             logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")

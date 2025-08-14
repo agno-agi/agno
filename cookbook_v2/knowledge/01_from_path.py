@@ -14,9 +14,9 @@ contents_db = PostgresDb(
     knowledge_table="knowledge_contents",
 )
 
-vector_db=PgVector(
-        table_name="vectors", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
-    )
+vector_db = PgVector(
+    table_name="vectors", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
+)
 # Create Knowledge Instance
 knowledge = Knowledge(
     name="Basic SDK Knowledge Base",
