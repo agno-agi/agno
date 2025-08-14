@@ -11,6 +11,7 @@ agent = Agent(
     markdown=True,
 )
 
+
 async def main():
     await agent.aprint_response(
         "What do you see in this image? Provide a detailed description and search for related information.",
@@ -21,6 +22,7 @@ async def main():
         ],
         stream=True,
     )
+
 
 if __name__ == "__main__":
     asyncio.run(main())

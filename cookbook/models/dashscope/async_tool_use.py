@@ -11,8 +11,12 @@ agent = Agent(
     markdown=True,
 )
 
+
 async def main():
-    await agent.aprint_response("What's the latest news about artificial intelligence?", stream=True)
+    await agent.aprint_response(
+        "What's the latest news about artificial intelligence?", stream=True
+    )
+
 
 if __name__ == "__main__":
     asyncio.run(main())

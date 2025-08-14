@@ -31,7 +31,7 @@ class DashScope(OpenAILike):
     base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
     # Thinking parameters
-    enable_thinking: Optional[bool] = None 
+    enable_thinking: Optional[bool] = None
     include_thoughts: Optional[bool] = None
 
     # DashScope supports structured outputs
@@ -74,7 +74,7 @@ class DashScope(OpenAILike):
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         params = super().get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice)
-        
+
         should_include_thoughts = self.enable_thinking or self.include_thoughts
         if should_include_thoughts:
             params["extra_body"] = {"enable_thinking": True}
