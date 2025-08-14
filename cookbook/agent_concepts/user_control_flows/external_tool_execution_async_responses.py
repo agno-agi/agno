@@ -37,8 +37,6 @@ agent = Agent(
     model=OpenAIResponses(id="gpt-4.1-mini"),
     tools=[execute_shell_command],
     markdown=True,
-    debug_mode=True,
-    show_tool_calls=True,
 )
 
 run_response = asyncio.run(agent.arun("What files do I have in my current directory?"))
