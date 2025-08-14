@@ -20,42 +20,48 @@ class BrandfetchTools(Toolkit):
     Supports both Brand API (retrieve comprehensive brand data) and
     Brand Search API (find and search brands by name).
 
+    -- Brand API
+
+    api_key: str - your Brandfetch API key
+
+    -- Brand Search API
+
+    client_id: str - your Brandfetch Client ID
+
     async_tools: bool = True - if True, will use async tools, if False, will use sync tools
     brand: bool = False - if True, will use brand api, if False, will not use brand api
-    brand_search: bool = False - if True, will use brand search api, if False, will not use brand search api
+    search: bool = False - if True, will use brand search api, if False, will not use brand search api
     """
 
     def __init__(
         self,
         api_key: Optional[str] = None,
-        client_key: Optional[str] = None,
+        client_id: Optional[str] = None,
         base_url: str = "https://api.brandfetch.io/v2",
         timeout: Optional[float] = 20.0,
-        async_tools: bool = True,
-        brand: bool = False,
-        brand_search: bool = False,
+        async_tools: bool = False,
+        brand: bool = True,
+        search: bool = False,
         **kwargs,
     ):
         self.api_key = api_key or getenv("BRANDFETCH_API_KEY")
-        self.client_key = client_key or getenv("BRANDFETCH_CLIENT_KEY")
+        self.client_id = client_id or getenv("BRANDFETCH_CLIENT_ID")
         self.base_url = base_url
         self.timeout = httpx.Timeout(timeout)
         self.async_tools = async_tools
-        self.brand = brand
-        self.brand_search = brand_search
         self.search_url = f"{self.base_url}/search"
         self.brand_url = f"{self.base_url}/brands"
 
         tools: list[Any] = []
         if self.async_tools:
-            if self.brand:
+            if brand:
                 tools.append(self.asearch_by_identifier)
-            if self.brand_search:
+            if search:
                 tools.append(self.asearch_by_brand)
         else:
-            if self.brand:
+            if brand:
                 tools.append(self.search_by_identifier)
-            if self.brand_search:
+            if search:
                 tools.append(self.search_by_brand)
         name = kwargs.pop("name", "brandfetch_tools")
         super().__init__(name=name, tools=tools, **kwargs)
@@ -142,13 +148,13 @@ class BrandfetchTools(Toolkit):
             Dict containing search results with brand matches
 
         Raises:
-            ValueError: If no client key is provided
+            ValueError: If no client ID is provided
         """
-        if not self.client_key:
-            raise ValueError("Client key is required for brand search by name")
+        if not self.client_id:
+            raise ValueError("Client ID is required for brand search by name")
 
         url = f"{self.search_url}/{name}"
-        params = {"c": self.client_key}
+        params = {"c": self.client_id}
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -159,7 +165,7 @@ class BrandfetchTools(Toolkit):
             if e.response.status_code == 404:
                 return {"error": f"No brands found for name: {name}"}
             elif e.response.status_code == 401:
-                return {"error": "Invalid client key"}
+                return {"error": "Invalid client ID"}
             elif e.response.status_code == 429:
                 return {"error": "Rate limit exceeded"}
             else:
@@ -178,13 +184,13 @@ class BrandfetchTools(Toolkit):
             Dict containing search results with brand matches
 
         Raises:
-            ValueError: If no client key is provided
+            ValueError: If no client ID is provided
         """
-        if not self.client_key:
-            raise ValueError("Client key is required for brand search by name")
+        if not self.client_id:
+            raise ValueError("Client ID is required for brand search by name")
 
         url = f"{self.search_url}/{name}"
-        params = {"c": self.client_key}
+        params = {"c": self.client_id}
 
         try:
             with httpx.Client(timeout=self.timeout) as client:
@@ -195,7 +201,7 @@ class BrandfetchTools(Toolkit):
             if e.response.status_code == 404:
                 return {"error": f"No brands found for name: {name}"}
             elif e.response.status_code == 401:
-                return {"error": "Invalid client key"}
+                return {"error": "Invalid client ID"}
             elif e.response.status_code == 429:
                 return {"error": "Rate limit exceeded"}
             else:
