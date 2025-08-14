@@ -6,10 +6,13 @@ Each section covers a specific framework domain, with before and after examples 
 
 If you have questions during your migration, we're here to help! Reach out to us on [Discord](https://discord.gg/4MtYHHrgA8) or [Discourse](https://community.agno.com/).
 
+# Migrating your Agno code
 
 ## Agents and Teams
 
-Agents and Teams are the main building blocks in the Agno framework. These are the v2 updates we have made to the `Agent` and `Team` classes:
+Agents and Teams are the main building blocks in the Agno framework.
+
+These are the v2 updates we have made to the `Agent` and `Team` classes:
 
 1. Streaming responses with `arun` now returns an `AsyncIterator`, not a coroutine. This is how you consume the resulting events now, when streaming a run:
 ```python v2_arun.py
@@ -189,7 +192,7 @@ You can check a comprehensive migration guide for Workflows here: https://docs.a
 
 Our `Playground` has been deprecated. Our new platform offering will substitute all usage cases. More information coming soon!
 
-## Migrating your DB
+# Migrating your Agno DB
 
 If you used `Storage` or `Memory` to store Agent sessions and memories in you database, you must migrate your tables for them to be used in v2.
 
