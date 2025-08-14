@@ -40,6 +40,41 @@ class Reader:
         self.description = description
         self.max_results = max_results
 
+    def set_chunking_strategy_from_string(self, strategy_name: str, **kwargs) -> None:
+        """Set the chunking strategy from a string name."""
+        strategy_name_lower = strategy_name.lower().strip()
+
+        if strategy_name_lower in ["agentic", "agenticchunking"]:
+            from agno.knowledge.chunking.agentic import AgenticChunking
+
+            self.chunking_strategy = AgenticChunking(**kwargs)
+        elif strategy_name_lower in ["document", "documentchunking"]:
+            from agno.knowledge.chunking.document import DocumentChunking
+
+            self.chunking_strategy = DocumentChunking(**kwargs)
+        elif strategy_name_lower in ["recursive", "recursivechunking"]:
+            from agno.knowledge.chunking.recursive import RecursiveChunking
+
+            self.chunking_strategy = RecursiveChunking(**kwargs)
+        elif strategy_name_lower in ["semantic", "semanticchunking"]:
+            from agno.knowledge.chunking.semantic import SemanticChunking
+
+            self.chunking_strategy = SemanticChunking(**kwargs)
+        elif strategy_name_lower in ["fixed", "fixedsize", "fixedsizechunking"]:
+            from agno.knowledge.chunking.fixed import FixedSizeChunking
+
+            self.chunking_strategy = FixedSizeChunking(**kwargs)
+        elif strategy_name_lower in ["row", "rowchunking"]:
+            from agno.knowledge.chunking.row import RowChunking
+
+            self.chunking_strategy = RowChunking(**kwargs)
+        elif strategy_name_lower in ["markdown", "markdownchunking"]:
+            from agno.knowledge.chunking.markdown import MarkdownChunking
+
+            self.chunking_strategy = MarkdownChunking(**kwargs)
+        else:
+            raise ValueError(f"Unsupported chunking strategy: {strategy_name}")
+
     def read(self, obj: Any, name: Optional[str] = None) -> List[Document]:
         raise NotImplementedError
 
@@ -47,6 +82,7 @@ class Reader:
         raise NotImplementedError
 
     def chunk_document(self, document: Document) -> List[Document]:
+        print(f"chunk_document: {self.chunking_strategy}")
         if self.chunking_strategy is None:
             self.chunking_strategy = FixedSizeChunking(chunk_size=self.chunk_size)
         return self.chunking_strategy.chunk(document)  # type: ignore
