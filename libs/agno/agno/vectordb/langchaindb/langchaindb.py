@@ -116,3 +116,14 @@ class LangChainVectorDb(VectorDb):
     def exists(self) -> bool:
         logger.warning("LangChainKnowledgeBase.exists() not supported - please check the vectorstore manually.")
         return True
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for documents with the given content_id.
+        Not implemented for LangChain wrapper.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        raise NotImplementedError("update_metadata not supported for LangChain vectorstores")
