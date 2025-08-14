@@ -4,7 +4,7 @@ This guide walks you through all the changes needed to migrate your Agno applica
 
 If you have questions during your migration, we're here to help! Reach out to us on [Discord](https://discord.gg/4MtYHHrgA8) or [Discourse](https://community.agno.com/).
 
-# Migrating your Agno DB
+# 1. Migrating your Agno DB
 
 If you used our `Storage` or `Memory` functionalities to store Agent sessions and memories in your database, you can start by migrating your tables.
 
@@ -16,7 +16,7 @@ Notice:
 - The script won't cleanup the old tables, in case you still need them.
 - The script is idempotent. If something goes wrong or if you stop it mid-run, you can run it again.
 
-# Migrating your Agno code
+# 2. Migrating your Agno code
 
 Each section covers a specific framework domain, with before and after examples and detailed explanations where needed.
 
@@ -110,7 +110,7 @@ agent = Agent(db=db)
 db = SqliteDb(db_file="agno.db", sessions_table="your_sessions_table_name", ...)
 ```
 
-4. These are all the supported tables, each used to persist data related to a specific domain:
+These are all the supported tables, each used to persist data related to a specific domain:
 ```python v2_storage_all_tables.py
 db = SqliteDb(
     db_file="agno.db",
@@ -127,7 +127,7 @@ db = SqliteDb(
 )
 ```
 
-5. Previously running a `Team` would create a team session and sessions for every team member participating in the run. Now, only the `Team` session is created. The runs for the team leader and all members can be found in the `Team` session.
+4. Previously running a `Team` would create a team session and sessions for every team member participating in the run. Now, only the `Team` session is created. The runs for the team leader and all members can be found in the `Team` session.
 ```python v2_storage_team_sessions.py
 team.run(...)
 
