@@ -1,6 +1,7 @@
 import inspect
 from dataclasses import dataclass
 from typing import AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
+from uuid import uuid4
 
 from agno.run.response import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
@@ -14,7 +15,7 @@ from agno.run.workflow import (
 )
 from agno.utils.log import log_debug, logger
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import StepInput, StepOutput, StepType
 
 WorkflowSteps = List[
     Union[
@@ -130,7 +131,7 @@ class Loop:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_responses: bool = True,
-    ) -> List[StepOutput]:
+    ) -> StepOutput:
         """Execute loop steps with iteration control - mirrors workflow execution logic"""
         # Use workflow logger for loop orchestration
         log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
@@ -202,7 +203,14 @@ class Loop:
         for iteration_results in all_results:
             flattened_results.extend(iteration_results)
 
-        return flattened_results
+        return StepOutput(
+            step_name=self.name,
+            step_id=str(uuid4()),
+            step_type=StepType.LOOP,
+            content=f"Loop {self.name} completed {iteration} iterations with {len(flattened_results)} total steps",
+            success=all(result.success for result in flattened_results) if flattened_results else True,
+            steps=flattened_results,
+        )
 
     def execute_stream(
         self,
@@ -213,12 +221,15 @@ class Loop:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_responses: bool = True,
+        parent_step_id: Optional[str] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute loop steps with streaming support - mirrors workflow execution logic"""
         log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
 
         # Prepare steps first
         self._prepare_steps()
+
+        loop_step_id = str(uuid4())
 
         if stream_intermediate_steps and workflow_run_response:
             # Yield loop started event
@@ -230,6 +241,8 @@ class Loop:
                 step_name=self.name,
                 step_index=step_index,
                 max_iterations=self.max_iterations,
+                step_id=loop_step_id,
+                parent_step_id=parent_step_id,
             )
 
         all_results = []
@@ -250,6 +263,8 @@ class Loop:
                     step_index=step_index,
                     iteration=iteration + 1,
                     max_iterations=self.max_iterations,
+                    step_id=loop_step_id,
+                    parent_step_id=parent_step_id,
                 )
 
             # Execute all steps in this iteration - mirroring workflow logic
@@ -277,6 +292,7 @@ class Loop:
                     workflow_run_response=workflow_run_response,
                     step_index=composite_step_index,
                     store_executor_responses=store_executor_responses,
+                    parent_step_id=loop_step_id,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_iteration.append(event)
@@ -341,6 +357,8 @@ class Loop:
                     max_iterations=self.max_iterations,
                     iteration_results=iteration_results,
                     should_continue=should_continue,
+                    step_id=loop_step_id,
+                    parent_step_id=parent_step_id,
                 )
 
             iteration += 1
@@ -363,11 +381,22 @@ class Loop:
                 total_iterations=iteration,
                 max_iterations=self.max_iterations,
                 all_results=all_results,
+                step_id=loop_step_id,
+                parent_step_id=parent_step_id,
             )
 
+        flattened_results = []
         for iteration_results in all_results:
-            for step_output in iteration_results:
-                yield step_output
+            flattened_results.extend(iteration_results)
+
+        yield StepOutput(
+            step_name=self.name,
+            step_id=loop_step_id,
+            step_type=StepType.LOOP,
+            content=f"Loop {self.name} completed {iteration} iterations with {len(flattened_results)} total steps",
+            success=all(result.success for result in flattened_results) if flattened_results else True,
+            steps=flattened_results,
+        )
 
     async def aexecute(
         self,
@@ -376,10 +405,12 @@ class Loop:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_responses: bool = True,
-    ) -> List[StepOutput]:
+    ) -> StepOutput:
         """Execute loop steps asynchronously with iteration control - mirrors workflow execution logic"""
         # Use workflow logger for async loop orchestration
         log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
+
+        loop_step_id = str(uuid4())
 
         # Prepare steps first
         self._prepare_steps()
@@ -451,7 +482,14 @@ class Loop:
         for iteration_results in all_results:
             flattened_results.extend(iteration_results)
 
-        return flattened_results
+        return StepOutput(
+            step_name=self.name,
+            step_id=loop_step_id,
+            step_type=StepType.LOOP,
+            content=f"Loop {self.name} completed {iteration} iterations with {len(flattened_results)} total steps",
+            success=all(result.success for result in flattened_results) if flattened_results else True,
+            steps=flattened_results,
+        )
 
     async def aexecute_stream(
         self,
@@ -462,9 +500,12 @@ class Loop:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_responses: bool = True,
+        parent_step_id: Optional[str] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute loop steps with async streaming support - mirrors workflow execution logic"""
         log_debug(f"Loop Start: {self.name}", center=True, symbol="=")
+
+        loop_step_id = str(uuid4())
 
         # Prepare steps first
         self._prepare_steps()
@@ -479,6 +520,8 @@ class Loop:
                 step_name=self.name,
                 step_index=step_index,
                 max_iterations=self.max_iterations,
+                step_id=loop_step_id,
+                parent_step_id=parent_step_id,
             )
 
         all_results = []
@@ -499,6 +542,8 @@ class Loop:
                     step_index=step_index,
                     iteration=iteration + 1,
                     max_iterations=self.max_iterations,
+                    step_id=loop_step_id,
+                    parent_step_id=parent_step_id,
                 )
 
             # Execute all steps in this iteration - mirroring workflow logic
@@ -526,6 +571,7 @@ class Loop:
                     workflow_run_response=workflow_run_response,
                     step_index=composite_step_index,
                     store_executor_responses=store_executor_responses,
+                    parent_step_id=loop_step_id,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_iteration.append(event)
@@ -593,6 +639,8 @@ class Loop:
                     max_iterations=self.max_iterations,
                     iteration_results=iteration_results,
                     should_continue=should_continue,
+                    step_id=loop_step_id,
+                    parent_step_id=parent_step_id,
                 )
 
             iteration += 1
@@ -615,8 +663,19 @@ class Loop:
                 total_iterations=iteration,
                 max_iterations=self.max_iterations,
                 all_results=all_results,
+                step_id=loop_step_id,
+                parent_step_id=parent_step_id,
             )
 
+        flattened_results = []
         for iteration_results in all_results:
-            for step_output in iteration_results:
-                yield step_output
+            flattened_results.extend(iteration_results)
+
+        yield StepOutput(
+            step_name=self.name,
+            step_id=loop_step_id,
+            step_type=StepType.LOOP,
+            content=f"Loop {self.name} completed {iteration} iterations with {len(flattened_results)} total steps",
+            success=all(result.success for result in flattened_results) if flattened_results else True,
+            steps=flattened_results,
+        )

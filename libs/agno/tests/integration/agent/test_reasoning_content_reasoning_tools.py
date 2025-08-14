@@ -34,6 +34,7 @@ def test_reasoning_content_from_reasoning_tools():
     assert hasattr(response, "reasoning_content"), "Response should have reasoning_content attribute"
     assert response.reasoning_content is not None, "reasoning_content should not be None"
     assert len(response.reasoning_content) > 0, "reasoning_content should not be empty"
+    assert response.metadata is not None
     assert response.metadata.reasoning_steps is not None
     assert len(response.metadata.reasoning_steps) > 0
 
@@ -63,5 +64,6 @@ def test_reasoning_content_from_reasoning_tools_streaming():
     )
     assert streaming_agent.run_response.reasoning_content is not None, "reasoning_content should not be None"
     assert len(streaming_agent.run_response.reasoning_content) > 0, "reasoning_content should not be empty"
+    assert streaming_agent.run_response.metadata is not None
     assert streaming_agent.run_response.metadata.reasoning_steps is not None
     assert len(streaming_agent.run_response.metadata.reasoning_steps) > 0

@@ -2,11 +2,9 @@ import os
 
 from agno.agent import Agent
 from agno.db.json import JsonDb  # noqa: F401
-from agno.db.postgres.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.vectordb.lightrag import LightRag
 from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -18,12 +16,7 @@ vector_db = PgVector(
     db_url=db_url,
 )
 
-vector_db = LightRag(
-    api_key=os.getenv("LIGHTRAG_API_KEY"),
-)
-
-# contents_db = JsonDb(db_path="./agno_json_data")
-contents_db = PostgresDb(db_url=db_url)
+contents_db = JsonDb(db_path="./agno_json_data")
 
 # Create knowledge base
 knowledge = Knowledge(

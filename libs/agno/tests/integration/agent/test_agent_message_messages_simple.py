@@ -63,6 +63,7 @@ def test_agent_message_ordering():
     assert response.content is not None
 
     # Verify run_input shows correct order
+    assert isinstance(agent.run_input, list)
     assert len(agent.run_input) == 4
     assert "First question" in agent.run_input[0]["content"]
     assert "AI is artificial intelligence" in agent.run_input[1]["content"]
@@ -109,6 +110,7 @@ def test_agent_with_different_message_formats():
         messages=[Message(role="user", content="Message object here")],
     )
     assert response.content is not None
+    assert isinstance(agent.run_input, list)
     assert len(agent.run_input) == 2
     assert isinstance(agent.run_input[0], dict)  # Message converted to dict
     assert isinstance(agent.run_input[1], str)  # String stays as string
@@ -125,7 +127,7 @@ def test_agent_with_empty_messages_list():
 
     assert response.content is not None
     # Empty messages should result in run_input being just the message
-    assert agent.run_input == "Only message here"
+    assert agent.run_input == ["Only message here"]
 
 
 def test_agent_run_input_consistency():
@@ -137,13 +139,14 @@ def test_agent_run_input_consistency():
         message="Current question",
         messages=[Message(role="user", content="Previous context")],
     )
-    first_run_input = agent.run_input.copy()
+    first_run_input = agent.run_input.copy()  # type: ignore
 
     # Second run with only message
     _ = agent.run(message="New question", session_id=response1.session_id)
     second_run_input = agent.run_input
 
     # Verify run_input captured correctly for each run
+    assert isinstance(first_run_input, list)
     assert len(first_run_input) == 2
     assert first_run_input[0]["content"] == "Previous context"
     assert first_run_input[1] == "Current question"
@@ -165,5 +168,6 @@ def test_agent_message_messages_with_different_models(model_id):
     )
 
     assert response.content is not None
+    assert isinstance(agent.run_input, list)
     assert len(agent.run_input) == 3
     assert agent.run_input[2] == "Summarize this conversation"

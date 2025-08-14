@@ -21,6 +21,6 @@ agent = Agent(
 run_response: RunOutput = agent.run("What is the stock price of NVDA")
 pprint(run_response)
 
-# run_response_strem: Iterator[RunOutput] = agent.run("What is the stock price of NVDA", stream=True)
+# run_response_strem: Iterator[RunOutputEvent] = agent.run("What is the stock price of NVDA", stream=True)
 # for response in run_response_strem:
 #     pprint(response)

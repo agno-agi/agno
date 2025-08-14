@@ -200,7 +200,7 @@ class Agent:
     # Add a tool that allows the Model to search the knowledge base (aka Agentic RAG)
     # Added only if knowledge is provided.
     search_knowledge: bool = True
-    # Add a tool that allows the Model to update the knowledge base.
+    # Add a tool that allows the Agent to update Knowledge.
     update_knowledge: bool = False
     # Add a tool that allows the Model to get the tool call history.
     read_tool_call_history: bool = False
@@ -2759,12 +2759,12 @@ class Agent:
             messages=messages_for_run_response, current_run_metrics=run_response.metrics
         )
 
-    def add_run_to_session(self, run_response: RunOutput):
-        """Add the given RunOutput to memory, together with some calculated data"""
+    def _add_run_to_session(self, run_response: RunOutput):
+        """Add the given RunResponse to memory, together with some calculated data"""
         if self.agent_session is not None:
             self.agent_session.add_run(run=run_response)
 
-    def set_session_metrics(self, run_response: RunOutput) -> None:
+    def _set_session_metrics(self, run_response: RunOutput) -> None:
         """Calculate metrics for the contextual session"""
         if self.session_metrics is None:
             self.session_metrics = Metrics()
@@ -6130,21 +6130,14 @@ class Agent:
         """
         import json
 
-        from agno.knowledge.document import Document
-
         if self.knowledge is None:
-            return "Knowledge base not available"
-        document_name = self.name
-        if document_name is None:
-            document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
+            return "Knowledge not available"
+        document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
         document_content = json.dumps({"query": query, "result": result})
-        log_info(f"Adding document to knowledge base: {document_name}: {document_content}")
-        self.knowledge.add_document_to_knowledge_base(
-            document=Document(
-                name=document_name,
-                content=document_content,
-            )
-        )
+        log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
+        from agno.knowledge.reader.text_reader import TextReader
+
+        asyncio.run(self.knowledge.add_content(name=document_name, text_content=document_content, reader=TextReader()))
         return "Successfully added to knowledge base"
 
     ###########################################################################

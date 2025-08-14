@@ -1,3 +1,4 @@
+import asyncio
 import json
 from hashlib import md5
 from typing import Any, Dict, List, Optional
@@ -281,7 +282,10 @@ class LanceDb(VectorDb):
         log_debug(f"Inserting {len(documents)} documents")
         data = []
 
-        # Prepare documents for insertion
+        # Prepare documents for insertion.
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
+
         for document in documents:
             if await self.async_doc_exists(document):
                 continue
@@ -292,7 +296,6 @@ class LanceDb(VectorDb):
                 meta_data.update(filters)
                 document.meta_data = meta_data
 
-            document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = str(md5(cleaned_content.encode()).hexdigest())
             payload = {

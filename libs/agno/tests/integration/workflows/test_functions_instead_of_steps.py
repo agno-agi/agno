@@ -40,7 +40,7 @@ def content_agent():
     )
 
 
-def test_simple_custom_execution_non_streaming(workflow_storage):
+def test_simple_custom_execution_non_streaming(workflow_db):
     """Test simple custom execution function (non-streaming)."""
 
     def simple_custom_execution(workflow: Workflow, execution_input: WorkflowExecutionInput) -> str:
@@ -50,7 +50,7 @@ def test_simple_custom_execution_non_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Simple Custom Execution Workflow",
-        db=workflow_storage,
+        db=workflow_db,
         steps=simple_custom_execution,
     )
 
@@ -62,7 +62,7 @@ def test_simple_custom_execution_non_streaming(workflow_storage):
     assert "Custom execution processed: Test message" in response.content
 
 
-def test_agent_based_custom_execution_non_streaming(workflow_storage):
+def test_agent_based_custom_execution_non_streaming(workflow_db):
     """Test custom execution function using an agent (non-streaming)."""
 
     def agent_custom_execution(workflow: Workflow, execution_input: WorkflowExecutionInput) -> str:
@@ -75,7 +75,7 @@ def test_agent_based_custom_execution_non_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Agent Custom Execution Workflow",
-        db=workflow_storage,
+        db=workflow_db,
         steps=agent_custom_execution,
     )
 
@@ -87,7 +87,7 @@ def test_agent_based_custom_execution_non_streaming(workflow_storage):
     assert "Agent analysis of: AI trends" in response.content
 
 
-def test_multi_step_custom_execution_non_streaming(workflow_storage):
+def test_multi_step_custom_execution_non_streaming(workflow_db):
     """Test custom execution function that simulates multiple steps."""
 
     def multi_step_custom_execution(workflow: Workflow, execution_input: WorkflowExecutionInput) -> str:
@@ -109,7 +109,7 @@ def test_multi_step_custom_execution_non_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Multi-Step Custom Execution Workflow",
-        db=workflow_storage,
+        db=workflow_db,
         steps=multi_step_custom_execution,
     )
 
@@ -123,7 +123,7 @@ def test_multi_step_custom_execution_non_streaming(workflow_storage):
     assert "Research on Technology market analysis" in response.content
 
 
-def test_custom_execution_streaming(workflow_storage):
+def test_custom_execution_streaming(workflow_db):
     """Test custom execution function with streaming."""
 
     def streaming_custom_execution(
@@ -142,7 +142,7 @@ def test_custom_execution_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Streaming Custom Execution Workflow",
-        db=workflow_storage,
+        db=workflow_db,
         steps=streaming_custom_execution,
     )
 
@@ -160,7 +160,7 @@ def test_custom_execution_streaming(workflow_storage):
     assert "Complete analysis for AI market trends" in completed_events[0].content
 
 
-def test_custom_execution_with_error_handling(workflow_storage):
+def test_custom_execution_with_error_handling(workflow_db):
     """Test custom execution function error handling."""
 
     def failing_custom_execution(workflow: Workflow, execution_input: WorkflowExecutionInput) -> str:
@@ -172,7 +172,7 @@ def test_custom_execution_with_error_handling(workflow_storage):
 
     workflow = Workflow(
         name="Failing Custom Execution Workflow",
-        db=workflow_storage,
+        db=workflow_db,
         steps=failing_custom_execution,
     )
 
@@ -183,7 +183,7 @@ def test_custom_execution_with_error_handling(workflow_storage):
     assert "Custom execution failed!" in response.content
 
 
-def test_custom_execution_with_workflow_access(workflow_storage):
+def test_custom_execution_with_workflow_access(workflow_db):
     """Test custom execution function accessing workflow properties."""
 
     def workflow_aware_execution(workflow: Workflow, execution_input: WorkflowExecutionInput) -> str:
@@ -195,7 +195,7 @@ def test_custom_execution_with_workflow_access(workflow_storage):
 
     workflow = Workflow(
         name="Workflow-Aware Custom Execution",
-        db=workflow_storage,
+        db=workflow_db,
         steps=workflow_aware_execution,
     )
 
@@ -207,7 +207,7 @@ def test_custom_execution_with_workflow_access(workflow_storage):
     assert "Workflow 'Workflow-Aware Custom Execution' processed message: Test workflow access" in response.content
 
 
-def test_custom_execution_with_execution_input_properties(workflow_storage):
+def test_custom_execution_with_execution_input_properties(workflow_db):
     """Test custom execution function accessing execution input properties."""
 
     def input_aware_execution(workflow: Workflow, execution_input: WorkflowExecutionInput) -> str:
@@ -230,7 +230,7 @@ def test_custom_execution_with_execution_input_properties(workflow_storage):
 
     workflow = Workflow(
         name="Input-Aware Custom Execution",
-        db=workflow_storage,
+        db=workflow_db,
         steps=input_aware_execution,
     )
 
@@ -244,7 +244,7 @@ def test_custom_execution_with_execution_input_properties(workflow_storage):
     assert "test_user" in str(response.content)
 
 
-async def test_async_custom_execution_non_streaming(workflow_storage):
+async def test_async_custom_execution_non_streaming(workflow_db):
     """Test async custom execution function (non-streaming)."""
 
     async def async_custom_execution(workflow: Workflow, execution_input: WorkflowExecutionInput) -> str:
@@ -260,7 +260,7 @@ async def test_async_custom_execution_non_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Async Custom Execution Workflow",
-        db=workflow_storage,
+        db=workflow_db,
         steps=async_custom_execution,
     )
 
@@ -272,7 +272,7 @@ async def test_async_custom_execution_non_streaming(workflow_storage):
     assert "Async custom execution processed: Async test message" in response.content
 
 
-async def test_async_custom_execution_streaming(workflow_storage):
+async def test_async_custom_execution_streaming(workflow_db):
     """Test async custom execution function with streaming."""
 
     async def async_streaming_custom_execution(workflow: Workflow, execution_input: WorkflowExecutionInput):
@@ -294,7 +294,7 @@ async def test_async_custom_execution_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Async Streaming Custom Execution Workflow",
-        db=workflow_storage,
+        db=workflow_db,
         steps=async_streaming_custom_execution,
     )
 
@@ -312,7 +312,7 @@ async def test_async_custom_execution_streaming(workflow_storage):
     assert "Async: Complete analysis for Async AI trends" in completed_events[0].content
 
 
-def test_custom_execution_return_types(workflow_storage):
+def test_custom_execution_return_types(workflow_db):
     """Test custom execution function with different return types."""
 
     def dict_return_execution(workflow: Workflow, execution_input: WorkflowExecutionInput) -> str:
@@ -326,7 +326,7 @@ def test_custom_execution_return_types(workflow_storage):
 
     workflow = Workflow(
         name="Dict Return Custom Execution",
-        db=workflow_storage,
+        db=workflow_db,
         steps=dict_return_execution,
     )
 
@@ -340,7 +340,7 @@ def test_custom_execution_return_types(workflow_storage):
     assert "'message': 'Dict test'" in response.content
 
 
-def test_custom_execution_complex_workflow_simulation(workflow_storage):
+def test_custom_execution_complex_workflow_simulation(workflow_db):
     """Test custom execution that simulates a complex multi-agent workflow."""
 
     def complex_workflow_simulation(workflow: Workflow, execution_input: WorkflowExecutionInput) -> str:
@@ -375,7 +375,7 @@ def test_custom_execution_complex_workflow_simulation(workflow_storage):
 
     workflow = Workflow(
         name="Complex Workflow Simulation",
-        db=workflow_storage,
+        db=workflow_db,
         steps=complex_workflow_simulation,
     )
 
@@ -391,7 +391,7 @@ def test_custom_execution_complex_workflow_simulation(workflow_storage):
     assert "Artificial Intelligence Market Trends" in response.content
 
 
-def test_custom_execution_with_none_return(workflow_storage):
+def test_custom_execution_with_none_return(workflow_db):
     """Test custom execution function that returns None."""
 
     def none_return_execution(workflow: Workflow, execution_input: WorkflowExecutionInput) -> None:
@@ -401,7 +401,7 @@ def test_custom_execution_with_none_return(workflow_storage):
 
     workflow = Workflow(
         name="None Return Custom Execution",
-        db=workflow_storage,
+        db=workflow_db,
         steps=none_return_execution,
     )
 
@@ -412,7 +412,7 @@ def test_custom_execution_with_none_return(workflow_storage):
     # Content might be empty or have a default message
 
 
-def test_custom_execution_with_empty_string_return(workflow_storage):
+def test_custom_execution_with_empty_string_return(workflow_db):
     """Test custom execution function that returns empty string."""
 
     def empty_string_execution(workflow: Workflow, execution_input: WorkflowExecutionInput) -> str:
@@ -421,7 +421,7 @@ def test_custom_execution_with_empty_string_return(workflow_storage):
 
     workflow = Workflow(
         name="Empty String Custom Execution",
-        db=workflow_storage,
+        db=workflow_db,
         steps=empty_string_execution,
     )
 

@@ -79,7 +79,7 @@ content_creation_workflow = Workflow(
 
 # Initialize the Playground with the workflows
 agent_os = AgentOS(
-    description="Example app for basic agent with playground capabilities",
+    description="Example OS setup",
     os_id="basic-app",
     workflows=[content_creation_workflow],
 )

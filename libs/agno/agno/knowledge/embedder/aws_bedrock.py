@@ -15,6 +15,14 @@ except ImportError:
     log_error("`boto3` not installed. Please install it via `pip install boto3`.")
     raise
 
+try:
+    import aioboto3
+    from aioboto3.session import Session as AioSession
+except ImportError:
+    log_error("`aioboto3` not installed. Please install it via `pip install aioboto3`.")
+    aioboto3 = None
+    AioSession = None
+
 
 @dataclass
 class AwsBedrockEmbedder(Embedder):
@@ -93,6 +101,46 @@ class AwsBedrockEmbedder(Embedder):
             **(self.client_params or {}),
         )
         return self.client
+
+    def get_async_client(self):
+        """
+        Returns an async AWS Bedrock client using aioboto3.
+
+        Returns:
+            An aioboto3 bedrock-runtime client context manager.
+        """
+        if aioboto3 is None:
+            raise AgnoError(
+                message="aioboto3 not installed. Please install it via `pip install aioboto3`.",
+                status_code=400,
+            )
+
+        if self.session:
+            # Convert boto3 session to aioboto3 session
+            aio_session = aioboto3.Session(
+                aws_access_key_id=self.session.get_credentials().access_key,
+                aws_secret_access_key=self.session.get_credentials().secret_key,
+                aws_session_token=self.session.get_credentials().token,
+                region_name=self.session.region_name,
+            )
+        else:
+            self.aws_access_key_id = self.aws_access_key_id or getenv("AWS_ACCESS_KEY_ID")
+            self.aws_secret_access_key = self.aws_secret_access_key or getenv("AWS_SECRET_ACCESS_KEY")
+            self.aws_region = self.aws_region or getenv("AWS_REGION")
+
+            if not self.aws_access_key_id or not self.aws_secret_access_key:
+                raise AgnoError(
+                    message="AWS credentials not found. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables or provide a boto3 session.",
+                    status_code=400,
+                )
+
+            aio_session = aioboto3.Session(
+                aws_access_key_id=self.aws_access_key_id,
+                aws_secret_access_key=self.aws_secret_access_key,
+                region_name=self.aws_region,
+            )
+
+        return aio_session.client("bedrock-runtime", **(self.client_params or {}))
 
     def _format_request_body(self, text: str) -> str:
         """
@@ -210,3 +258,81 @@ class AwsBedrockEmbedder(Embedder):
             usage = response["usage"]
 
         return embedding, usage
+
+    async def async_get_embedding(self, text: str) -> List[float]:
+        """
+        Async version of get_embedding() using native aioboto3 async client.
+        """
+        try:
+            body = self._format_request_body(text)
+            async with self.get_async_client() as client:
+                response = await client.invoke_model(
+                    modelId=self.id,
+                    body=body,
+                    contentType="application/json",
+                    accept="application/json",
+                )
+                response_body = json.loads(response["body"].read().decode("utf-8"))
+
+                # Extract embeddings using the same logic as get_embedding
+                if "embeddings" in response_body:
+                    if isinstance(response_body["embeddings"], list):
+                        # Default 'float' embeddings response format
+                        return response_body["embeddings"][0]
+                    elif isinstance(response_body["embeddings"], dict):
+                        # If embeddings_types parameter was used, select float embeddings
+                        if "float" in response_body["embeddings"]:
+                            return response_body["embeddings"]["float"][0]
+                        # Fallback to the first available embedding type
+                        for embedding_type in response_body["embeddings"]:
+                            return response_body["embeddings"][embedding_type][0]
+                logger.warning("No embeddings found in response")
+                return []
+        except ClientError as e:
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            raise ModelProviderError(message=str(e.response), model_name="AwsBedrockEmbedder", model_id=self.id) from e
+        except Exception as e:
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            raise ModelProviderError(message=str(e), model_name="AwsBedrockEmbedder", model_id=self.id) from e
+
+    async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
+        """
+        Async version of get_embedding_and_usage() using native aioboto3 async client.
+        """
+        try:
+            body = self._format_request_body(text)
+            async with self.get_async_client() as client:
+                response = await client.invoke_model(
+                    modelId=self.id,
+                    body=body,
+                    contentType="application/json",
+                    accept="application/json",
+                )
+                response_body = json.loads(response["body"].read().decode("utf-8"))
+
+                embedding: List[float] = []
+                # Extract embeddings using the same logic as get_embedding_and_usage
+                if "embeddings" in response_body:
+                    if isinstance(response_body["embeddings"], list):
+                        embedding = response_body["embeddings"][0]
+                    elif isinstance(response_body["embeddings"], dict):
+                        if "float" in response_body["embeddings"]:
+                            embedding = response_body["embeddings"]["float"][0]
+                        # Fallback to the first available embedding type
+                        else:
+                            for embedding_type in response_body["embeddings"]:
+                                embedding = response_body["embeddings"][embedding_type][0]
+                                break
+
+                # Extract usage metrics if available
+                usage = None
+                if "usage" in response_body:
+                    usage = response_body["usage"]
+
+                return embedding, usage
+        except ClientError as e:
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            raise ModelProviderError(message=str(e.response), model_name="AwsBedrockEmbedder", model_id=self.id) from e
+        except Exception as e:
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            raise ModelProviderError(message=str(e), model_name="AwsBedrockEmbedder", model_id=self.id) from e

@@ -27,7 +27,7 @@ from typing import Dict, Iterator, Optional
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.run.response import RunResponseEvent
+from agno.run.response import RunOutputEvent
 from agno.run.workflow import WorkflowCompletedEvent
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.newspaper4k import Newspaper4kTools
@@ -181,7 +181,7 @@ class ResearchReportGenerator(Workflow):
         use_search_cache: bool = True,
         use_scrape_cache: bool = True,
         use_cached_report: bool = True,
-    ) -> Iterator[RunOutput]:
+    ) -> Iterator[RunOutputEvent]:
         """
         Generate a comprehensive news report on a given topic.
 
@@ -195,7 +195,7 @@ class ResearchReportGenerator(Workflow):
             use_cached_report (bool, optional): Whether to return a previously generated report on the same topic. Defaults to False.
 
         Returns:
-            Iterator[RunOutput]: An stream of objects containing the generated report or status information.
+            Iterator[RunOutputEvent]: An stream of objects containing the generated report or status information.
 
         Steps:
         1. Check for a cached report if use_cached_report is True.
@@ -361,7 +361,7 @@ class ResearchReportGenerator(Workflow):
 
     def write_research_report(
         self, topic: str, scraped_articles: Dict[str, ScrapedArticle]
-    ) -> Iterator[RunOutput]:
+    ) -> Iterator[RunOutputEvent]:
         logger.info("Writing research report")
         # Prepare the input for the writer
         writer_input = {
@@ -409,7 +409,7 @@ if __name__ == "__main__":
     )
 
     # Execute the workflow with caching enabled
-    report_stream: Iterator[RunOutput] = generate_research_report.run(
+    report_stream: Iterator[RunOutputEvent] = generate_research_report.run(
         topic=topic,
         use_search_cache=True,
         use_scrape_cache=True,

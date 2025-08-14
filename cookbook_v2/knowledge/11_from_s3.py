@@ -2,6 +2,8 @@
 1. Run: `python cookbook/agent_concepts/knowledge/11_from_s3.py` to run the cookbook
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
@@ -24,10 +26,14 @@ knowledge = Knowledge(
 )
 
 # Add from S3 bucket
-knowledge.add_content(
-    name="S3 PDF",
-    remote_content=S3Content(bucket_name="agno-public", key="recipes/ThaiRecipes.pdf"),
-    metadata={"remote_content": "S3"},
+asyncio.run(
+    knowledge.add_content(
+        name="S3 PDF",
+        remote_content=S3Content(
+            bucket_name="agno-public", key="recipes/ThaiRecipes.pdf"
+        ),
+        metadata={"remote_content": "S3"},
+    )
 )
 
 agent = Agent(

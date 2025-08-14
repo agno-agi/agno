@@ -12,7 +12,7 @@ agent = Agent(
     markdown=True,
 )
 
-run_stream: Iterator[RunOutput] = agent.run(
+run_stream: Iterator[RunOutputEvent] = agent.run(
     "What is the stock price of NVDA", stream=True
 )
 pprint_run_response(run_stream, markdown=True)

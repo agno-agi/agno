@@ -2,6 +2,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import AsyncIterator, Awaitable, Callable, Iterator, List, Optional, Union
+from uuid import uuid4
 
 from agno.models.metrics import Metrics
 from agno.run.response import RunOutputEvent
@@ -16,7 +17,7 @@ from agno.utils.log import log_debug, logger
 from agno.workflow.condition import Condition
 from agno.workflow.step import Step
 from agno.workflow.steps import Steps
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import StepInput, StepOutput, StepType
 
 WorkflowSteps = List[
     Union[
@@ -79,24 +80,25 @@ class Parallel:
     def _aggregate_results(self, step_outputs: List[StepOutput]) -> StepOutput:
         """Aggregate multiple step outputs into a single StepOutput"""
         if not step_outputs:
-            return StepOutput(step_name=self.name or "Parallel", content="No parallel steps executed")
-
-        # To store the individual step outputs for each parallel step
-        parallel_step_outputs = {output.step_name or f"step_{i}": output for i, output in enumerate(step_outputs)}
+            return StepOutput(
+                step_name=self.name or "Parallel",
+                step_id=str(uuid4()),
+                step_type="Parallel",
+                content="No parallel steps executed",
+                steps=[],
+            )
 
         if len(step_outputs) == 1:
-            # Single result, update the step name but preserve parallel structure
+            # Single result, but still create a Parallel container
             single_result = step_outputs[0]
-
-            # Extract metrics using the dedicated method
             aggregated_metrics = self._extract_metrics_from_response(step_outputs)
 
             return StepOutput(
                 step_name=self.name or "Parallel",
-                content=single_result.content,
-                executor_type="parallel",
+                step_id=str(uuid4()),
+                step_type=StepType.PARALLEL,
+                content=f"Parallel {self.name or 'execution'} completed with 1 result",
                 executor_name=self.name or "Parallel",
-                parallel_step_outputs=parallel_step_outputs,
                 images=single_result.images,
                 videos=single_result.videos,
                 audio=single_result.audio,
@@ -104,12 +106,13 @@ class Parallel:
                 success=single_result.success,
                 error=single_result.error,
                 stop=single_result.stop,
+                steps=step_outputs,  # This is the key addition
             )
 
         early_termination_requested = any(output.stop for output in step_outputs if hasattr(output, "stop"))
 
         # Multiple results - aggregate them
-        aggregated_content = self._build_aggregated_content(step_outputs)
+        aggregated_content = f"Parallel {self.name or 'execution'} completed with {len(step_outputs)} results"
 
         # Combine all media from parallel steps
         all_images = []
@@ -129,16 +132,18 @@ class Parallel:
 
         return StepOutput(
             step_name=self.name or "Parallel",
+            step_id=str(uuid4()),
+            step_type=StepType.PARALLEL,
             executor_type="parallel",
             executor_name=self.name or "Parallel",
             content=aggregated_content,
-            parallel_step_outputs=parallel_step_outputs,
             images=all_images if all_images else None,
             videos=all_videos if all_videos else None,
             audio=all_audio if all_audio else None,
             success=not has_any_failure,
             stop=early_termination_requested,
             metrics=aggregated_metrics,
+            steps=step_outputs,
         )
 
     def _extract_metrics_from_response(self, step_outputs: List[StepOutput]) -> Optional[Metrics]:
@@ -285,9 +290,12 @@ class Parallel:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_responses: bool = True,
+        parent_step_id: Optional[str] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute all steps in parallel with streaming support"""
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
+
+        parallel_step_id = str(uuid4())
 
         self._prepare_steps()
 
@@ -301,6 +309,8 @@ class Parallel:
                 step_name=self.name,
                 step_index=step_index,
                 parallel_step_count=len(self.steps),
+                step_id=parallel_step_id,
+                parent_step_id=parent_step_id,
             )
 
         def execute_step_stream_with_index(step_with_index):
@@ -327,6 +337,7 @@ class Parallel:
                     workflow_run_response=workflow_run_response,
                     step_index=sub_step_index,
                     store_executor_responses=store_executor_responses,
+                    parent_step_id=parallel_step_id,
                 ):
                     events.append(event)
                 return (index, events)
@@ -420,6 +431,8 @@ class Parallel:
                 step_index=step_index,
                 parallel_step_count=len(self.steps),
                 step_results=[aggregated_result],  # Now single aggregated result
+                step_id=parallel_step_id,
+                parent_step_id=parent_step_id,
             )
 
     async def aexecute(
@@ -522,9 +535,12 @@ class Parallel:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_responses: bool = True,
+        parent_step_id: Optional[str] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute all steps in parallel with async streaming support"""
         log_debug(f"Parallel Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="=")
+
+        parallel_step_id = str(uuid4())
 
         self._prepare_steps()
 
@@ -538,6 +554,8 @@ class Parallel:
                 step_name=self.name,
                 step_index=step_index,
                 parallel_step_count=len(self.steps),
+                step_id=parallel_step_id,
+                parent_step_id=parent_step_id,
             )
 
         async def execute_step_stream_async_with_index(step_with_index):
@@ -564,6 +582,7 @@ class Parallel:
                     workflow_run_response=workflow_run_response,
                     step_index=sub_step_index,
                     store_executor_responses=store_executor_responses,
+                    parent_step_id=parallel_step_id,
                 ):  # type: ignore[union-attr]
                     events.append(event)
                 return (index, events)
@@ -655,4 +674,6 @@ class Parallel:
                 step_index=step_index,
                 parallel_step_count=len(self.steps),
                 step_results=[aggregated_result],  # Now single aggregated result
+                step_id=parallel_step_id,
+                parent_step_id=parent_step_id,
             )

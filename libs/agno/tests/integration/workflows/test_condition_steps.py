@@ -61,9 +61,9 @@ def test_condition_direct_execute_true():
 
     result = condition.execute(step_input)
 
-    assert isinstance(result, list)
-    assert len(result) == 1
-    assert "Fact check complete" in result[0].content
+    assert isinstance(result, StepOutput)
+    assert len(result.steps) == 1
+    assert "Fact check complete" in result.steps[0].content
 
 
 def test_condition_direct_execute_false():
@@ -73,8 +73,8 @@ def test_condition_direct_execute_false():
 
     result = condition.execute(step_input)
 
-    assert isinstance(result, list)
-    assert len(result) == 0  # No steps executed
+    assert isinstance(result, StepOutput)
+    assert len(result.steps) == 0  # No steps executed
 
 
 def test_condition_direct_boolean_evaluator():
@@ -84,9 +84,9 @@ def test_condition_direct_boolean_evaluator():
 
     result = condition.execute(step_input)
 
-    assert isinstance(result, list)
-    assert len(result) == 1
-    assert "Research findings" in result[0].content
+    assert isinstance(result, StepOutput)
+    assert len(result.steps) == 1
+    assert "Research findings" in result.steps[0].content
 
 
 @pytest.mark.asyncio
@@ -97,9 +97,9 @@ async def test_condition_direct_aexecute():
 
     result = await condition.aexecute(step_input)
 
-    assert isinstance(result, list)
-    assert len(result) == 1
-    assert "Research findings" in result[0].content
+    assert isinstance(result, StepOutput)
+    assert len(result.steps) == 1
+    assert "Research findings" in result.steps[0].content
 
 
 def test_condition_direct_execute_stream():
@@ -140,10 +140,10 @@ def test_condition_direct_multiple_steps():
 
     result = condition.execute(step_input)
 
-    assert isinstance(result, list)
-    assert len(result) == 2
-    assert "Research findings" in result[0].content
-    assert "Analysis of research" in result[1].content
+    assert isinstance(result, StepOutput)
+    assert len(result.steps) == 2
+    assert "Research findings" in result.steps[0].content
+    assert "Analysis of research" in result.steps[1].content
 
 
 # ============================================================================
@@ -151,11 +151,11 @@ def test_condition_direct_multiple_steps():
 # ============================================================================
 
 
-def test_basic_condition_true(workflow_storage):
+def test_basic_condition_true(workflow_db):
     """Test basic condition that evaluates to True."""
     workflow = Workflow(
         name="Basic Condition",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[research_step, Condition(name="stats_check", evaluator=has_statistics, steps=[fact_check_step])],
     )
 
@@ -163,17 +163,17 @@ def test_basic_condition_true(workflow_storage):
     assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 2
     # Condition output is a list
-    assert isinstance(response.step_results[1], list)
+    assert isinstance(response.step_results[1], StepOutput)
     # One step executed in condition
-    assert len(response.step_results[1]) == 1
-    assert "Fact check complete" in response.step_results[1][0].content
+    assert len(response.step_results[1].steps) == 1
+    assert "Fact check complete" in response.step_results[1].steps[0].content
 
 
-def test_basic_condition_false(workflow_storage):
+def test_basic_condition_false(workflow_db):
     """Test basic condition that evaluates to False."""
     workflow = Workflow(
         name="Basic Condition False",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[research_step, Condition(name="stats_check", evaluator=has_statistics, steps=[fact_check_step])],
     )
 
@@ -181,16 +181,18 @@ def test_basic_condition_false(workflow_storage):
     response = workflow.run(message="General market overview")
     assert isinstance(response, WorkflowRunOutput)
 
-    # Should have 2 step responses: research_step + empty condition result
+    # Should have 2 step responses: research_step + condition result
     assert len(response.step_results) == 2
-    assert response.step_results[1] == []  # Condition returned empty list
+    assert isinstance(response.step_results[1], StepOutput)
+    assert len(response.step_results[1].steps) == 0  # No steps executed when condition is false
+    assert "not met" in response.step_results[1].content
 
 
-def test_parallel_with_conditions(workflow_storage):
+def test_parallel_with_conditions(workflow_db):
     """Test parallel containing multiple conditions."""
     workflow = Workflow(
         name="Parallel with Conditions",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             research_step,  # Add a step before parallel to ensure proper chaining
             Parallel(
@@ -207,16 +209,29 @@ def test_parallel_with_conditions(workflow_storage):
 
     # Check the parallel output structure
     parallel_output = response.step_results[1]
-    assert parallel_output.success is True
-    assert "SUCCESS: analysis_step" in parallel_output.content
-    assert "SUCCESS: fact_check_step" in parallel_output.content
+
+    # Check that the parallel step has nested condition results
+    assert parallel_output.step_type == "Parallel"
+    assert len(parallel_output.steps) == 2  # Two conditions executed
+
+    # Check that we can access the nested step content
+    condition_results = parallel_output.steps
+    tech_condition = next((step for step in condition_results if step.step_name == "tech_check"), None)
+    stats_condition = next((step for step in condition_results if step.step_name == "stats_check"), None)
+
+    assert tech_condition is not None
+    assert stats_condition is not None
+    assert len(tech_condition.steps) == 1  # analysis_step executed
+    assert len(stats_condition.steps) == 1  # fact_check_step executed
+    assert "Analysis of research" in tech_condition.steps[0].content
+    assert "Fact check complete" in stats_condition.steps[0].content
 
 
-def test_condition_streaming(workflow_storage):
+def test_condition_streaming(workflow_db):
     """Test condition with streaming."""
     workflow = Workflow(
         name="Streaming Condition",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[Condition(name="tech_check", evaluator=is_tech_topic, steps=[research_step, analysis_step])],
     )
 
@@ -233,7 +248,7 @@ def test_condition_streaming(workflow_storage):
     assert condition_started[0].condition_result is True
 
 
-def test_condition_error_handling(workflow_storage):
+def test_condition_error_handling(workflow_db):
     """Test condition error handling."""
 
     def failing_evaluator(_: StepInput) -> bool:
@@ -241,7 +256,7 @@ def test_condition_error_handling(workflow_storage):
 
     workflow = Workflow(
         name="Error Condition",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[Condition(name="failing_check", evaluator=failing_evaluator, steps=[research_step])],
     )
 
@@ -251,11 +266,11 @@ def test_condition_error_handling(workflow_storage):
     assert "Evaluator failed" in response.content
 
 
-def test_nested_conditions(workflow_storage):
+def test_nested_conditions(workflow_db):
     """Test nested conditions."""
     workflow = Workflow(
         name="Nested Conditions",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Condition(
                 name="outer",
@@ -269,33 +284,41 @@ def test_nested_conditions(workflow_storage):
     assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 1
     outer_condition = response.step_results[0]
-    assert isinstance(outer_condition, list)
+    assert isinstance(outer_condition, StepOutput)
     # research_step + inner condition result
-    assert len(outer_condition) == 2
+    assert len(outer_condition.steps) == 2
+
+    # Check that the inner condition is properly nested
+    inner_condition = outer_condition.steps[1]  # Second step should be the inner condition
+    assert inner_condition.step_type == "Condition"
+    assert inner_condition.step_name == "inner"
+    assert len(inner_condition.steps) == 1  # fact_check_step executed
+    assert "Fact check complete" in inner_condition.steps[0].content
 
 
 @pytest.mark.asyncio
-async def test_async_condition(workflow_storage):
+async def test_async_condition(workflow_db):
     """Test async condition."""
     workflow = Workflow(
         name="Async Condition",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[Condition(name="async_check", evaluator=async_evaluator, steps=[research_step])],
     )
 
     response = await workflow.arun(message="AI technology")
     assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 1
-    assert isinstance(response.step_results[0], list)
-    assert len(response.step_results[0]) == 1
+    assert isinstance(response.step_results[0], StepOutput)
+    assert len(response.step_results[0].steps) == 1
+    assert "Research findings" in response.step_results[0].steps[0].content
 
 
 @pytest.mark.asyncio
-async def test_async_condition_streaming(workflow_storage):
+async def test_async_condition_streaming(workflow_db):
     """Test async condition with streaming."""
     workflow = Workflow(
         name="Async Streaming Condition",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[Condition(name="async_check", evaluator=async_evaluator, steps=[research_step])],
     )
 

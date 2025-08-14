@@ -1,6 +1,7 @@
 import inspect
 from dataclasses import dataclass
 from typing import AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
+from uuid import uuid4
 
 from agno.run.response import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
@@ -12,7 +13,7 @@ from agno.run.workflow import (
 )
 from agno.utils.log import log_debug, logger
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import StepInput, StepOutput, StepType
 
 WorkflowSteps = List[
     Union[
@@ -148,9 +149,11 @@ class Router:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_responses: bool = True,
-    ) -> List[StepOutput]:
+    ) -> StepOutput:
         """Execute the router and its selected steps with sequential chaining"""
         log_debug(f"Router Start: {self.name}", center=True, symbol="-")
+
+        router_step_id = str(uuid4())
 
         self._prepare_steps()
 
@@ -159,7 +162,13 @@ class Router:
         log_debug(f"Router {self.name}: Selected {len(steps_to_execute)} steps to execute")
 
         if not steps_to_execute:
-            return []
+            return StepOutput(
+                step_name=self.name,
+                step_id=router_step_id,
+                step_type=StepType.ROUTER,
+                content=f"Router {self.name} completed with 0 results (no steps selected)",
+                success=True,
+            )
 
         all_results: List[StepOutput] = []
         current_step_input = step_input
@@ -211,7 +220,15 @@ class Router:
                 break
 
         log_debug(f"Router End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
-        return all_results
+
+        return StepOutput(
+            step_name=self.name,
+            step_id=router_step_id,
+            step_type=StepType.ROUTER,
+            content=f"Router {self.name} completed with {len(all_results)} results",
+            success=all(result.success for result in all_results) if all_results else True,
+            steps=all_results,
+        )
 
     def execute_stream(
         self,
@@ -222,11 +239,14 @@ class Router:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_responses: bool = True,
+        parent_step_id: Optional[str] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the router with streaming support"""
         log_debug(f"Router Start: {self.name}", center=True, symbol="-")
 
         self._prepare_steps()
+
+        router_step_id = str(uuid4())
 
         # Route to appropriate steps
         steps_to_execute = self._route_steps(step_input)
@@ -242,6 +262,8 @@ class Router:
                 step_name=self.name,
                 step_index=step_index,
                 selected_steps=[getattr(step, "name", f"step_{i}") for i, step in enumerate(steps_to_execute)],
+                step_id=router_step_id,
+                parent_step_id=parent_step_id,
             )
 
         if not steps_to_execute:
@@ -257,6 +279,8 @@ class Router:
                     selected_steps=[],
                     executed_steps=0,
                     step_results=[],
+                    step_id=router_step_id,
+                    parent_step_id=parent_step_id,
                 )
             return
 
@@ -276,6 +300,7 @@ class Router:
                     workflow_run_response=workflow_run_response,
                     step_index=step_index,
                     store_executor_responses=store_executor_responses,
+                    parent_step_id=router_step_id,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)
@@ -336,10 +361,18 @@ class Router:
                 selected_steps=[getattr(step, "name", f"step_{i}") for i, step in enumerate(steps_to_execute)],
                 executed_steps=len(steps_to_execute),
                 step_results=all_results,
+                step_id=router_step_id,
+                parent_step_id=parent_step_id,
             )
 
-        for result in all_results:
-            yield result
+        yield StepOutput(
+            step_name=self.name,
+            step_id=router_step_id,
+            step_type=StepType.ROUTER,
+            content=f"Router {self.name} completed with {len(all_results)} results",
+            success=all(result.success for result in all_results) if all_results else True,
+            steps=all_results,
+        )
 
     async def aexecute(
         self,
@@ -352,6 +385,8 @@ class Router:
         """Async execute the router and its selected steps with sequential chaining"""
         log_debug(f"Router Start: {self.name}", center=True, symbol="-")
 
+        router_step_id = str(uuid4())
+
         self._prepare_steps()
 
         # Route to appropriate steps
@@ -359,7 +394,13 @@ class Router:
         log_debug(f"Router {self.name} selected: {len(steps_to_execute)} steps to execute")
 
         if not steps_to_execute:
-            return []
+            return StepOutput(
+                step_name=self.name,
+                step_id=router_step_id,
+                step_type=StepType.ROUTER,
+                content=f"Router {self.name} completed with 0 results (no steps selected)",
+                success=True,
+            )
 
         # Chain steps sequentially like Loop does
         all_results: List[StepOutput] = []
@@ -414,7 +455,15 @@ class Router:
                 break  # Stop on first error
 
         log_debug(f"Router End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
-        return all_results
+
+        return StepOutput(
+            step_name=self.name,
+            step_id=router_step_id,
+            step_type=StepType.ROUTER,
+            content=f"Router {self.name} completed with {len(all_results)} results",
+            success=all(result.success for result in all_results) if all_results else True,
+            steps=all_results,
+        )
 
     async def aexecute_stream(
         self,
@@ -425,11 +474,14 @@ class Router:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_responses: bool = True,
+        parent_step_id: Optional[str] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Async execute the router with streaming support"""
         log_debug(f"Router Start: {self.name}", center=True, symbol="-")
 
         self._prepare_steps()
+
+        router_step_id = str(uuid4())
 
         # Route to appropriate steps
         steps_to_execute = await self._aroute_steps(step_input)
@@ -445,6 +497,8 @@ class Router:
                 step_name=self.name,
                 step_index=step_index,
                 selected_steps=[getattr(step, "name", f"step_{i}") for i, step in enumerate(steps_to_execute)],
+                step_id=router_step_id,
+                parent_step_id=parent_step_id,
             )
 
         if not steps_to_execute:
@@ -460,6 +514,8 @@ class Router:
                     selected_steps=[],
                     executed_steps=0,
                     step_results=[],
+                    step_id=router_step_id,
+                    parent_step_id=parent_step_id,
                 )
             return
 
@@ -481,6 +537,7 @@ class Router:
                     workflow_run_response=workflow_run_response,
                     step_index=step_index,
                     store_executor_responses=store_executor_responses,
+                    parent_step_id=router_step_id,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)
@@ -541,7 +598,17 @@ class Router:
                 selected_steps=[getattr(step, "name", f"step_{i}") for i, step in enumerate(steps_to_execute)],
                 executed_steps=len(steps_to_execute),
                 step_results=all_results,
+                step_id=router_step_id,
+                parent_step_id=parent_step_id,
             )
 
-        for result in all_results:
-            yield result
+        yield StepOutput(
+            step_name=self.name,
+            step_id=router_step_id,
+            step_type=StepType.ROUTER,
+            content=f"Router {self.name} completed with {len(all_results)} results",
+            success=all(result.success for result in all_results) if all_results else True,
+            error=None,
+            stop=False,
+            steps=all_results,
+        )

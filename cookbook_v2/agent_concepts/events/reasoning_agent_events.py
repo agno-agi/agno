@@ -25,7 +25,7 @@ async def run_agent_with_events(prompt: str):
 
         if run_output_event.event in [RunEvent.reasoning_step]:
             print(f"\nEVENT: {run_output_event.event}")
-            print(f"REASONING CONTENT: {run_output_event.reasoning_content}")  # type: ignore
+            print(f"REASONING CONTENT: {run_output_event.reasoning_content}")  # type: ignore   
 
         if run_output_event.event in [RunEvent.reasoning_completed]:
             print(f"\nEVENT: {run_output_event.event}")

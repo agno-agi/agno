@@ -59,6 +59,8 @@ class BaseWorkflowRunOutputEvent:
     workflow_name: Optional[str] = None
     session_id: Optional[str] = None
     run_id: Optional[str] = None
+    step_id: Optional[str] = None
+    parent_step_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {k: v for k, v in asdict(self).items() if v is not None}
@@ -160,7 +162,6 @@ class StepStartedEvent(BaseWorkflowRunOutputEvent):
 
     event: str = WorkflowRunEvent.step_started.value
     step_name: Optional[str] = None
-    step_id: Optional[str] = None
     step_index: Optional[Union[int, tuple]] = None
 
 
@@ -170,7 +171,6 @@ class StepCompletedEvent(BaseWorkflowRunOutputEvent):
 
     event: str = WorkflowRunEvent.step_completed.value
     step_name: Optional[str] = None
-    step_id: Optional[str] = None
     step_index: Optional[Union[int, tuple]] = None
 
     content: Optional[Any] = None
@@ -192,7 +192,6 @@ class StepErrorEvent(BaseWorkflowRunOutputEvent):
 
     event: str = WorkflowRunEvent.step_error.value
     step_name: Optional[str] = None
-    step_id: Optional[str] = None
     step_index: Optional[Union[int, tuple]] = None
     error: Optional[str] = None
 

@@ -1,3 +1,4 @@
+import asyncio
 import json
 from hashlib import md5
 from typing import Any, Dict, List, Optional
@@ -491,16 +492,107 @@ class SingleStore(VectorDb):
     async def async_create(self) -> None:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+    async def async_insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+        with self.Session.begin() as sess:
+            counter = 0
+            for document in documents:
+                cleaned_content = document.content.replace("\x00", "\ufffd")
+                record_id = md5(cleaned_content.encode()).hexdigest()
+                _id = document.id or record_id
+
+                meta_data_json = json.dumps(document.meta_data)
+                usage_json = json.dumps(document.usage)
+
+                # Convert embedding list to SingleStore VECTOR format
+                embeddings = f"[{','.join(map(str, document.embedding))}]" if document.embedding else None
+
+                stmt = mysql.insert(self.table).values(
+                    id=_id,
+                    name=document.name,
+                    meta_data=meta_data_json,
+                    content=cleaned_content,
+                    embedding=embeddings,
+                    usage=usage_json,
+                    content_hash=content_hash,
+                    content_id=document.content_id,
+                )
+                sess.execute(stmt)
+                counter += 1
+                log_debug(f"Inserted document: {document.name} ({document.meta_data})")
+
+            sess.commit()
+            log_debug(f"Committed {counter} documents")
+
+    async def async_upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        Upsert (insert or update) documents in the table.
+
+        Args:
+            documents (List[Document]): List of documents to upsert.
+            filters (Optional[Dict[str, Any]]): Optional filters for the upsert.
+            batch_size (int): Number of documents to upsert in each batch.
+        """
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
+
+        with self.Session.begin() as sess:
+            counter = 0
+            for document in documents:
+                cleaned_content = document.content.replace("\x00", "\ufffd")
+                record_id = md5(cleaned_content.encode()).hexdigest()
+                _id = document.id or record_id
+
+                meta_data_json = json.dumps(document.meta_data)
+                usage_json = json.dumps(document.usage)
+
+                # Convert embedding list to SingleStore VECTOR format
+                embeddings = f"[{','.join(map(str, document.embedding))}]" if document.embedding else None
+                stmt = (
+                    mysql.insert(self.table)
+                    .values(
+                        id=_id,
+                        name=document.name,
+                        meta_data=meta_data_json,
+                        content=cleaned_content,
+                        embedding=embeddings,
+                        usage=usage_json,
+                        content_hash=content_hash,
+                        content_id=document.content_id,
+                    )
+                    .on_duplicate_key_update(
+                        name=document.name,
+                        meta_data=meta_data_json,
+                        content=cleaned_content,
+                        embedding=embeddings,
+                        usage=usage_json,
+                        content_hash=content_hash,
+                        content_id=document.content_id,
+                    )
+                )
+                sess.execute(stmt)
+                counter += 1
+                log_debug(f"Upserted document: {document.name} ({document.meta_data})")
+
+            sess.commit()
+            log_debug(f"Committed {counter} documents")
 
     async def async_search(
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+        return self.search(query=query, limit=limit, filters=filters)
 
     async def async_drop(self) -> None:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")

@@ -21,11 +21,11 @@ def content_step_function(step_input: StepInput) -> StepOutput:
     return StepOutput(content=f"Content: Hello World | Referencing: {prev}")
 
 
-def test_function_sequence_non_streaming(workflow_storage):
+def test_function_sequence_non_streaming(workflow_db):
     """Test basic function sequence."""
     workflow = Workflow(
         name="Test Workflow",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Step(name="research", executor=research_step_function),
             Step(name="content", executor=content_step_function),
@@ -39,11 +39,11 @@ def test_function_sequence_non_streaming(workflow_storage):
     assert len(response.step_results) == 2
 
 
-def test_function_sequence_streaming(workflow_storage):
+def test_function_sequence_streaming(workflow_db):
     """Test function sequence with streaming."""
     workflow = Workflow(
         name="Test Workflow",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Step(name="research", executor=research_step_function),
             Step(name="content", executor=content_step_function),
@@ -58,12 +58,12 @@ def test_function_sequence_streaming(workflow_storage):
     assert "Content: Hello World | Referencing: Research: test" == completed_events[0].content
 
 
-def test_agent_sequence_non_streaming(workflow_storage, test_agent):
+def test_agent_sequence_non_streaming(workflow_db, test_agent):
     """Test agent sequence."""
     test_agent.instructions = "Do research on the topic and return the results."
     workflow = Workflow(
         name="Test Workflow",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Step(name="research", agent=test_agent),
             Step(name="content", executor=content_step_function),
@@ -77,12 +77,12 @@ def test_agent_sequence_non_streaming(workflow_storage, test_agent):
     assert len(response.step_results) == 2
 
 
-def test_team_sequence_non_streaming(workflow_storage, test_team):
+def test_team_sequence_non_streaming(workflow_db, test_team):
     """Test team sequence."""
     test_team.members[0].role = "Do research on the topic and return the results."
     workflow = Workflow(
         name="Test Workflow",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Step(name="research", team=test_team),
             Step(name="content", executor=content_step_function),
@@ -97,7 +97,7 @@ def test_team_sequence_non_streaming(workflow_storage, test_team):
 
 
 @pytest.mark.asyncio
-async def test_async_function_sequence(workflow_storage):
+async def test_async_function_sequence(workflow_db):
     """Test async function sequence."""
 
     async def async_research(step_input: StepInput) -> StepOutput:
@@ -106,7 +106,7 @@ async def test_async_function_sequence(workflow_storage):
 
     workflow = Workflow(
         name="Test Workflow",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Step(name="research", executor=async_research),
             Step(name="content", executor=content_step_function),
@@ -121,7 +121,7 @@ async def test_async_function_sequence(workflow_storage):
 
 
 @pytest.mark.asyncio
-async def test_async_streaming(workflow_storage):
+async def test_async_streaming(workflow_db):
     """Test async streaming."""
 
     async def async_streaming_step(step_input: StepInput) -> AsyncIterator[str]:
@@ -130,7 +130,7 @@ async def test_async_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Test Workflow",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Step(name="research", executor=async_streaming_step),
             Step(name="content", executor=content_step_function),
@@ -146,7 +146,7 @@ async def test_async_streaming(workflow_storage):
     assert len(completed_events) == 1
 
 
-def test_step_chaining(workflow_storage):
+def test_step_chaining(workflow_db):
     """Test that steps properly chain outputs."""
 
     def step1(step_input: StepInput) -> StepOutput:
@@ -158,7 +158,7 @@ def test_step_chaining(workflow_storage):
 
     workflow = Workflow(
         name="Test Workflow",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Step(name="step1", executor=step1),
             Step(name="step2", executor=step2),

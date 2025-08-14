@@ -96,7 +96,7 @@ async def custom_content_planning_function(
             - Execution Ready: Detailed action items included
         """.strip()
 
-        yield StepOutput(content=enhanced_content, response=response)
+        yield StepOutput(content=enhanced_content)
 
     except Exception as e:
         yield StepOutput(

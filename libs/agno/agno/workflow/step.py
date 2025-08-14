@@ -18,7 +18,7 @@ from agno.run.workflow import (
 )
 from agno.team import Team
 from agno.utils.log import log_debug, logger, use_agent_logger, use_team_logger, use_workflow_logger
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import StepInput, StepOutput, StepType
 
 StepExecutor = Callable[
     [StepInput],
@@ -240,6 +240,11 @@ class Step:
                             self._convert_video_artifacts_to_videos(step_input.videos) if step_input.videos else None
                         )
                         audios = self._convert_audio_artifacts_to_audio(step_input.audio) if step_input.audio else None
+
+                        kwargs = {}
+                        if isinstance(self.active_executor, Team):
+                            kwargs["store_member_responses"] = True
+
                         response = self.active_executor.run(  # type: ignore[misc]
                             message=message,
                             images=images,
@@ -247,6 +252,7 @@ class Step:
                             audio=audios,
                             session_id=session_id,
                             user_id=user_id,
+                            **kwargs,
                         )
 
                         if store_executor_responses:
@@ -285,6 +291,7 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_responses: bool = True,
+        parent_step_id: Optional[str] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
@@ -301,6 +308,7 @@ class Step:
                 step_name=self.name,
                 step_index=step_index,
                 step_id=self.step_id,
+                parent_step_id=parent_step_id,
             )
 
         # Execute with retries and streaming
@@ -369,6 +377,11 @@ class Step:
                             self._convert_video_artifacts_to_videos(step_input.videos) if step_input.videos else None
                         )
                         audios = self._convert_audio_artifacts_to_audio(step_input.audio) if step_input.audio else None
+
+                        kwargs = {}
+                        if isinstance(self.active_executor, Team):
+                            kwargs["store_member_responses"] = True
+
                         response_stream = self.active_executor.run(  # type: ignore[call-overload, misc]
                             message=message,
                             images=images,
@@ -386,6 +399,7 @@ class Step:
                                 "step_name": self.name,
                                 "step_index": step_index,
                             },
+                            **kwargs,
                         )
 
                         if store_executor_responses:
@@ -420,6 +434,7 @@ class Step:
                         step_index=step_index,
                         content=final_response.content,
                         step_response=final_response,
+                        parent_step_id=parent_step_id,
                     )
 
                 return
@@ -536,6 +551,11 @@ class Step:
                             self._convert_video_artifacts_to_videos(step_input.videos) if step_input.videos else None
                         )
                         audios = self._convert_audio_artifacts_to_audio(step_input.audio) if step_input.audio else None
+
+                        kwargs = {}
+                        if isinstance(self.active_executor, Team):
+                            kwargs["store_member_responses"] = True
+
                         response = await self.active_executor.arun(  # type: ignore
                             message=message,
                             images=images,
@@ -543,6 +563,7 @@ class Step:
                             audio=audios,
                             session_id=session_id,
                             user_id=user_id,
+                            **kwargs,
                         )
 
                         if store_executor_responses:
@@ -581,6 +602,7 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_responses: bool = True,
+        parent_step_id: Optional[str] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
 
@@ -597,6 +619,7 @@ class Step:
                 step_name=self.name,
                 step_index=step_index,
                 step_id=self.step_id,
+                parent_step_id=parent_step_id,
             )
 
         # Execute with retries and streaming
@@ -683,6 +706,11 @@ class Step:
                             self._convert_video_artifacts_to_videos(step_input.videos) if step_input.videos else None
                         )
                         audios = self._convert_audio_artifacts_to_audio(step_input.audio) if step_input.audio else None
+
+                        kwargs = {}
+                        if isinstance(self.active_executor, Team):
+                            kwargs["store_member_responses"] = True
+
                         response_stream = self.active_executor.arun(  # type: ignore
                             message=message,
                             images=images,
@@ -700,6 +728,7 @@ class Step:
                                 "step_name": self.name,
                                 "step_index": step_index,
                             },
+                            **kwargs,
                         )
 
                         if store_executor_responses:
@@ -734,6 +763,7 @@ class Step:
                         step_id=self.step_id,
                         content=final_response.content,
                         step_response=final_response,
+                        parent_step_id=parent_step_id,
                     )
                 return
 
@@ -759,14 +789,40 @@ class Step:
         if self._executor_type in ["agent", "team"]:
             # propogate the workflow run id as parent run id to the executor response
             self.active_executor.run_response.parent_run_id = workflow_run_response.run_id
+            self.active_executor.run_response.workflow_step_id = self.step_id
 
             # Get the raw response from the step's active executor
             raw_response = self.active_executor.run_response
             if raw_response and isinstance(raw_response, (RunOutput, TeamRunOutput)):
                 if workflow_run_response.step_executor_runs is None:
                     workflow_run_response.step_executor_runs = []
-                # Add to step_executor_runs
+
+                raw_response.workflow_step_id = self.step_id
+                # Add the primary executor run
                 workflow_run_response.step_executor_runs.append(raw_response)
+
+                # Add direct member agent runs (in case of a team we force store_member_responses=True here)
+                if isinstance(raw_response, TeamRunResponse) and getattr(
+                    self.active_executor, "store_member_responses", False
+                ):
+                    for mr in raw_response.member_responses or []:
+                        if isinstance(mr, RunResponse):
+                            workflow_run_response.step_executor_runs.append(mr)
+
+    def _get_deepest_content_from_step_output(self, step_output: "StepOutput") -> Optional[str]:
+        """
+        Extract the deepest content from a step output, handling nested structures like Steps, Router, Loop, etc.
+
+        For container steps (Steps, Router, Loop, etc.), this will recursively find the content from the
+        last actual step rather than using the generic container message.
+        """
+        # If this step has nested steps (like Steps, Condition, Router, Loop, etc.)
+        if hasattr(step_output, "steps") and step_output.steps and len(step_output.steps) > 0:
+            # Recursively get content from the last nested step
+            return self._get_deepest_content_from_step_output(step_output.steps[-1])
+
+        # For regular steps, return their content
+        return step_output.content
 
     def _prepare_message(
         self,
@@ -777,8 +833,10 @@ class Step:
 
         if previous_step_outputs and self._executor_type in ["agent", "team"]:
             last_output = list(previous_step_outputs.values())[-1] if previous_step_outputs else None
-            if last_output and last_output.content:
-                return last_output.content
+            if last_output:
+                deepest_content = self._get_deepest_content_from_step_output(last_output)
+                if deepest_content:
+                    return deepest_content
 
         # If no previous step outputs, return the original message unchanged
         return message
@@ -788,6 +846,7 @@ class Step:
         if isinstance(response, StepOutput):
             response.step_name = self.name or "unnamed_step"
             response.step_id = self.step_id
+            response.step_type = StepType.STEP
             response.executor_type = self._executor_type
             response.executor_name = self.executor_name
             return response
@@ -803,6 +862,7 @@ class Step:
         return StepOutput(
             step_name=self.name or "unnamed_step",
             step_id=self.step_id,
+            step_type=StepType.STEP,
             executor_type=self._executor_type,
             executor_name=self.executor_name,
             content=response.content,

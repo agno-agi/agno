@@ -188,7 +188,8 @@ class Team:
     knowledge_filters: Optional[Dict[str, Any]] = None
     # Let the agent choose the knowledge filters
     enable_agentic_knowledge_filters: Optional[bool] = False
-
+    # Add a tool that allows the Team to update Knowledge.
+    update_knowledge: bool = False
     # If True, add references to the user prompt
     add_knowledge_to_context: bool = False
     # Retrieval function to get references
@@ -288,6 +289,8 @@ class Team:
     store_events: bool = False
     # List of events to skip from the Team
     events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None
+    # Store member agent runs inside the team's RunResponse
+    store_member_responses: bool = False
 
     # Optional app ID. Indicates this team is part of an app.
     os_id: Optional[str] = None
@@ -311,6 +314,7 @@ class Team:
         mode: Literal["route", "coordinate", "collaborate"] = "coordinate",
         model: Optional[Model] = None,
         name: Optional[str] = None,
+        role: Optional[str] = None,
         id: Optional[str] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -338,6 +342,7 @@ class Team:
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_knowledge_to_context: bool = False,
         enable_agentic_knowledge_filters: Optional[bool] = False,
+        update_knowledge: bool = False,
         knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
         enable_agentic_context: bool = False,
@@ -373,6 +378,7 @@ class Team:
         stream_intermediate_steps: bool = False,
         store_events: bool = False,
         events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None,
+        store_member_responses: bool = False,
         stream_member_events: bool = True,
         debug_mode: bool = False,
         debug_level: Literal[1, 2] = 1,
@@ -391,6 +397,7 @@ class Team:
         self.user_id = user_id
         self.session_id = session_id
         self.session_name = session_name
+        self.role = role
         self.session_state = session_state
         self.team_session_state = team_session_state
         self.workflow_session_state = workflow_session_state
@@ -417,6 +424,7 @@ class Team:
         self.knowledge = knowledge
         self.knowledge_filters = knowledge_filters
         self.enable_agentic_knowledge_filters = enable_agentic_knowledge_filters
+        self.update_knowledge = update_knowledge
         self.add_knowledge_to_context = add_knowledge_to_context
         self.knowledge_retriever = knowledge_retriever
         self.references_format = references_format
@@ -459,6 +467,7 @@ class Team:
         self.stream = stream
         self.stream_intermediate_steps = stream_intermediate_steps
         self.store_events = store_events
+        self.store_member_responses = store_member_responses
 
         self.events_to_skip = events_to_skip
         if self.events_to_skip is None:
@@ -557,7 +566,7 @@ class Team:
 
         if isinstance(member, Agent):
             member.team_id = self.id
-            member.set_id()
+            member._set_id()
         elif isinstance(member, Team):
             if member.id is None:
                 member.id = str(uuid4())
@@ -872,6 +881,7 @@ class Team:
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        store_member_responses: Optional[bool] = None,
         **kwargs: Any,
     ) -> TeamRunOutput: ...
 
@@ -892,6 +902,7 @@ class Team:
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        store_member_responses: Optional[bool] = None,
         **kwargs: Any,
     ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
 
@@ -910,6 +921,7 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
+        store_member_responses: Optional[bool] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
@@ -949,6 +961,9 @@ class Team:
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
+
+        if store_member_responses is None:
+            store_member_responses = False if self.store_member_responses is None else self.store_member_responses
 
         if stream_intermediate_steps is None:
             stream_intermediate_steps = (
@@ -992,6 +1007,7 @@ class Team:
             audio=audio,
             files=files,
             workflow_context=workflow_context,
+            store_member_responses=store_member_responses,
         )
 
         # Create a run_id for this specific run
@@ -1281,6 +1297,7 @@ class Team:
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        store_member_responses: Optional[bool] = None,
         **kwargs: Any,
     ) -> TeamRunOutput: ...
 
@@ -1300,6 +1317,7 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
+        store_member_responses: Optional[bool] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
@@ -1320,9 +1338,11 @@ class Team:
         files: Optional[Sequence[File]] = None,
         messages: Optional[Sequence[Union[Dict, Message]]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        store_member_responses: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         """Run the Team asynchronously and return the response."""
+
         session_id, user_id = self._initialize_session(
             session_id=session_id, user_id=user_id, session_state=session_state
         )
@@ -1351,6 +1371,9 @@ class Team:
         # Use stream override value when necessary
         if stream is None:
             stream = False if self.stream is None else self.stream
+
+        if store_member_responses is None:
+            store_member_responses = False if self.store_member_responses is None else self.store_member_responses
 
         if stream_intermediate_steps is None:
             stream_intermediate_steps = (
@@ -1389,6 +1412,8 @@ class Team:
             videos=videos,
             audio=audio,
             files=files,
+            workflow_context=workflow_context,
+            store_member_responses=store_member_responses,
         )
 
         # Create a run_id for this specific run
@@ -2510,10 +2535,10 @@ class Team:
                         # Add tool calls panel for member if available
                         if hasattr(member_response, "tools") and member_response.tools:
                             member_name = None
-                            if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
-                                member_name = self._get_member_name(member_response.agent_id)
-                            elif isinstance(member_response, TeamRunOutput) and member_response.team_id is not None:
-                                member_name = self._get_member_name(member_response.team_id)
+                            if isinstance(member_response, RunOutput) and member_response.id is not None:
+                                member_name = self._get_member_name(member_response.id)
+                            elif isinstance(member_response, TeamRunOutput) and member_response.id is not None:
+                                member_name = self._get_member_name(member_response.id)
 
                             if member_name:
                                 formatted_calls = format_tool_calls(member_response.tools)
@@ -2540,10 +2565,10 @@ class Team:
 
                         show_markdown = False
                         if member_markdown:
-                            if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
-                                show_markdown = member_markdown.get(member_response.agent_id, False)
-                            elif isinstance(member_response, TeamRunOutput) and member_response.team_id is not None:
-                                show_markdown = member_markdown.get(member_response.team_id, False)
+                            if isinstance(member_response, RunResponse) and member_response.id is not None:
+                                show_markdown = member_markdown.get(member_response.id, False)
+                            elif isinstance(member_response, TeamRunResponse) and member_response.id is not None:
+                                show_markdown = member_markdown.get(member_response.id, False)
 
                         member_response_content: Union[str, JSON, Markdown] = self._parse_response_content(
                             member_response,
@@ -2552,13 +2577,13 @@ class Team:
                         )
 
                         # Create panel for member response
-                        if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
+                        if isinstance(member_response, RunOutput) and member_response.id is not None:
                             member_response_panel = create_panel(
                                 content=member_response_content,
                                 title=f"{self._get_member_name(member_response.id)} Response",
                                 border_style="magenta",
                             )
-                        elif isinstance(member_response, TeamRunOutput) and member_response.team_id is not None:
+                        elif isinstance(member_response, TeamRunResponse) and member_response.id is not None:
                             member_response_panel = create_panel(
                                 content=member_response_content,
                                 title=f"{self._get_member_name(member_response.id)} Response",
@@ -2798,10 +2823,10 @@ class Team:
                 if hasattr(resp, "member_responses") and resp.member_responses:
                     for member_response in resp.member_responses:
                         member_id = None
-                        if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
-                            member_id = member_response.agent_id
-                        elif isinstance(member_response, TeamRunOutput) and member_response.team_id is not None:
-                            member_id = member_response.team_id
+                        if isinstance(member_response, RunOutput) and member_response.id is not None:
+                            member_id = member_response.id
+                        elif isinstance(member_response, TeamRunOutput) and member_response.id is not None:
+                            member_id = member_response.id
 
                         if member_id and hasattr(member_response, "tools") and member_response.tools:
                             if member_id not in member_tool_calls:
@@ -2861,11 +2886,11 @@ class Team:
                 for member_response in resp.member_responses if hasattr(resp, "member_responses") else []:
                     member_id = None
                     member_name = "Team Member"
-                    if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
-                        member_id = member_response.agent_id
+                    if isinstance(member_response, RunOutput) and member_response.id is not None:
+                        member_id = member_response.id
                         member_name = self._get_member_name(member_id)
-                    elif isinstance(member_response, TeamRunOutput) and member_response.team_id is not None:
-                        member_id = member_response.team_id
+                    elif isinstance(member_response, TeamRunOutput) and member_response.id is not None:
+                        member_id = member_response.id
                         member_name = self._get_member_name(member_id)
 
                     # If we have tool calls for this member, display them
@@ -3042,10 +3067,10 @@ class Team:
             # Add member tool calls and responses in correct order
             for i, member_response in enumerate(self.run_response.member_responses if self.run_response else []):
                 member_id = None
-                if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
-                    member_id = member_response.agent_id
-                elif isinstance(member_response, TeamRunOutput) and member_response.team_id is not None:
-                    member_id = member_response.team_id
+                if isinstance(member_response, RunOutput) and member_response.id is not None:
+                    member_id = member_response.id
+                elif isinstance(member_response, TeamRunOutput) and member_response.id is not None:
+                    member_id = member_response.id
 
                 if member_id:
                     # First add tool calls if any
@@ -3083,10 +3108,10 @@ class Team:
 
                     # Then add response
                     show_markdown = False
-                    if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
-                        show_markdown = member_markdown.get(member_response.agent_id, False)
-                    elif isinstance(member_response, TeamRunOutput) and member_response.team_id is not None:
-                        show_markdown = member_markdown.get(member_response.team_id, False)
+                    if isinstance(member_response, RunOutput) and member_response.id is not None:
+                        show_markdown = member_markdown.get(member_response.id, False)
+                    elif isinstance(member_response, TeamRunOutput) and member_response.id is not None:
+                        show_markdown = member_markdown.get(member_response.id, False)
 
                     member_response_content = self._parse_response_content(
                         member_response,
@@ -3095,10 +3120,10 @@ class Team:
                     )
 
                     member_name = "Team Member"
-                    if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
-                        member_name = self._get_member_name(member_response.agent_id)
-                    elif isinstance(member_response, TeamRunOutput) and member_response.team_id is not None:
-                        member_name = self._get_member_name(member_response.team_id)
+                    if isinstance(member_response, RunOutput) and member_response.id is not None:
+                        member_name = self._get_member_name(member_response.id)
+                    elif isinstance(member_response, TeamRunOutput) and member_response.id is not None:
+                        member_name = self._get_member_name(member_response.id)
 
                     member_response_panel = create_panel(
                         content=member_response_content,
@@ -3393,10 +3418,10 @@ class Team:
                         # Add tool calls panel for member if available
                         if hasattr(member_response, "tools") and member_response.tools:
                             member_name = None
-                            if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
-                                member_name = self._get_member_name(member_response.agent_id)
-                            elif isinstance(member_response, TeamRunOutput) and member_response.team_id is not None:
-                                member_name = self._get_member_name(member_response.team_id)
+                            if isinstance(member_response, RunOutput) and member_response.id is not None:
+                                member_name = self._get_member_name(member_response.id)
+                            elif isinstance(member_response, TeamRunOutput) and member_response.id is not None:
+                                member_name = self._get_member_name(member_response.id)
 
                             if member_name:
                                 # Format tool calls
@@ -3422,11 +3447,11 @@ class Team:
                                     panels.append(member_tool_calls_panel)
                                     live_console.update(Group(*panels))
 
-                        show_markdown = False
-                        if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
-                            show_markdown = member_markdown.get(member_response.agent_id, False)
-                        elif isinstance(member_response, TeamRunOutput) and member_response.team_id is not None:
-                            show_markdown = member_markdown.get(member_response.team_id, False)
+                        show_markdown = False   
+                        if isinstance(member_response, RunOutput) and member_response.id is not None:
+                            show_markdown = member_markdown.get(member_response.id, False)
+                        elif isinstance(member_response, TeamRunOutput) and member_response.id is not None:
+                            show_markdown = member_markdown.get(member_response.id, False)
 
                         member_response_content: Union[str, JSON, Markdown] = self._parse_response_content(
                             member_response,
@@ -3435,13 +3460,13 @@ class Team:
                         )
 
                         # Create panel for member response
-                        if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
+                        if isinstance(member_response, RunOutput) and member_response.id is not None:
                             member_response_panel = create_panel(
                                 content=member_response_content,
                                 title=f"{self._get_member_name(member_response.id)} Response",
                                 border_style="magenta",
                             )
-                        elif isinstance(member_response, TeamRunOutput) and member_response.team_id is not None:
+                        elif isinstance(member_response, TeamRunOutput) and member_response.id is not None:
                             member_response_panel = create_panel(
                                 content=member_response_content,
                                 title=f"{self._get_member_name(member_response.id)} Response",
@@ -3677,10 +3702,10 @@ class Team:
                 if hasattr(resp, "member_responses") and resp.member_responses:
                     for member_response in resp.member_responses:
                         member_id = None
-                        if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
-                            member_id = member_response.agent_id
-                        elif isinstance(member_response, TeamRunOutput) and member_response.team_id is not None:
-                            member_id = member_response.team_id
+                        if isinstance(member_response, RunOutput) and member_response.id is not None:
+                            member_id = member_response.id
+                        elif isinstance(member_response, TeamRunOutput) and member_response.id is not None:
+                            member_id = member_response.id
 
                         if member_id and hasattr(member_response, "tools") and member_response.tools:
                             if member_id not in member_tool_calls:
@@ -3856,10 +3881,10 @@ class Team:
             # Add member tool calls and responses in correct order
             for i, member_response in enumerate(self.run_response.member_responses if self.run_response else []):
                 member_id = None
-                if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
-                    member_id = member_response.agent_id
-                elif isinstance(member_response, TeamRunOutput) and member_response.team_id is not None:
-                    member_id = member_response.team_id
+                if isinstance(member_response, RunOutput) and member_response.id is not None:
+                    member_id = member_response.id
+                elif isinstance(member_response, TeamRunOutput) and member_response.id is not None:
+                    member_id = member_response.id
 
                 if member_id:
                     # First add tool calls if any
@@ -3902,10 +3927,10 @@ class Team:
 
                     # Then add response
                     show_markdown = False
-                    if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
-                        show_markdown = member_markdown.get(member_response.agent_id, False)
-                    elif isinstance(member_response, TeamRunOutput) and member_response.team_id is not None:
-                        show_markdown = member_markdown.get(member_response.team_id, False)
+                    if isinstance(member_response, RunOutput) and member_response.id is not None:
+                        show_markdown = member_markdown.get(member_response.id, False)
+                    elif isinstance(member_response, TeamRunOutput) and member_response.id is not None:
+                        show_markdown = member_markdown.get(member_response.id, False)
 
                     member_response_content = self._parse_response_content(
                         member_response,
@@ -3914,10 +3939,10 @@ class Team:
                     )
 
                     member_name = "Team Member"
-                    if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
-                        member_name = self._get_member_name(member_response.agent_id)
-                    elif isinstance(member_response, TeamRunOutput) and member_response.team_id is not None:
-                        member_name = self._get_member_name(member_response.team_id)
+                    if isinstance(member_response, RunOutput) and member_response.id is not None:
+                        member_name = self._get_member_name(member_response.id)
+                    elif isinstance(member_response, TeamRunOutput) and member_response.id is not None:
+                        member_name = self._get_member_name(member_response.id)
 
                     member_response_panel = create_panel(
                         content=member_response_content,
@@ -4752,6 +4777,7 @@ class Team:
         audio: Optional[Sequence[Audio]] = None,
         files: Optional[Sequence[File]] = None,
         workflow_context: Optional[Dict] = None,
+        store_member_responses: bool = False,
     ) -> None:
         # Prepare tools
         _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
@@ -4793,6 +4819,9 @@ class Team:
                         self.search_knowledge_base_function(knowledge_filters=knowledge_filters, async_mode=async_mode)
                     )
 
+        if self.knowledge is not None and self.update_knowledge:
+            _tools.append(self.add_to_knowledge)
+
         if self.mode == "route":
             user_message = self._get_user_message(
                 message, audio=audio, images=images, videos=videos, files=files, user_id=user_id
@@ -4810,6 +4839,7 @@ class Team:
                 files=files,  # type: ignore
                 knowledge_filters=knowledge_filters,
                 workflow_context=workflow_context,
+                store_member_responses=store_member_responses,
             )
             _tools.append(forward_task_func)
             if self.get_member_information_tool:
@@ -4829,6 +4859,7 @@ class Team:
                     files=files,  # type: ignore
                     knowledge_filters=knowledge_filters,
                     workflow_context=workflow_context,
+                    store_member_responses=store_member_responses,
                 )
             )
             if self.get_member_information_tool:
@@ -4846,6 +4877,7 @@ class Team:
                 audio=audio,  # type: ignore
                 files=files,  # type: ignore
                 workflow_context=workflow_context,
+                store_member_responses=store_member_responses,
             )
             _tools.append(run_member_agents_func)
 
@@ -5190,6 +5222,9 @@ class Team:
 
         if self.description is not None:
             system_message_content += f"<description>\n{self.description}\n</description>\n\n"
+
+        if self.role is not None:
+            system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
 
         # 3.3.5 Then add instructions for the Agent
         if len(instructions) > 0:
@@ -5874,6 +5909,7 @@ class Team:
         audio: Optional[List[Audio]] = None,
         files: Optional[List[File]] = None,
         workflow_context: Optional[Dict] = None,
+        store_member_responses: bool = False,
     ) -> Function:
         if not images:
             images = []
@@ -5989,6 +6025,10 @@ class Team:
 
                 # Add the member run to the team run response
                 self.run_response = cast(TeamRunOutput, self.run_response)
+
+                if store_member_responses and self.run_response:
+                    self.run_response.add_member_run(member_agent.run_response)  # type: ignore
+
                 # Add the member run to the team session
                 self.team_session.add_run(member_agent.run_response)
 
@@ -6073,6 +6113,10 @@ class Team:
 
                     # Add the member run to the team run response
                     self.run_response = cast(TeamRunOutput, self.run_response)
+
+                    if store_member_responses and self.run_response:
+                        self.run_response.add_member_run(agent.run_response)
+
                     # Add the member run to the team session
                     self.team_session.add_run(agent.run_response)
 
@@ -6157,6 +6201,7 @@ class Team:
         files: Optional[List[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         workflow_context: Optional[Dict] = None,
+        store_member_responses: bool = False,
     ) -> Function:
         if not images:
             images = []
@@ -6302,6 +6347,10 @@ class Team:
 
             # Add the member run to the team run response
             self.run_response = cast(TeamRunOutput, self.run_response)
+
+            if store_member_responses and self.run_response:
+                self.run_response.add_member_run(member_agent.run_response)
+
             # Add the member run to the team session
             self.team_session.add_run(member_agent.run_response)
 
@@ -6442,6 +6491,10 @@ class Team:
 
             # Add the member run to the team run response
             self.run_response = cast(TeamRunOutput, self.run_response)
+
+            if store_member_responses and self.run_response:
+                self.run_response.add_member_run(member_agent.run_response)
+
             # Add the member run to the team session
             self.team_session.add_run(member_agent.run_response)
 
@@ -6546,6 +6599,7 @@ class Team:
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         workflow_context: Optional[Dict] = None,
+        store_member_responses: bool = False,
     ) -> Function:
         if not images:
             images = []
@@ -6689,6 +6743,10 @@ class Team:
 
             # Add the member run to the team run response
             self.run_response = cast(TeamRunOutput, self.run_response)
+
+            if store_member_responses and self.run_response:
+                self.run_response.add_member_run(member_agent.run_response)
+
             # Add the member run to the team session
             self.team_session.add_run(member_agent.run_response)
 
@@ -6826,6 +6884,10 @@ class Team:
 
             # Add the member run to the team run response
             self.run_response = cast(TeamRunOutput, self.run_response)
+
+            if store_member_responses and self.run_response:
+                self.run_response.add_member_run(member_agent.run_response)
+
             # Add the member run to the team session
             self.team_session.add_run(member_agent.run_response)
 
@@ -7433,6 +7495,24 @@ class Team:
     ###########################################################################
     # Knowledge
     ###########################################################################
+
+    def add_to_knowledge(self, query: str, result: str) -> str:
+        """Use this function to add information to the knowledge base for future use.
+
+        Args:
+            query: The query to add.
+            result: The result of the query.
+
+        Returns:
+            str: A string indicating the status of the addition.
+        """
+        document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
+        document_content = json.dumps({"query": query, "result": result})
+        log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
+        from agno.knowledge.reader.text_reader import TextReader
+
+        asyncio.run(self.knowledge.add_content(name=document_name, text_content=document_content, reader=TextReader()))
+        return "Successfully added to knowledge base"
 
     def get_relevant_docs_from_knowledge(
         self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs

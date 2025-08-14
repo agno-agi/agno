@@ -46,68 +46,14 @@ class Knowledge:
         self.construct_readers()
         self.valid_metadata_filters = set()
 
-    def _is_text_mime_type(self, mime_type: str) -> bool:
-        """
-        Check if a MIME type represents text content that can be safely encoded as UTF-8.
-
-        Args:
-            mime_type: The MIME type to check
-
-        Returns:
-            bool: True if it's a text type, False if binary
-        """
-        if not mime_type:
-            return False
-
-        text_types = [
-            "text/",
-            "application/json",
-            "application/xml",
-            "application/javascript",
-            "application/csv",
-            "application/sql",
-        ]
-
-        return any(mime_type.startswith(t) for t in text_types)
-
-    def _should_include_file(self, file_path: str, include: Optional[List[str]], exclude: Optional[List[str]]) -> bool:
-        """
-        Determine if a file should be included based on include/exclude patterns.
-
-        Logic:
-        1. If include is specified, file must match at least one include pattern
-        2. If exclude is specified, file must not match any exclude pattern
-        3. If neither specified, include all files
-
-        Args:
-            file_path: Path to the file to check
-            include: Optional list of include patterns (glob-style)
-            exclude: Optional list of exclude patterns (glob-style)
-
-        Returns:
-            bool: True if file should be included, False otherwise
-        """
-        import fnmatch
-
-        # If include patterns specified, file must match at least one
-        if include:
-            if not any(fnmatch.fnmatch(file_path, pattern) for pattern in include):
-                return False
-
-        # If exclude patterns specified, file must not match any
-        if exclude:
-            if any(fnmatch.fnmatch(file_path, pattern) for pattern in exclude):
-                return False
-
-        return True
-
     # --- SDK Specific Methods ---
 
+    # --- Add Contents ---
     @overload
-    def add_contents(self, contents: List[ContentDict]) -> None: ...
+    async def add_contents(self, contents: List[ContentDict]) -> None: ...
 
     @overload
-    def add_contents(
+    async def add_contents(
         self,
         *,
         paths: Optional[List[str]] = None,
@@ -120,11 +66,11 @@ class Knowledge:
         remote_content: Optional[RemoteContent] = None,
     ) -> None: ...
 
-    def add_contents(self, *args, **kwargs) -> None:
+    async def add_contents(self, *args, **kwargs) -> None:
         if args and isinstance(args[0], list):
             arguments = args[0]
             for argument in arguments:
-                self.add_content(
+                await self.add_content(
                     name=argument.get("name"),
                     description=argument.get("description"),
                     path=argument.get("path"),
@@ -153,7 +99,7 @@ class Knowledge:
             remote_content = kwargs.get("remote_content", None)
 
             for path in paths:
-                self.add_content(
+                await self.add_content(
                     name=name,
                     description=description,
                     path=path,
@@ -164,7 +110,7 @@ class Knowledge:
                     skip_if_exists=skip_if_exists,
                 )
             for url in urls:
-                self.add_content(
+                await self.add_content(
                     name=name,
                     description=description,
                     url=url,
@@ -175,7 +121,7 @@ class Knowledge:
                     skip_if_exists=skip_if_exists,
                 )
             if topics:
-                self.add_content(
+                await self.add_content(
                     name=name,
                     description=description,
                     topics=topics,
@@ -187,7 +133,7 @@ class Knowledge:
                 )
 
             if remote_content:
-                self.add_content(
+                await self.add_content(
                     name=name,
                     metadata=metadata,
                     description=description,
@@ -200,10 +146,10 @@ class Knowledge:
             raise ValueError("Invalid usage of add_contents.")
 
     @overload
-    async def async_add_contents(self, contents: List[ContentDict]) -> None: ...
+    def add_contents_sync(self, contents: List[ContentDict]) -> None: ...
 
     @overload
-    async def async_add_contents(
+    def add_contents_sync(
         self,
         *,
         paths: Optional[List[str]] = None,
@@ -215,12 +161,11 @@ class Knowledge:
         skip_if_exists: bool = False,
     ) -> None: ...
 
-    async def async_add_contents(self, *args, **kwargs) -> None:
+    def add_contents_sync(self, *args, **kwargs) -> None:
         """
-        Asynchronously add multiple content items to the knowledge base.
+        Synchronously add multiple content items to the knowledge base.
 
-        This method wraps the synchronous add_contents method and runs it in a thread pool
-        to avoid blocking the event loop.
+        This method wraps the asynchronous add_contents method
 
         Supports two usage patterns:
         1. Pass a list of content dictionaries as first argument
@@ -236,9 +181,27 @@ class Knowledge:
             upsert: Whether to update existing content if it already exists
             skip_if_exists: Whether to skip adding content if it already exists
         """
-        await asyncio.to_thread(self.add_contents, *args, **kwargs)
+        asyncio.run(self.add_contents, *args, **kwargs)
 
-    def add_content(
+    # --- Add Content ---
+
+    @overload
+    async def add_content(
+        self,
+        *,
+        paths: Optional[List[str]] = None,
+        urls: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, str]] = None,
+        include: Optional[List[str]] = None,
+        exclude: Optional[List[str]] = None,
+        upsert: bool = False,
+        skip_if_exists: bool = False,
+    ) -> None: ...
+
+    @overload
+    async def add_content(self, *args, **kwargs) -> None: ...
+
+    async def add_content(
         self,
         name: Optional[str] = None,
         description: Optional[str] = None,
@@ -281,9 +244,25 @@ class Knowledge:
             reader=reader,
         )
 
-        self._load_content(content, upsert, skip_if_exists, include, exclude)
+        await self._load_content(content, upsert, skip_if_exists, include, exclude)
 
-    async def async_add_content(
+    @overload
+    def add_content_sync(
+        self,
+        *,
+        paths: Optional[List[str]] = None,
+        urls: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, str]] = None,
+        include: Optional[List[str]] = None,
+        exclude: Optional[List[str]] = None,
+        upsert: bool = False,
+        skip_if_exists: bool = False,
+    ) -> None: ...
+
+    @overload
+    def add_content_sync(self, *args, **kwargs) -> None: ...
+
+    def add_content_sync(
         self,
         name: Optional[str] = None,
         description: Optional[str] = None,
@@ -300,10 +279,7 @@ class Knowledge:
         skip_if_exists: bool = True,
     ) -> None:
         """
-        Asynchronously add content to the knowledge base.
-
-        This method wraps the synchronous add_content method and runs it in a thread pool
-        to avoid blocking the event loop.
+        Synchronously add content to the knowledge base.
 
         Args:
             name: Optional name for the content
@@ -320,24 +296,25 @@ class Knowledge:
             upsert: Whether to update existing content if it already exists
             skip_if_exists: Whether to skip adding content if it already exists
         """
-        await asyncio.to_thread(
-            self.add_content,
-            name=name,
-            description=description,
-            path=path,
-            url=url,
-            text_content=text_content,
-            metadata=metadata,
-            topics=topics,
-            remote_content=remote_content,
-            reader=reader,
-            include=include,
-            exclude=exclude,
-            upsert=upsert,
-            skip_if_exists=skip_if_exists,
+        asyncio.run(
+            self.add_content(
+                name=name,
+                description=description,
+                path=path,
+                url=url,
+                text_content=text_content,
+                metadata=metadata,
+                topics=topics,
+                remote_content=remote_content,
+                reader=reader,
+                include=include,
+                exclude=exclude,
+                upsert=upsert,
+                skip_if_exists=skip_if_exists,
+            )
         )
 
-    def _load_from_path(
+    async def _load_from_path(
         self,
         content: Content,
         upsert: bool,
@@ -384,33 +361,10 @@ class Knowledge:
                         log_warning(f"Could not get file size for {path}: {e}")
                         content.size = 0
 
-                completed = True
-
                 for read_document in read_documents:
                     read_document.content_id = content.id
 
-                if upsert:
-                    try:
-                        self.vector_db.upsert(content.content_hash, read_documents, content.metadata)
-                    except Exception as e:
-                        log_error(f"Error upserting document: {e}")
-                        content.status = ContentStatus.FAILED
-                        content.status_message = "Could not upsert embedding"
-                        completed = False
-                        self._update_content(content)
-                else:
-                    try:
-                        self.vector_db.insert(content.content_hash, documents=read_documents, filters=content.metadata)
-                    except Exception as e:
-                        log_error(f"Error inserting document: {e}")
-                        content.status = ContentStatus.FAILED
-                        content.status_message = "Could not insert embedding"
-                        completed = False
-                        self._update_content(content)
-
-                if completed:
-                    content.status = ContentStatus.COMPLETED
-                    self._update_content(content)
+                await self._handle_vector_db_insert(content, read_documents, upsert)
 
         elif path.is_dir():
             for file_path in path.iterdir():
@@ -428,11 +382,11 @@ class Knowledge:
                     description=content.description,
                     reader=content.reader,
                 )
-                self._load_from_path(file_content, upsert, skip_if_exists, include, exclude)
+                await self._load_from_path(file_content, upsert, skip_if_exists, include, exclude)
         else:
             log_warning(f"Invalid path: {path}")
 
-    def _load_from_url(
+    async def _load_from_url(
         self,
         content: Content,
         upsert: bool,
@@ -513,28 +467,9 @@ class Knowledge:
                     file_size += read_document.size
                 read_document.content_id = content.id
 
-        if self.vector_db.upsert_available() and upsert:
-            try:
-                self.vector_db.upsert(content.content_hash, documents=read_documents, filters=content.metadata)
-            except Exception as e:
-                log_error(f"Error upserting document: {e}")
-                content.status = ContentStatus.FAILED
-                content.status_message = "Could not upsert embedding"
-                self._update_content(content)
-        else:
-            try:
-                self.vector_db.insert(content.content_hash, documents=read_documents, filters=content.metadata)
-            except Exception as e:
-                log_error(f"Error inserting document: {e}")
-                content.status = ContentStatus.FAILED
-                content.status_message = "Could not insert embedding"
-                self._update_content(content)
+        await self._handle_vector_db_insert(content, read_documents, upsert)
 
-        content.size = file_size
-        content.status = ContentStatus.COMPLETED
-        self._update_content(content)
-
-    def _load_from_content(
+    async def _load_from_content(
         self,
         content: Content,
         upsert: bool = True,
@@ -562,7 +497,6 @@ class Knowledge:
             return
         self._add_to_contents_db(content)
 
-        completed = True
         read_documents = []
 
         if isinstance(content.file_data, str):
@@ -582,7 +516,6 @@ class Knowledge:
                 else:
                     content.status = ContentStatus.FAILED
                     content.status_message = "Text reader not available"
-                    completed = False
                     self._update_content(content)
                     return
 
@@ -615,7 +548,6 @@ class Knowledge:
                 if len(read_documents) == 0:
                     content.status = ContentStatus.FAILED
                     content.status_message = "Content could not be read"
-                    completed = False
                     self._update_content(content)
 
         else:
@@ -624,31 +556,9 @@ class Knowledge:
             self._update_content(content)
             return
 
-        # Add to vector store - pass as a list
-        if self.vector_db and self.vector_db.upsert_available() and upsert:
-            try:
-                self.vector_db.upsert(content.content_hash, documents=read_documents, filters=content.metadata)
-            except Exception as e:
-                log_error(f"Error upserting document: {e}")
-                content.status = ContentStatus.FAILED
-                content.status_message = "Could not upsert embedding"
-                completed = False
-                self._update_content(content)
-        else:
-            try:
-                self.vector_db.insert(content.content_hash, documents=read_documents, filters=content.metadata)
-            except Exception as e:
-                log_error(f"Error inserting document: {e}")
-                content.status = ContentStatus.FAILED
-                content.status_message = "Could not insert embedding"
-                completed = False
-                self._update_content(content)
+        await self._handle_vector_db_insert(content, read_documents, upsert)
 
-        if completed:
-            content.status = ContentStatus.COMPLETED
-            self._update_content(content)
-
-    def _load_from_topics(
+    async def _load_from_topics(
         self,
         content: Content,
         upsert: bool,
@@ -691,14 +601,9 @@ class Knowledge:
                 content.status_message = "No content found for topic"
                 self._update_content(content)
 
-            if self.vector_db.upsert_available() and upsert:
-                self.vector_db.upsert(content.content_hash, documents=read_documents, filters=content.metadata)
-            else:
-                self.vector_db.insert(content.content_hash, documents=read_documents, filters=content.metadata)
-            content.status = ContentStatus.COMPLETED
-            self._update_content(content)
+            await self._handle_vector_db_insert(content, read_documents, upsert)
 
-    def _load_from_remote_content(
+    async def _load_from_remote_content(
         self,
         content: Content,
         upsert: bool,
@@ -711,15 +616,15 @@ class Knowledge:
         remote_content = content.remote_content
 
         if isinstance(remote_content, S3Content):
-            self._load_from_s3(content, upsert, skip_if_exists)
+            await self._load_from_s3(content, upsert, skip_if_exists)
 
         elif isinstance(remote_content, GCSContent):
-            self._load_from_gcs(content, upsert, skip_if_exists)
+            await self._load_from_gcs(content, upsert, skip_if_exists)
 
         else:
             log_warning(f"Unsupported remote content type: {type(remote_content)}")
 
-    def _load_from_s3(self, content: Content, upsert: bool, skip_if_exists: bool):
+    async def _load_from_s3(self, content: Content, upsert: bool, skip_if_exists: bool):
         from agno.aws.resource.s3.object import S3Object  # type: ignore
 
         if content.reader is None:
@@ -769,31 +674,9 @@ class Knowledge:
             for read_document in read_documents:
                 read_document.content_id = content.id
 
-            completed = True
-            if upsert:
-                try:
-                    self.vector_db.upsert(content_hash, read_documents, content.metadata)
-                except Exception as e:
-                    log_error(f"Error upserting document: {e}")
-                    content_entry.status = ContentStatus.FAILED
-                    content_entry.status_message = "Could not upsert embedding"
-                    completed = False
-                    self._update_content(content_entry)
-            else:
-                try:
-                    self.vector_db.insert(content_hash, documents=read_documents, filters=content.metadata)
-                except Exception as e:
-                    log_error(f"Error inserting document: {e}")
-                    content_entry.status = ContentStatus.FAILED
-                    content_entry.status_message = "Could not insert embedding"
-                    completed = False
-                    self._update_content(content_entry)
+            await self._handle_vector_db_insert(content_entry, read_documents, upsert)
 
-            if completed:
-                content_entry.status = ContentStatus.COMPLETED
-                self._update_content(content_entry)
-
-    def _load_from_gcs(self, content: Content, upsert: bool, skip_if_exists: bool):
+    async def _load_from_gcs(self, content: Content, upsert: bool, skip_if_exists: bool):
         if content.reader is None:
             reader = self.gcs_reader
         else:
@@ -836,32 +719,34 @@ class Knowledge:
             for read_document in read_documents:
                 read_document.content_id = content.id
 
-            completed = True
+            await self._handle_vector_db_insert(content_entry, read_documents, upsert)
 
-            if upsert:
-                try:
-                    self.vector_db.upsert(content_hash, read_documents, content.metadata)
-                except Exception as e:
-                    log_error(f"Error upserting document: {e}")
-                    content_entry.status = ContentStatus.FAILED
-                    content_entry.status_message = "Could not upsert embedding"
-                    completed = False
-                    self._update_content(content_entry)
-            else:
-                try:
-                    self.vector_db.insert(content_hash, documents=read_documents, filters=content.metadata)
-                except Exception as e:
-                    log_error(f"Error inserting document: {e}")
-                    content_entry.status = ContentStatus.FAILED
-                    content_entry.status_message = "Could not insert embedding"
-                    completed = False
-                    self._update_content(content_entry)
+    async def _handle_vector_db_insert(self, content, read_documents, upsert):
+        if self.vector_db.upsert_available() and upsert:
+            try:
+                await self.vector_db.async_upsert(content.content_hash, read_documents, content.metadata)
+            except Exception as e:
+                log_error(f"Error upserting document: {e}")
+                content.status = ContentStatus.FAILED
+                content.status_message = "Could not upsert embedding"
+                self._update_content(content)
+                return
+        else:
+            try:
+                await self.vector_db.async_insert(
+                    content.content_hash, documents=read_documents, filters=content.metadata
+                )
+            except Exception as e:
+                log_error(f"Error inserting document: {e}")
+                content.status = ContentStatus.FAILED
+                content.status_message = "Could not insert embedding"
+                self._update_content(content)
+                return
 
-            if completed:
-                content_entry.status = ContentStatus.COMPLETED
-                self._update_content(content_entry)
+        content.status = ContentStatus.COMPLETED
+        self._update_content(content)
 
-    def _load_content(
+    async def _load_content(
         self,
         content: Content,
         upsert: bool,
@@ -875,19 +760,19 @@ class Knowledge:
             self.add_filters(content.metadata)
 
         if content.path:
-            self._load_from_path(content, upsert, skip_if_exists, include, exclude)
+            await self._load_from_path(content, upsert, skip_if_exists, include, exclude)
 
         if content.url:
-            self._load_from_url(content, upsert, skip_if_exists)
+            await self._load_from_url(content, upsert, skip_if_exists)
 
         if content.file_data or content.upload_file:
-            self._load_from_content(content, upsert, skip_if_exists)
+            await self._load_from_content(content, upsert, skip_if_exists)
 
         if content.topics:
-            self._load_from_topics(content, upsert, skip_if_exists)
+            await self._load_from_topics(content, upsert, skip_if_exists)
 
         if content.remote_content:
-            self._load_from_remote_content(content, upsert, skip_if_exists)
+            await self._load_from_remote_content(content, upsert, skip_if_exists)
 
     def _build_content_hash(self, content: Content) -> str:
         """
@@ -1177,31 +1062,22 @@ class Knowledge:
     def remove_vector_by_id(self, id: str) -> bool:
         if self.vector_db is None:
             log_warning("No vector DB provided")
-            return
+            return False
         return self.vector_db.delete_by_id(id)
 
     def remove_vectors_by_name(self, name: str) -> bool:
         if self.vector_db is None:
             log_warning("No vector DB provided")
-            return
+            return False
         return self.vector_db.delete_by_name(name)
 
     def remove_vectors_by_metadata(self, metadata: Dict[str, Any]) -> bool:
         if self.vector_db is None:
             log_warning("No vector DB provided")
-            return
+            return False
         return self.vector_db.delete_by_metadata(metadata)
 
     # --- API Only Methods ---
-
-    def process_content(
-        self,
-        content: Content,
-    ) -> None:
-        # Validation:At least one of the parameters must be provided
-        if not content.id:
-            content.id = str(uuid4())
-        self._load_content(content, upsert=False, skip_if_exists=True)
 
     def patch_content(self, content: Content) -> Optional[Dict[str, Any]]:
         return self._update_content(content)
@@ -1353,6 +1229,61 @@ class Knowledge:
         ]
 
     # --- Convenience Properties for Backward Compatibility ---
+
+    def _is_text_mime_type(self, mime_type: str) -> bool:
+        """
+        Check if a MIME type represents text content that can be safely encoded as UTF-8.
+
+        Args:
+            mime_type: The MIME type to check
+
+        Returns:
+            bool: True if it's a text type, False if binary
+        """
+        if not mime_type:
+            return False
+
+        text_types = [
+            "text/",
+            "application/json",
+            "application/xml",
+            "application/javascript",
+            "application/csv",
+            "application/sql",
+        ]
+
+        return any(mime_type.startswith(t) for t in text_types)
+
+    def _should_include_file(self, file_path: str, include: Optional[List[str]], exclude: Optional[List[str]]) -> bool:
+        """
+        Determine if a file should be included based on include/exclude patterns.
+
+        Logic:
+        1. If include is specified, file must match at least one include pattern
+        2. If exclude is specified, file must not match any exclude pattern
+        3. If neither specified, include all files
+
+        Args:
+            file_path: Path to the file to check
+            include: Optional list of include patterns (glob-style)
+            exclude: Optional list of exclude patterns (glob-style)
+
+        Returns:
+            bool: True if file should be included, False otherwise
+        """
+        import fnmatch
+
+        # If include patterns specified, file must match at least one
+        if include:
+            if not any(fnmatch.fnmatch(file_path, pattern) for pattern in include):
+                return False
+
+        # If exclude patterns specified, file must not match any
+        if exclude:
+            if any(fnmatch.fnmatch(file_path, pattern) for pattern in exclude):
+                return False
+
+        return True
 
     def _get_reader(self, reader_type: str) -> Optional[Reader]:
         """Get a cached reader or create it if not cached, handling missing dependencies gracefully."""

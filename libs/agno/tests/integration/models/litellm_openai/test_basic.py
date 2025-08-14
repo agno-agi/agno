@@ -92,7 +92,7 @@ def test_with_memory():
     agent = Agent(
         model=LiteLLMOpenAI(id="gpt-4o"),
         add_history_to_context=True,
-        num_history_responses=5,
+        num_history_runs=5,
         markdown=True,
         telemetry=False,
     )

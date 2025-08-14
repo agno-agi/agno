@@ -148,7 +148,7 @@ def test_json_response_mode():
 def test_history():
     agent = Agent(
         model=WatsonX(id="meta-llama/llama-3-3-70b-instruct"),
-        db=SqliteDb(db_file="tmp/ibm_watsonx_agent_storage.db"),
+        db=SqliteDb(db_file="tmp/ibm_watsonx_agent_db.db"),
         add_history_to_context=True,
         telemetry=False,
     )

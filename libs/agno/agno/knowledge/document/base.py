@@ -29,6 +29,13 @@ class Document:
 
         self.embedding, self.usage = _embedder.get_embedding_and_usage(self.content)
 
+    async def async_embed(self, embedder: Optional[Embedder] = None) -> None:
+        """Embed the document using the provided embedder"""
+        _embedder = embedder or self.embedder
+        if _embedder is None:
+            raise ValueError("No embedder provided")
+        self.embedding, self.usage = await _embedder.async_get_embedding_and_usage(self.content)
+
     def to_dict(self) -> Dict[str, Any]:
         """Returns a dictionary representation of the document"""
         fields = {"name", "meta_data", "content"}

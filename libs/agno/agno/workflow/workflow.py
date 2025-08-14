@@ -72,7 +72,6 @@ from agno.workflow.types import (
     WorkflowMetrics,
 )
 
-# TODO: This is used to infer the Step type in the main to_dict() method. Instead, each step should have a type field
 STEP_TYPE_MAPPING = {
     Step: StepType.STEP,
     Steps: StepType.STEPS,
@@ -459,60 +458,32 @@ class Workflow:
     def _aggregate_workflow_metrics(self, step_results: List[Union[StepOutput, List[StepOutput]]]) -> WorkflowMetrics:
         """Aggregate metrics from all step responses into structured workflow metrics"""
         steps_dict = {}
-        total_steps = 0
 
         def process_step_output(step_output: StepOutput):
             """Process a single step output for metrics"""
-            nonlocal total_steps
-            total_steps += 1
 
-            # Add step-specific metrics
-            if step_output.step_name and step_output.metrics:
-                if step_output.parallel_step_outputs:
-                    # This is a parallel step - create nested step metrics for each sub-step
-                    parallel_step_metrics = {}
-                    for sub_step_name, sub_step_output in step_output.parallel_step_outputs.items():
-                        if sub_step_output.metrics:
-                            parallel_step_metrics[sub_step_name] = StepMetrics(
-                                step_name=sub_step_name,
-                                executor_type=sub_step_output.executor_type or "unknown",
-                                executor_name=sub_step_output.executor_name or "unknown",
-                                metrics=sub_step_output.metrics,
-                                parallel_steps=None,
-                            )
+            # If this step has nested steps, process them recursively
+            if hasattr(step_output, "steps") and step_output.steps:
+                for nested_step in step_output.steps:
+                    process_step_output(nested_step)
 
-                    # Create a StepMetrics for the parallel container
-                    step_metrics = StepMetrics(
-                        step_name=step_output.step_name,
-                        executor_type="parallel",
-                        executor_name=step_output.step_name or "Parallel",
-                        metrics=step_output.metrics,
-                        parallel_steps=parallel_step_metrics if parallel_step_metrics else None,
-                    )
-                else:
-                    # Regular step
-                    step_metrics = StepMetrics(
-                        step_name=step_output.step_name,
-                        executor_type=step_output.executor_type or "unknown",
-                        executor_name=step_output.executor_name or "unknown",
-                        metrics=step_output.metrics,
-                        parallel_steps=None,
-                    )
-
+            # Only collect metrics from steps that actually have metrics (actual agents/teams)
+            if (
+                step_output.step_name and step_output.metrics and step_output.executor_type in ["agent", "team"]
+            ):  # Only include actual executors
+                step_metrics = StepMetrics(
+                    step_name=step_output.step_name,
+                    executor_type=step_output.executor_type or "unknown",
+                    executor_name=step_output.executor_name or "unknown",
+                    metrics=step_output.metrics,
+                )
                 steps_dict[step_output.step_name] = step_metrics
 
         # Process all step results
         for step_result in step_results:
-            if isinstance(step_result, list):
-                # Handle List[StepOutput] from workflow components
-                for sub_step_output in step_result:
-                    process_step_output(sub_step_output)
-            else:
-                # Handle single StepOutput
-                process_step_output(step_result)
+            process_step_output(step_result)
 
         return WorkflowMetrics(
-            total_steps=total_steps,
             steps=steps_dict,
         )
 
@@ -612,37 +583,18 @@ class Workflow:
                     )  # type: ignore[union-attr]
 
                     # Update the workflow-level previous_step_outputs dictionary
-                    if isinstance(step_output, list):
-                        log_debug(f"Step returned {len(step_output)} outputs")
-                        # For multiple outputs (from Loop, Condition, etc.), store the last one
-                        if step_output:
-                            previous_step_outputs[step_name] = step_output[-1]
-                            if any(output.stop for output in step_output):
-                                logger.info(f"Early termination requested by step {step_name}")
-                                break
-                    else:
-                        # Single output
-                        previous_step_outputs[step_name] = step_output
-                        if step_output.stop:
-                            logger.info(f"Early termination requested by step {step_name}")
-                            break
+                    previous_step_outputs[step_name] = step_output
+                    if step_output.stop:
+                        logger.info(f"Early termination requested by step {step_name}")
+                        break
 
                     # Update shared media for next step
-                    if isinstance(step_output, list):
-                        for output in step_output:
-                            shared_images.extend(output.images or [])
-                            shared_videos.extend(output.videos or [])
-                            shared_audio.extend(output.audio or [])
-                            output_images.extend(output.images or [])
-                            output_videos.extend(output.videos or [])
-                            output_audio.extend(output.audio or [])
-                    else:
-                        shared_images.extend(step_output.images or [])
-                        shared_videos.extend(step_output.videos or [])
-                        shared_audio.extend(step_output.audio or [])
-                        output_images.extend(step_output.images or [])
-                        output_videos.extend(step_output.videos or [])
-                        output_audio.extend(step_output.audio or [])
+                    shared_images.extend(step_output.images or [])
+                    shared_videos.extend(step_output.videos or [])
+                    shared_audio.extend(step_output.audio or [])
+                    output_images.extend(step_output.images or [])
+                    output_videos.extend(step_output.videos or [])
+                    output_audio.extend(step_output.audio or [])
 
                     collected_step_outputs.append(step_output)
 
@@ -652,11 +604,17 @@ class Workflow:
                 if collected_step_outputs:
                     workflow_run_response.workflow_metrics = self._aggregate_workflow_metrics(collected_step_outputs)
                     last_output = collected_step_outputs[-1]
-                    if isinstance(last_output, list) and last_output:
-                        # If it's a list (from Condition/Loop/etc.), use the last one
-                        workflow_run_response.content = last_output[-1].content
-                    elif not isinstance(last_output, list):
-                        # Single StepOutput
+
+                    # Use deepest nested content if this is a container (Steps/Router/Loop/etc.)
+                    if getattr(last_output, "steps", None):
+                        _cur = last_output
+                        while getattr(_cur, "steps", None):
+                            _steps = _cur.steps or []
+                            if not _steps:
+                                break
+                            _cur = _steps[-1]
+                        workflow_run_response.content = _cur.content
+                    else:
                         workflow_run_response.content = last_output.content
                 else:
                     workflow_run_response.content = "No steps executed"
@@ -816,11 +774,17 @@ class Workflow:
                 if collected_step_outputs:
                     workflow_run_response.workflow_metrics = self._aggregate_workflow_metrics(collected_step_outputs)
                     last_output = collected_step_outputs[-1]
-                    if isinstance(last_output, list) and last_output:
-                        # If it's a list (from Condition/Loop/etc.), use the last one
-                        workflow_run_response.content = last_output[-1].content
-                    elif not isinstance(last_output, list):
-                        # Single StepOutput
+
+                    # Use deepest nested content if this is a container (Steps/Router/Loop/etc.)
+                    if getattr(last_output, "steps", None):
+                        _cur = last_output
+                        while getattr(_cur, "steps", None):
+                            _steps = _cur.steps or []
+                            if not _steps:
+                                break
+                            _cur = _steps[-1]
+                        workflow_run_response.content = _cur.content
+                    else:
                         workflow_run_response.content = last_output.content
                 else:
                     workflow_run_response.content = "No steps executed"
@@ -983,36 +947,18 @@ class Workflow:
                     )  # type: ignore[union-attr]
 
                     # Update the workflow-level previous_step_outputs dictionary
-                    if isinstance(step_output, list):
-                        # For multiple outputs (from Loop, Condition, etc.), store the last one
-                        if step_output:
-                            previous_step_outputs[step_name] = step_output[-1]
-                            if any(output.stop for output in step_output):
-                                logger.info(f"Early termination requested by step {step_name}")
-                                break
-                    else:
-                        # Single output
-                        previous_step_outputs[step_name] = step_output
-                        if step_output.stop:
-                            logger.info(f"Early termination requested by step {step_name}")
-                            break
+                    previous_step_outputs[step_name] = step_output
+                    if step_output.stop:
+                        logger.info(f"Early termination requested by step {step_name}")
+                        break
 
                     # Update shared media for next step
-                    if isinstance(step_output, list):
-                        for output in step_output:
-                            shared_images.extend(output.images or [])
-                            shared_videos.extend(output.videos or [])
-                            shared_audio.extend(output.audio or [])
-                            output_images.extend(output.images or [])
-                            output_videos.extend(output.videos or [])
-                            output_audio.extend(output.audio or [])
-                    else:
-                        shared_images.extend(step_output.images or [])
-                        shared_videos.extend(step_output.videos or [])
-                        shared_audio.extend(step_output.audio or [])
-                        output_images.extend(step_output.images or [])
-                        output_videos.extend(step_output.videos or [])
-                        output_audio.extend(step_output.audio or [])
+                    shared_images.extend(step_output.images or [])
+                    shared_videos.extend(step_output.videos or [])
+                    shared_audio.extend(step_output.audio or [])
+                    output_images.extend(step_output.images or [])
+                    output_videos.extend(step_output.videos or [])
+                    output_audio.extend(step_output.audio or [])
 
                     collected_step_outputs.append(step_output)
 
@@ -1022,11 +968,17 @@ class Workflow:
                 if collected_step_outputs:
                     workflow_run_response.workflow_metrics = self._aggregate_workflow_metrics(collected_step_outputs)
                     last_output = collected_step_outputs[-1]
-                    if isinstance(last_output, list) and last_output:
-                        # If it's a list (from Condition/Loop/etc.), use the last one
-                        workflow_run_response.content = last_output[-1].content
-                    elif not isinstance(last_output, list):
-                        # Single StepOutput
+
+                    # Use deepest nested content if this is a container (Steps/Router/Loop/etc.)
+                    if getattr(last_output, "steps", None):
+                        _cur = last_output
+                        while getattr(_cur, "steps", None):
+                            _steps = _cur.steps or []
+                            if not _steps:
+                                break
+                            _cur = _steps[-1]
+                        workflow_run_response.content = _cur.content
+                    else:
                         workflow_run_response.content = last_output.content
                 else:
                     workflow_run_response.content = "No steps executed"
@@ -1191,11 +1143,17 @@ class Workflow:
                 if collected_step_outputs:
                     workflow_run_response.workflow_metrics = self._aggregate_workflow_metrics(collected_step_outputs)
                     last_output = collected_step_outputs[-1]
-                    if isinstance(last_output, list) and last_output:
-                        # If it's a list (from Condition/Loop/etc.), use the last one
-                        workflow_run_response.content = last_output[-1].content
-                    elif not isinstance(last_output, list):
-                        # Single StepOutput
+
+                    # Use deepest nested content if this is a container (Steps/Router/Loop/etc.)
+                    if getattr(last_output, "steps", None):
+                        _cur = last_output
+                        while getattr(_cur, "steps", None):
+                            _steps = _cur.steps or []
+                            if not _steps:
+                                break
+                            _cur = _steps[-1]
+                        workflow_run_response.content = _cur.content
+                    else:
                         workflow_run_response.content = last_output.content
                 else:
                     workflow_run_response.content = "No steps executed"
@@ -1752,13 +1710,23 @@ class Workflow:
         if self.steps and not callable(self.steps):
             steps_dict = []
             for step in self.steps:  # type: ignore
-                # TODO: The step should have a type field
-                step_type = STEP_TYPE_MAPPING[type(step)]
-                step_dict = {
-                    "name": step.name if hasattr(step, "name") else step.__name__,
-                    "description": step.description if hasattr(step, "description") else "User-defined callable step",
-                    "type": step_type.value,
-                }
+                if not isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
+                    # This is a raw function, agent, team, or other callable - handle it directly
+                    step_dict = {
+                        "name": getattr(step, "name", getattr(step, "__name__", "anonymous_step")),
+                        "description": getattr(step, "description", "User-defined callable step"),
+                        "type": StepType.STEP.value,  # Treat all non-workflow objects as basic steps
+                    }
+                else:
+                    # This is a workflow step object - use the mapping
+                    step_type = STEP_TYPE_MAPPING[type(step)]
+                    step_dict = {
+                        "name": step.name if hasattr(step, "name") else step.__name__,
+                        "description": step.description
+                        if hasattr(step, "description")
+                        else "User-defined callable step",
+                        "type": step_type.value,
+                    }
                 steps_dict.append(step_dict)
 
             workflow_data["steps"] = steps_dict
@@ -1958,6 +1926,36 @@ class Workflow:
                 **kwargs,
             )
 
+    def _print_step_output_recursive(
+        self, step_output: StepOutput, step_number: int, markdown: bool, console, depth: int = 0
+    ) -> None:
+        """Recursively print step output and its nested steps"""
+        from rich.markdown import Markdown
+
+        from agno.utils.response import create_panel
+
+        # Print the current step
+        if step_output.content:
+            formatted_content = self._format_step_content_for_display(step_output)
+
+            # Create title with proper nesting indication
+            if depth == 0:
+                title = f"Step {step_number}: {step_output.step_name} (Completed)"
+            else:
+                title = f"{'  ' * depth}└─ {step_output.step_name} (Completed)"
+
+            step_panel = create_panel(
+                content=Markdown(formatted_content) if markdown else formatted_content,
+                title=title,
+                border_style="orange3",
+            )
+            console.print(step_panel)
+
+        # Print nested steps if they exist
+        if step_output.steps:
+            for j, nested_step in enumerate(step_output.steps):
+                self._print_step_output_recursive(nested_step, j + 1, markdown, console, depth + 1)
+
     def _print_response(
         self,
         message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
@@ -2050,28 +2048,7 @@ class Workflow:
 
                 if show_step_details and workflow_response.step_results:
                     for i, step_output in enumerate(workflow_response.step_results):
-                        # Handle both single StepOutput and List[StepOutput] (from loop/parallel steps)
-                        if isinstance(step_output, list):
-                            # This is a loop or parallel step with multiple outputs
-                            for j, sub_step_output in enumerate(step_output):
-                                if sub_step_output.content:
-                                    formatted_content = self._format_step_content_for_display(sub_step_output)
-                                    step_panel = create_panel(
-                                        content=Markdown(formatted_content) if markdown else formatted_content,
-                                        title=f"Step {i + 1}.{j + 1}: {sub_step_output.step_name} (Completed)",
-                                        border_style="orange3",
-                                    )
-                                    console.print(step_panel)  # type: ignore
-                        else:
-                            # This is a regular single step
-                            if step_output.content:
-                                formatted_content = self._format_step_content_for_display(step_output)
-                                step_panel = create_panel(
-                                    content=Markdown(formatted_content) if markdown else formatted_content,
-                                    title=f"Step {i + 1}: {step_output.step_name} (Completed)",
-                                    border_style="orange3",
-                                )
-                                console.print(step_panel)  # type: ignore
+                        self._print_step_output_recursive(step_output, i + 1, markdown, console)
 
                 # For callable functions, show the content directly since there are no step_results
                 elif show_step_details and callable(self.steps) and workflow_response.content:

@@ -1,3 +1,4 @@
+import asyncio
 from hashlib import md5
 from typing import Any, Dict, List, Optional
 
@@ -307,8 +308,10 @@ class Clickhouse(VectorDb):
         rows: List[List[Any]] = []
         async_client = await self._ensure_async_client()
 
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
+
         for document in documents:
-            document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             _id = md5(cleaned_content.encode()).hexdigest()
 

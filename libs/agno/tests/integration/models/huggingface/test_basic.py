@@ -149,7 +149,7 @@ def test_json_response_mode():
 def test_history():
     agent = Agent(
         model=HuggingFace(id="mistralai/Mistral-7B-Instruct-v0.2"),
-        db=SqliteDb(db_file="tmp/huggingface_agent_storage.db"),
+        db=SqliteDb(db_file="tmp/huggingface_agent_db.db"),
         add_history_to_context=True,
         telemetry=False,
     )

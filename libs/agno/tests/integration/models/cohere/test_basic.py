@@ -75,7 +75,7 @@ def test_with_memory():
     agent = Agent(
         model=Cohere(id="command-r-08-2024"),
         add_history_to_context=True,
-        num_history_responses=5,
+        num_history_runs=5,
         markdown=True,
         telemetry=False,
     )

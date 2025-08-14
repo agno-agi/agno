@@ -5,20 +5,20 @@ from agno.team.team import Team
 
 
 @pytest.fixture
-def route_team(team_storage, memory):
+def route_team(team_db, memory):
     """Create a route team with storage and memory for testing."""
     return Team(
         name="Route Team",
         mode="route",
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[],
-        storage=team_storage,
+        db=team_db,
         memory=memory,
         enable_user_memories=True,
     )
 
 
-def test_team_session_state(route_team, team_storage):
+def test_team_session_state(route_team, team_db):
     session_id = "session_1"
 
     route_team.session_id = session_id
@@ -32,7 +32,7 @@ def test_team_session_state(route_team, team_storage):
     assert route_team.session_name == "my_test_session"
     assert route_team.session_state == {"test_key": "test_value"}
     assert route_team.team_session_state == {"team_test_key": "team_test_value"}
-    session_from_storage = team_storage.read(session_id=session_id)
+    session_from_storage = team_db.read(session_id=session_id)
     assert session_from_storage is not None
     assert session_from_storage.session_id == session_id
     assert session_from_storage.session_data["session_name"] == "my_test_session"

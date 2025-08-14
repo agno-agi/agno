@@ -1,6 +1,7 @@
 import inspect
 from dataclasses import dataclass
 from typing import AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
+from uuid import uuid4
 
 from agno.run.response import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
@@ -12,7 +13,7 @@ from agno.run.workflow import (
 )
 from agno.utils.log import log_debug, logger
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import StepInput, StepOutput, StepType
 
 WorkflowSteps = List[
     Union[
@@ -151,9 +152,11 @@ class Condition:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_responses: bool = True,
-    ) -> List[StepOutput]:
+    ) -> StepOutput:
         """Execute the condition and its steps with sequential chaining if condition is true"""
         log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
+
+        conditional_step_id = str(uuid4())
 
         self._prepare_steps()
 
@@ -163,7 +166,13 @@ class Condition:
 
         if not condition_result:
             log_debug(f"Condition {self.name} not met, skipping {len(self.steps)} steps")
-            return []
+            return StepOutput(
+                step_name=self.name,
+                step_id=conditional_step_id,
+                step_type=StepType.CONDITION,
+                content=f"Condition {self.name} not met - skipped {len(self.steps)} steps",
+                success=True,
+            )
 
         log_debug(f"Condition {self.name} met, executing {len(self.steps)} steps")
         all_results: List[StepOutput] = []
@@ -221,7 +230,17 @@ class Condition:
                 break
 
         log_debug(f"Condition End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
-        return all_results
+
+        return StepOutput(
+            step_name=self.name,
+            step_id=conditional_step_id,
+            step_type=StepType.CONDITION,
+            content=f"Condition {self.name} completed with {len(all_results)} results",
+            success=all(result.success for result in all_results) if all_results else True,
+            error=None,
+            stop=False,
+            steps=all_results,
+        )
 
     def execute_stream(
         self,
@@ -232,9 +251,12 @@ class Condition:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_responses: bool = True,
+        parent_step_id: Optional[str] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the condition with streaming support - mirrors Loop logic"""
         log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
+
+        conditional_step_id = str(uuid4())
 
         self._prepare_steps()
 
@@ -252,6 +274,8 @@ class Condition:
                 step_name=self.name,
                 step_index=step_index,
                 condition_result=condition_result,
+                step_id=conditional_step_id,
+                parent_step_id=parent_step_id,
             )
 
         if not condition_result:
@@ -267,6 +291,8 @@ class Condition:
                     condition_result=False,
                     executed_steps=0,
                     step_results=[],
+                    step_id=conditional_step_id,
+                    parent_step_id=parent_step_id,
                 )
             return
 
@@ -296,6 +322,7 @@ class Condition:
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
                     store_executor_responses=store_executor_responses,
+                    parent_step_id=conditional_step_id,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)
@@ -355,10 +382,18 @@ class Condition:
                 condition_result=True,
                 executed_steps=len(self.steps),
                 step_results=all_results,
+                step_id=conditional_step_id,
+                parent_step_id=parent_step_id,
             )
 
-        for result in all_results:
-            yield result
+        yield StepOutput(
+            step_name=self.name,
+            step_id=conditional_step_id,
+            step_type=StepType.CONDITION,
+            content=f"Condition {self.name} completed with {len(all_results)} results",
+            success=all(result.success for result in all_results) if all_results else True,
+            steps=all_results,
+        )
 
     async def aexecute(
         self,
@@ -371,6 +406,8 @@ class Condition:
         """Async execute the condition and its steps with sequential chaining"""
         log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
 
+        conditional_step_id = str(uuid4())
+
         self._prepare_steps()
 
         # Evaluate the condition
@@ -379,7 +416,13 @@ class Condition:
 
         if not condition_result:
             log_debug(f"Condition {self.name} not met, skipping {len(self.steps)} steps")
-            return []
+            return StepOutput(
+                step_name=self.name,
+                step_id=str(uuid4()),
+                step_type=StepType.CONDITION,
+                content=f"Condition {self.name} not met - skipped {len(self.steps)} steps",
+                success=True,
+            )
 
         log_debug(f"Condition {self.name} met, executing {len(self.steps)} steps")
 
@@ -437,7 +480,16 @@ class Condition:
                 break
 
         log_debug(f"Condition End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
-        return all_results
+        return StepOutput(
+            step_name=self.name,
+            step_id=conditional_step_id,
+            step_type=StepType.CONDITION,
+            content=f"Condition {self.name} completed with {len(all_results)} results",
+            success=all(result.success for result in all_results) if all_results else True,
+            error=None,
+            stop=False,
+            steps=all_results,
+        )
 
     async def aexecute_stream(
         self,
@@ -448,9 +500,12 @@ class Condition:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_responses: bool = True,
+        parent_step_id: Optional[str] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Async execute the condition with streaming support - mirrors Loop logic"""
         log_debug(f"Condition Start: {self.name}", center=True, symbol="-")
+
+        conditional_step_id = str(uuid4())
 
         self._prepare_steps()
 
@@ -468,6 +523,8 @@ class Condition:
                 step_name=self.name,
                 step_index=step_index,
                 condition_result=condition_result,
+                step_id=conditional_step_id,
+                parent_step_id=parent_step_id,
             )
 
         if not condition_result:
@@ -483,6 +540,8 @@ class Condition:
                     condition_result=False,
                     executed_steps=0,
                     step_results=[],
+                    step_id=conditional_step_id,
+                    parent_step_id=parent_step_id,
                 )
             return
 
@@ -514,6 +573,7 @@ class Condition:
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
                     store_executor_responses=store_executor_responses,
+                    parent_step_id=conditional_step_id,
                 ):
                     if isinstance(event, StepOutput):
                         step_outputs_for_step.append(event)
@@ -574,7 +634,15 @@ class Condition:
                 condition_result=True,
                 executed_steps=len(self.steps),
                 step_results=all_results,
+                step_id=conditional_step_id,
+                parent_step_id=parent_step_id,
             )
 
-        for result in all_results:
-            yield result
+        yield StepOutput(
+            step_name=self.name,
+            step_id=conditional_step_id,
+            step_type=StepType.CONDITION,
+            content=f"Condition {self.name} completed with {len(all_results)} results",
+            success=all(result.success for result in all_results) if all_results else True,
+            steps=all_results,
+        )
