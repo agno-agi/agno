@@ -292,15 +292,9 @@ def test_intermediate_steps_with_user_confirmation(agent_db):
     assert len(events[RunEvent.tool_call_started]) == 1
     assert events[RunEvent.tool_call_started][0].tool.tool_name == "get_the_weather"  # type: ignore
     assert len(events[RunEvent.tool_call_completed]) == 1
-<<<<<<< HEAD
     assert events[RunEvent.tool_call_completed][0].content is not None
     assert events[RunEvent.tool_call_completed][0].tool.result is not None
     assert len(events[RunEvent.run_content]) > 1
-=======
-    assert events[RunEvent.tool_call_completed][0].content is not None  # type: ignore
-    assert events[RunEvent.tool_call_completed][0].tool.result is not None  # type: ignore
-    assert len(events[RunEvent.run_response_content]) > 1
->>>>>>> 7e718322026f5ba95c3d959c9c42abfe440776d6
     assert len(events[RunEvent.run_completed]) == 1
 
     assert agent.run_response is not None
@@ -383,17 +377,10 @@ def test_intermediate_steps_with_structured_output(agent_db):
     assert len(events[RunEvent.run_content]) == 1
     assert len(events[RunEvent.run_completed]) == 1
 
-<<<<<<< HEAD
     assert events[RunEvent.run_content][0].content is not None
     assert events[RunEvent.run_content][0].content_type == "Person"
     assert events[RunEvent.run_content][0].content.name == "Elon Musk"
     assert len(events[RunEvent.run_content][0].content.description) > 1
-=======
-    assert events[RunEvent.run_response_content][0].content is not None  # type: ignore
-    assert events[RunEvent.run_response_content][0].content_type == "Person"  # type: ignore
-    assert events[RunEvent.run_response_content][0].content.name == "Elon Musk"  # type: ignore
-    assert len(events[RunEvent.run_response_content][0].content.description) > 1  # type: ignore
->>>>>>> 7e718322026f5ba95c3d959c9c42abfe440776d6
 
     assert events[RunEvent.run_completed][0].content is not None  # type: ignore
     assert events[RunEvent.run_completed][0].content_type == "Person"  # type: ignore
@@ -446,17 +433,10 @@ def test_intermediate_steps_with_parser_model(agent_db):
     )  # The first model streams, then the parser model has a single content event
     assert len(events[RunEvent.run_completed]) == 1
 
-<<<<<<< HEAD
     assert events[RunEvent.run_content][-1].content is not None
     assert events[RunEvent.run_content][-1].content_type == "Person"
     assert events[RunEvent.run_content][-1].content.name == "Elon Musk"
     assert len(events[RunEvent.run_content][-1].content.description) > 1
-=======
-    assert events[RunEvent.run_response_content][-1].content is not None  # type: ignore
-    assert events[RunEvent.run_response_content][-1].content_type == "Person"  # type: ignore
-    assert events[RunEvent.run_response_content][-1].content.name == "Elon Musk"  # type: ignore
-    assert len(events[RunEvent.run_response_content][-1].content.description) > 1  # type: ignore
->>>>>>> 7e718322026f5ba95c3d959c9c42abfe440776d6
 
     assert events[RunEvent.run_completed][0].content is not None  # type: ignore
     assert events[RunEvent.run_completed][0].content_type == "Person"  # type: ignore

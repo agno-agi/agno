@@ -2565,9 +2565,9 @@ class Team:
 
                         show_markdown = False
                         if member_markdown:
-                            if isinstance(member_response, RunResponse) and member_response.id is not None:
+                            if isinstance(member_response, RunOutput) and member_response.id is not None:
                                 show_markdown = member_markdown.get(member_response.id, False)
-                            elif isinstance(member_response, TeamRunResponse) and member_response.id is not None:
+                            elif isinstance(member_response, TeamRunOutput) and member_response.id is not None:
                                 show_markdown = member_markdown.get(member_response.id, False)
 
                         member_response_content: Union[str, JSON, Markdown] = self._parse_response_content(
@@ -2583,7 +2583,7 @@ class Team:
                                 title=f"{self._get_member_name(member_response.id)} Response",
                                 border_style="magenta",
                             )
-                        elif isinstance(member_response, TeamRunResponse) and member_response.id is not None:
+                        elif isinstance(member_response, TeamRunOutput) and member_response.id is not None:
                             member_response_panel = create_panel(
                                 content=member_response_content,
                                 title=f"{self._get_member_name(member_response.id)} Response",
@@ -3447,7 +3447,7 @@ class Team:
                                     panels.append(member_tool_calls_panel)
                                     live_console.update(Group(*panels))
 
-                        show_markdown = False   
+                        show_markdown = False
                         if isinstance(member_response, RunOutput) and member_response.id is not None:
                             show_markdown = member_markdown.get(member_response.id, False)
                         elif isinstance(member_response, TeamRunOutput) and member_response.id is not None:

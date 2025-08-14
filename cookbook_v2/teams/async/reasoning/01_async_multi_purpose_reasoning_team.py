@@ -104,9 +104,7 @@ agno_assist = Agent(
     instructions="Search your knowledge before answering. Help write working Agno code.",
     tools=[
         KnowledgeTools(
-            knowledge=agno_assist_knowledge, 
-            add_instructions=True, 
-            add_few_shot=True
+            knowledge=agno_assist_knowledge, add_instructions=True, add_few_shot=True
         ),
     ],
     add_history_to_context=True,
@@ -152,14 +150,15 @@ agent_team = Team(
     share_member_interactions=True,
 )
 
+
 async def main():
     """Main async function to demonstrate different team capabilities."""
-    
+
     # Load the knowledge base (run once to populate)
     # await agno_assist_knowledge.aload()
 
     # Example interactions:
-    
+
     # 1. General capability query
     await agent_team.aprint_response("Hi! What are you capable of doing?")
 
@@ -172,8 +171,8 @@ async def main():
 
     # 3. Financial research
     # await agent_team.aprint_response(dedent("""
-    #     What should I be investing in right now? 
-    #     Research current market trends and write a detailed report 
+    #     What should I be investing in right now?
+    #     Research current market trends and write a detailed report
     #     suitable for a financial advisor.
     # """), stream=True)
 
@@ -185,6 +184,7 @@ async def main():
     #         f"Analyze this medical information and suggest a likely diagnosis:\n{loaded_txt}",
     #         stream=True,
     #     )
+
 
 if __name__ == "__main__":
     asyncio.run(main())

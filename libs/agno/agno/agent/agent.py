@@ -2407,7 +2407,7 @@ class Agent:
                     # Update RunOutput
                     if structured_output is not None:
                         run_response.content = structured_output
-                        if isinstance(run_response, RunResponse):
+                        if isinstance(run_response, RunOutput):
                             run_response.content_type = self.response_model.__name__
                     else:
                         log_warning("Failed to convert response to response_model")

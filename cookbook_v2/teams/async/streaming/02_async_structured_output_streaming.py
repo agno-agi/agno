@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 class StockAnalysis(BaseModel):
     """Stock analysis data structure."""
+
     symbol: str
     company_name: str
     analysis: str
@@ -25,12 +26,14 @@ class StockAnalysis(BaseModel):
 
 class CompanyAnalysis(BaseModel):
     """Company analysis data structure."""
+
     company_name: str
     analysis: str
 
 
 class StockReport(BaseModel):
     """Final stock report data structure."""
+
     symbol: str
     company_name: str
     analysis: str
@@ -76,14 +79,13 @@ team = Team(
     show_members_responses=True,
 )
 
+
 async def test_structured_streaming():
     """Test async structured output streaming."""
     await team.aprint_response(
-        "Give me a stock report for NVDA", 
-        stream=True, 
-        stream_intermediate_steps=True
+        "Give me a stock report for NVDA", stream=True, stream_intermediate_steps=True
     )
-    
+
     # Verify the response is properly structured
     assert isinstance(team.run_response.content, StockReport)
     print(f"\n✅ Response type verified: {type(team.run_response.content)}")
@@ -91,14 +93,16 @@ async def test_structured_streaming():
 
 async def test_structured_streaming_with_arun():
     """Test async structured output streaming using arun() method."""
-    await apprint_run_response(team.arun(
-        message="Give me a stock report for AAPL", 
-        stream=True,
-        stream_intermediate_steps=True
-    ))
-    
+    await apprint_run_response(
+        team.arun(
+            message="Give me a stock report for AAPL",
+            stream=True,
+            stream_intermediate_steps=True,
+        )
+    )
+
 
 if __name__ == "__main__":
     asyncio.run(test_structured_streaming())
-    
+
     asyncio.run(test_structured_streaming_with_arun())

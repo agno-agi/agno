@@ -164,6 +164,7 @@ class MemoryManager:
         if self.db:
             if memory.memory_id is None:
                 from uuid import uuid4
+
                 memory_id = memory.memory_id or str(uuid4())
                 memory.memory_id = memory_id
 

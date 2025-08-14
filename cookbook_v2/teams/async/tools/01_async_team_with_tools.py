@@ -1,7 +1,7 @@
 """
 This example demonstrates how to create an async team with various tools for information gathering.
 
-The team uses multiple agents with different tools (Wikipedia, DuckDuckGo, AgentQL) to 
+The team uses multiple agents with different tools (Wikipedia, DuckDuckGo, AgentQL) to
 gather comprehensive information about a company asynchronously.
 """
 

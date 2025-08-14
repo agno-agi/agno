@@ -802,11 +802,11 @@ class Step:
                 workflow_run_response.step_executor_runs.append(raw_response)
 
                 # Add direct member agent runs (in case of a team we force store_member_responses=True here)
-                if isinstance(raw_response, TeamRunResponse) and getattr(
+                if isinstance(raw_response, TeamRunOutput) and getattr(
                     self.active_executor, "store_member_responses", False
                 ):
                     for mr in raw_response.member_responses or []:
-                        if isinstance(mr, RunResponse):
+                        if isinstance(mr, RunOutput):
                             workflow_run_response.step_executor_runs.append(mr)
 
     def _get_deepest_content_from_step_output(self, step_output: "StepOutput") -> Optional[str]:
