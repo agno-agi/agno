@@ -59,5 +59,3 @@ async def test_async_image_input_stream():
         full_content += r.content or ""
 
     assert "bridge" in full_content.lower()
-
-

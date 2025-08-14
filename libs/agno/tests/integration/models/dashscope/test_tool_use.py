@@ -50,6 +50,7 @@ def test_tool_use_stream():
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
 
+
 @pytest.mark.asyncio
 async def test_async_tool_use():
     agent = Agent(
@@ -77,7 +78,9 @@ async def test_async_tool_use_stream():
         monitoring=False,
     )
 
-    response_stream = await agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
+    response_stream = await agent.arun(
+        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
+    )
 
     responses = []
     tool_call_seen = False
@@ -208,5 +211,3 @@ def test_tool_call_list_parameters():
         if call.get("type", "") == "function":
             assert call["function"]["name"] in ["get_contents", "exa_answer", "search_exa"]
     assert response.content is not None
-
-

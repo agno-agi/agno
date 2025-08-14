@@ -110,7 +110,9 @@ def test_response_model():
         monitoring=False,
     )
 
-    response = agent.run("Create a movie about time travel. Please return a JSON object with the title, genre, and plot.")
+    response = agent.run(
+        "Create a movie about time travel. Please return a JSON object with the title, genre, and plot."
+    )
 
     # Verify structured output
     assert isinstance(response.content, MovieScript)
@@ -158,5 +160,3 @@ def test_history():
     assert len(agent.run_response.messages) == 6
     agent.run("Hello 4")
     assert len(agent.run_response.messages) == 8
-
-
