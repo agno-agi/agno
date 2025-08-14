@@ -1,6 +1,4 @@
-from typing import Any, Dict, List, Optional, Tuple
-
-import pytest
+from typing import Any, Dict, List, Optional
 
 from agno.models.message import Message
 from agno.models.openai.responses import OpenAIResponses
