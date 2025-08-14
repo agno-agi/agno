@@ -2,11 +2,23 @@
 
 This guide walks you through all the changes needed to migrate your Agno applications from v1 to v2.
 
-Each section covers a specific framework domain, with before and after examples and detailed explanations where needed.
-
 If you have questions during your migration, we're here to help! Reach out to us on [Discord](https://discord.gg/4MtYHHrgA8) or [Discourse](https://community.agno.com/).
 
+# Migrating your Agno DB
+
+If you used our `Storage` or `Memory` functionalities to store Agent sessions and memories in your database, you can start by migrating your tables.
+
+- You can use our migration script: `agno/scripts/migrate_to_v2.py`
+- Follow the script instructions and run it.
+- Your v2-ready tables will be available afterwards.
+
+Notice:
+- The script won't cleanup the old tables, in case you still need them.
+- The script is idempotent. If something goes wrong or if you stop it mid-run, you can run it again.
+
 # Migrating your Agno code
+
+Each section covers a specific framework domain, with before and after examples and detailed explanations where needed.
 
 ## Agents and Teams
 
@@ -66,7 +78,9 @@ run_output: RunOutput = agent.run(...)
 
 ## Storage
 
-Storage is used to persist Agent sessions, state and memories in a database. This is how Storage looks like on V1:
+Storage is used to persist Agent sessions, state and memories in a database.
+
+This is how Storage looks like on v1:
 
 ```python v1_storage.py
 from agno.agent import Agent
@@ -77,11 +91,10 @@ storage = SqliteStorage(table_name="agent_sessions", db_file="agno.db", mode="ag
 agent = Agent(storage=storage)
 ```
 
-### Storage V2
+These are the changes we have made for v2:
 
-- All previously available databases are supported on v2.
-- The `Storage` classes have moved from `agno/storage` to `agno/db`. We will now refer to them as our `Db` classes.
-- The `mode` parameter has been deprecated. The same instance can now be used by Agents, Teams and Workflows.
+1. The `Storage` classes have moved from `agno/storage` to `agno/db`. We will now refer to them as our `Db` classes.
+2. The `mode` parameter has been deprecated. The same instance can now be used by Agents, Teams and Workflows.
 
 ```python v2_storage.py
 from agno.agent import Agent
@@ -92,12 +105,12 @@ db = SqliteDb(db_file="agno.db")
 agent = Agent(db=db)
 ```
 
-- The `table_name` parameter has been deprecated. One instance now handles multiple tables, you can define their names individually.
+3. The `table_name` parameter has been deprecated. One instance now handles multiple tables, you can define their names individually.
 ```python v2_storage_table_names.py
 db = SqliteDb(db_file="agno.db", sessions_table="your_sessions_table_name", ...)
 ```
 
-- These are all the supported tables, each used to persist data related to a specific domain:
+4. These are all the supported tables, each used to persist data related to a specific domain:
 ```python v2_storage_all_tables.py
 db = SqliteDb(
     db_file="agno.db",
@@ -114,7 +127,7 @@ db = SqliteDb(
 )
 ```
 
-- Previously running a `Team` would create a team session and sessions for every team member participating in the run. Now, only the `Team` session is created. The runs for the team leader and all members can be found in the `Team` session.
+5. Previously running a `Team` would create a team session and sessions for every team member participating in the run. Now, only the `Team` session is created. The runs for the team leader and all members can be found in the `Team` session.
 ```python v2_storage_team_sessions.py
 team.run(...)
 
@@ -128,7 +141,9 @@ You can find examples for all other databases and advanced scenarios in the `/co
 
 ## Memory
 
-Memory gives an Agent the ability to recall relevant information. This is how Memory looks like on V1:
+Memory gives an Agent the ability to recall relevant information.
+
+This is how Memory looks like on V1:
 
 ```python v1_memory.py
 from agno.agent import Agent
@@ -141,10 +156,10 @@ memory = Memory(db=memory_db)
 agent = Agent(memory=memory)
 ```
 
-### Memory V2
+These are the changes we have made for v2:
 
-- The `MemoryDb` classes have been deprecated. The main `Db` classes are to be used.
-- The `Memory` class has been deprecated. You now just need to set `enable_user_memories=True` on an Agent with a `db` for Memory to work.
+1. The `MemoryDb` classes have been deprecated. The main `Db` classes are to be used.
+2. The `Memory` class has been deprecated. You now just need to set `enable_user_memories=True` on an Agent with a `db` for Memory to work.
 
 ```python v2_memory.py
 from agno.agent import Agent
@@ -155,13 +170,13 @@ db = SqliteDb(db_file="agno.db")
 agent = Agent(db=db, enable_user_memories=True)
 ```
 
-- The generated memories will be stored in the `memories_table`. By default, the `agno_memories` will be used. It will be created if needed. You can also set the memory table like this:
+3. The generated memories will be stored in the `memories_table`. By default, the `agno_memories` will be used. It will be created if needed. You can also set the memory table like this:
 
 ```python v2_memory_set_table.py
 db = SqliteDb(db_file="agno.db", memory_table="your_memory_table_name")
 ```
 
-- The methods you previously had access to through the Memory class, are now direclty available on the relevant `db` object. For example:
+4. The methods you previously had access to through the Memory class, are now direclty available on the relevant `db` object. For example:
 ``` python v2_memory_db_methods.py
 agent.db.get_user_memories(user_id="123")
 ```
@@ -178,13 +193,16 @@ You can find examples for other all other databases and advanced scenarios in th
 
 Metrics are used to understand the usage and consumption related to a Session, a Run or a Message.
 
-- The `time` field has been renamed to `duration`.
-- Provider-specific metrics fields are now to be found inside the `provider_metrics` field.
-- A new `additional_metrics` field has been added for you to add any extra fields you need.
+These are the changes we have made for v2:
+
+1. The `time` field has been renamed to `duration`.
+2. Provider-specific metrics fields are now to be found inside the `provider_metrics` field.
+3. A new `additional_metrics` field has been added for you to add any extra fields you need.
 
 ## Workflows
 
 We have heavily updated our Workflows, aiming to provide top-of-the-line tooling to build agentic systems.
+
 You can check a comprehensive migration guide for Workflows here: https://docs.agno.com/workflows_2/migration
 
 
@@ -192,13 +210,3 @@ You can check a comprehensive migration guide for Workflows here: https://docs.a
 
 Our `Playground` has been deprecated. Our new platform offering will substitute all usage cases. More information coming soon!
 
-# Migrating your Agno DB
-
-If you used `Storage` or `Memory` to store Agent sessions and memories in you database, you must migrate your tables for them to be used in v2.
-
-- We have a migration script to make it easy: `agno/scripts/migrate_to_v2.py`
-- Follow the script instructions and run it. Your new v2-ready tables will be available afterwards.
-
-Notice:
-- The script won't cleanup the old tables, in case you still need them.
-- The script is idempotent. If something goes wrong or if you stop it mid-run, you can run it again.
