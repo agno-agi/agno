@@ -171,7 +171,8 @@ if __name__ == "__main__":
     )
 
     asyncio.run(
-        media_workflow.aprint_response(input="Create an image of magical forest for a movie scene",
+        media_workflow.aprint_response(
+            input="Create an image of magical forest for a movie scene",
             markdown=True,
         )
     )

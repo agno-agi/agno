@@ -129,7 +129,8 @@ if __name__ == "__main__":
         annual_spend=50_000_000,
         incumbent_suppliers=["CATL", "Panasonic", "LG Energy Solution"],
     )
-    procurement_workflow.print_response(input=analysis_details,
+    procurement_workflow.print_response(
+        input=analysis_details,
         stream=True,
         stream_intermediate_steps=True,
     )

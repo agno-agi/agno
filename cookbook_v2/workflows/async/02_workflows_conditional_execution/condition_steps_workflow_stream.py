@@ -106,7 +106,8 @@ if __name__ == "__main__":
 
     try:
         asyncio.run(
-            basic_workflow.aprint_response(input="Recent breakthroughs in quantum computing",
+            basic_workflow.aprint_response(
+                input="Recent breakthroughs in quantum computing",
                 stream=True,
                 stream_intermediate_steps=True,
             )

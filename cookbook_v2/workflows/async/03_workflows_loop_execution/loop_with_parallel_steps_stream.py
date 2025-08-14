@@ -115,7 +115,8 @@ workflow = Workflow(
 
 if __name__ == "__main__":
     asyncio.run(
-        workflow.aprint_response(input="Research the latest trends in AI and machine learning, then create a summary",
+        workflow.aprint_response(
+            input="Research the latest trends in AI and machine learning, then create a summary",
             stream=True,
             stream_intermediate_steps=True,
         )

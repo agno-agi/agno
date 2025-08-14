@@ -141,7 +141,8 @@ if __name__ == "__main__":
     )
 
     try:
-        workflow.print_response(input="Latest AI developments in machine learning",
+        workflow.print_response(
+            input="Latest AI developments in machine learning",
             stream=True,
             stream_intermediate_steps=True,
         )

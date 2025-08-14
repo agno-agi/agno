@@ -169,7 +169,8 @@ if __name__ == "__main__":
         resolution="1920x1080",
     )
 
-    media_workflow.print_response(input="Create an image of magical forest for a movie scene",
+    media_workflow.print_response(
+        input="Create an image of magical forest for a movie scene",
         markdown=True,
     )
 

@@ -123,24 +123,28 @@ shopping_workflow = Workflow(
 if __name__ == "__main__":
     # Example 1: Add items to the shopping list
     print("=== Example 1: Adding Items ===")
-    shopping_workflow.print_response(input="Please add milk, bread, and eggs to my shopping list."
+    shopping_workflow.print_response(
+        input="Please add milk, bread, and eggs to my shopping list."
     )
     print("Workflow session state:", shopping_workflow.workflow_session_state)
 
     # Example 2: Add more items and view list
     print("\n=== Example 2: Adding More Items ===")
-    shopping_workflow.print_response(input="Add apples and bananas to the list, then show me the complete list."
+    shopping_workflow.print_response(
+        input="Add apples and bananas to the list, then show me the complete list."
     )
     print("Workflow session state:", shopping_workflow.workflow_session_state)
 
     # Example 3: Remove items
     print("\n=== Example 3: Removing Items ===")
-    shopping_workflow.print_response(input="Remove bread from the list and show me what's left."
+    shopping_workflow.print_response(
+        input="Remove bread from the list and show me what's left."
     )
     print("Workflow session state:", shopping_workflow.workflow_session_state)
 
     # Example 4: Clear the entire list
     print("\n=== Example 4: Clearing List ===")
-    shopping_workflow.print_response(input="Clear the entire shopping list and confirm it's empty."
+    shopping_workflow.print_response(
+        input="Clear the entire shopping list and confirm it's empty."
     )
     print("Final workflow session state:", shopping_workflow.workflow_session_state)

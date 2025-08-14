@@ -144,8 +144,7 @@ if __name__ == "__main__":
 
     try:
         asyncio.run(
-            workflow.aprint_response(input="Latest AI developments in machine learning"
-            )
+            workflow.aprint_response(input="Latest AI developments in machine learning")
         )
     except Exception as e:
         print(f"❌ Error: {e}")

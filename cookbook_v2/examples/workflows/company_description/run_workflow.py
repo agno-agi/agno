@@ -150,5 +150,6 @@ if __name__ == "__main__":
         supplier_homepage_url="https://www.agno.com",
         user_email="yash@agno.com",
     )
-    company_description_workflow.print_response(input=supplier_profile_request,
+    company_description_workflow.print_response(
+        input=supplier_profile_request,
     )

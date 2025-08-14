@@ -367,7 +367,8 @@ Respond with a JSON object containing:
     "advantage": "white"/"black"/"equal"
 }}"""
 
-                        st.session_state.team.run(input=analysis_message,
+                        st.session_state.team.run(
+                            input=analysis_message,
                             stream=False,
                             dependencies={
                                 "board_state": board_state,
@@ -399,7 +400,8 @@ Respond with a JSON object containing:
                     st.rerun()
                 else:
                     logger.error(f"Invalid move attempt: {message}")
-                    st.session_state.team.run(input=f"""\
+                    st.session_state.team.run(
+                        input=f"""\
 Invalid move: {message}
 
 Current board state (FEN): {fen}

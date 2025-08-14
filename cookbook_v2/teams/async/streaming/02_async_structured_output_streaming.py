@@ -93,11 +93,14 @@ async def test_structured_streaming():
 
 async def test_structured_streaming_with_arun():
     """Test async structured output streaming using arun() method."""
-    await apprint_run_response(team.arun(input="Give me a stock report for AAPL", 
-        stream=True,
-        stream_intermediate_steps=True
-    ))
-    
+    await apprint_run_response(
+        team.arun(
+            input="Give me a stock report for AAPL",
+            stream=True,
+            stream_intermediate_steps=True,
+        )
+    )
+
 
 if __name__ == "__main__":
     asyncio.run(test_structured_streaming())
