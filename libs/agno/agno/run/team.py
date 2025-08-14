@@ -416,6 +416,9 @@ class TeamRunResponse:
         response_audio = data.pop("response_audio", None)
         response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
 
+        citations = data.pop("citations", None)
+        citations = Citations.model_validate(citations) if citations else None
+
         # To make it backwards compatible
         if "event" in data:
             data.pop("event")
@@ -428,6 +431,7 @@ class TeamRunResponse:
             videos=videos,
             audio=audio,
             response_audio=response_audio,
+            citations=citations,
             tools=tools,
             events=events,
             **data,

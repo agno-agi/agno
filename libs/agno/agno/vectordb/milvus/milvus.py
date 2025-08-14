@@ -690,8 +690,10 @@ class Milvus(VectorDb):
         except Exception as e:
             logger.error(f"Error during hybrid search: {e}")
             return []
-    
-    async def async_hybrid_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+
+    async def async_hybrid_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
         """
         Perform an asynchronous hybrid search combining dense and sparse vector similarity.
 

@@ -23,11 +23,11 @@ This setup is useful for:
 from textwrap import dedent
 
 from agno.agent import Agent
+from agno.app.fastapi import FastAPIApp
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
-from agno.app.fastapi import FastAPIApp
 
 reddit_researcher = Agent(
     name="Reddit Researcher",
@@ -81,6 +81,3 @@ app = fastapi_app.get_app()
 
 if __name__ == "__main__":
     fastapi_app.serve(app="team:app", port=8001, reload=True)
-
-
-    
