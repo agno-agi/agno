@@ -241,7 +241,7 @@ class Agent:
     # A list of extra messages added after the system message and before the user message.
     # Use these for few-shot learning or to provide additional context to the Model.
     # Note: these are not retained in memory, they are added directly to the messages sent to the model.
-    additional_messages: Optional[List[Union[Dict, Message]]] = None
+    additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None
     # --- User message settings ---
     # Provide the user message as a string, list, dict, or function
     # Note: this will ignore the message sent to the run function
@@ -382,7 +382,7 @@ class Agent:
         add_location_to_context: bool = False,
         timezone_identifier: Optional[str] = None,
         add_state_in_messages: bool = False,
-        additional_messages: Optional[List[Union[Dict, Message]]] = None,
+        additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
         user_message: Optional[Union[List, Dict, str, Callable, Message]] = None,
         user_message_role: str = "user",
         build_user_context: bool = True,
@@ -475,7 +475,7 @@ class Agent:
         self.add_location_to_context = add_location_to_context
         self.timezone_identifier = timezone_identifier
         self.add_state_in_messages = add_state_in_messages
-        self.additional_messages = additional_messages
+        self.additional_input = additional_input
 
         self.user_message = user_message
         self.user_message_role = user_message_role
@@ -4467,12 +4467,12 @@ class Agent:
             run_messages.messages.append(system_message)
 
         # 2. Add extra messages to run_messages if provided
-        if self.additional_messages is not None:
+        if self.additional_input is not None:
             messages_to_add_to_run_response: List[Message] = []
             if run_messages.extra_messages is None:
                 run_messages.extra_messages = []
 
-            for _m in self.additional_messages:
+            for _m in self.additional_input:
                 if isinstance(_m, Message):
                     messages_to_add_to_run_response.append(_m)
                     run_messages.messages.append(_m)
@@ -4489,12 +4489,12 @@ class Agent:
             if len(messages_to_add_to_run_response) > 0:
                 log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
                 if self.run_response.metadata is None:
-                    self.run_response.metadata = RunOutputMetaData(additional_messages=messages_to_add_to_run_response)
+                    self.run_response.metadata = RunOutputMetaData(additional_input=messages_to_add_to_run_response)
                 else:
-                    if self.run_response.metadata.additional_messages is None:
-                        self.run_response.metadata.additional_messages = messages_to_add_to_run_response
+                    if self.run_response.metadata.additional_input is None:
+                        self.run_response.metadata.additional_input = messages_to_add_to_run_response
                     else:
-                        self.run_response.metadata.additional_messages.extend(messages_to_add_to_run_response)
+                        self.run_response.metadata.additional_input.extend(messages_to_add_to_run_response)
 
         # 3. Add history to run_messages
         if self.add_history_to_context and self.agent_session is not None:
