@@ -5,7 +5,7 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Mapping, Optional, 
 
 from pydantic import BaseModel
 
-from agno.agent.agent import RunResponse
+from agno.agent.agent import RunOutput
 from agno.models.message import Message, Metrics
 from agno.models.ollama.chat import ChatResponse, Ollama
 from agno.models.response import ModelResponse
@@ -195,7 +195,7 @@ class OllamaTools(Ollama):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunResponse] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> Iterator[ModelResponse]:
         """
         Process a streaming response from the model.
@@ -226,7 +226,7 @@ class OllamaTools(Ollama):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunResponse] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Process a streaming response from the model.

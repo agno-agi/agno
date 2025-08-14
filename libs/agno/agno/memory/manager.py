@@ -573,7 +573,7 @@ class MemoryManager:
             try:
                 memory_search = parse_response_model_str(response.content, MemorySearchResponse)  # type: ignore
 
-                # Update RunResponse
+                # Update RunOutput
                 if memory_search is None:
                     log_warning("Failed to convert memory_search response to MemorySearchResponse")
                     return []

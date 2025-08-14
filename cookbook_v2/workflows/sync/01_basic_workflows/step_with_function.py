@@ -44,7 +44,7 @@ def custom_content_planning_function(step_input: StepInput) -> StepOutput:
     """
     Custom function that does intelligent content planning with context awareness
     """
-    message = step_input.message
+    message = step_input.input
     previous_step_content = step_input.previous_step_content
 
     # Create intelligent planning prompt
@@ -84,7 +84,7 @@ def custom_content_planning_function(step_input: StepInput) -> StepOutput:
             - Execution Ready: Detailed action items included
         """.strip()
 
-        return StepOutput(content=enhanced_content, response=response)
+        return StepOutput(content=enhanced_content)
 
     except Exception as e:
         return StepOutput(
@@ -120,8 +120,7 @@ if __name__ == "__main__":
         # You can mix and match agents, teams, and even regular python functions directly as steps
         steps=[research_step, content_planning_step],
     )
-    content_creation_workflow.print_response(
-        message="AI trends in 2024",
+    content_creation_workflow.print_response(input="AI trends in 2024",
         markdown=True,
     )
 

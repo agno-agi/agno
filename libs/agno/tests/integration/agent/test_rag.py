@@ -31,7 +31,7 @@ async def loaded_knowledge_base():
             embedder=OpenAIEmbedder(),
         ),
     )
-    await knowledge.async_add_content(
+    await knowledge.add_content(
         url="https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
     )
     return knowledge

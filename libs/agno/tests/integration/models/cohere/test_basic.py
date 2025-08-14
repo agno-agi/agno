@@ -1,12 +1,12 @@
 import pytest
 from pydantic import BaseModel, Field
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.db.sqlite import SqliteDb
 from agno.models.cohere import Cohere
 
 
-def _assert_metrics(response: RunResponse):
+def _assert_metrics(response: RunOutput):
     assert response.metrics is not None
     input_tokens = response.metrics.input_tokens
     output_tokens = response.metrics.output_tokens
@@ -22,7 +22,7 @@ def test_basic():
     agent = Agent(model=Cohere(id="command-light"), markdown=True, telemetry=False)
 
     # Print the response in the terminal
-    response: RunResponse = agent.run("Share a 2 sentence horror story")
+    response: RunOutput = agent.run("Share a 2 sentence horror story")
 
     assert response.content is not None and response.messages is not None
     assert len(response.messages) == 3
@@ -75,7 +75,7 @@ def test_with_memory():
     agent = Agent(
         model=Cohere(id="command-r-08-2024"),
         add_history_to_context=True,
-        num_history_responses=5,
+        num_history_runs=5,
         markdown=True,
         telemetry=False,
     )

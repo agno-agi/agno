@@ -1,7 +1,7 @@
 import asyncio
 from typing import List
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.openai import OpenAIChat
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
@@ -43,9 +43,9 @@ json_mode_agent = Agent(
 
 
 # Get the response in a variable
-# json_mode_response: RunResponse = json_mode_agent.arun("New York")
+# json_mode_response: RunOutput = json_mode_agent.arun("New York")
 # pprint(json_mode_response.content)
-# structured_output_response: RunResponse = structured_output_agent.arun("New York")
+# structured_output_response: RunOutput = structured_output_agent.arun("New York")
 # pprint(structured_output_response.content)
 
 asyncio.run(structured_output_agent.aprint_response("New York"))

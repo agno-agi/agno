@@ -1,5 +1,5 @@
 """
-This example demonstrates how to use additional_messages with an Agent
+This example demonstrates how to use additional_input with an Agent
 to teach proper response patterns through few-shot learning.
 """
 
@@ -77,7 +77,7 @@ if __name__ == "__main__":
         name="Customer Support Specialist",
         model=OpenAIChat(id="gpt-4o-mini"),
         add_name_to_context=True,
-        additional_messages=support_examples,  # few-shot learning examples
+        additional_input=support_examples,  # few-shot learning examples
         instructions=[
             "You are an expert customer support specialist.",
             "Always be empathetic, professional, and solution-oriented.",

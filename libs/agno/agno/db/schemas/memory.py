@@ -17,7 +17,6 @@ class UserMemory:
 
     agent_id: Optional[str] = None
     team_id: Optional[str] = None
-    workflow_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
@@ -29,7 +28,6 @@ class UserMemory:
             "user_id": self.user_id,
             "agent_id": self.agent_id,
             "team_id": self.team_id,
-            "workflow_id": self.workflow_id,
             "feedback": self.feedback,
         }
         return {k: v for k, v in _dict.items() if v is not None}

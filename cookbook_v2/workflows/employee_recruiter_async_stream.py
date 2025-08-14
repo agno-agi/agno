@@ -138,7 +138,7 @@ async def recruitment_execution(
     """Execute the complete recruitment workflow"""
 
     # Get inputs
-    message: str = execution_input.message
+    message: str = execution_input.input
     jd: str = job_description
     resumes: List[str] = kwargs.get("candidate_resume_urls", [])
 
@@ -287,7 +287,7 @@ if __name__ == "__main__":
 
     asyncio.run(
         recruitment_workflow.aprint_response(
-            message="Process candidates for backend engineer position",
+            input="Process candidates for backend engineer position",
             candidate_resume_urls=[
                 "https://agno-public.s3.us-east-1.amazonaws.com/demo_data/filters/cv_1.pdf",
                 "https://agno-public.s3.us-east-1.amazonaws.com/demo_data/filters/cv_2.pdf",

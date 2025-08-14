@@ -1,5 +1,5 @@
 """
-This example shows a straightforward use case of additional_messages
+This example shows a straightforward use case of additional_input
 to teach a customer support team proper response patterns.
 """
 
@@ -93,7 +93,7 @@ if __name__ == "__main__":
         mode="coordinate",
         model=OpenAIChat(id="gpt-4o-mini"),
         add_name_to_context=True,
-        additional_messages=support_examples,  # 🆕 Teaching examples
+        additional_input=support_examples,  # 🆕 Teaching examples
         instructions=[
             "You coordinate customer support with excellence and empathy.",
             "Follow established patterns for proper issue resolution.",

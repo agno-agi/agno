@@ -4,20 +4,20 @@ from agno.models.openai.chat import OpenAIChat
 from agno.team.team import Team
 
 
-def test_team_image_input(team_storage, agent_storage):
+def test_team_image_input(team_db, agent_db):
     image_analyst = Agent(
         name="Image Analyst",
         role="Analyze images and provide insights.",
         model=OpenAIChat(id="gpt-4o-mini"),
         markdown=True,
-        storage=agent_storage,
+        db=agent_db,
     )
 
     team = Team(
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[image_analyst],
         name="Team",
-        storage=team_storage,
+        db=team_db,
     )
 
     response = team.run(
@@ -26,7 +26,7 @@ def test_team_image_input(team_storage, agent_storage):
     )
     assert response.content is not None
 
-    session_in_db = team_storage.read(response.session_id)
+    session_in_db = team_db.read(response.session_id)
     assert session_in_db is not None
     assert session_in_db.memory["runs"] is not None
     assert len(session_in_db.memory["runs"]) == 1
@@ -39,29 +39,29 @@ def test_team_image_input(team_storage, agent_storage):
     )
 
 
-def test_team_image_input_no_prompt(team_storage, agent_storage):
+def test_team_image_input_no_prompt(team_db, agent_db):
     image_analyst = Agent(
         name="Image Analyst",
         role="Analyze images and provide insights.",
         model=OpenAIChat(id="gpt-4o-mini"),
         markdown=True,
-        storage=agent_storage,
+        db=agent_db,
     )
 
     team = Team(
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[image_analyst],
         name="Team",
-        storage=team_storage,
+        db=team_db,
     )
 
     response = team.run(
         images=[Image(url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg")],
-        message="Analyze this image and provide insights.",
+        input="Analyze this image and provide insights.",
     )
     assert response.content is not None
 
-    session_in_db = team_storage.read(response.session_id)
+    session_in_db = team_db.read(response.session_id)
     assert session_in_db is not None
     assert session_in_db.memory["runs"] is not None
     assert len(session_in_db.memory["runs"]) == 1

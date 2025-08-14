@@ -8,7 +8,7 @@ from agno.memory import MemoryManager, SessionSummarizer
 from agno.memory.memory import Memory
 from agno.models.message import Message
 from agno.models.openai.chat import OpenAIChat
-from agno.run.response import RunResponse
+from agno.run.response import RunOutput
 from agno.session.schema import SessionSummary, UserMemory
 
 
@@ -64,7 +64,7 @@ def sample_session_summary():
 
 @pytest.fixture
 def sample_run_response():
-    return RunResponse(
+    return RunOutput(
         content="Sample response content",
         messages=[Message(role="user", content="Hello"), Message(role="assistant", content="Hi there!")],
     )
@@ -182,7 +182,7 @@ def test_custom_summarizer_with_system_message(mock_model, mock_db):
         session_id = "test_session"
         user_id = "test_user"
 
-        run_response = RunResponse(
+        run_response = RunOutput(
             content="Sample response",
             messages=[
                 Message(role="user", content="I need to schedule a meeting for next week"),
@@ -306,7 +306,7 @@ def test_create_session_summary(memory_with_managers):
     session_id = "test_session"
     user_id = "test_user"
 
-    run_response = RunResponse(
+    run_response = RunOutput(
         content="Sample response",
         messages=[Message(role="user", content="Hello"), Message(role="assistant", content="Hi there!")],
     )
@@ -452,7 +452,7 @@ def test_get_messages_for_session(memory_with_model):
     # Add a run with messages
     session_id = "test_session"
 
-    run_response = RunResponse(
+    run_response = RunOutput(
         content="Sample response",
         messages=[
             Message(role="user", content="Hello, how are you?"),
@@ -478,7 +478,7 @@ def test_get_messages_for_session_with_multiple_runs(memory_with_model):
     # Add multiple runs with messages
     session_id = "test_session"
 
-    run1 = RunResponse(
+    run1 = RunOutput(
         content="First response",
         messages=[
             Message(role="user", content="What's the weather like?"),
@@ -486,7 +486,7 @@ def test_get_messages_for_session_with_multiple_runs(memory_with_model):
         ],
     )
 
-    run2 = RunResponse(
+    run2 = RunOutput(
         content="Second response",
         messages=[
             Message(role="user", content="What about tomorrow?"),
@@ -517,7 +517,7 @@ def test_get_messages_for_session_with_history_messages(memory_with_model):
     # Add a run with history messages
     session_id = "test_session"
 
-    run_response_1 = RunResponse(
+    run_response_1 = RunOutput(
         content="Sample response",
         messages=[
             Message(role="user", content="Hello, how are you?", from_history=True),
@@ -526,7 +526,7 @@ def test_get_messages_for_session_with_history_messages(memory_with_model):
     )
 
     # The most recent run response
-    run_response_2 = RunResponse(
+    run_response_2 = RunOutput(
         content="Sample response",
         messages=[
             Message(role="user", content="What's new?"),
@@ -567,7 +567,7 @@ def test_get_messages_from_last_n_runs(memory_with_model):
     # Add multiple runs with messages
     session_id = "test_session"
 
-    run1 = RunResponse(
+    run1 = RunOutput(
         content="First response",
         messages=[
             Message(role="user", content="What's the weather like?"),
@@ -575,7 +575,7 @@ def test_get_messages_from_last_n_runs(memory_with_model):
         ],
     )
 
-    run2 = RunResponse(
+    run2 = RunOutput(
         content="Second response",
         messages=[
             Message(role="user", content="What about tomorrow?"),
@@ -605,7 +605,7 @@ def test_add_interaction_to_team_context(memory_with_model):
     member_name = "Researcher"
     task = "Research the latest AI developments"
 
-    run_response = RunResponse(
+    run_response = RunOutput(
         content="Research findings",
         messages=[Message(role="assistant", content="I found that the latest AI models have improved significantly.")],
     )
@@ -656,12 +656,12 @@ def test_get_team_member_interactions_str(memory_with_model):
     # Add interactions to team context
     session_id = "test_session"
 
-    run1 = RunResponse(
+    run1 = RunOutput(
         content="Research findings",
         messages=[Message(role="assistant", content="I found that the latest AI models have improved significantly.")],
     )
 
-    run2 = RunResponse(
+    run2 = RunOutput(
         content="Analysis results",
         messages=[
             Message(role="assistant", content="Based on the research, we should focus on transformer architectures.")

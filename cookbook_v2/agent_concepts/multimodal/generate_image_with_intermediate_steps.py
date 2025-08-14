@@ -1,6 +1,6 @@
 from typing import Iterator
 
-from agno.agent import Agent, RunResponseEvent
+from agno.agent import Agent, RunOutputEvent
 from agno.models.openai import OpenAIChat
 from agno.tools.dalle import DalleTools
 from agno.utils.common import dataclass_to_dict
@@ -18,7 +18,7 @@ image_agent = Agent(
     markdown=True,
 )
 
-run_stream: Iterator[RunResponseEvent] = image_agent.run(
+run_stream: Iterator[RunOutputEvent] = image_agent.run(
     "Create an image of a yellow siamese cat",
     stream=True,
     stream_intermediate_steps=True,

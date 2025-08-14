@@ -1,6 +1,6 @@
 from typing import List
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.aws import AwsBedrock
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
@@ -32,7 +32,7 @@ movie_agent = Agent(
 )
 
 # Get the response in a variable
-# movie_agent: RunResponse = movie_agent.run("New York")
+# movie_agent: RunOutput = movie_agent.run("New York")
 # pprint(movie_agent.content)
 
 movie_agent.print_response("New York")

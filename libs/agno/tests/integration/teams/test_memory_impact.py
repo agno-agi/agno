@@ -99,7 +99,7 @@ class MemoryMonitor:
         }
 
 
-def test_team_memory_impact_with_gc_monitoring(agent_storage, team_storage, memory):
+def test_team_memory_impact_with_gc_monitoring(agent_db, team_db, memory):
     """
     Test that creates a team with memory and storage, runs a series of prompts,
     and monitors memory usage to verify garbage collection is working correctly.
@@ -136,7 +136,7 @@ def test_team_memory_impact_with_gc_monitoring(agent_storage, team_storage, memo
         model=OpenAIChat(id="gpt-4o-mini"),
         role="Perform mathematical calculations",
         tools=[simple_calculator],
-        storage=agent_storage,
+        db=agent_db,
         memory=memory,
         enable_user_memories=True,
     )
@@ -146,7 +146,7 @@ def test_team_memory_impact_with_gc_monitoring(agent_storage, team_storage, memo
         model=OpenAIChat(id="gpt-4o-mini"),
         role="Process and analyze text",
         tools=[text_processor],
-        storage=agent_storage,
+        db=agent_db,
         memory=memory,
         enable_user_memories=True,
     )
@@ -157,7 +157,7 @@ def test_team_memory_impact_with_gc_monitoring(agent_storage, team_storage, memo
         mode="route",
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[calculator_agent, text_agent],
-        storage=team_storage,
+        db=team_db,
         memory=memory,
         enable_user_memories=True,
         instructions="Route mathematical questions to the calculator agent and text processing questions to the text processor agent.",
@@ -238,7 +238,7 @@ def test_team_memory_impact_with_gc_monitoring(agent_storage, team_storage, memo
                 assert memory_increase < 0.5, f"Memory leak detected: {memory_increase:.2f} MB increase after GC"
 
         # Check that sessions were stored
-        session_from_storage = team_storage.read(session_id=session_id)
+        session_from_storage = team_db.read(session_id=session_id)
         assert session_from_storage is not None, "Session was not stored"
 
         # Check that runs are in memory
@@ -255,7 +255,7 @@ def test_team_memory_impact_with_gc_monitoring(agent_storage, team_storage, memo
         monitor.stop_monitoring()
 
 
-def test_team_memory_cleanup_after_session_switch(agent_storage, team_storage, memory):
+def test_team_memory_cleanup_after_session_switch(agent_db, team_db, memory):
     """
     Test that verifies team memory is properly cleaned up when switching between sessions.
     """
@@ -269,7 +269,7 @@ def test_team_memory_cleanup_after_session_switch(agent_storage, team_storage, m
         model=OpenAIChat(id="gpt-4o-mini"),
         role="Process simple requests",
         tools=[simple_function],
-        storage=agent_storage,
+        db=agent_db,
         memory=memory,
         enable_user_memories=True,
     )
@@ -279,7 +279,7 @@ def test_team_memory_cleanup_after_session_switch(agent_storage, team_storage, m
         mode="route",
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[agent],
-        storage=team_storage,
+        db=team_db,
         memory=memory,
         enable_user_memories=True,
     )
@@ -328,7 +328,7 @@ def test_team_memory_cleanup_after_session_switch(agent_storage, team_storage, m
 
         # Verify all sessions are properly stored
         for session_id in sessions:
-            session_from_storage = team_storage.read(session_id=session_id)
+            session_from_storage = team_db.read(session_id=session_id)
             assert session_from_storage is not None, f"Session {session_id} was not stored"
             assert session_id in memory.runs, f"Session {session_id} runs not found in memory"
 
@@ -340,7 +340,7 @@ def test_team_memory_cleanup_after_session_switch(agent_storage, team_storage, m
 
 
 @pytest.mark.asyncio
-async def test_team_memory_with_multiple_members(agent_storage, team_storage, memory):
+async def test_team_memory_with_multiple_members(agent_db, team_db, memory):
     """
     Test memory usage with multiple team members to ensure scalability.
     """
@@ -428,7 +428,7 @@ async def test_team_memory_with_multiple_members(agent_storage, team_storage, me
         model=MockModel(id="gpt-4o-mini"),
         role="Provide financial planning and budget analysis",
         tools=[calculate_budget],
-        storage=agent_storage,
+        db=agent_db,
         memory=memory,
         enable_user_memories=True,
         add_history_to_context=True,
@@ -439,7 +439,7 @@ async def test_team_memory_with_multiple_members(agent_storage, team_storage, me
         model=MockModel(id="gpt-4o-mini"),
         role="Analyze health data and provide wellness recommendations",
         tools=[analyze_health_data],
-        storage=agent_storage,
+        db=agent_db,
         memory=memory,
         enable_user_memories=True,
         add_history_to_context=True,
@@ -450,7 +450,7 @@ async def test_team_memory_with_multiple_members(agent_storage, team_storage, me
         model=MockModel(id="gpt-4o-mini"),
         role="Help schedule meetings and coordinate team activities",
         tools=[schedule_meeting],
-        storage=agent_storage,
+        db=agent_db,
         memory=memory,
         enable_user_memories=True,
         add_history_to_context=True,
@@ -461,7 +461,7 @@ async def test_team_memory_with_multiple_members(agent_storage, team_storage, me
         mode="route",
         model=MockModel(id="gpt-4o-mini"),
         members=[agent1, agent2, agent3],
-        storage=team_storage,
+        db=team_db,
         memory=memory,
         enable_user_memories=True,
         add_history_to_context=True,

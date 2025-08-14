@@ -2,7 +2,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.run.response import (
-    RunResponseContentEvent,
+    RunContentEvent,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
@@ -80,14 +80,13 @@ step_workflow = Workflow(
 )
 
 print("Running Step workflow with streaming...")
-for event in step_workflow.run(
-    message="AI trends in 2024",
+for event in step_workflow.run(input="AI trends in 2024",
     stream=True,
     stream_intermediate_steps=True,
 ):
-    # Filter out RunResponseContentEvent from printing to reduce noise
+    # Filter out RunContentEvent from printing to reduce noise
     if not isinstance(
-        event, (RunResponseContentEvent, ToolCallStartedEvent, ToolCallCompletedEvent)
+        event, (RunContentEvent, ToolCallStartedEvent, ToolCallCompletedEvent)
     ):
         print(
             f"Event: {event.event if hasattr(event, 'event') else type(event).__name__}"
@@ -128,13 +127,12 @@ parallel_workflow = Workflow(
 )
 
 print("Running Parallel workflow...")
-for event in parallel_workflow.run(
-    message="Research machine learning developments",
+for event in parallel_workflow.run(input="Research machine learning developments",
     stream=True,
     stream_intermediate_steps=True,
 ):
-    # Filter out RunResponseContentEvent from printing
-    if not isinstance(event, RunResponseContentEvent):
+    # Filter out RunContentEvent from printing
+    if not isinstance(event, RunContentEvent):
         print(
             f"Event: {event.event if hasattr(event, 'event') else type(event).__name__}"
         )

@@ -1,7 +1,7 @@
 import json
 from typing import List
 
-from agno.run.team import TeamRunResponse
+from agno.run.team import TeamRunOutput
 from agno.session.schema import UserMemory
 from rich.console import Console
 from rich.json import JSON
@@ -10,7 +10,7 @@ from rich.panel import Panel
 console = Console()
 
 
-def print_chat_history(session_run: TeamRunResponse):
+def print_chat_history(session_run: TeamRunOutput):
     # -*- Print history
     messages = []
     for m in session_run.messages:

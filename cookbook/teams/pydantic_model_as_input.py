@@ -32,7 +32,7 @@ team = Team(
 )
 
 team.print_response(
-    message=ResearchTopic(
+    input=ResearchTopic(
         topic="AI",
         focus_areas=["AI", "Machine Learning"],
         target_audience="Developers",

@@ -69,7 +69,7 @@ write_step = Step(
 # === CONDITION EVALUATORS ===
 def should_conduct_research(step_input: StepInput) -> bool:
     """Check if we should conduct comprehensive research"""
-    topic = step_input.message or step_input.previous_step_content or ""
+    topic = step_input.input or step_input.previous_step_content or ""
 
     # Keywords that indicate research is needed
     research_keywords = [
@@ -101,7 +101,7 @@ def should_conduct_research(step_input: StepInput) -> bool:
 
 def is_tech_related(step_input: StepInput) -> bool:
     """Check if the topic is tech-related for additional tech research"""
-    topic = step_input.message or step_input.previous_step_content or ""
+    topic = step_input.input or step_input.previous_step_content or ""
     tech_keywords = [
         "ai",
         "machine learning",
@@ -155,8 +155,7 @@ if __name__ == "__main__":
 
     try:
         asyncio.run(
-            workflow.aprint_response(
-                message="Latest AI developments in machine learning",
+            workflow.aprint_response(input="Latest AI developments in machine learning",
                 stream=True,
                 stream_intermediate_steps=True,
             )

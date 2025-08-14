@@ -38,7 +38,6 @@ agent_team = Team(
 )
 
 # Give the team a task
-agent_team.print_response(
-    message="Summarize the latest news about Nvidia and share its stock price?",
+agent_team.print_response(input="Summarize the latest news about Nvidia and share its stock price?",
     stream=True,
 )

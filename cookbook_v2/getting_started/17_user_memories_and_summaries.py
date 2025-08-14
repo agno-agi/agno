@@ -165,7 +165,7 @@ def main(user: str = "user"):
         if message in exit_on:
             break
 
-        agent.print_response(message=message, stream=True, markdown=True)
+        agent.print_response(input=message, stream=True, markdown=True)
         print_agent_memory(agent)
 
 

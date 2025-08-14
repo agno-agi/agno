@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Iterator
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent, RunOutput
 from agno.db.workflow.sqlite import SqliteWorkflowStorage
 from agno.models.openai import OpenAIChat
 from agno.run.workflow import WorkflowCompletedEvent
@@ -65,7 +65,7 @@ class GameGenerator(Workflow):
         response_model=QAOutput,
     )
 
-    def run(self, game_description: str) -> Iterator[RunResponse]:
+    def run(self, game_description: str) -> Iterator[RunOutputEvent]:
         logger.info(f"Game description: {game_description}")
 
         game_output = self.game_developer.run(game_description)
@@ -133,7 +133,7 @@ if __name__ == "__main__":
     )
 
     # Execute the workflow
-    result: Iterator[RunResponse] = game_generator.run(
+    result: Iterator[RunOutputEvent] = game_generator.run(
         game_description=game_description
     )
 

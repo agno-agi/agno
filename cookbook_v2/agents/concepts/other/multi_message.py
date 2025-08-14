@@ -1,9 +1,8 @@
 from agno.agent import Agent
 from agno.models.message import Message
 
-Agent().print_response(
-    message="Also, please summarize the key findings in bullet points for my slides.",
-    messages=[
+Agent().print_response(input="Also, please summarize the key findings in bullet points for my slides.",
+    input=[
         Message(
             role="user",
             content="I'm preparing a presentation for my company about renewable energy adoption.",

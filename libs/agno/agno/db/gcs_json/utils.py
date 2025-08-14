@@ -6,8 +6,8 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from agno.db.base import SessionType
-from agno.run.response import RunResponse
-from agno.run.team import TeamRunResponse
+from agno.run.response import RunOutput
+from agno.run.team import TeamRunOutput
 from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug
 
@@ -25,9 +25,9 @@ def hydrate_session(session: dict) -> dict:
         session["summary"] = SessionSummary.from_dict(session["summary"])
     if session.get("runs") is not None:
         if session["session_type"] == SessionType.AGENT:
-            session["runs"] = [RunResponse.from_dict(run) for run in session["runs"]]
+            session["runs"] = [RunOutput.from_dict(run) for run in session["runs"]]
         elif session["session_type"] == SessionType.TEAM:
-            session["runs"] = [TeamRunResponse.from_dict(run) for run in session["runs"]]
+            session["runs"] = [TeamRunOutput.from_dict(run) for run in session["runs"]]
 
     return session
 

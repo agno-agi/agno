@@ -345,9 +345,9 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 live_log.update(status)
 
                 if self.agent is not None:
-                    output = self.agent.run(message=eval_input).content
+                    output = self.agent.run(input=eval_input).content
                 elif self.team is not None:
-                    output = self.team.run(message=eval_input).content
+                    output = self.team.run(input=eval_input).content
 
                 if not output:
                     logger.error(f"Failed to generate a valid answer on iteration {i + 1}: {output}")
@@ -467,10 +467,10 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 live_log.update(status)
 
                 if self.agent is not None:
-                    response = await self.agent.arun(message=eval_input)
+                    response = await self.agent.arun(input=eval_input)
                     output = response.content
                 elif self.team is not None:
-                    response = await self.team.arun(message=eval_input)
+                    response = await self.team.arun(input=eval_input)
                     output = response.content
 
                 if not output:

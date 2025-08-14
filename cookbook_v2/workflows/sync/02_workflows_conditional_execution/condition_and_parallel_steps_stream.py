@@ -67,7 +67,7 @@ write_step = Step(
 # === CONDITION EVALUATORS ===
 def check_if_we_should_search_hn(step_input: StepInput) -> bool:
     """Check if we should search Hacker News"""
-    topic = step_input.message or step_input.previous_step_content or ""
+    topic = step_input.input or step_input.previous_step_content or ""
     tech_keywords = [
         "ai",
         "machine learning",
@@ -82,14 +82,14 @@ def check_if_we_should_search_hn(step_input: StepInput) -> bool:
 
 def check_if_we_should_search_web(step_input: StepInput) -> bool:
     """Check if we should search the web"""
-    topic = step_input.message or step_input.previous_step_content or ""
+    topic = step_input.input or step_input.previous_step_content or ""
     general_keywords = ["news", "information", "research", "facts", "data"]
     return any(keyword in topic.lower() for keyword in general_keywords)
 
 
 def check_if_we_should_search_x(step_input: StepInput) -> bool:
     """Check if we should search X/Twitter"""
-    topic = step_input.message or step_input.previous_step_content or ""
+    topic = step_input.input or step_input.previous_step_content or ""
     social_keywords = [
         "trending",
         "viral",
@@ -104,7 +104,7 @@ def check_if_we_should_search_x(step_input: StepInput) -> bool:
 
 def check_if_we_should_search_exa(step_input: StepInput) -> bool:
     """Check if we should use Exa search"""
-    topic = step_input.message or step_input.previous_step_content or ""
+    topic = step_input.input or step_input.previous_step_content or ""
     advanced_keywords = ["deep", "academic", "research", "analysis", "comprehensive"]
     return any(keyword in topic.lower() for keyword in advanced_keywords)
 
@@ -141,8 +141,7 @@ if __name__ == "__main__":
     )
 
     try:
-        workflow.print_response(
-            message="Latest AI developments in machine learning",
+        workflow.print_response(input="Latest AI developments in machine learning",
             stream=True,
             stream_intermediate_steps=True,
         )

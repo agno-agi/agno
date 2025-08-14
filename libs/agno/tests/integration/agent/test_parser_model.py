@@ -106,10 +106,11 @@ def test_parser_model_stream():
     for event in response:
         print(event)
 
+    assert park_agent.run_response is not None
     assert park_agent.run_response.content is not None
     assert isinstance(park_agent.run_response.content, ParkGuide)
-    assert isinstance(park_agent.run_response.content.park_name, str)
-    assert len(park_agent.run_response.content.park_name) > 0
+    assert isinstance(park_agent.run_response.content.park_name, str)  # type: ignore
+    assert len(park_agent.run_response.content.park_name) > 0  # type: ignore
 
     assert isinstance(park_agent.run_response.content.activities, list)
     assert len(park_agent.run_response.content.activities) >= 2

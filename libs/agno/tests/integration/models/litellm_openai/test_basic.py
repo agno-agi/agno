@@ -1,12 +1,12 @@
 import pytest
 from pydantic import BaseModel, Field
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent, RunOutput
 from agno.db.sqlite import SqliteDb
 from agno.models.litellm import LiteLLMOpenAI
 
 
-def _assert_metrics(response: RunResponse):
+def _assert_metrics(response: RunOutput):
     """Helper function to assert metrics are present and valid"""
     # Check that metrics dictionary exists
     assert response.metrics is not None
@@ -33,7 +33,7 @@ def test_basic():
     agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False)
 
     # Get the response
-    response: RunResponse = agent.run("Share a 2 sentence horror story")
+    response: RunOutput = agent.run("Share a 2 sentence horror story")
 
     assert response.content is not None
     assert response.messages is not None
@@ -92,7 +92,7 @@ def test_with_memory():
     agent = Agent(
         model=LiteLLMOpenAI(id="gpt-4o"),
         add_history_to_context=True,
-        num_history_responses=5,
+        num_history_runs=5,
         markdown=True,
         telemetry=False,
     )

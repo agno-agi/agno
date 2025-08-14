@@ -6,10 +6,10 @@ import pytest
 
 from agno.agent.agent import Agent
 from agno.run.base import RunStatus
-from agno.run.response import RunResponseEvent
+from agno.run.response import RunOutputEvent
 from agno.run.workflow import WorkflowCompletedEvent
 from agno.workflow.types import WorkflowExecutionInput
-from agno.workflow.workflow import Workflow, WorkflowRunResponse
+from agno.workflow.workflow import Workflow, WorkflowRunOutput
 
 
 # Mock agents for testing
@@ -40,34 +40,34 @@ def content_agent():
     )
 
 
-def test_simple_custom_execution_non_streaming(workflow_storage):
+def test_simple_custom_execution_non_streaming(workflow_db):
     """Test simple custom execution function (non-streaming)."""
 
     def simple_custom_execution(workflow: Workflow, execution_input: WorkflowExecutionInput) -> str:
         """Simple custom execution that returns a string."""
-        message = execution_input.message or "No message"
+        message = execution_input.input or "No message"
         return f"Custom execution processed: {message}"
 
     workflow = Workflow(
         name="Simple Custom Execution Workflow",
-        db=workflow_storage,
+        db=workflow_db,
         steps=simple_custom_execution,
     )
 
-    response = workflow.run(message="Test message")
+    response = workflow.run(input="Test message")
 
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert response.content is not None
     assert response.status == RunStatus.completed
     assert "Custom execution processed: Test message" in response.content
 
 
-def test_agent_based_custom_execution_non_streaming(workflow_storage):
+def test_agent_based_custom_execution_non_streaming(workflow_db):
     """Test custom execution function using an agent (non-streaming)."""
 
     def agent_custom_execution(workflow: Workflow, execution_input: WorkflowExecutionInput) -> str:
         """Custom execution that uses an agent."""
-        message = execution_input.message or "Default topic"
+        message = execution_input.input or "Default topic"
 
         # Mock agent response instead of making actual API call
         mock_response = f"Agent analysis of: {message}"
@@ -75,24 +75,24 @@ def test_agent_based_custom_execution_non_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Agent Custom Execution Workflow",
-        db=workflow_storage,
+        db=workflow_db,
         steps=agent_custom_execution,
     )
 
-    response = workflow.run(message="AI trends")
+    response = workflow.run(input="AI trends")
 
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert response.content is not None
     assert response.status == RunStatus.completed
     assert "Agent analysis of: AI trends" in response.content
 
 
-def test_multi_step_custom_execution_non_streaming(workflow_storage):
+def test_multi_step_custom_execution_non_streaming(workflow_db):
     """Test custom execution function that simulates multiple steps."""
 
     def multi_step_custom_execution(workflow: Workflow, execution_input: WorkflowExecutionInput) -> str:
         """Custom execution that simulates multiple processing steps."""
-        message = execution_input.message or "Default topic"
+        message = execution_input.input or "Default topic"
 
         # Simulate research step
         research_results = f"Research on {message}: Found key insights about trends and developments."
@@ -109,13 +109,13 @@ def test_multi_step_custom_execution_non_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Multi-Step Custom Execution Workflow",
-        db=workflow_storage,
+        db=workflow_db,
         steps=multi_step_custom_execution,
     )
 
-    response = workflow.run(message="Technology market analysis")
+    response = workflow.run(input="Technology market analysis")
 
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert response.content is not None
     assert response.status == RunStatus.completed
     assert "Final Report:" in response.content
@@ -123,14 +123,14 @@ def test_multi_step_custom_execution_non_streaming(workflow_storage):
     assert "Research on Technology market analysis" in response.content
 
 
-def test_custom_execution_streaming(workflow_storage):
+def test_custom_execution_streaming(workflow_db):
     """Test custom execution function with streaming."""
 
     def streaming_custom_execution(
         workflow: Workflow, execution_input: WorkflowExecutionInput
-    ) -> Iterator[Union[str, RunResponseEvent]]:
+    ) -> Iterator[Union[str, RunOutputEvent]]:
         """Custom execution that yields streaming content."""
-        message = execution_input.message or "Default topic"
+        message = execution_input.input or "Default topic"
 
         # Yield intermediate steps
         yield f"Starting analysis of: {message}"
@@ -142,13 +142,13 @@ def test_custom_execution_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Streaming Custom Execution Workflow",
-        db=workflow_storage,
+        db=workflow_db,
         steps=streaming_custom_execution,
     )
 
     # Collect streaming events
     events = []
-    for event in workflow.run(message="AI market trends", stream=True):
+    for event in workflow.run(input="AI market trends", stream=True):
         events.append(event)
 
     # Verify streaming events were generated
@@ -160,7 +160,7 @@ def test_custom_execution_streaming(workflow_storage):
     assert "Complete analysis for AI market trends" in completed_events[0].content
 
 
-def test_custom_execution_with_error_handling(workflow_storage):
+def test_custom_execution_with_error_handling(workflow_db):
     """Test custom execution function error handling."""
 
     def failing_custom_execution(workflow: Workflow, execution_input: WorkflowExecutionInput) -> str:
@@ -172,50 +172,50 @@ def test_custom_execution_with_error_handling(workflow_storage):
 
     workflow = Workflow(
         name="Failing Custom Execution Workflow",
-        db=workflow_storage,
+        db=workflow_db,
         steps=failing_custom_execution,
     )
 
-    response = workflow.run(message="Test message")
+    response = workflow.run(input="Test message")
 
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert response.status == RunStatus.completed  # Now completed since we handle the error
     assert "Custom execution failed!" in response.content
 
 
-def test_custom_execution_with_workflow_access(workflow_storage):
+def test_custom_execution_with_workflow_access(workflow_db):
     """Test custom execution function accessing workflow properties."""
 
     def workflow_aware_execution(workflow: Workflow, execution_input: WorkflowExecutionInput) -> str:
         """Custom execution that uses workflow properties."""
         workflow_name = workflow.name or "Unknown Workflow"
-        message = execution_input.message or "No message"
+        message = execution_input.input or "No message"
 
         return f"Workflow '{workflow_name}' processed message: {message}"
 
     workflow = Workflow(
         name="Workflow-Aware Custom Execution",
-        db=workflow_storage,
+        db=workflow_db,
         steps=workflow_aware_execution,
     )
 
-    response = workflow.run(message="Test workflow access")
+    response = workflow.run(input="Test workflow access")
 
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert response.content is not None
     assert response.status == RunStatus.completed
     assert "Workflow 'Workflow-Aware Custom Execution' processed message: Test workflow access" in response.content
 
 
-def test_custom_execution_with_execution_input_properties(workflow_storage):
+def test_custom_execution_with_execution_input_properties(workflow_db):
     """Test custom execution function accessing execution input properties."""
 
     def input_aware_execution(workflow: Workflow, execution_input: WorkflowExecutionInput) -> str:
         """Custom execution that examines all execution input properties."""
         components = []
 
-        if execution_input.message:
-            components.append(f"Message: {execution_input.message}")
+        if execution_input.input:
+            components.append(f"Message: {execution_input.input}")
 
         if execution_input.images:
             components.append(f"Images: {len(execution_input.images)} provided")
@@ -230,28 +230,28 @@ def test_custom_execution_with_execution_input_properties(workflow_storage):
 
     workflow = Workflow(
         name="Input-Aware Custom Execution",
-        db=workflow_storage,
+        db=workflow_db,
         steps=input_aware_execution,
     )
 
     # Pass data via message_data instead of user_id/session_id
     message = {"user_id": "test_user", "session_id": "test_session"}
-    response = workflow.run(message=message)
+    response = workflow.run(input=message)
 
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert response.content is not None
     assert response.status == RunStatus.completed
     assert "test_user" in str(response.content)
 
 
-async def test_async_custom_execution_non_streaming(workflow_storage):
+async def test_async_custom_execution_non_streaming(workflow_db):
     """Test async custom execution function (non-streaming)."""
 
     async def async_custom_execution(workflow: Workflow, execution_input: WorkflowExecutionInput) -> str:
         """Async custom execution function."""
         import asyncio
 
-        message = execution_input.message or "No message"
+        message = execution_input.input or "No message"
 
         # Simulate async work
         await asyncio.sleep(0.01)
@@ -260,26 +260,26 @@ async def test_async_custom_execution_non_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Async Custom Execution Workflow",
-        db=workflow_storage,
+        db=workflow_db,
         steps=async_custom_execution,
     )
 
-    response = await workflow.arun(message="Async test message")
+    response = await workflow.arun(input="Async test message")
 
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert response.content is not None
     assert response.status == RunStatus.completed
     assert "Async custom execution processed: Async test message" in response.content
 
 
-async def test_async_custom_execution_streaming(workflow_storage):
+async def test_async_custom_execution_streaming(workflow_db):
     """Test async custom execution function with streaming."""
 
     async def async_streaming_custom_execution(workflow: Workflow, execution_input: WorkflowExecutionInput):
         """Async custom execution that yields streaming content."""
         import asyncio
 
-        message = execution_input.message or "Default topic"
+        message = execution_input.input or "Default topic"
 
         # Yield intermediate steps
         yield f"Async: Starting analysis of: {message}"
@@ -294,13 +294,13 @@ async def test_async_custom_execution_streaming(workflow_storage):
 
     workflow = Workflow(
         name="Async Streaming Custom Execution Workflow",
-        db=workflow_storage,
+        db=workflow_db,
         steps=async_streaming_custom_execution,
     )
 
     # Collect async streaming events
     events = []
-    async for event in await workflow.arun(message="Async AI trends", stream=True):
+    async for event in await workflow.arun(input="Async AI trends", stream=True):
         events.append(event)
 
     # Verify streaming events were generated
@@ -312,27 +312,27 @@ async def test_async_custom_execution_streaming(workflow_storage):
     assert "Async: Complete analysis for Async AI trends" in completed_events[0].content
 
 
-def test_custom_execution_return_types(workflow_storage):
+def test_custom_execution_return_types(workflow_db):
     """Test custom execution function with different return types."""
 
     def dict_return_execution(workflow: Workflow, execution_input: WorkflowExecutionInput) -> str:
         """Custom execution that returns a dictionary."""
         result = {
             "status": "success",
-            "message": execution_input.message,
+            "message": execution_input.input,
             "analysis": "Complete analysis performed",
         }
         return str(result)  # Convert dict to string explicitly
 
     workflow = Workflow(
         name="Dict Return Custom Execution",
-        db=workflow_storage,
+        db=workflow_db,
         steps=dict_return_execution,
     )
 
-    response = workflow.run(message="Dict test")
+    response = workflow.run(input="Dict test")
 
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert response.content is not None
     assert response.status == RunStatus.completed
     # Check for string representation of dict values
@@ -340,12 +340,12 @@ def test_custom_execution_return_types(workflow_storage):
     assert "'message': 'Dict test'" in response.content
 
 
-def test_custom_execution_complex_workflow_simulation(workflow_storage):
+def test_custom_execution_complex_workflow_simulation(workflow_db):
     """Test custom execution that simulates a complex multi-agent workflow."""
 
     def complex_workflow_simulation(workflow: Workflow, execution_input: WorkflowExecutionInput) -> str:
         """Custom execution simulating research -> analysis -> content creation."""
-        topic = execution_input.message or "General topic"
+        topic = execution_input.input or "General topic"
 
         # Simulate research phase
         research_phase = f"Research Phase Results for '{topic}':\n"
@@ -375,13 +375,13 @@ def test_custom_execution_complex_workflow_simulation(workflow_storage):
 
     workflow = Workflow(
         name="Complex Workflow Simulation",
-        db=workflow_storage,
+        db=workflow_db,
         steps=complex_workflow_simulation,
     )
 
-    response = workflow.run(message="Artificial Intelligence Market Trends")
+    response = workflow.run(input="Artificial Intelligence Market Trends")
 
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert response.content is not None
     assert response.status == RunStatus.completed
     assert "COMPREHENSIVE ANALYSIS REPORT" in response.content
@@ -391,7 +391,7 @@ def test_custom_execution_complex_workflow_simulation(workflow_storage):
     assert "Artificial Intelligence Market Trends" in response.content
 
 
-def test_custom_execution_with_none_return(workflow_storage):
+def test_custom_execution_with_none_return(workflow_db):
     """Test custom execution function that returns None."""
 
     def none_return_execution(workflow: Workflow, execution_input: WorkflowExecutionInput) -> None:
@@ -401,18 +401,18 @@ def test_custom_execution_with_none_return(workflow_storage):
 
     workflow = Workflow(
         name="None Return Custom Execution",
-        db=workflow_storage,
+        db=workflow_db,
         steps=none_return_execution,
     )
 
-    response = workflow.run(message="None test")
+    response = workflow.run(input="None test")
 
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert response.status == RunStatus.completed
     # Content might be empty or have a default message
 
 
-def test_custom_execution_with_empty_string_return(workflow_storage):
+def test_custom_execution_with_empty_string_return(workflow_db):
     """Test custom execution function that returns empty string."""
 
     def empty_string_execution(workflow: Workflow, execution_input: WorkflowExecutionInput) -> str:
@@ -421,13 +421,13 @@ def test_custom_execution_with_empty_string_return(workflow_storage):
 
     workflow = Workflow(
         name="Empty String Custom Execution",
-        db=workflow_storage,
+        db=workflow_db,
         steps=empty_string_execution,
     )
 
-    response = workflow.run(message="Empty test")
+    response = workflow.run(input="Empty test")
 
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert response.status == RunStatus.completed
     # Content should be empty string
     assert response.content == ""

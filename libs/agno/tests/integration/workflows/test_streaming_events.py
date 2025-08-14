@@ -30,7 +30,7 @@ from agno.workflow.types import StepInput, StepOutput
 # Helper functions for testing
 def step_function(step_input: StepInput) -> StepOutput:
     """Basic step function."""
-    return StepOutput(content=f"Step output: {step_input.message}")
+    return StepOutput(content=f"Step output: {step_input.input}")
 
 
 def simple_step_1(step_input: StepInput) -> StepOutput:
@@ -43,7 +43,7 @@ def simple_step_2(step_input: StepInput) -> StepOutput:
 
 def condition_check(step_input: StepInput) -> bool:
     """Simple condition check."""
-    return "test" in str(step_input.message)
+    return "test" in str(step_input.input)
 
 
 def loop_condition(outputs):
@@ -53,7 +53,7 @@ def loop_condition(outputs):
 
 def router_function(step_input: StepInput) -> List[Step]:
     """Router function to select steps."""
-    if "a" in str(step_input.message):
+    if "a" in str(step_input.input):
         return [Step(name="route_a", executor=step_a)]
     else:
         return [Step(name="route_b", executor=step_b)]
@@ -78,15 +78,15 @@ def step_b(step_input: StepInput) -> StepOutput:
 # ============================================================================
 
 
-def test_step_events_with_stream_intermediate_steps_false(workflow_storage):
+def test_step_events_with_stream_intermediate_steps_false(workflow_db):
     """Test Step events with stream_intermediate_steps=False."""
     workflow = Workflow(
         name="Step Events Test",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[Step(name="test_step", executor=step_function)],
     )
 
-    events = list(workflow.run(message="test", stream=True, stream_intermediate_steps=False))
+    events = list(workflow.run(input="test", stream=True, stream_intermediate_steps=False))
     event_types = [type(event).__name__ for event in events]
 
     # Should only have workflow events, NO step started/completed events
@@ -96,15 +96,15 @@ def test_step_events_with_stream_intermediate_steps_false(workflow_storage):
     assert "StepCompletedEvent" not in event_types
 
 
-def test_step_events_with_stream_intermediate_steps_true(workflow_storage):
+def test_step_events_with_stream_intermediate_steps_true(workflow_db):
     """Test Step events with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Step Events Test",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[Step(name="test_step", executor=step_function)],
     )
 
-    events = list(workflow.run(message="test", stream=True, stream_intermediate_steps=True))
+    events = list(workflow.run(input="test", stream=True, stream_intermediate_steps=True))
 
     # Check for step events
     step_started = [e for e in events if isinstance(e, StepStartedEvent)]
@@ -122,7 +122,7 @@ def test_step_events_with_stream_intermediate_steps_true(workflow_storage):
     assert step_completed[0].step_name == "test_step"
 
 
-def test_workflow_events_with_stream_intermediate_steps_false(workflow_storage):
+def test_workflow_events_with_stream_intermediate_steps_false(workflow_db):
     """Test that with stream_intermediate_steps=False, only workflow and content events are received."""
     workflow = Workflow(
         name="Test Workflow",
@@ -130,10 +130,10 @@ def test_workflow_events_with_stream_intermediate_steps_false(workflow_storage):
             Step(name="step_1", executor=simple_step_1),
             Step(name="step_2", executor=simple_step_2),
         ],
-        db=workflow_storage,
+        db=workflow_db,
     )
 
-    events = list(workflow.run("test message", stream=True, stream_intermediate_steps=False))
+    events = list(workflow.run(input="test message", stream=True, stream_intermediate_steps=False))
 
     # Extract event types
     event_types = [type(event).__name__ for event in events]
@@ -151,7 +151,7 @@ def test_workflow_events_with_stream_intermediate_steps_false(workflow_storage):
     assert step_outputs[1].content == "Step 2 completed"
 
 
-def test_workflow_events_with_stream_intermediate_steps_true(workflow_storage):
+def test_workflow_events_with_stream_intermediate_steps_true(workflow_db):
     """Test that with stream_intermediate_steps=True, all events including step events are received."""
     workflow = Workflow(
         name="Test Workflow",
@@ -159,10 +159,10 @@ def test_workflow_events_with_stream_intermediate_steps_true(workflow_storage):
             Step(name="step_1", executor=simple_step_1),
             Step(name="step_2", executor=simple_step_2),
         ],
-        db=workflow_storage,
+        db=workflow_db,
     )
 
-    events = list(workflow.run("test message", stream=True, stream_intermediate_steps=True))
+    events = list(workflow.run(input="test message", stream=True, stream_intermediate_steps=True))
 
     # Extract event types
     event_types = [type(event).__name__ for event in events]
@@ -185,16 +185,16 @@ def test_workflow_events_with_stream_intermediate_steps_true(workflow_storage):
 
 
 @pytest.mark.asyncio
-async def test_step_events_async_with_stream_intermediate_steps_true(workflow_storage):
+async def test_step_events_async_with_stream_intermediate_steps_true(workflow_db):
     """Test Step events in async streaming with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Async Step Events Test",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[Step(name="test_step", executor=step_function)],
     )
 
     events = []
-    async for event in await workflow.arun(message="test", stream=True, stream_intermediate_steps=True):
+    async for event in await workflow.arun(input="test", stream=True, stream_intermediate_steps=True):
         events.append(event)
 
     # Check for step events
@@ -214,11 +214,11 @@ async def test_step_events_async_with_stream_intermediate_steps_true(workflow_st
 # ============================================================================
 
 
-def test_steps_events_with_stream_intermediate_steps_false(workflow_storage):
+def test_steps_events_with_stream_intermediate_steps_false(workflow_db):
     """Test Steps events with stream_intermediate_steps=False."""
     workflow = Workflow(
         name="Steps Events Test",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Steps(
                 name="test_steps",
@@ -230,7 +230,7 @@ def test_steps_events_with_stream_intermediate_steps_false(workflow_storage):
         ],
     )
 
-    events = list(workflow.run(message="test", stream=True, stream_intermediate_steps=False))
+    events = list(workflow.run(input="test", stream=True, stream_intermediate_steps=False))
     event_types = [type(event).__name__ for event in events]
 
     assert "WorkflowStartedEvent" in event_types
@@ -241,11 +241,11 @@ def test_steps_events_with_stream_intermediate_steps_false(workflow_storage):
     assert "StepCompletedEvent" not in event_types
 
 
-def test_steps_events_with_stream_intermediate_steps_true(workflow_storage):
+def test_steps_events_with_stream_intermediate_steps_true(workflow_db):
     """Test Steps events with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Steps Events Test",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Steps(
                 name="test_steps",
@@ -257,7 +257,7 @@ def test_steps_events_with_stream_intermediate_steps_true(workflow_storage):
         ],
     )
 
-    events = list(workflow.run(message="test", stream=True, stream_intermediate_steps=True))
+    events = list(workflow.run(input="test", stream=True, stream_intermediate_steps=True))
 
     # Check for steps events
     steps_started = [e for e in events if isinstance(e, StepsExecutionStartedEvent)]
@@ -272,11 +272,11 @@ def test_steps_events_with_stream_intermediate_steps_true(workflow_storage):
 
 
 @pytest.mark.asyncio
-async def test_steps_events_async_with_stream_intermediate_steps_true(workflow_storage):
+async def test_steps_events_async_with_stream_intermediate_steps_true(workflow_db):
     """Test Steps events in async streaming with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Async Steps Events Test",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Steps(
                 name="test_steps",
@@ -289,7 +289,7 @@ async def test_steps_events_async_with_stream_intermediate_steps_true(workflow_s
     )
 
     events = []
-    async for event in await workflow.arun(message="test", stream=True, stream_intermediate_steps=True):
+    async for event in await workflow.arun(input="test", stream=True, stream_intermediate_steps=True):
         events.append(event)
 
     # Check for steps events
@@ -305,11 +305,11 @@ async def test_steps_events_async_with_stream_intermediate_steps_true(workflow_s
 # ============================================================================
 
 
-def test_parallel_events_with_stream_intermediate_steps_false(workflow_storage):
+def test_parallel_events_with_stream_intermediate_steps_false(workflow_db):
     """Test Parallel events with stream_intermediate_steps=False."""
     workflow = Workflow(
         name="Parallel Events Test",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Parallel(
                 step_a,
@@ -319,7 +319,7 @@ def test_parallel_events_with_stream_intermediate_steps_false(workflow_storage):
         ],
     )
 
-    events = list(workflow.run(message="test", stream=True, stream_intermediate_steps=False))
+    events = list(workflow.run(input="test", stream=True, stream_intermediate_steps=False))
     event_types = [type(event).__name__ for event in events]
 
     # Should only have workflow events, NO parallel intermediate events
@@ -331,11 +331,11 @@ def test_parallel_events_with_stream_intermediate_steps_false(workflow_storage):
     assert "StepCompletedEvent" not in event_types
 
 
-def test_parallel_events_with_stream_intermediate_steps_true(workflow_storage):
+def test_parallel_events_with_stream_intermediate_steps_true(workflow_db):
     """Test Parallel events with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Parallel Events Test",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Parallel(
                 step_a,
@@ -345,7 +345,7 @@ def test_parallel_events_with_stream_intermediate_steps_true(workflow_storage):
         ],
     )
 
-    events = list(workflow.run(message="test", stream=True, stream_intermediate_steps=True))
+    events = list(workflow.run(input="test", stream=True, stream_intermediate_steps=True))
 
     # Check for parallel events
     parallel_started = [e for e in events if isinstance(e, ParallelExecutionStartedEvent)]
@@ -361,11 +361,11 @@ def test_parallel_events_with_stream_intermediate_steps_true(workflow_storage):
 
 
 @pytest.mark.asyncio
-async def test_parallel_events_async_with_stream_intermediate_steps_true(workflow_storage):
+async def test_parallel_events_async_with_stream_intermediate_steps_true(workflow_db):
     """Test Parallel events in async streaming with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Async Parallel Events Test",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Parallel(
                 step_a,
@@ -376,7 +376,7 @@ async def test_parallel_events_async_with_stream_intermediate_steps_true(workflo
     )
 
     events = []
-    async for event in await workflow.arun(message="test", stream=True, stream_intermediate_steps=True):
+    async for event in await workflow.arun(input="test", stream=True, stream_intermediate_steps=True):
         events.append(event)
 
     # Check for parallel events
@@ -392,11 +392,11 @@ async def test_parallel_events_async_with_stream_intermediate_steps_true(workflo
 # ============================================================================
 
 
-def test_loop_events_with_stream_intermediate_steps_false(workflow_storage):
+def test_loop_events_with_stream_intermediate_steps_false(workflow_db):
     """Test Loop events with stream_intermediate_steps=False."""
     workflow = Workflow(
         name="Loop Events Test",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Loop(
                 name="test_loop",
@@ -407,7 +407,7 @@ def test_loop_events_with_stream_intermediate_steps_false(workflow_storage):
         ],
     )
 
-    events = list(workflow.run(message="test", stream=True, stream_intermediate_steps=False))
+    events = list(workflow.run(input="test", stream=True, stream_intermediate_steps=False))
     event_types = [type(event).__name__ for event in events]
 
     # Should only have workflow events, NO loop intermediate events
@@ -421,11 +421,11 @@ def test_loop_events_with_stream_intermediate_steps_false(workflow_storage):
     assert "StepCompletedEvent" not in event_types
 
 
-def test_loop_events_with_stream_intermediate_steps_true(workflow_storage):
+def test_loop_events_with_stream_intermediate_steps_true(workflow_db):
     """Test Loop events with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Loop Events Test",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Loop(
                 name="test_loop",
@@ -436,7 +436,7 @@ def test_loop_events_with_stream_intermediate_steps_true(workflow_storage):
         ],
     )
 
-    events = list(workflow.run(message="test", stream=True, stream_intermediate_steps=True))
+    events = list(workflow.run(input="test", stream=True, stream_intermediate_steps=True))
 
     # Check for loop events
     loop_started = [e for e in events if isinstance(e, LoopExecutionStartedEvent)]
@@ -455,11 +455,11 @@ def test_loop_events_with_stream_intermediate_steps_true(workflow_storage):
 
 
 @pytest.mark.asyncio
-async def test_loop_events_async_with_stream_intermediate_steps_true(workflow_storage):
+async def test_loop_events_async_with_stream_intermediate_steps_true(workflow_db):
     """Test Loop events in async streaming with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Async Loop Events Test",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Loop(
                 name="test_loop",
@@ -471,7 +471,7 @@ async def test_loop_events_async_with_stream_intermediate_steps_true(workflow_st
     )
 
     events = []
-    async for event in await workflow.arun(message="test", stream=True, stream_intermediate_steps=True):
+    async for event in await workflow.arun(input="test", stream=True, stream_intermediate_steps=True):
         events.append(event)
 
     # Check for loop events
@@ -487,11 +487,11 @@ async def test_loop_events_async_with_stream_intermediate_steps_true(workflow_st
 # ============================================================================
 
 
-def test_condition_events_with_stream_intermediate_steps_false(workflow_storage):
+def test_condition_events_with_stream_intermediate_steps_false(workflow_db):
     """Test Condition events with stream_intermediate_steps=False."""
     workflow = Workflow(
         name="Condition Events Test",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Condition(
                 name="test_condition",
@@ -501,7 +501,7 @@ def test_condition_events_with_stream_intermediate_steps_false(workflow_storage)
         ],
     )
 
-    events = list(workflow.run(message="test", stream=True, stream_intermediate_steps=False))
+    events = list(workflow.run(input="test", stream=True, stream_intermediate_steps=False))
     event_types = [type(event).__name__ for event in events]
 
     # Should only have workflow events, NO condition intermediate events
@@ -513,11 +513,11 @@ def test_condition_events_with_stream_intermediate_steps_false(workflow_storage)
     assert "StepCompletedEvent" not in event_types
 
 
-def test_condition_events_with_stream_intermediate_steps_true(workflow_storage):
+def test_condition_events_with_stream_intermediate_steps_true(workflow_db):
     """Test Condition events with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Condition Events Test",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Condition(
                 name="test_condition",
@@ -527,7 +527,7 @@ def test_condition_events_with_stream_intermediate_steps_true(workflow_storage):
         ],
     )
 
-    events = list(workflow.run(message="test", stream=True, stream_intermediate_steps=True))
+    events = list(workflow.run(input="test", stream=True, stream_intermediate_steps=True))
 
     # Check for condition events
     condition_started = [e for e in events if isinstance(e, ConditionExecutionStartedEvent)]
@@ -542,11 +542,11 @@ def test_condition_events_with_stream_intermediate_steps_true(workflow_storage):
 
 
 @pytest.mark.asyncio
-async def test_condition_events_async_with_stream_intermediate_steps_true(workflow_storage):
+async def test_condition_events_async_with_stream_intermediate_steps_true(workflow_db):
     """Test Condition events in async streaming with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Async Condition Events Test",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Condition(
                 name="test_condition",
@@ -557,7 +557,7 @@ async def test_condition_events_async_with_stream_intermediate_steps_true(workfl
     )
 
     events = []
-    async for event in await workflow.arun(message="test", stream=True, stream_intermediate_steps=True):
+    async for event in await workflow.arun(input="test", stream=True, stream_intermediate_steps=True):
         events.append(event)
 
     # Check for condition events
@@ -573,11 +573,11 @@ async def test_condition_events_async_with_stream_intermediate_steps_true(workfl
 # ============================================================================
 
 
-def test_router_events_with_stream_intermediate_steps_false(workflow_storage):
+def test_router_events_with_stream_intermediate_steps_false(workflow_db):
     """Test Router events with stream_intermediate_steps=False."""
     workflow = Workflow(
         name="Router Events Test",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Router(
                 name="test_router",
@@ -590,7 +590,7 @@ def test_router_events_with_stream_intermediate_steps_false(workflow_storage):
         ],
     )
 
-    events = list(workflow.run(message="test_a", stream=True, stream_intermediate_steps=False))
+    events = list(workflow.run(input="test_a", stream=True, stream_intermediate_steps=False))
     event_types = [type(event).__name__ for event in events]
 
     # Should only have workflow events, NO router intermediate events
@@ -602,7 +602,7 @@ def test_router_events_with_stream_intermediate_steps_false(workflow_storage):
     assert "StepCompletedEvent" not in event_types
 
 
-def test_router_events_with_stream_intermediate_steps_true(workflow_storage):
+def test_router_events_with_stream_intermediate_steps_true(workflow_db):
     """Test Router events with stream_intermediate_steps=True."""
     # Create the available choices
     route_a_step = Step(name="route_a", executor=step_a)
@@ -610,7 +610,7 @@ def test_router_events_with_stream_intermediate_steps_true(workflow_storage):
 
     workflow = Workflow(
         name="Router Events Test",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Router(
                 name="test_router",
@@ -620,7 +620,7 @@ def test_router_events_with_stream_intermediate_steps_true(workflow_storage):
         ],
     )
 
-    events = list(workflow.run(message="test_a", stream=True, stream_intermediate_steps=True))
+    events = list(workflow.run(input="test_a", stream=True, stream_intermediate_steps=True))
 
     # Check for router events
     router_started = [e for e in events if isinstance(e, RouterExecutionStartedEvent)]
@@ -635,7 +635,7 @@ def test_router_events_with_stream_intermediate_steps_true(workflow_storage):
 
 
 @pytest.mark.asyncio
-async def test_router_events_async_with_stream_intermediate_steps_true(workflow_storage):
+async def test_router_events_async_with_stream_intermediate_steps_true(workflow_db):
     """Test Router events in async streaming with stream_intermediate_steps=True."""
     # Create the available choices
     route_a_step = Step(name="route_a", executor=step_a)
@@ -643,7 +643,7 @@ async def test_router_events_async_with_stream_intermediate_steps_true(workflow_
 
     workflow = Workflow(
         name="Async Router Events Test",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Router(
                 name="test_router",
@@ -654,7 +654,7 @@ async def test_router_events_async_with_stream_intermediate_steps_true(workflow_
     )
 
     events = []
-    async for event in await workflow.arun(message="test_a", stream=True, stream_intermediate_steps=True):
+    async for event in await workflow.arun(input="test_a", stream=True, stream_intermediate_steps=True):
         events.append(event)
 
     # Check for router events
@@ -670,11 +670,11 @@ async def test_router_events_async_with_stream_intermediate_steps_true(workflow_
 # ============================================================================
 
 
-def test_comprehensive_workflow_events_with_stream_intermediate_steps_true(workflow_storage):
+def test_comprehensive_workflow_events_with_stream_intermediate_steps_true(workflow_db):
     """Test comprehensive workflow with multiple component types with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Comprehensive Events Test",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Step(name="initial_step", executor=step_function),
             Parallel(
@@ -696,7 +696,7 @@ def test_comprehensive_workflow_events_with_stream_intermediate_steps_true(workf
         ],
     )
 
-    events = list(workflow.run(message="test", stream=True, stream_intermediate_steps=True))
+    events = list(workflow.run(input="test", stream=True, stream_intermediate_steps=True))
 
     # Check that we have events from all components
     step_events = [e for e in events if isinstance(e, (StepStartedEvent, StepCompletedEvent))]
@@ -717,11 +717,11 @@ def test_comprehensive_workflow_events_with_stream_intermediate_steps_true(workf
 
 
 @pytest.mark.asyncio
-async def test_comprehensive_workflow_events_async_with_stream_intermediate_steps_true(workflow_storage):
+async def test_comprehensive_workflow_events_async_with_stream_intermediate_steps_true(workflow_db):
     """Test comprehensive workflow with multiple component types - async with stream_intermediate_steps=True."""
     workflow = Workflow(
         name="Async Comprehensive Events Test",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Step(name="initial_step", executor=step_function),
             Parallel(
@@ -739,7 +739,7 @@ async def test_comprehensive_workflow_events_async_with_stream_intermediate_step
     )
 
     events = []
-    async for event in await workflow.arun(message="test", stream=True, stream_intermediate_steps=True):
+    async for event in await workflow.arun(input="test", stream=True, stream_intermediate_steps=True):
         events.append(event)
 
     # Check that we have events from all components
@@ -756,11 +756,11 @@ async def test_comprehensive_workflow_events_async_with_stream_intermediate_step
     assert len(workflow_events) == 2  # Started + completed
 
 
-def test_comprehensive_workflow_events_with_stream_intermediate_steps_false(workflow_storage):
+def test_comprehensive_workflow_events_with_stream_intermediate_steps_false(workflow_db):
     """Test comprehensive workflow with multiple component types with stream_intermediate_steps=False."""
     workflow = Workflow(
         name="Comprehensive Events Test",
-        db=workflow_storage,
+        db=workflow_db,
         steps=[
             Step(name="initial_step", executor=step_function),
             Parallel(
@@ -782,7 +782,7 @@ def test_comprehensive_workflow_events_with_stream_intermediate_steps_false(work
         ],
     )
 
-    events = list(workflow.run(message="test", stream=True, stream_intermediate_steps=False))
+    events = list(workflow.run(input="test", stream=True, stream_intermediate_steps=False))
     event_types = [type(event).__name__ for event in events]
 
     # Should only have workflow events, NO intermediate component events

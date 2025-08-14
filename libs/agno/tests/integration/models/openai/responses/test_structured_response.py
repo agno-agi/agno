@@ -4,7 +4,7 @@ from typing import Dict, List
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.openai import OpenAIResponses
 
 
