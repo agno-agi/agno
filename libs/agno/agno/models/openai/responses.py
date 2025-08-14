@@ -409,15 +409,19 @@ class OpenAIResponses(Model):
 
                 formatted_messages.append(message_dict)
 
+            # Tool call result
             elif message.role == "tool":
                 if message.tool_call_id and message.content is not None:
-                    call_id_value = message.tool_call_id
+                    function_call_id = message.tool_call_id
                     # Normalize: if a fc_* id was provided, translate to its corresponding call_* id
-                    if isinstance(call_id_value, str) and call_id_value in fc_id_to_call_id:
-                        call_id_value = fc_id_to_call_id[call_id_value]
+                    if isinstance(function_call_id, str) and function_call_id in fc_id_to_call_id:
+                        call_id_value = fc_id_to_call_id[function_call_id]
+                    else:
+                        call_id_value = function_call_id
                     formatted_messages.append(
                         {"type": "function_call_output", "call_id": call_id_value, "output": message.content}
                     )
+            # Tool Calls
             elif message.tool_calls is not None and len(message.tool_calls) > 0:
                 # Only skip re-sending prior function_call items when we have a previous_response_id
                 # (reasoning models). For non-reasoning models, we must include the prior function_call
@@ -731,6 +735,7 @@ class OpenAIResponses(Model):
                 model_response.tool_calls.append(
                     {
                         "id": output.id,
+                        # Store additional call_id from OpenAI responses
                         "call_id": output.call_id or output.id,
                         "type": "function",
                         "function": {
