@@ -12,7 +12,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
-from agno.utils.pprint import pprint_run_response
+from agno.utils.pprint import apprint_run_response
 from pydantic import BaseModel
 
 
@@ -78,7 +78,6 @@ team = Team(
 
 async def test_structured_streaming():
     """Test async structured output streaming."""
-    # Test structured output streaming asynchronously
     await team.aprint_response(
         "Give me a stock report for NVDA", 
         stream=True, 
@@ -89,5 +88,17 @@ async def test_structured_streaming():
     assert isinstance(team.run_response.content, StockReport)
     print(f"\n✅ Response type verified: {type(team.run_response.content)}")
 
+
+async def test_structured_streaming_with_arun():
+    """Test async structured output streaming using arun() method."""
+    await apprint_run_response(team.arun(
+        message="Give me a stock report for AAPL", 
+        stream=True,
+        stream_intermediate_steps=True
+    ))
+    
+
 if __name__ == "__main__":
     asyncio.run(test_structured_streaming())
+    
+    asyncio.run(test_structured_streaming_with_arun())

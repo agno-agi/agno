@@ -12,6 +12,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
+from agno.utils.pprint import apprint_run_response
 
 # Stock price and analyst data agent
 stock_searcher = Agent(
@@ -30,7 +31,7 @@ stock_searcher = Agent(
 company_info_agent = Agent(
     name="Company Info Searcher",
     model=OpenAIChat("gpt-4o"),
-    role="Searches the web for information on a stock.",
+    role="Searches the web for information on a company.",
     tools=[
         YFinanceTools(
             stock_price=False,
@@ -50,7 +51,22 @@ team = Team(
     show_members_responses=True,
 )
 
-if __name__ == "__main__":
-    asyncio.run(
-        team.aprint_response("What is the current stock price of NVDA?", stream=True)
+async def streaming_with_arun():
+    """Demonstrate async streaming using arun() method."""
+    await apprint_run_response(team.arun(
+        message="What is the current stock price of NVDA?", 
+        stream=True
+    ))
+
+async def streaming_with_aprint_response():
+    """Demonstrate async streaming using aprint_response() method."""
+    await team.aprint_response(
+        "What is the current stock price of NVDA?", 
+        stream=True
     )
+
+
+if __name__ == "__main__":
+    asyncio.run(streaming_with_arun())
+    
+    asyncio.run(streaming_with_aprint_response())
