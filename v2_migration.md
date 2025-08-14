@@ -1,27 +1,30 @@
 # Agno v2 Migration Guide
 
-This guide walks you through all the changes needed to migrate your Agno applications from v1 to v2. Each section covers a specific framework domain, with before and after examples and detailed explanations where needed.
+This guide walks you through all the changes needed to migrate your Agno applications from v1 to v2.
+
+Each section covers a specific framework domain, with before and after examples and detailed explanations where needed.
 
 If you have questions during your migration, we're here to help! Reach out to us on [Discord](https://discord.gg/4MtYHHrgA8) or [Discourse](https://community.agno.com/).
 
-Welcome to Agno v2!
 
 ## Agents and Teams
 
-- Streaming responses with `arun` now returns an `AsyncIterator`, not a coroutine. This is how you can consume the response events:
+Agents and Teams are the main building blocks in the Agno framework. These are the v2 updates we have made to the `Agent` and `Team` classes:
+
+1. Streaming responses with `arun` now returns an `AsyncIterator`, not a coroutine. This is how you consume the resulting events now, when streaming a run:
 ```python v2_arun.py
 async for event in agent.arun(...):
     ...
 ```
 
-- The `RunResponse` class is now `RunOutput`. This is the type of the results you get when running an Agent:
+2. The `RunResponse` class is now `RunOutput`. This is the type of the results you get when running an Agent:
 ```python v2_run_output.py
 from agno.run.response import RunOutput
 
 run_output: RunOutput = agent.run(...)
 ```
 
-- The events you get when streaming an Agent result have been renamed:
+3.  The events you get when streaming an Agent result have been renamed:
     - `RunOutputStartedEvent` → `RunStartedEvent`
     - `RunOutputCompletedEvent` → `RunCompletedEvent`
     - `RunOutputErrorEvent` → `RunErrorEvent`
@@ -29,19 +32,16 @@ run_output: RunOutput = agent.run(...)
     - `RunOutputContinuedEvent` → `RunContinuedEvent`
     - `RunOutputPausedEvent` → `RunPausedEvent`
     - `RunOutputContentEvent` → `RunContentEvent`
-- Similarly, for Team output events:
+
+4. Similarly, for Team output events:
     - `TeamRunOutputStartedEvent` → `TeamRunStartedEvent`
     - `TeamRunOutputCompletedEvent` → `TeamRunCompletedEvent`
     - `TeamRunOutputErrorEvent` → `TeamRunErrorEvent`
     - `TeamRunOutputCancelledEvent` → `TeamRunCancelledEvent`
     - `TeamRunOutputContentEvent` → `TeamRunContentEvent`
 
-```python v2_events.py
-for event in agent.run(stream=True, stream_intermediate_steps=True):
-    ...
-```
 
-**Renamed args and methods**
+5. **Renamed args and methods**
 - `agent_id` -> `id`
 - `add_session_summary_references` -> `add_session_summary_to_context`
 - `add_memory_references` -> `add_memories_to_context`
@@ -56,7 +56,7 @@ for event in agent.run(stream=True, stream_intermediate_steps=True):
 - `goal` -> `success_criteria`
 - Some methods have been made private e.g. `set_id` -> `_set_id`. You can assume methods which name start with underscore are private, and only to be used inside the Agent class itself.
 
-**Deprecated args and methods**
+6. **Deprecated args and methods**
 - `resolve_context`
 - `show_tool_calls`
 
