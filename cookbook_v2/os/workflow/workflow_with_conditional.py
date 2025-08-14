@@ -37,7 +37,26 @@ writer = Agent(
 
 def needs_fact_checking(step_input: StepInput) -> bool:
     """Determine if the research contains claims that need fact-checking"""
-    return True  # Always return True for testing purposes
+    summary = step_input.previous_step_content or ""
+
+    # Look for keywords that suggest factual claims
+    fact_indicators = [
+        "study shows",
+        "research indicates",
+        "according to",
+        "statistics",
+        "data shows",
+        "survey",
+        "report",
+        "million",
+        "billion",
+        "percent",
+        "%",
+        "increase",
+        "decrease",
+    ]
+
+    return any(indicator in summary.lower() for indicator in fact_indicators)
 
 
 # === WORKFLOW STEPS ===
