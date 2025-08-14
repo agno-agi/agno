@@ -1041,19 +1041,19 @@ async def run_team_for_user(user: str, print_responses: bool = False):
     random_city = random.choice(cities)
     session_id = f"session_{user}_{uuid.uuid4()}"
 
-    _ = team.arun(message=f"I love {random_city}!", user_id=user, session_id=session_id)
+    _ = team.arun(input=f"I love {random_city}!", user_id=user, session_id=session_id)
     _ = team.arun(
-        message=f"Create a report on the activities and weather in {random_city}.",
+        input=f"Create a report on the activities and weather in {random_city}.",
         user_id=user,
         session_id=session_id,
     )
     _ = team.arun(
-        message=f"What else can you tell me about {random_city}?",
+        input=f"What else can you tell me about {random_city}?",
         user_id=user,
         session_id=session_id,
     )
     _ = team.arun(
-        message=f"What other cities are similar to {random_city}?",
+        input=f"What other cities are similar to {random_city}?",
         user_id=user,
         session_id=session_id,
     )

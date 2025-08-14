@@ -1,7 +1,7 @@
 from agno.agent import Agent, Message
 
 Agent().print_response(
-    messages=[
+    input=[
         Message(
             role="user",
             content=[

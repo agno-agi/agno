@@ -128,11 +128,11 @@ def media_sequence_selector(step_input: StepInput) -> List[Step]:
     """
 
     # Check if message exists and is a string
-    if not step_input.message or not isinstance(step_input.message, str):
+    if not step_input.input or not isinstance(step_input.input, str):
         return [image_sequence]  # Default to image sequence
 
     # Convert message to lowercase for case-insensitive matching
-    message_lower = step_input.message.lower()
+    message_lower = step_input.input.lower()
 
     # Check for video keywords
     if "video" in message_lower:
@@ -171,8 +171,7 @@ if __name__ == "__main__":
     )
 
     asyncio.run(
-        media_workflow.aprint_response(
-            message="Create an image of magical forest for a movie scene",
+        media_workflow.aprint_response(input="Create an image of magical forest for a movie scene",
             markdown=True,
         )
     )
@@ -188,6 +187,6 @@ if __name__ == "__main__":
     # )
 
     # asyncio.run(media_workflow.aprint_response(
-    #     message="Create a cinematic video city timelapse",
+    #     input="Create a cinematic video city timelapse",
     #     markdown=True,
     # ))

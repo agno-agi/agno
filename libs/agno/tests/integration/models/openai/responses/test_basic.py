@@ -3,18 +3,18 @@ from typing import Optional
 import pytest
 from pydantic import BaseModel, Field
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.db.sqlite import SqliteDb
 from agno.exceptions import ModelProviderError
 from agno.models.openai import OpenAIResponses
 
 
-def _assert_metrics(response: RunResponse):
+def _assert_metrics(response: RunOutput):
     """
     Assert that the response metrics are valid and consistent.
 
     Args:
-        response: The RunResponse to validate metrics for
+        response: The RunOutput to validate metrics for
     """
     assert response.metrics is not None
     input_tokens = response.metrics.input_tokens
@@ -32,7 +32,7 @@ def test_basic():
     agent = Agent(model=OpenAIResponses(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
     # Run a simple query
-    response: RunResponse = agent.run("Share a 2 sentence horror story")
+    response: RunOutput = agent.run("Share a 2 sentence horror story")
 
     assert response.content is not None and response.messages is not None
     assert len(response.messages) == 3

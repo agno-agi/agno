@@ -3,13 +3,13 @@ from typing import Optional
 import pytest
 from pydantic import BaseModel, Field
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.db.sqlite import SqliteDb
 from agno.exceptions import ModelProviderError
 from agno.models.openai import OpenAIChat
 
 
-def _assert_metrics(response: RunResponse):
+def _assert_metrics(response: RunOutput):
     assert response.metrics is not None
     input_tokens = response.metrics.input_tokens
     output_tokens = response.metrics.output_tokens
@@ -25,7 +25,7 @@ def test_basic():
     agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
     # Print the response in the terminal
-    response: RunResponse = agent.run("Share a 2 sentence horror story")
+    response: RunOutput = agent.run("Share a 2 sentence horror story")
 
     assert response.content is not None and response.messages is not None
     assert len(response.messages) == 3

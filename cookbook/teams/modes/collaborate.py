@@ -76,7 +76,7 @@ agent_team = Team(
 if __name__ == "__main__":
     asyncio.run(
         agent_team.aprint_response(
-            message="Start the discussion on the topic: 'What is the best way to learn to code?'",
+            input="Start the discussion on the topic: 'What is the best way to learn to code?'",
             # stream=True,
             # stream_intermediate_steps=True,
         )

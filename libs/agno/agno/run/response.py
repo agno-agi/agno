@@ -9,7 +9,7 @@ from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifac
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
-from agno.run.base import BaseRunResponseEvent, RunResponseMetaData, RunStatus
+from agno.run.base import BaseRunOutputEvent, RunOutputMetaData, RunStatus
 from agno.utils.log import logger
 
 
@@ -17,7 +17,7 @@ class RunEvent(str, Enum):
     """Events that can be sent by the run() functions"""
 
     run_started = "RunStarted"
-    run_response_content = "RunResponseContent"
+    run_content = "RunContent"
     run_completed = "RunCompleted"
     run_error = "RunError"
     run_cancelled = "RunCancelled"
@@ -40,7 +40,7 @@ class RunEvent(str, Enum):
 
 
 @dataclass
-class BaseAgentRunResponseEvent(BaseRunResponseEvent):
+class BaseAgentRunEvent(BaseRunOutputEvent):
     created_at: int = field(default_factory=lambda: int(time()))
     event: str = ""
     agent_id: str = ""
@@ -60,7 +60,7 @@ class BaseAgentRunResponseEvent(BaseRunResponseEvent):
 
 
 @dataclass
-class RunResponseStartedEvent(BaseAgentRunResponseEvent):
+class RunStartedEvent(BaseAgentRunEvent):
     """Event sent when the run starts"""
 
     event: str = RunEvent.run_started.value
@@ -69,21 +69,21 @@ class RunResponseStartedEvent(BaseAgentRunResponseEvent):
 
 
 @dataclass
-class RunResponseContentEvent(BaseAgentRunResponseEvent):
-    """Main event for each delta of the RunResponse"""
+class RunContentEvent(BaseAgentRunEvent):
+    """Main event for each delta of the RunOutput"""
 
-    event: str = RunEvent.run_response_content.value
+    event: str = RunEvent.run_content.value
     content: Optional[Any] = None
     content_type: str = "str"
     thinking: Optional[str] = None
     citations: Optional[Citations] = None
     response_audio: Optional[AudioResponse] = None  # Model audio response
     image: Optional[ImageArtifact] = None  # Image attached to the response
-    metadata: Optional[RunResponseMetaData] = None
+    metadata: Optional[RunOutputMetaData] = None
 
 
 @dataclass
-class RunResponseCompletedEvent(BaseAgentRunResponseEvent):
+class RunCompletedEvent(BaseAgentRunEvent):
     event: str = RunEvent.run_completed.value
     content: Optional[Any] = None
     content_type: str = "str"
@@ -94,11 +94,11 @@ class RunResponseCompletedEvent(BaseAgentRunResponseEvent):
     videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
     audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
     response_audio: Optional[AudioResponse] = None  # Model audio response
-    metadata: Optional[RunResponseMetaData] = None
+    metadata: Optional[RunOutputMetaData] = None
 
 
 @dataclass
-class RunResponsePausedEvent(BaseAgentRunResponseEvent):
+class RunPausedEvent(BaseAgentRunEvent):
     event: str = RunEvent.run_paused.value
     tools: Optional[List[ToolExecution]] = None
 
@@ -108,18 +108,18 @@ class RunResponsePausedEvent(BaseAgentRunResponseEvent):
 
 
 @dataclass
-class RunResponseContinuedEvent(BaseAgentRunResponseEvent):
+class RunContinuedEvent(BaseAgentRunEvent):
     event: str = RunEvent.run_continued.value
 
 
 @dataclass
-class RunResponseErrorEvent(BaseAgentRunResponseEvent):
+class RunErrorEvent(BaseAgentRunEvent):
     event: str = RunEvent.run_error.value
     content: Optional[str] = None
 
 
 @dataclass
-class RunResponseCancelledEvent(BaseAgentRunResponseEvent):
+class RunCancelledEvent(BaseAgentRunEvent):
     event: str = RunEvent.run_cancelled.value
     reason: Optional[str] = None
 
@@ -129,22 +129,22 @@ class RunResponseCancelledEvent(BaseAgentRunResponseEvent):
 
 
 @dataclass
-class MemoryUpdateStartedEvent(BaseAgentRunResponseEvent):
+class MemoryUpdateStartedEvent(BaseAgentRunEvent):
     event: str = RunEvent.memory_update_started.value
 
 
 @dataclass
-class MemoryUpdateCompletedEvent(BaseAgentRunResponseEvent):
+class MemoryUpdateCompletedEvent(BaseAgentRunEvent):
     event: str = RunEvent.memory_update_completed.value
 
 
 @dataclass
-class ReasoningStartedEvent(BaseAgentRunResponseEvent):
+class ReasoningStartedEvent(BaseAgentRunEvent):
     event: str = RunEvent.reasoning_started.value
 
 
 @dataclass
-class ReasoningStepEvent(BaseAgentRunResponseEvent):
+class ReasoningStepEvent(BaseAgentRunEvent):
     event: str = RunEvent.reasoning_step.value
     content: Optional[Any] = None
     content_type: str = "str"
@@ -152,20 +152,20 @@ class ReasoningStepEvent(BaseAgentRunResponseEvent):
 
 
 @dataclass
-class ReasoningCompletedEvent(BaseAgentRunResponseEvent):
+class ReasoningCompletedEvent(BaseAgentRunEvent):
     event: str = RunEvent.reasoning_completed.value
     content: Optional[Any] = None
     content_type: str = "str"
 
 
 @dataclass
-class ToolCallStartedEvent(BaseAgentRunResponseEvent):
+class ToolCallStartedEvent(BaseAgentRunEvent):
     event: str = RunEvent.tool_call_started.value
     tool: Optional[ToolExecution] = None
 
 
 @dataclass
-class ToolCallCompletedEvent(BaseAgentRunResponseEvent):
+class ToolCallCompletedEvent(BaseAgentRunEvent):
     event: str = RunEvent.tool_call_completed.value
     tool: Optional[ToolExecution] = None
     content: Optional[Any] = None
@@ -175,23 +175,23 @@ class ToolCallCompletedEvent(BaseAgentRunResponseEvent):
 
 
 @dataclass
-class ParserModelResponseStartedEvent(BaseAgentRunResponseEvent):
+class ParserModelResponseStartedEvent(BaseAgentRunEvent):
     event: str = RunEvent.parser_model_response_started.value
 
 
 @dataclass
-class ParserModelResponseCompletedEvent(BaseAgentRunResponseEvent):
+class ParserModelResponseCompletedEvent(BaseAgentRunEvent):
     event: str = RunEvent.parser_model_response_completed.value
 
 
-RunResponseEvent = Union[
-    RunResponseStartedEvent,
-    RunResponseContentEvent,
-    RunResponseCompletedEvent,
-    RunResponseErrorEvent,
-    RunResponseCancelledEvent,
-    RunResponsePausedEvent,
-    RunResponseContinuedEvent,
+RunOutputEvent = Union[
+    RunStartedEvent,
+    RunContentEvent,
+    RunCompletedEvent,
+    RunErrorEvent,
+    RunCancelledEvent,
+    RunPausedEvent,
+    RunContinuedEvent,
     ReasoningStartedEvent,
     ReasoningStepEvent,
     ReasoningCompletedEvent,
@@ -206,13 +206,13 @@ RunResponseEvent = Union[
 
 # Map event string to dataclass
 RUN_EVENT_TYPE_REGISTRY = {
-    RunEvent.run_started.value: RunResponseStartedEvent,
-    RunEvent.run_response_content.value: RunResponseContentEvent,
-    RunEvent.run_completed.value: RunResponseCompletedEvent,
-    RunEvent.run_error.value: RunResponseErrorEvent,
-    RunEvent.run_cancelled.value: RunResponseCancelledEvent,
-    RunEvent.run_paused.value: RunResponsePausedEvent,
-    RunEvent.run_continued.value: RunResponseContinuedEvent,
+    RunEvent.run_started.value: RunStartedEvent,
+    RunEvent.run_content.value: RunContentEvent,
+    RunEvent.run_completed.value: RunCompletedEvent,
+    RunEvent.run_error.value: RunErrorEvent,
+    RunEvent.run_cancelled.value: RunCancelledEvent,
+    RunEvent.run_paused.value: RunPausedEvent,
+    RunEvent.run_continued.value: RunContinuedEvent,
     RunEvent.reasoning_started.value: ReasoningStartedEvent,
     RunEvent.reasoning_step.value: ReasoningStepEvent,
     RunEvent.reasoning_completed.value: ReasoningCompletedEvent,
@@ -225,7 +225,7 @@ RUN_EVENT_TYPE_REGISTRY = {
 }
 
 
-def run_response_event_from_dict(data: dict) -> BaseRunResponseEvent:
+def run_output_event_from_dict(data: dict) -> BaseRunOutputEvent:
     event_type = data.get("event", "")
     cls = RUN_EVENT_TYPE_REGISTRY.get(event_type)
     if not cls:
@@ -234,7 +234,7 @@ def run_response_event_from_dict(data: dict) -> BaseRunResponseEvent:
 
 
 @dataclass
-class RunResponse:
+class RunOutput:
     """Response returned by Agent.run() or Workflow.run() functions"""
 
     content: Optional[Any] = None
@@ -260,17 +260,17 @@ class RunResponse:
     audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
     response_audio: Optional[AudioResponse] = None  # Model audio response
     citations: Optional[Citations] = None
-    metadata: Optional[RunResponseMetaData] = None
+    metadata: Optional[RunOutputMetaData] = None
     created_at: int = field(default_factory=lambda: int(time()))
 
-    events: Optional[List[RunResponseEvent]] = None
+    events: Optional[List[RunOutputEvent]] = None
 
     status: RunStatus = RunStatus.running
 
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
     # and should be treated as foreign keys for data integrity
-    workflow_step_id: Optional[str] = None   # FK: Points to StepOutput.step_id
+    workflow_step_id: Optional[str] = None  # FK: Points to StepOutput.step_id
 
     @property
     def is_paused(self):
@@ -325,7 +325,7 @@ class RunResponse:
 
         if self.metadata is not None:
             _dict["metadata"] = (
-                self.metadata.to_dict() if isinstance(self.metadata, RunResponseMetaData) else self.metadata
+                self.metadata.to_dict() if isinstance(self.metadata, RunOutputMetaData) else self.metadata
             )
 
         if self.images is not None:
@@ -389,12 +389,12 @@ class RunResponse:
         return json.dumps(_dict, indent=2)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "RunResponse":
+    def from_dict(cls, data: Dict[str, Any]) -> "RunOutput":
         if "run" in data:
             data = data.pop("run")
 
         events = data.pop("events", None)
-        events = [run_response_event_from_dict(event) for event in events] if events else None
+        events = [run_output_event_from_dict(event) for event in events] if events else None
 
         messages = data.pop("messages", None)
         messages = [Message.model_validate(message) for message in messages] if messages else None

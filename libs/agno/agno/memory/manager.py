@@ -164,6 +164,7 @@ class MemoryManager:
         if self.db:
             if memory.memory_id is None:
                 from uuid import uuid4
+
                 memory_id = memory.memory_id or str(uuid4())
                 memory.memory_id = memory_id
 
@@ -572,7 +573,7 @@ class MemoryManager:
             try:
                 memory_search = parse_response_model_str(response.content, MemorySearchResponse)  # type: ignore
 
-                # Update RunResponse
+                # Update RunOutput
                 if memory_search is None:
                     log_warning("Failed to convert memory_search response to MemorySearchResponse")
                     return []

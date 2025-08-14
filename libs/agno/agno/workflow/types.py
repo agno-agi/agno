@@ -14,7 +14,7 @@ from agno.utils.log import log_warning
 class WorkflowExecutionInput:
     """Input data for a step execution"""
 
-    message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None
+    input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None
 
     additional_data: Optional[Dict[str, Any]] = None
 
@@ -23,35 +23,35 @@ class WorkflowExecutionInput:
     videos: Optional[List[VideoArtifact]] = None
     audio: Optional[List[AudioArtifact]] = None
 
-    def get_message_as_string(self) -> Optional[str]:
-        """Convert message to string representation"""
-        if self.message is None:
+    def get_input_as_string(self) -> Optional[str]:
+        """Convert input to string representation"""
+        if self.input is None:
             return None
 
-        if isinstance(self.message, str):
-            return self.message
-        elif isinstance(self.message, BaseModel):
-            return self.message.model_dump_json(indent=2, exclude_none=True)
-        elif isinstance(self.message, (dict, list)):
+        if isinstance(self.input, str):
+            return self.input
+        elif isinstance(self.input, BaseModel):
+            return self.input.model_dump_json(indent=2, exclude_none=True)
+        elif isinstance(self.input, (dict, list)):
             import json
 
-            return json.dumps(self.message, indent=2, default=str)
+            return json.dumps(self.input, indent=2, default=str)
         else:
-            return str(self.message)
+            return str(self.input)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
-        message_dict: Optional[Union[str, Dict[str, Any], List[Any]]] = None
-        if self.message is not None:
-            if isinstance(self.message, BaseModel):
-                message_dict = self.message.model_dump(exclude_none=True)
-            elif isinstance(self.message, (dict, list)):
-                message_dict = self.message
+        input_dict: Optional[Union[str, Dict[str, Any], List[Any]]] = None
+        if self.input is not None:
+            if isinstance(self.input, BaseModel):
+                input_dict = self.input.model_dump(exclude_none=True)
+            elif isinstance(self.input, (dict, list)):
+                input_dict = self.input
             else:
-                message_dict = str(self.message)
+                input_dict = str(self.input)
 
         return {
-            "message": message_dict,
+            "input": input_dict,
             "additional_data": self.additional_data,
             "images": [img.to_dict() for img in self.images] if self.images else None,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,
@@ -63,7 +63,7 @@ class WorkflowExecutionInput:
 class StepInput:
     """Input data for a step execution"""
 
-    message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None
+    input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None
 
     previous_step_content: Optional[Any] = None
     previous_step_outputs: Optional[Dict[str, "StepOutput"]] = None
@@ -75,21 +75,21 @@ class StepInput:
     videos: Optional[List[VideoArtifact]] = None
     audio: Optional[List[AudioArtifact]] = None
 
-    def get_message_as_string(self) -> Optional[str]:
-        """Convert message to string representation"""
-        if self.message is None:
+    def get_input_as_string(self) -> Optional[str]:
+        """Convert input to string representation"""
+        if self.input is None:
             return None
 
-        if isinstance(self.message, str):
-            return self.message
-        elif isinstance(self.message, BaseModel):
-            return self.message.model_dump_json(indent=2, exclude_none=True)
-        elif isinstance(self.message, (dict, list)):
+        if isinstance(self.input, str):
+            return self.input
+        elif isinstance(self.input, BaseModel):
+            return self.input.model_dump_json(indent=2, exclude_none=True)
+        elif isinstance(self.input, (dict, list)):
             import json
 
-            return json.dumps(self.message, indent=2, default=str)
+            return json.dumps(self.input, indent=2, default=str)
         else:
-            return str(self.message)
+            return str(self.input)
 
     def get_step_output(self, step_name: str) -> Optional["StepOutput"]:
         """Get output from a specific previous step by name"""
@@ -169,14 +169,14 @@ class StepInput:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         # Handle the unified message field
-        message_dict: Optional[Union[str, Dict[str, Any], List[Any]]] = None
-        if self.message is not None:
-            if isinstance(self.message, BaseModel):
-                message_dict = self.message.model_dump(exclude_none=True)
-            elif isinstance(self.message, (dict, list)):
-                message_dict = self.message
+        input_dict: Optional[Union[str, Dict[str, Any], List[Any]]] = None
+        if self.input is not None:
+            if isinstance(self.input, BaseModel):
+                input_dict = self.input.model_dump(exclude_none=True)
+            elif isinstance(self.input, (dict, list)):
+                input_dict = self.input
             else:
-                message_dict = str(self.message)
+                input_dict = str(self.input)
 
         previous_step_content_str: Optional[str] = None
         # Handle previous_step_content (keep existing logic)
@@ -196,7 +196,7 @@ class StepInput:
                 previous_steps_dict[step_name] = output.to_dict()
 
         return {
-            "message": message_dict,
+            "input": input_dict,
             "previous_step_outputs": previous_steps_dict,
             "previous_step_content": previous_step_content_str,
             "additional_data": self.additional_data,

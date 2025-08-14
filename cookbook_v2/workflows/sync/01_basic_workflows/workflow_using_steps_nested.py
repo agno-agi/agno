@@ -60,7 +60,7 @@ initial_research_step = Step(
 # Condition evaluator function
 def is_tech_topic(step_input) -> bool:
     """Check if the topic is tech-related and needs specialized research"""
-    message = step_input.message.lower() if step_input.message else ""
+    message = step_input.input.lower() if step_input.input else ""
     tech_keywords = [
         "ai",
         "machine learning",
@@ -140,8 +140,7 @@ if __name__ == "__main__":
         steps=[article_creation_sequence],
     )
 
-    article_workflow.print_response(
-        message="Write an article about the latest AI developments in machine learning",
+    article_workflow.print_response(input="Write an article about the latest AI developments in machine learning",
         markdown=True,
         stream=True,
         stream_intermediate_steps=True,

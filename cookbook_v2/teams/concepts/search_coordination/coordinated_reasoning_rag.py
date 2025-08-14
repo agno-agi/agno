@@ -16,6 +16,7 @@ Setup:
 """
 
 import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.knowledge import Knowledge
@@ -72,7 +73,7 @@ reasoning_analyst = Agent(
     markdown=True,
 )
 
-# Evidence Evaluator Agent - Specialized in evidence assessment  
+# Evidence Evaluator Agent - Specialized in evidence assessment
 evidence_evaluator = Agent(
     name="Evidence Evaluator",
     model=Claude(id="claude-sonnet-4-20250514"),
@@ -97,7 +98,7 @@ response_coordinator = Agent(
     instructions=[
         "Synthesize all team member contributions into a coherent response.",
         "Ensure logical flow and consistency across the response.",
-        "Include proper citations and evidence references.", 
+        "Include proper citations and evidence references.",
         "Present reasoning chains clearly and transparently.",
         "Use reasoning tools to structure the final response.",
     ],
@@ -109,7 +110,12 @@ coordinated_reasoning_team = Team(
     name="Coordinated Reasoning RAG Team",
     mode="coordinate",  # Sequential coordination for reasoning
     model=Claude(id="claude-sonnet-4-20250514"),
-    members=[information_gatherer, reasoning_analyst, evidence_evaluator, response_coordinator],
+    members=[
+        information_gatherer,
+        reasoning_analyst,
+        evidence_evaluator,
+        response_coordinator,
+    ],
     instructions=[
         "Work together to provide comprehensive, well-reasoned responses.",
         "Information Gatherer: First search and gather all relevant information.",
@@ -127,37 +133,31 @@ coordinated_reasoning_team = Team(
 async def async_reasoning_demo():
     """Demonstrate async coordinated reasoning RAG with streaming."""
     print("🧠 Async Coordinated Reasoning RAG Team Demo")
-    print("="*60)
-    
+    print("=" * 60)
+
     query = "What are Agents and how do they work with tools? Explain the reasoning behind their design."
-        
+
     # Run async with streaming and reasoning
     await coordinated_reasoning_team.aprint_response(
-        query,
-        stream=True,
-        stream_intermediate_steps=True,
-        show_full_reasoning=True
+        query, stream=True, stream_intermediate_steps=True, show_full_reasoning=True
     )
 
 
 def sync_reasoning_demo():
     """Demonstrate sync coordinated reasoning RAG."""
     print("🧠 Coordinated Reasoning RAG Team Demo")
-    print("="*50)
-    
+    print("=" * 50)
+
     query = "What are Agents and how do they work with tools? Explain the reasoning behind their design."
-        
+
     # Run with detailed reasoning output
     coordinated_reasoning_team.print_response(
-        query,
-        stream=True,
-        stream_intermediate_steps=True,
-        show_full_reasoning=True
+        query, stream=True, stream_intermediate_steps=True, show_full_reasoning=True
     )
 
 
 if __name__ == "__main__":
     # Choose which demo to run
     # asyncio.run(async_reasoning_demo())
-    
+
     sync_reasoning_demo()

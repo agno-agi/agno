@@ -862,6 +862,11 @@ class Knowledge:
             content_row.updated_at = int(time.time())
             self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
+            if self.vector_db:
+                self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata)
+
+            self.add_filters(content.metadata)
+
             return content_row.to_dict()
 
         else:

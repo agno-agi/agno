@@ -45,7 +45,7 @@ def custom_content_planning_function(step_input: StepInput) -> StepOutput:
     Custom function that does intelligent content planning with context awareness
     Now also uses additional_data for extra context
     """
-    message = step_input.message
+    message = step_input.input
     previous_step_content = step_input.previous_step_content
 
     # Access additional_data that was passed with the workflow
@@ -138,8 +138,7 @@ if __name__ == "__main__":
     )
 
     # Run workflow with additional_data
-    content_creation_workflow.print_response(
-        message="AI trends in 2024",
+    content_creation_workflow.print_response(input="AI trends in 2024",
         additional_data={
             "user_email": "kaustubh@agno.com",
             "priority": "high",

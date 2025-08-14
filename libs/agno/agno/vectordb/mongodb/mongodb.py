@@ -1274,3 +1274,34 @@ class MongoDb(VectorDb):
         except Exception as e:
             logger.error(f"Error deleting documents with content_id '{content_id}': {e}")
             return False
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for documents with the given content_id.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        try:
+            collection = self.client[self.database_name][self.collection_name]
+
+            # Create query filter for content_id
+            filter_query = {"content_id": content_id}
+
+            update_operations = {}
+            for key, value in metadata.items():
+                update_operations[f"meta_data.{key}"] = value
+                update_operations[f"filters.{key}"] = value
+
+            # Update documents
+            result = collection.update_many(filter_query, {"$set": update_operations})
+
+            if result.matched_count == 0:
+                logger.debug(f"No documents found with content_id: {content_id}")
+            else:
+                logger.debug(f"Updated metadata for {result.matched_count} documents with content_id: {content_id}")
+
+        except Exception as e:
+            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+            raise

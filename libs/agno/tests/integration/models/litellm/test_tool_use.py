@@ -1,12 +1,12 @@
 import pytest
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent, RunOutput
 from agno.models.litellm import LiteLLM
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
 
 
-def _assert_metrics(response: RunResponse):
+def _assert_metrics(response: RunOutput):
     """Helper function to assert metrics are present and valid"""
     # Check that metrics dictionary exists
     assert response.metrics is not None
@@ -39,7 +39,7 @@ def test_tool_use():
     )
 
     # Get the response with a query that should trigger tool use
-    response: RunResponse = agent.run("What's the latest news about SpaceX?")
+    response: RunOutput = agent.run("What's the latest news about SpaceX?")
 
     assert response.content is not None
     # system, user, assistant (and possibly tool messages)

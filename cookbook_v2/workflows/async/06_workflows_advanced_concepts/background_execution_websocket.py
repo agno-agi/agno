@@ -580,8 +580,7 @@ async def run_workflow_background_stream(request: Dict[str, Any]):
 
     try:
         # Execute workflow in background with streaming and WebSocket
-        result = await workflow.arun(
-            message=message,
+        result = await workflow.arun(input=message,
             session_id=session_id,
             stream=True,
             stream_intermediate_steps=True,

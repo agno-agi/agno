@@ -15,7 +15,6 @@ class UserMemorySchema(BaseModel):
 
     agent_id: Optional[str]
     team_id: Optional[str]
-    workflow_id: Optional[str]
     user_id: Optional[str]
 
     updated_at: Optional[datetime]
@@ -27,7 +26,6 @@ class UserMemorySchema(BaseModel):
             user_id=str(memory_dict["user_id"]),
             agent_id=memory_dict.get("agent_id"),
             team_id=memory_dict.get("team_id"),
-            workflow_id=memory_dict.get("workflow_id"),
             memory=memory_dict["memory"],
             topics=memory_dict.get("topics", []),
             updated_at=memory_dict["updated_at"],

@@ -3,7 +3,7 @@ from typing import Optional
 import pytest
 from pydantic import BaseModel, Field
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.groq import Groq
 from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools

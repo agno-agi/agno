@@ -92,14 +92,13 @@ if __name__ == "__main__":
     )
 
     # 1. Should work properly, as its in sync with input schema
-    content_creation_workflow.print_response(
-        message=research_topic,
+    content_creation_workflow.print_response(input=research_topic,
         markdown=True,
     )
 
     # 2. Should fail, as some fields present in input schema are missing here
     # content_creation_workflow.print_response(
-    #     message=ResearchTopic(
+    #     input=ResearchTopic(
     #         topic="AI trends in 2024",
     #         focus_areas=[
     #             "Machine Learning",
@@ -113,13 +112,13 @@ if __name__ == "__main__":
 
     # 3. Should fail, as its not in sync with input schema, diff pydantic model provided
     # content_creation_workflow.print_response(
-    #     message=DifferentModel(name="test"),
+    #     input=DifferentModel(name="test"),
     #     markdown=True,
     # )
 
     # 4. Pass a valid dict that matches ResearchTopic
     # content_creation_workflow.print_response(
-    #     message={
+    #     input={
     #         "topic": "AI trends in 2024",
     #         "focus_areas": ["Machine Learning", "Computer Vision"],
     #         "target_audience": "Tech professionals",

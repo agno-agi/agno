@@ -92,8 +92,7 @@ werewolf_team = Team(
 
 # Run the game
 asyncio.run(
-    werewolf_team.aprint_response(
-        message="Start a new Werewolf game. First plan how you will run the game. Then assign roles and initialize the game state. Then proceed with the first day phase and continue until the game is over.",
+    werewolf_team.aprint_response(input="Start a new Werewolf game. First plan how you will run the game. Then assign roles and initialize the game state. Then proceed with the first day phase and continue until the game is over.",
         stream=True,
         stream_intermediate_steps=True,
     )

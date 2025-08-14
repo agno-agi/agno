@@ -7,8 +7,8 @@ from pydantic import BaseModel
 
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
 from agno.run.base import RunStatus
-from agno.run.response import RunResponse
-from agno.run.team import TeamRunResponse
+from agno.run.response import RunOutput
+from agno.run.team import TeamRunOutput
 from agno.utils.log import log_error
 
 if TYPE_CHECKING:
@@ -48,7 +48,7 @@ class WorkflowRunEvent(str, Enum):
 
 
 @dataclass
-class BaseWorkflowRunResponseEvent:
+class BaseWorkflowRunOutputEvent:
     """Base class for all workflow run response events"""
 
     created_at: int = field(default_factory=lambda: int(time()))
@@ -117,14 +117,14 @@ class BaseWorkflowRunResponseEvent:
 
 
 @dataclass
-class WorkflowStartedEvent(BaseWorkflowRunResponseEvent):
+class WorkflowStartedEvent(BaseWorkflowRunOutputEvent):
     """Event sent when workflow execution starts"""
 
     event: str = WorkflowRunEvent.workflow_started.value
 
 
 @dataclass
-class WorkflowCompletedEvent(BaseWorkflowRunResponseEvent):
+class WorkflowCompletedEvent(BaseWorkflowRunOutputEvent):
     """Event sent when workflow execution completes"""
 
     event: str = WorkflowRunEvent.workflow_completed.value
@@ -137,7 +137,7 @@ class WorkflowCompletedEvent(BaseWorkflowRunResponseEvent):
 
 
 @dataclass
-class WorkflowErrorEvent(BaseWorkflowRunResponseEvent):
+class WorkflowErrorEvent(BaseWorkflowRunOutputEvent):
     """Event sent when workflow execution fails"""
 
     event: str = WorkflowRunEvent.workflow_error.value
@@ -145,7 +145,7 @@ class WorkflowErrorEvent(BaseWorkflowRunResponseEvent):
 
 
 @dataclass
-class WorkflowCancelledEvent(BaseWorkflowRunResponseEvent):
+class WorkflowCancelledEvent(BaseWorkflowRunOutputEvent):
     """Event sent when workflow execution is cancelled"""
 
     event: str = WorkflowRunEvent.workflow_cancelled.value
@@ -157,7 +157,7 @@ class WorkflowCancelledEvent(BaseWorkflowRunResponseEvent):
 
 
 @dataclass
-class StepStartedEvent(BaseWorkflowRunResponseEvent):
+class StepStartedEvent(BaseWorkflowRunOutputEvent):
     """Event sent when step execution starts"""
 
     event: str = WorkflowRunEvent.step_started.value
@@ -166,7 +166,7 @@ class StepStartedEvent(BaseWorkflowRunResponseEvent):
 
 
 @dataclass
-class StepCompletedEvent(BaseWorkflowRunResponseEvent):
+class StepCompletedEvent(BaseWorkflowRunOutputEvent):
     """Event sent when step execution completes"""
 
     event: str = WorkflowRunEvent.step_completed.value
@@ -187,7 +187,7 @@ class StepCompletedEvent(BaseWorkflowRunResponseEvent):
 
 
 @dataclass
-class StepErrorEvent(BaseWorkflowRunResponseEvent):
+class StepErrorEvent(BaseWorkflowRunOutputEvent):
     """Event sent when step execution fails"""
 
     event: str = WorkflowRunEvent.step_error.value
@@ -197,7 +197,7 @@ class StepErrorEvent(BaseWorkflowRunResponseEvent):
 
 
 @dataclass
-class LoopExecutionStartedEvent(BaseWorkflowRunResponseEvent):
+class LoopExecutionStartedEvent(BaseWorkflowRunOutputEvent):
     """Event sent when loop execution starts"""
 
     event: str = WorkflowRunEvent.loop_execution_started.value
@@ -207,7 +207,7 @@ class LoopExecutionStartedEvent(BaseWorkflowRunResponseEvent):
 
 
 @dataclass
-class LoopIterationStartedEvent(BaseWorkflowRunResponseEvent):
+class LoopIterationStartedEvent(BaseWorkflowRunOutputEvent):
     """Event sent when loop iteration starts"""
 
     event: str = WorkflowRunEvent.loop_iteration_started.value
@@ -218,7 +218,7 @@ class LoopIterationStartedEvent(BaseWorkflowRunResponseEvent):
 
 
 @dataclass
-class LoopIterationCompletedEvent(BaseWorkflowRunResponseEvent):
+class LoopIterationCompletedEvent(BaseWorkflowRunOutputEvent):
     """Event sent when loop iteration completes"""
 
     event: str = WorkflowRunEvent.loop_iteration_completed.value
@@ -231,7 +231,7 @@ class LoopIterationCompletedEvent(BaseWorkflowRunResponseEvent):
 
 
 @dataclass
-class LoopExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
+class LoopExecutionCompletedEvent(BaseWorkflowRunOutputEvent):
     """Event sent when loop execution completes"""
 
     event: str = WorkflowRunEvent.loop_execution_completed.value
@@ -243,7 +243,7 @@ class LoopExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
 
 
 @dataclass
-class ParallelExecutionStartedEvent(BaseWorkflowRunResponseEvent):
+class ParallelExecutionStartedEvent(BaseWorkflowRunOutputEvent):
     """Event sent when parallel step execution starts"""
 
     event: str = WorkflowRunEvent.parallel_execution_started.value
@@ -253,7 +253,7 @@ class ParallelExecutionStartedEvent(BaseWorkflowRunResponseEvent):
 
 
 @dataclass
-class ParallelExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
+class ParallelExecutionCompletedEvent(BaseWorkflowRunOutputEvent):
     """Event sent when parallel step execution completes"""
 
     event: str = WorkflowRunEvent.parallel_execution_completed.value
@@ -266,7 +266,7 @@ class ParallelExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
 
 
 @dataclass
-class ConditionExecutionStartedEvent(BaseWorkflowRunResponseEvent):
+class ConditionExecutionStartedEvent(BaseWorkflowRunOutputEvent):
     """Event sent when condition step execution starts"""
 
     event: str = WorkflowRunEvent.condition_execution_started.value
@@ -276,7 +276,7 @@ class ConditionExecutionStartedEvent(BaseWorkflowRunResponseEvent):
 
 
 @dataclass
-class ConditionExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
+class ConditionExecutionCompletedEvent(BaseWorkflowRunOutputEvent):
     """Event sent when condition step execution completes"""
 
     event: str = WorkflowRunEvent.condition_execution_completed.value
@@ -290,7 +290,7 @@ class ConditionExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
 
 
 @dataclass
-class RouterExecutionStartedEvent(BaseWorkflowRunResponseEvent):
+class RouterExecutionStartedEvent(BaseWorkflowRunOutputEvent):
     """Event sent when router step execution starts"""
 
     event: str = WorkflowRunEvent.router_execution_started.value
@@ -301,7 +301,7 @@ class RouterExecutionStartedEvent(BaseWorkflowRunResponseEvent):
 
 
 @dataclass
-class RouterExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
+class RouterExecutionCompletedEvent(BaseWorkflowRunOutputEvent):
     """Event sent when router step execution completes"""
 
     event: str = WorkflowRunEvent.router_execution_completed.value
@@ -316,7 +316,7 @@ class RouterExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
 
 
 @dataclass
-class StepsExecutionStartedEvent(BaseWorkflowRunResponseEvent):
+class StepsExecutionStartedEvent(BaseWorkflowRunOutputEvent):
     """Event sent when steps execution starts"""
 
     event: str = WorkflowRunEvent.steps_execution_started.value
@@ -326,7 +326,7 @@ class StepsExecutionStartedEvent(BaseWorkflowRunResponseEvent):
 
 
 @dataclass
-class StepsExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
+class StepsExecutionCompletedEvent(BaseWorkflowRunOutputEvent):
     """Event sent when steps execution completes"""
 
     event: str = WorkflowRunEvent.steps_execution_completed.value
@@ -340,7 +340,7 @@ class StepsExecutionCompletedEvent(BaseWorkflowRunResponseEvent):
 
 
 @dataclass
-class StepOutputEvent(BaseWorkflowRunResponseEvent):
+class StepOutputEvent(BaseWorkflowRunOutputEvent):
     """Event sent when a step produces output - replaces direct StepOutput yielding"""
 
     event: str = "StepOutput"
@@ -381,7 +381,7 @@ class StepOutputEvent(BaseWorkflowRunResponseEvent):
 
 
 # Union type for all workflow run response events
-WorkflowRunResponseEvent = Union[
+WorkflowRunOutputEvent = Union[
     WorkflowStartedEvent,
     WorkflowCompletedEvent,
     WorkflowErrorEvent,
@@ -405,7 +405,7 @@ WorkflowRunResponseEvent = Union[
 
 
 @dataclass
-class WorkflowRunResponse:
+class WorkflowRunOutput:
     """Response returned by Workflow.run() functions - kept for backwards compatibility"""
 
     content: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, Any]] = None
@@ -429,10 +429,10 @@ class WorkflowRunResponse:
     step_results: List[Union["StepOutput", List["StepOutput"]]] = field(default_factory=list)  # noqa: F821
 
     # Store agent/team responses separately with parent_run_id references
-    step_executor_runs: Optional[List[Union[RunResponse, TeamRunResponse]]] = None
+    step_executor_runs: Optional[List[Union[RunOutput, TeamRunOutput]]] = None
 
     # Store events from workflow execution
-    events: Optional[List[WorkflowRunResponseEvent]] = None
+    events: Optional[List[WorkflowRunOutputEvent]] = None
 
     # Workflow metrics aggregated from all steps
     workflow_metrics: Optional["WorkflowMetrics"] = None
@@ -509,7 +509,7 @@ class WorkflowRunResponse:
         return _dict
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "WorkflowRunResponse":
+    def from_dict(cls, data: Dict[str, Any]) -> "WorkflowRunOutput":
         # Import here to avoid circular import
         from agno.workflow.step import StepOutput
 
@@ -529,14 +529,14 @@ class WorkflowRunResponse:
 
         # Parse step_executor_runs
         step_executor_runs_data = data.pop("step_executor_runs", [])
-        step_executor_runs: List[Union[RunResponse, TeamRunResponse]] = []
+        step_executor_runs: List[Union[RunOutput, TeamRunOutput]] = []
         if step_executor_runs_data:
             step_executor_runs = []
             for run_data in step_executor_runs_data:
                 if "team_id" in run_data or "team_name" in run_data:
-                    step_executor_runs.append(TeamRunResponse.from_dict(run_data))
+                    step_executor_runs.append(TeamRunOutput.from_dict(run_data))
                 else:
-                    step_executor_runs.append(RunResponse.from_dict(run_data))
+                    step_executor_runs.append(RunOutput.from_dict(run_data))
 
         metadata = data.pop("metadata", None)
 

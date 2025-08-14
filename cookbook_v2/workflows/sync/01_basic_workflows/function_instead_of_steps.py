@@ -45,14 +45,14 @@ def custom_execution_function(
     print(f"Executing workflow: {workflow.name}")
 
     # Run the research team
-    run_response = research_team.run(execution_input.message)
+    run_response = research_team.run(execution_input.input)
     research_content = run_response.content
 
     # Create intelligent planning prompt
     planning_prompt = f"""
         STRATEGIC CONTENT PLANNING REQUEST:
 
-        Core Topic: {execution_input.message}
+        Core Topic: {execution_input.input}
 
         Research Results: {research_content[:500]}
 
@@ -82,6 +82,5 @@ if __name__ == "__main__":
         ),
         steps=custom_execution_function,
     )
-    content_creation_workflow.print_response(
-        message="AI trends in 2024",
+    content_creation_workflow.print_response(input="AI trends in 2024",
     )

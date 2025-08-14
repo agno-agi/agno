@@ -1,6 +1,6 @@
 from typing import Iterator
 
-from agno.agent import Agent, RunResponseEvent  # noqa
+from agno.agent import Agent, RunOutputEvent
 from agno.models.openai import OpenAIChat
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.pprint import pprint_run_response
@@ -12,7 +12,7 @@ agent = Agent(
     markdown=True,
 )
 
-run_stream: Iterator[RunResponseEvent] = agent.run(
+run_stream: Iterator[RunOutputEvent] = agent.run(
     "What is the stock price of NVDA", stream=True
 )
 pprint_run_response(run_stream, markdown=True)

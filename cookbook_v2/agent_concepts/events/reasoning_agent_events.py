@@ -12,30 +12,30 @@ finance_agent = Agent(
 
 async def run_agent_with_events(prompt: str):
     content_started = False
-    async for run_response_event in finance_agent.arun(
+    async for run_output_event in finance_agent.arun(
         prompt,
         stream=True,
         stream_intermediate_steps=True,
     ):
-        if run_response_event.event in [RunEvent.run_started, RunEvent.run_completed]:
-            print(f"\nEVENT: {run_response_event.event}")
+        if run_output_event.event in [RunEvent.run_started, RunEvent.run_completed]:
+            print(f"\nEVENT: {run_output_event.event}")
 
-        if run_response_event.event in [RunEvent.reasoning_started]:
-            print(f"\nEVENT: {run_response_event.event}")
+        if run_output_event.event in [RunEvent.reasoning_started]:
+            print(f"\nEVENT: {run_output_event.event}")
 
-        if run_response_event.event in [RunEvent.reasoning_step]:
-            print(f"\nEVENT: {run_response_event.event}")
-            print(f"REASONING CONTENT: {run_response_event.reasoning_content}")  # type: ignore
+        if run_output_event.event in [RunEvent.reasoning_step]:
+            print(f"\nEVENT: {run_output_event.event}")
+            print(f"REASONING CONTENT: {run_output_event.reasoning_content}")  # type: ignore
 
-        if run_response_event.event in [RunEvent.reasoning_completed]:
-            print(f"\nEVENT: {run_response_event.event}")
+        if run_output_event.event in [RunEvent.reasoning_completed]:
+            print(f"\nEVENT: {run_output_event.event}")
 
-        if run_response_event.event in [RunEvent.run_response_content]:
+        if run_output_event.event in [RunEvent.run_content]:
             if not content_started:
                 print("\nCONTENT:")
                 content_started = True
             else:
-                print(run_response_event.content, end="")
+                print(run_output_event.content, end="")
 
 
 if __name__ == "__main__":

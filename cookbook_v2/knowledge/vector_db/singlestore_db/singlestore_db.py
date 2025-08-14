@@ -10,6 +10,7 @@
 - Create the database with your choice of name. Default setup script requires AGNO as database name. `CREATE DATABASE your_database_name;`
 """
 
+import asyncio
 from os import getenv
 
 from agno.agent import Agent
@@ -40,10 +41,12 @@ vector_db = SingleStore(
 
 knowledge = Knowledge(name="My SingleStore Knowledge Base", vector_db=vector_db)
 
-knowledge.add_content(
-    name="Recipes",
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-    metadata={"doc_type": "recipe_book"},
+asyncio.run(
+    knowledge.add_content(
+        name="Recipes",
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+        metadata={"doc_type": "recipe_book"},
+    )
 )
 
 agent = Agent(

@@ -1391,6 +1391,7 @@ class SingleStoreDb(BaseDb):
                         "status_message": knowledge_row.status_message,
                         "created_at": knowledge_row.created_at,
                         "updated_at": knowledge_row.updated_at,
+                        "external_id": knowledge_row.external_id,
                     }.items()
                     if v is not None
                 }

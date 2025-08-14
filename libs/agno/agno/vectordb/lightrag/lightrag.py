@@ -357,3 +357,13 @@ class LightRag(VectorDb):
         else:
             # If it's a string or other format, wrap it in a Document
             return [Document(content=str(result), meta_data={"source": "lightrag", "query": query, "mode": mode})]
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update metadata is not supported for LightRag as it manages its own graph structure.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        raise NotImplementedError("update_metadata not supported for LightRag - use LightRag's native methods")

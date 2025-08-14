@@ -1,6 +1,6 @@
 from typing import List
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.portkey import Portkey
 from pydantic import BaseModel, Field
 
@@ -31,7 +31,7 @@ agent = Agent(
 )
 
 # Get the response in a variable
-# run: RunResponse = agent.run("New York")
+# run: RunOutput = agent.run("New York")
 # print(run.content)
 
 agent.print_response("New York")

@@ -1,6 +1,6 @@
 import asyncio
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent, RunOutput
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from rich.pretty import pprint
@@ -19,7 +19,7 @@ async def get_agent(delay, provider):
         tools=[DuckDuckGoTools()],
     )
     await asyncio.sleep(delay)
-    response: RunResponse = await agent.arun(
+    response: RunOutput = await agent.arun(
         f"Write a report on the following AI provider: {provider}"
     )
     return response

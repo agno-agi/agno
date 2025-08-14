@@ -808,3 +808,67 @@ class LanceDb(VectorDb):
         except Exception as e:
             logger.error(f"Error checking content_hash existence '{content_hash}': {e}")
             return False
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for documents with the given content_id.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        import json
+
+        try:
+            # Search for documents with the given content_id
+            query_filter = f"payload->>'content_id' = '{content_id}'"
+            results = self.table.search().where(query_filter).to_pandas()
+
+            if results.empty:
+                logger.debug(f"No documents found with content_id: {content_id}")
+                return
+
+            # Update each matching document
+            updated_count = 0
+            for _, row in results.iterrows():
+                row_id = row["id"]
+                current_payload = json.loads(row["payload"])
+
+                # Merge existing metadata with new metadata
+                if "meta_data" in current_payload:
+                    current_payload["meta_data"].update(metadata)
+                else:
+                    current_payload["meta_data"] = metadata
+
+                if "filters" in current_payload:
+                    if isinstance(current_payload["filters"], dict):
+                        current_payload["filters"].update(metadata)
+                    else:
+                        current_payload["filters"] = metadata
+                else:
+                    current_payload["filters"] = metadata
+
+                # Update the document
+                update_data = {"id": row_id, "payload": json.dumps(current_payload)}
+
+                # LanceDB doesn't have a direct update, so we need to delete and re-insert
+                # First, get all the existing data
+                vector_data = row["vector"] if "vector" in row else None
+                text_data = row["text"] if "text" in row else None
+
+                # Create complete update record
+                if vector_data is not None:
+                    update_data["vector"] = vector_data
+                if text_data is not None:
+                    update_data["text"] = text_data
+
+                # Delete old record and insert updated one
+                self.table.delete(f"id = '{row_id}'")
+                self.table.add([update_data])
+                updated_count += 1
+
+            logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
+
+        except Exception as e:
+            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+            raise

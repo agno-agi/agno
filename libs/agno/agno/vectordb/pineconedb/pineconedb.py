@@ -616,3 +616,55 @@ class PineconeDb(VectorDb):
         except Exception as e:
             log_warning(f"Error deleting documents with content_hash {content_hash}: {e}")
             return False
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for documents with the given content_id.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        try:
+            # Query for vectors with the given content_id
+            query_response = self.index.query(
+                filter={"content_id": {"$eq": content_id}},
+                top_k=10000,  # Get all matching vectors
+                include_metadata=True,
+                namespace=self.namespace,
+            )
+
+            if not query_response.matches:
+                logger.debug(f"No documents found with content_id: {content_id}")
+                return
+
+            # Prepare updates for each matching vector
+            update_data = []
+            for match in query_response.matches:
+                vector_id = match.id
+                current_metadata = match.metadata or {}
+
+                # Merge existing metadata with new metadata
+                updated_metadata = current_metadata.copy()
+                updated_metadata.update(metadata)
+
+                if "filters" not in updated_metadata:
+                    updated_metadata["filters"] = {}
+                if isinstance(updated_metadata["filters"], dict):
+                    updated_metadata["filters"].update(metadata)
+                else:
+                    updated_metadata["filters"] = metadata
+
+                update_data.append({"id": vector_id, "metadata": updated_metadata})
+
+            # Update vectors in batches
+            batch_size = 100
+            for i in range(0, len(update_data), batch_size):
+                batch = update_data[i : i + batch_size]
+                self.index.update(vectors=batch, namespace=self.namespace)
+
+            logger.debug(f"Updated metadata for {len(update_data)} documents with content_id: {content_id}")
+
+        except Exception as e:
+            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+            raise

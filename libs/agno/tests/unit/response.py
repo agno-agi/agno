@@ -1,7 +1,7 @@
 import json
 
 from agno.models.message import Message, Metrics
-from agno.run.response import RunResponse
+from agno.run.response import RunOutput
 
 
 def test_timer_serialization():
@@ -11,6 +11,6 @@ def test_timer_serialization():
     message_2.metrics.start_timer()
     message_2.metrics.stop_timer()
 
-    run_response = RunResponse(messages=[message_1, message_2])
+    run_response = RunOutput(messages=[message_1, message_2])
 
     assert json.dumps(run_response.to_dict()) is not None

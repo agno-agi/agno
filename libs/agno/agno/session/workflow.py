@@ -4,7 +4,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional
 
-from agno.run.workflow import WorkflowRunResponse
+from agno.run.workflow import WorkflowRunOutput
 from agno.utils.log import logger
 
 
@@ -22,8 +22,8 @@ class WorkflowSession:
     # Workflow name
     workflow_name: Optional[str] = None
 
-    # Workflow runs - stores WorkflowRunResponse objects in memory
-    runs: Optional[List[WorkflowRunResponse]] = None
+    # Workflow runs - stores WorkflowRunOutput objects in memory
+    runs: Optional[List[WorkflowRunOutput]] = None
 
     # Session Data: session_name, session_state, images, videos, audio
     session_data: Optional[Dict[str, Any]] = None
@@ -56,7 +56,7 @@ class WorkflowSession:
         if self.updated_at is None:
             self.updated_at = current_time
 
-    def upsert_run(self, run: WorkflowRunResponse) -> None:
+    def upsert_run(self, run: WorkflowRunOutput) -> None:
         """Add or update a workflow run (upsert behavior)"""
         if self.runs is None:
             self.runs = []
@@ -109,19 +109,19 @@ class WorkflowSession:
             logger.warning("WorkflowSession is missing session_id")
             return None
 
-        # Deserialize runs from dictionaries back to WorkflowRunResponse objects
+        # Deserialize runs from dictionaries back to WorkflowRunOutput objects
         runs_data = data.get("runs")
-        runs: Optional[List[WorkflowRunResponse]] = None
+        runs: Optional[List[WorkflowRunOutput]] = None
 
         if runs_data is not None:
             runs = []
             for run_item in runs_data:
-                if isinstance(run_item, WorkflowRunResponse):
-                    # Already a WorkflowRunResponse object (from deserialize_session_json_fields)
+                if isinstance(run_item, WorkflowRunOutput):
+                    # Already a WorkflowRunOutput object (from deserialize_session_json_fields)
                     runs.append(run_item)
                 elif isinstance(run_item, dict):
                     # Still a dictionary, needs to be converted
-                    runs.append(WorkflowRunResponse.from_dict(run_item))
+                    runs.append(WorkflowRunOutput.from_dict(run_item))
                 else:
                     logger.warning(f"Unexpected run item type: {type(run_item)}")
 

@@ -38,7 +38,7 @@ def answer_from_known_questions(agent: Team, question: str) -> str:
         "What is the capital of Greece?": "Athens",
         "What is the capital of Turkey?": "Ankara",
     }
-    
+
     # Initialize session state if needed
     if agent.session_state is None:
         agent.session_state = {}
@@ -65,11 +65,7 @@ web_agent = Agent(
 )
 
 # Create team with custom tool and agent members
-team = Team(
-    name="Q & A team", 
-    members=[web_agent], 
-    tools=[answer_from_known_questions]
-)
+team = Team(name="Q & A team", members=[web_agent], tools=[answer_from_known_questions])
 
 # Test the team
 team.print_response("What is the capital of France?", stream=True)

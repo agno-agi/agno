@@ -1304,6 +1304,7 @@ class SqliteDb(BaseDb):
                         "status": knowledge_row.status,
                         "created_at": knowledge_row.created_at,
                         "updated_at": knowledge_row.updated_at,
+                        "external_id": knowledge_row.external_id,
                     }.items()
                     # Filtering out None fields if updating
                     if v is not None

@@ -14,7 +14,7 @@ reviewer = Agent(name="Reviewer")
 # Custom safety checker function that can stop the entire workflow
 def content_safety_checker(step_input: StepInput) -> StepOutput:
     """Safety checker that runs in parallel and can stop the workflow"""
-    content = step_input.message or ""
+    content = step_input.input or ""
 
     # Simulate detecting unsafe content that requires immediate stopping
     if "unsafe" in content.lower() or "dangerous" in content.lower():
@@ -34,7 +34,7 @@ def content_safety_checker(step_input: StepInput) -> StepOutput:
 # Custom quality checker function
 def quality_checker(step_input: StepInput) -> StepOutput:
     """Quality checker that runs in parallel"""
-    content = step_input.message or ""
+    content = step_input.input or ""
 
     # Simulate quality check
     if len(content) < 10:
@@ -86,6 +86,5 @@ if __name__ == "__main__":
     )
     print()
 
-    workflow.print_response(
-        message="Write about unsafe and dangerous AI developments that could harm society",
+    workflow.print_response(input="Write about unsafe and dangerous AI developments that could harm society",
     )
