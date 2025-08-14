@@ -1,9 +1,9 @@
 import asyncio
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.models.dashscope import DashScope
+from agno.models.qwen import Qwen
 
-agent = Agent(model=DashScope(id="qwen-plus", temperature=0.5), markdown=True)
+agent = Agent(model=Qwen(id="qwen-plus", temperature=0.5), markdown=True)
 
 # Get the response in a variable
 # run: RunResponse = await agent.arun("Share a 2 sentence horror story")

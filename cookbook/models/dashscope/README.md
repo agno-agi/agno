@@ -7,7 +7,7 @@ python3 -m venv ~/.venvs/aienv
 source ~/.venvs/aienv/bin/activate
 ```
 
-### 2. Export your `DASHSCOPE_API_KEY`
+### 2. Export your `DASHSCOPE_API_KEY` or `QWEN_API_KEY`
 
 Get your API key from: https://modelstudio.console.alibabacloud.com/?tab=model#/api-key
 
@@ -18,7 +18,7 @@ export DASHSCOPE_API_KEY=***
 ### 3. Install libraries
 
 ```shell
-pip install -U openai duckduckgo-search duckdb agno
+pip install -U openai duckduckgo-search agno
 ```
 
 ### 4. Run basic Agent

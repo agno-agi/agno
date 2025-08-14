@@ -2,9 +2,9 @@ import asyncio
 from typing import AsyncIterator  # noqa
 
 from agno.agent import Agent, RunResponseEvent  # noqa
-from agno.models.dashscope import DashScope
+from agno.models.qwen import Qwen
 
-agent = Agent(model=DashScope(id="qwen-plus", temperature=0.5), markdown=True)
+agent = Agent(model=Qwen(id="qwen-plus", temperature=0.5), markdown=True)
 
 
 async def main():
