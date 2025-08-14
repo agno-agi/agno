@@ -9,30 +9,25 @@ To enable this, set `enable_user_memories=True` in the Agent config.
 from uuid import uuid4
 
 from agno.agent.agent import Agent
-from agno.db.sqlite import SqliteStorage
-from agno.memory.db.sqlite import SqliteMemoryDb
-from agno.memory.memory import Memory
+from agno.db.postgres import PostgresDb
+from agno.memory import MemoryManager
 from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
-from utils import print_chat_history
 
-memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-# No need to set the model, it gets set by the agent to the agent's model
-memory = Memory(db=memory_db)
+db = PostgresDb(db_url=db_url)
 
-# Reset the memory for this example
-memory.clear()
+# No need to set the MemoryManager, it gets set during the runtime
+memory_manager = MemoryManager(db=db)
 
 session_id = str(uuid4())
 john_doe_id = "john_doe@example.com"
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    memory=memory,
-    storage=SqliteStorage(
-        table_name="agent_sessions", db_file="tmp/persistent_memory.db"
-    ),
+    db=db,
+    memory_manager=memory_manager,
     enable_user_memories=True,
 )
 
@@ -47,11 +42,7 @@ agent.print_response(
     "What are my hobbies?", stream=True, user_id=john_doe_id, session_id=session_id
 )
 
-# -*- Print the chat history
-session_runs = memory.runs[session_id]
-print_chat_history(session_runs)
-
-memories = memory.get_user_memories(user_id=john_doe_id)
+memories = memory_manager.get_user_memories(user_id=john_doe_id)
 print("John Doe's memories:")
 pprint(memories)
 
@@ -61,10 +52,6 @@ agent.print_response(
     user_id=john_doe_id,
     session_id=session_id,
 )
-
-# -*- Print the chat history
-session_runs = memory.runs[session_id]
-print_chat_history(session_runs)
 
 # You can also get the user memories from the agent
 memories = agent.get_user_memories(user_id=john_doe_id)

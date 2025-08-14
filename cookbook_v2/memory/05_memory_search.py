@@ -6,16 +6,16 @@ How to search for user memories using different retrieval methods
 - semantic: Retrieves memories using semantic search
 """
 
-from agno.memory import Memory, UserMemory
-from agno.memory.db.sqlite import SqliteMemoryDb
-from agno.models.google.gemini import Gemini
+from agno.memory import MemoryManager, UserMemory
+from agno.db.postgres import PostgresDb
+from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
-memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
-# Reset for this example
-memory_db.clear()
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-memory = Memory(model=Gemini(id="gemini-2.0-flash-exp"), db=memory_db)
+memory_db = PostgresDb(db_url=db_url)
+
+memory = MemoryManager(model=OpenAIChat(id="gpt-4o"), db=memory_db)
 
 john_doe_id = "john_doe@example.com"
 memory.add_user_memory(
@@ -29,7 +29,7 @@ memory.add_user_memory(
     user_id=john_doe_id,
 )
 print("John Doe's memories:")
-pprint(memory.memories)
+pprint(memory.get_user_memories(user_id=john_doe_id))
 
 memories = memory.search_user_memories(
     user_id=john_doe_id, limit=1, retrieval_method="last_n"

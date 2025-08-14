@@ -7,46 +7,31 @@ We also set custom system prompts for the memory manager and summarizer. You can
 """
 
 from agno.agent.agent import Agent
-from agno.memory.db.sqlite import SqliteMemoryDb
-from agno.memory.memory import Memory, MemoryManager, SessionSummarizer
-from agno.models.anthropic.claude import Claude
-from agno.models.google.gemini import Gemini
-from agno.models.openrouter.openrouter import OpenRouter
+from agno.db.postgres import PostgresDb
+from agno.memory import MemoryManager
+from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
-memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+
+db = PostgresDb(db_url=db_url)
 
 
 # You can also override the entire `system_message` for the memory manager
 memory_manager = MemoryManager(
-    model=OpenRouter(id="meta-llama/llama-3.3-70b-instruct"),
+    model=OpenAIChat(id="gpt-4o"),
     additional_instructions="""
     IMPORTANT: Don't store any memories about the user's name. Just say "The User" instead of referencing the user's name.
     """,
+    db=db,
 )
-
-# You can also override the entire `system_message` for the session summarizer
-session_summarizer = SessionSummarizer(
-    model=Claude(id="claude-3-5-sonnet-20241022"),
-    additional_instructions="""
-    Make the summary very informal and conversational.
-    """,
-)
-
-memory = Memory(
-    db=memory_db,
-    memory_manager=memory_manager,
-    summarizer=session_summarizer,
-)
-
-# Reset the memory for this example
-memory.clear()
 
 john_doe_id = "john_doe@example.com"
 
 agent = Agent(
-    model=Gemini(id="gemini-2.0-flash-exp"),
-    memory=memory,
+    model=OpenAIChat(id="gpt-4o"),
+    db=db,
+    memory_manager=memory_manager,
     enable_user_memories=True,
     enable_session_summaries=True,
     user_id=john_doe_id,
@@ -59,11 +44,7 @@ agent.print_response(
 agent.print_response("I dont like to swim", stream=True)
 
 
-memories = memory.get_user_memories(user_id=john_doe_id)
+memories = memory_manager.get_user_memories(user_id=john_doe_id)
 
 print("John Doe's memories:")
 pprint(memories)
-
-summary = agent.get_session_summary()
-print("Session summary:")
-pprint(summary)

@@ -2,28 +2,25 @@
 Create user memories with an Agent by providing a either text or a list of messages.
 """
 
-from agno.memory import Memory
-from agno.memory.db.sqlite import SqliteMemoryDb
+from agno.memory import MemoryManager
+from agno.db.postgres import PostgresDb
 from agno.memory.manager import MemoryManager
 from agno.models.anthropic.claude import Claude
-from agno.models.google import Gemini
+from agno.models.openai import OpenAIChat
 from agno.models.message import Message
 from rich.pretty import pprint
 
-memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
-# Reset for this example
-memory_db.clear()
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-memory = Memory(
-    model=Gemini(id="gemini-2.0-flash-exp"),
-    memory_manager=MemoryManager(
-        model=Gemini(id="gemini-2.0-flash-exp"),
-        memory_capture_instructions="""\
+memory_db = PostgresDb(db_url=db_url)
+
+memory = MemoryManager(
+    model=OpenAIChat(id="gpt-4o"),
+    memory_capture_instructions="""\
                     Memories should only include details about the user's academic interests.
                     Only include which subjects they are interested in.
                     Ignore names, hobbies, and personal interests.
                     """,
-    ),
     db=memory_db,
 )
 
@@ -50,7 +47,7 @@ pprint(memories)
 
 
 # Use default memory manager
-memory = Memory(model=Claude(id="claude-3-5-sonnet-latest"), db=memory_db)
+memory = MemoryManager(model=Claude(id="claude-3-5-sonnet-latest"), db=memory_db)
 jane_doe_id = "jane_doe@example.com"
 
 # Send a history of messages and add memories

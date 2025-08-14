@@ -2,17 +2,20 @@
 How to add, get, delete, and replace user memories manually
 """
 
-from agno.memory import UserMemory
+from agno.memory import MemoryManager, UserMemory
+from agno.db.postgres import PostgresDb
 from rich.pretty import pprint
 
-memory = Memory()
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+
+memory = MemoryManager(db=PostgresDb(db_url=db_url))
 
 # Add a memory for the default user
 memory.add_user_memory(
     memory=UserMemory(memory="The user's name is John Doe", topics=["name"]),
 )
 print("Memories:")
-pprint(memory.memories)
+pprint(memory.get_user_memories())
 
 # Add memories for Jane Doe
 jane_doe_id = "jane_doe@example.com"

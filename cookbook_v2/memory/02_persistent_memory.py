@@ -6,17 +6,15 @@ Every time you run this, the `Memory` object will be re-initialized from the DB.
 
 from typing import List
 
-from agno.db.sqlite import SqliteDb
-from agno.memory import Memory
-from agno.session.schema import UserMemory
+from agno.db.postgres import PostgresDb
+from agno.memory import MemoryManager, UserMemory
 from rich.pretty import pprint
 
-memory_db = SqliteDb(db_file="tmp/memory.db")
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-# Clear the DB
-memory_db.clear()
+memory_db = PostgresDb(db_url=db_url)
 
-memory = Memory(db=memory_db)
+memory = MemoryManager(db=memory_db)
 
 john_doe_id = "john_doe@example.com"
 
@@ -34,6 +32,6 @@ memory.add_user_memory(
     user_id=john_doe_id,
 )
 
-memories: List[MemoryRow] = memory_db.read_memories()
+memories: List[UserMemory] = memory.get_user_memories(user_id=john_doe_id)
 print("All memories:")
 pprint(memories)

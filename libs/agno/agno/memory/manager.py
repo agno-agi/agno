@@ -8,7 +8,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 from pydantic import BaseModel, Field
 
 from agno.db.base import BaseDb, SessionType
-from agno.db.schemas.memory import UserMemory
+from agno.db.schemas import UserMemory
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.session import Session
@@ -162,11 +162,11 @@ class MemoryManager:
             str: The id of the memory
         """
         if self.db:
-            from uuid import uuid4
-
-            memory_id = memory.memory_id or str(uuid4())
             if memory.memory_id is None:
+                from uuid import uuid4
+                memory_id = memory.memory_id or str(uuid4())
                 memory.memory_id = memory_id
+
             if user_id is None:
                 user_id = "default"
             memory.user_id = user_id
@@ -174,8 +174,7 @@ class MemoryManager:
             if not memory.updated_at:
                 memory.updated_at = datetime.now()
 
-            if self.db:
-                self._upsert_db_memory(memory=memory)
+            self._upsert_db_memory(memory=memory)
             return memory_id
 
         else:
@@ -778,7 +777,7 @@ class MemoryManager:
             log_error("No model provided for memory manager")
             return "No model provided for memory manager"
 
-        log_debug("MemoryConnector Start", center=True)
+        log_debug("MemoryManager Start", center=True)
 
         if len(messages) == 1:
             input_string = messages[0].get_content_string()
@@ -816,7 +815,7 @@ class MemoryManager:
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
-        log_debug("MemoryConnector End", center=True)
+        log_debug("MemoryManager End", center=True)
 
         return response.content or "No response from model"
 
@@ -835,7 +834,7 @@ class MemoryManager:
             log_error("No model provided for memory manager")
             return "No model provided for memory manager"
 
-        log_debug("MemoryConnector Start", center=True)
+        log_debug("MemoryManager Start", center=True)
 
         if len(messages) == 1:
             input_string = messages[0].get_content_string()
@@ -873,7 +872,7 @@ class MemoryManager:
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
-        log_debug("MemoryConnector End", center=True)
+        log_debug("MemoryManager End", center=True)
 
         return response.content or "No response from model"
 
@@ -890,7 +889,7 @@ class MemoryManager:
             log_error("No model provided for memory manager")
             return "No model provided for memory manager"
 
-        log_debug("MemoryConnector Start", center=True)
+        log_debug("MemoryManager Start", center=True)
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
@@ -916,7 +915,7 @@ class MemoryManager:
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
-        log_debug("MemoryConnector End", center=True)
+        log_debug("MemoryManager End", center=True)
 
         return response.content or "No response from model"
 
@@ -933,7 +932,7 @@ class MemoryManager:
             log_error("No model provided for memory manager")
             return "No model provided for memory manager"
 
-        log_debug("MemoryConnector Start", center=True)
+        log_debug("MemoryManager Start", center=True)
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
@@ -959,7 +958,7 @@ class MemoryManager:
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
-        log_debug("MemoryConnector End", center=True)
+        log_debug("MemoryManager End", center=True)
 
         return response.content or "No response from model"
 
