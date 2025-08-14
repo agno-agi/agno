@@ -189,7 +189,7 @@ def test_basic_loop(workflow_db):
     )
 
     response = workflow.run(input="test")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 1
     assert find_content_in_steps(response.step_results[0], "AI trends")
 
@@ -217,7 +217,7 @@ def test_loop_with_parallel(workflow_db):
     )
 
     response = workflow.run(input="test")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
 
     # Check the loop step output in step_results
     loop_step_output = response.step_results[0]  # First step (Loop)
@@ -297,7 +297,7 @@ async def test_async_loop(workflow_db):
     )
 
     response = await workflow.arun(input="test")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert find_content_in_steps(response.step_results[0], "AI trends")
 
 
@@ -325,5 +325,5 @@ async def test_async_parallel_loop(workflow_db):
     )
 
     response = await workflow.arun(input="test")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert find_content_in_steps(response.step_results[0], "AI trends")

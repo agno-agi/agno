@@ -2748,7 +2748,7 @@ class Agent:
         )
 
     def _add_run_to_session(self, run_response: RunOutput):
-        """Add the given RunResponse to memory, together with some calculated data"""
+        """Add the given RunOutput to memory, together with some calculated data"""
         if self.agent_session is not None:
             self.agent_session.add_run(run=run_response)
 

@@ -20,7 +20,7 @@ def find_content_in_steps(step_output, search_text):
 # Helper functions
 def research_step(step_input: StepInput) -> StepOutput:
     """Research step."""
-    return StepOutput(content=f"Research: {step_input.message}. Found data showing trends.", success=True)
+    return StepOutput(content=f"Research: {step_input.input}. Found data showing trends.", success=True)
 
 
 def analysis_step(step_input: StepInput) -> StepOutput:
@@ -36,7 +36,7 @@ def summary_step(step_input: StepInput) -> StepOutput:
 # Evaluators for conditions
 def has_data(step_input: StepInput) -> bool:
     """Check if content contains data."""
-    content = step_input.message or step_input.previous_step_content or ""
+    content = step_input.input or step_input.previous_step_content or ""
     return "data" in content.lower()
 
 
@@ -48,7 +48,7 @@ def needs_more_research(step_input: StepInput) -> bool:
 
 def router_step(step_input: StepInput) -> StepOutput:
     """Router decision step."""
-    return StepOutput(content="Route A" if "data" in step_input.message.lower() else "Route B", success=True)
+    return StepOutput(content="Route A" if "data" in step_input.input.lower() else "Route B", success=True)
 
 
 def route_a_step(step_input: StepInput) -> StepOutput:
@@ -77,7 +77,7 @@ def test_loop_with_parallel(workflow_db):
     )
 
     response = workflow.run(input="test topic")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 1  # One loop output
     loop_output = response.step_results[0]
     assert isinstance(loop_output, StepOutput)
@@ -105,7 +105,7 @@ def test_loop_with_condition(workflow_db):
     )
 
     response = workflow.run(input="test data")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 1
     # Search for "Analysis" in the nested structure
     assert find_content_in_steps(response.step_results[0], "Analysis")
@@ -134,7 +134,7 @@ def test_condition_with_loop(workflow_db):
     )
 
     response = workflow.run(input="test topic")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 2  # Research + Condition
 
 
@@ -163,7 +163,7 @@ def test_parallel_with_loops(workflow_db):
     )
 
     response = workflow.run(input="test topic")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 1  # One parallel output
     parallel_output = response.step_results[0]
     assert isinstance(parallel_output, StepOutput)
@@ -195,7 +195,7 @@ def test_nested_conditions_and_loops(workflow_db):
     )
 
     response = workflow.run(input="test data")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 1  # One condition output
     condition_output = response.step_results[0]
     assert isinstance(condition_output, StepOutput)
@@ -223,7 +223,7 @@ def test_parallel_with_conditions_and_loops(workflow_db):
     )
 
     response = workflow.run(input="test data")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 2  # Parallel + Summary
 
 
@@ -251,7 +251,7 @@ async def test_async_complex_combination(workflow_db):
     )
 
     response = await workflow.arun(input="test topic")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert find_content_in_steps(response.step_results[-1], "Summary")
 
 
@@ -299,7 +299,7 @@ def test_router_with_loop(workflow_db):
 
     def route_selector(step_input: StepInput):
         """Select between research loop and summary."""
-        if "data" in step_input.message.lower():
+        if "data" in step_input.input.lower():
             return [research_loop]
         return [Step(name="summary", executor=summary_step)]
 
@@ -317,7 +317,7 @@ def test_router_with_loop(workflow_db):
     )
 
     response = workflow.run(input="test data")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 1
     # Search for "Research" in the nested structure
     assert find_content_in_steps(response.step_results[0], "Research")
@@ -357,7 +357,7 @@ def test_loop_with_router(workflow_db):
     )
 
     response = workflow.run(input="test data")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 1
     loop_output = response.step_results[0]
     assert isinstance(loop_output, StepOutput)
@@ -372,7 +372,7 @@ def test_parallel_with_routers(workflow_db):
         """Select research path."""
         return (
             [Step(name="research", executor=research_step)]
-            if "data" in step_input.message.lower()
+            if "data" in step_input.input.lower()
             else [Step(name="analysis", executor=analysis_step)]
         )
 
@@ -380,7 +380,7 @@ def test_parallel_with_routers(workflow_db):
         """Select summary path."""
         return (
             [Step(name="summary", executor=summary_step)]
-            if "complete" in step_input.message.lower()
+            if "complete" in step_input.input.lower()
             else [Step(name="analysis", executor=analysis_step)]
         )
 
@@ -413,7 +413,7 @@ def test_parallel_with_routers(workflow_db):
     )
 
     response = workflow.run(input="test data complete")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 1
     parallel_output = response.step_results[0]
     assert isinstance(parallel_output, StepOutput)
@@ -432,7 +432,7 @@ def test_router_with_condition_and_loop(workflow_db):
 
     def route_selector(step_input: StepInput):
         """Select between research loop and conditional analysis."""
-        if "research" in step_input.message.lower():
+        if "research" in step_input.input.lower():
             return [research_loop]
         return [analysis_condition]
 
@@ -451,7 +451,7 @@ def test_router_with_condition_and_loop(workflow_db):
     )
 
     response = workflow.run(input="test research data")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 2
 
 
@@ -474,7 +474,7 @@ def test_nested_routers(workflow_db):
 
     def outer_selector(step_input: StepInput):
         """Select outer route."""
-        if "research" in step_input.message.lower():
+        if "research" in step_input.input.lower():
             return [Step(name="research", executor=research_step), inner_router]
         return [Step(name="summary", executor=summary_step)]
 
@@ -496,7 +496,7 @@ def test_nested_routers(workflow_db):
     )
 
     response = workflow.run(input="test research data")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 1
     router_output = response.step_results[0]
     assert isinstance(router_output, StepOutput)
@@ -516,7 +516,7 @@ def test_router_streaming(workflow_db):
 
     def route_selector(step_input: StepInput):
         """Select between research loop and conditional analysis."""
-        if "research" in step_input.message.lower():
+        if "research" in step_input.input.lower():
             return [research_loop]
         return [analysis_condition]
 

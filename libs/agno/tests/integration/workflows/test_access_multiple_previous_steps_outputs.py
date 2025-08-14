@@ -10,17 +10,17 @@ from agno.workflow.types import StepInput, StepOutput
 # Helper functions
 def step_a(step_input: StepInput) -> StepOutput:
     """Step A in parallel execution."""
-    return StepOutput(step_name="step_a", content=f"Step A processed: {step_input.message}", success=True)
+    return StepOutput(step_name="step_a", content=f"Step A processed: {step_input.input}", success=True)
 
 
 def step_b(step_input: StepInput) -> StepOutput:
     """Step B in parallel execution."""
-    return StepOutput(step_name="step_b", content=f"Step B analyzed: {step_input.message}", success=True)
+    return StepOutput(step_name="step_b", content=f"Step B analyzed: {step_input.input}", success=True)
 
 
 def step_c(step_input: StepInput) -> StepOutput:
     """Step C in parallel execution."""
-    return StepOutput(step_name="step_c", content=f"Step C reviewed: {step_input.message}", success=True)
+    return StepOutput(step_name="step_c", content=f"Step C reviewed: {step_input.input}", success=True)
 
 
 def parallel_aggregator_step(step_input: StepInput) -> StepOutput:
@@ -51,7 +51,7 @@ def parallel_aggregator_step(step_input: StepInput) -> StepOutput:
 
 def research_step(step_input: StepInput) -> StepOutput:
     """Research step."""
-    return StepOutput(step_name="research_step", content=f"Research: {step_input.message}", success=True)
+    return StepOutput(step_name="research_step", content=f"Research: {step_input.input}", success=True)
 
 
 def analysis_step(step_input: StepInput) -> StepOutput:
@@ -82,7 +82,7 @@ def test_basic_access(workflow_db):
     workflow = Workflow(name="Basic Access", db=workflow_db, steps=[research_step, analysis_step, report_step])
 
     response = workflow.run(input="test topic")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 3
 
     # Verify report contains data from previous steps
@@ -111,7 +111,7 @@ async def test_async_access(workflow_db):
     workflow = Workflow(name="Async Access", db=workflow_db, steps=[research_step, analysis_step, report_step])
 
     response = await workflow.arun(input="test topic")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 3
     assert "Report:" in response.content
 
@@ -140,7 +140,7 @@ def test_parallel_step_access(workflow_db):
     )
 
     response = workflow.run(input="test data")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 2
 
     # Verify the aggregator step received parallel data correctly
@@ -164,7 +164,7 @@ async def test_async_parallel_step_access(workflow_db):
     )
 
     response = await workflow.arun(input="async test data")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 2
 
     # Verify the aggregator step received parallel data correctly
@@ -185,7 +185,7 @@ def test_single_parallel_step_access(workflow_db):
     )
 
     response = workflow.run(input="single test")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 2
 
     # Verify even single parallel steps return dict structure

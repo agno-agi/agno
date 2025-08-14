@@ -25,7 +25,7 @@ def find_content_in_steps(step_output, search_text):
 # Simple helper functions
 def step1_function(step_input: StepInput) -> StepOutput:
     """First step function."""
-    return StepOutput(content=f"Step1: {step_input.message}")
+    return StepOutput(content=f"Step1: {step_input.input}")
 
 
 def step2_function(step_input: StepInput) -> StepOutput:
@@ -43,12 +43,12 @@ def step3_function(step_input: StepInput) -> StepOutput:
 async def async_step_function(step_input: StepInput) -> StepOutput:
     """Async step function."""
     await asyncio.sleep(0.001)
-    return StepOutput(content=f"AsyncStep: {step_input.message}")
+    return StepOutput(content=f"AsyncStep: {step_input.input}")
 
 
 async def async_streaming_function(step_input: StepInput) -> AsyncIterator[str]:
     """Async streaming step function."""
-    yield f"Streaming: {step_input.message}"
+    yield f"Streaming: {step_input.input}"
     await asyncio.sleep(0.001)
 
 

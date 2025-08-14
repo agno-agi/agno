@@ -28,7 +28,7 @@ def test_router_direct_execute():
     step_b = Step(name="step_b", executor=lambda x: StepOutput(content="Output B"))
 
     def simple_selector(step_input: StepInput):
-        if "A" in step_input.message:
+        if "A" in step_input.input:
             return [step_a]
         return [step_b]
 
@@ -60,7 +60,7 @@ def test_router_direct_multiple_steps():
     step_3 = Step(name="step_3", executor=lambda x: StepOutput(content="Step 3"))
 
     def multi_selector(step_input: StepInput):
-        if "multi" in step_input.message:
+        if "multi" in step_input.input:
             return [step_1, step_2]
         return [step_3]
 
@@ -95,7 +95,7 @@ def test_router_direct_with_steps_component():
     single_step = Step(name="single", executor=lambda x: StepOutput(content="Single"))
 
     def sequence_selector(step_input: StepInput):
-        if "sequence" in step_input.message:
+        if "sequence" in step_input.input:
             return [steps_sequence]
         return [single_step]
 
@@ -127,7 +127,7 @@ def test_router_direct_error_handling():
     success_step = Step(name="success", executor=lambda x: StepOutput(content="Success"))
 
     def error_selector(step_input: StepInput):
-        if "fail" in step_input.message:
+        if "fail" in step_input.input:
             return [failing_step]
         return [success_step]
 
@@ -159,7 +159,7 @@ def test_router_direct_chaining():
     """Test Router.execute with step chaining (sequential execution)."""
 
     def step_1_executor(step_input: StepInput) -> StepOutput:
-        return StepOutput(content=f"Step 1: {step_input.message}")
+        return StepOutput(content=f"Step 1: {step_input.input}")
 
     def step_2_executor(step_input: StepInput) -> StepOutput:
         # Should receive output from step 1
@@ -197,7 +197,7 @@ def test_basic_routing(workflow_db):
 
     def route_selector(step_input: StepInput):
         """Select between tech and general steps."""
-        if "tech" in step_input.message.lower():
+        if "tech" in step_input.input.lower():
             return [tech_step]
         return [general_step]
 
@@ -283,9 +283,9 @@ def test_mixed_routing(workflow_db, test_agent, test_team):
     team_step = Step(name="team", team=test_team)
 
     def route_selector(step_input: StepInput):
-        if "function" in step_input.message:
+        if "function" in step_input.input:
             return [function_step]
-        elif "agent" in step_input.message:
+        elif "agent" in step_input.input:
             return [agent_step]
         return [team_step]
 
@@ -326,7 +326,7 @@ def test_multiple_step_routing(workflow_db):
     summary_step = Step(name="summary", executor=lambda x: StepOutput(content="Summary output"))
 
     def route_selector(step_input: StepInput):
-        if "research" in step_input.message:
+        if "research" in step_input.input:
             return [research_step, analysis_step]
         return [summary_step]
 
@@ -359,7 +359,7 @@ def test_route_steps(workflow_db):
     summary_step = Step(name="summary", executor=lambda x: StepOutput(content="Summary output"))
 
     def route_selector(step_input: StepInput):
-        if "research" in step_input.message:
+        if "research" in step_input.input:
             return [research_sequence]
         return [summary_step]
 

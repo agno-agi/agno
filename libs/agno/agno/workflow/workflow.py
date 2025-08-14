@@ -2035,7 +2035,7 @@ class Workflow:
 
             try:
                 # Execute workflow and get the response directly
-                workflow_response: WorkflowRunResponse = self.run(
+                workflow_response: WorkflowRunOutput = self.run(
                     input=input,
                     user_id=user_id,
                     session_id=session_id,
@@ -2786,7 +2786,7 @@ class Workflow:
 
             try:
                 # Execute workflow and get the response directly
-                workflow_response: WorkflowRunResponse = await self.arun(
+                workflow_response: WorkflowRunOutput = await self.arun(
                     input=input,
                     additional_data=additional_data,
                     user_id=user_id,
@@ -3361,12 +3361,12 @@ class Workflow:
 
                                     # Check if this is a team's final structured output
                                     is_structured_output = (
-                                        isinstance(response, TeamRunResponseContentEvent)
+                                        isinstance(response, TeamRunOutputContentEvent)
                                         and hasattr(response, "content_type")
                                         and response.content_type != "str"
                                         and response.content_type != ""
                                     )
-                            elif isinstance(response, RunResponseContentEvent) and current_step_executor_type != "team":
+                            elif isinstance(response, RunOutputContentEvent) and current_step_executor_type != "team":
                                 response_str = response.content  # type: ignore
                             else:
                                 continue

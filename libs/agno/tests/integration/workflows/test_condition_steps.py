@@ -7,7 +7,7 @@ from agno.run.workflow import (
     ConditionExecutionCompletedEvent,
     ConditionExecutionStartedEvent,
     WorkflowCompletedEvent,
-    WorkflowRunResponse,
+    WorkflowRunOutput,
 )
 from agno.workflow import Condition, Parallel, Workflow
 from agno.workflow.types import StepInput, StepOutput
@@ -104,13 +104,13 @@ async def test_condition_direct_aexecute():
 
 def test_condition_direct_execute_stream():
     """Test Condition.execute_stream() directly."""
-    from agno.run.workflow import WorkflowRunResponse
+    from agno.run.workflow import WorkflowRunOutput
 
     condition = Condition(name="Direct Stream Condition", evaluator=is_tech_topic, steps=[research_step])
     step_input = StepInput(input="AI trends")
 
     # Mock workflow response for streaming
-    mock_response = WorkflowRunResponse(
+    mock_response = WorkflowRunOutput(
         run_id="test-run",
         workflow_name="test-workflow",
         workflow_id="test-id",
@@ -160,7 +160,7 @@ def test_basic_condition_true(workflow_db):
     )
 
     response = workflow.run(input="Market shows 40% growth")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 2
     # Condition output is a list
     assert isinstance(response.step_results[1], StepOutput)
@@ -179,7 +179,7 @@ def test_basic_condition_false(workflow_db):
 
     # Using a message without statistics
     response = workflow.run(input="General market overview")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
 
     # Should have 2 step responses: research_step + condition result
     assert len(response.step_results) == 2
@@ -206,7 +206,7 @@ def test_parallel_with_conditions(workflow_db):
     )
 
     response = workflow.run(input="AI market shows 40% growth")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 2  # research_step + parallel
 
     # Check the parallel output structure
@@ -263,7 +263,7 @@ def test_condition_error_handling(workflow_db):
     )
 
     response = workflow.run(input="test")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert response.status == RunStatus.error
     assert "Evaluator failed" in response.content
 
@@ -283,7 +283,7 @@ def test_nested_conditions(workflow_db):
     )
 
     response = workflow.run(input="AI market shows 40% growth")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 1
     outer_condition = response.step_results[0]
     assert isinstance(outer_condition, StepOutput)
@@ -308,7 +308,7 @@ async def test_async_condition(workflow_db):
     )
 
     response = await workflow.arun(input="AI technology")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 1
     assert isinstance(response.step_results[0], StepOutput)
     assert len(response.step_results[0].steps) == 1

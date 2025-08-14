@@ -145,7 +145,7 @@ def test_basic_parallel(workflow_db):
     )
 
     response = workflow.run(input="test")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 2
 
     # Check parallel output
@@ -191,7 +191,7 @@ def test_parallel_with_agent(workflow_db, test_agent):
     )
 
     response = workflow.run(input="test")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     parallel_output = response.step_results[0]
     assert isinstance(parallel_output, StepOutput)
     assert parallel_output.step_type == "Parallel"
@@ -213,7 +213,7 @@ async def test_async_parallel(workflow_db):
     )
 
     response = await workflow.arun(input="test")
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 2
 
     # Check parallel output structure

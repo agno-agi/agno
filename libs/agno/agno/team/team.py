@@ -289,7 +289,7 @@ class Team:
     store_events: bool = False
     # List of events to skip from the Team
     events_to_skip: Optional[List[Union[RunEvent, TeamRunEvent]]] = None
-    # Store member agent runs inside the team's RunResponse
+    # Store member agent runs inside the team's RunOutput
     store_member_responses: bool = False
 
     # Optional app ID. Indicates this team is part of an app.
@@ -2434,7 +2434,7 @@ class Team:
                 live_console.update(Group(*panels))
 
             # Run the agent
-            run_response: TeamRunResponse = self.run(  # type: ignore
+            run_response: TeamRunOutput = self.run(  # type: ignore
                 input=input,
                 images=images,
                 audio=audio,
@@ -3311,7 +3311,7 @@ class Team:
                 live_console.update(Group(*panels))
 
             # Run the agent
-            run_response: TeamRunResponse = await self.arun(  # type: ignore
+            run_response: TeamRunOutput = await self.arun(  # type: ignore
                 input=input,
                 images=images,
                 audio=audio,
@@ -5309,9 +5309,7 @@ class Team:
                 log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
                 if self.run_response is not None:
                     if self.run_response.metadata is None:
-                        self.run_response.metadata = RunOutputMetaData(
-                            additional_input=messages_to_add_to_run_response
-                        )
+                        self.run_response.metadata = RunOutputMetaData(additional_input=messages_to_add_to_run_response)
                     else:
                         if self.run_response.metadata.additional_input is None:
                             self.run_response.metadata.additional_input = messages_to_add_to_run_response
@@ -5394,7 +5392,7 @@ class Team:
     ):
         # Get references from the knowledge base to use in the user message
         references = None
-        self.run_response = cast(TeamRunResponse, self.run_response)
+        self.run_response = cast(TeamRunOutput, self.run_response)
         if self.add_knowledge_to_context and input:
             message_str: str
             if isinstance(input, str):
@@ -6235,7 +6233,7 @@ class Team:
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
                 )
-                for member_agent_run_output_event in member_agent_run_output_stream:
+                for member_agent_run_output_event in member_agent_run_response_stream:
                     check_if_run_cancelled(member_agent_run_output_event)
 
                     # Yield the member event directly
@@ -6387,7 +6385,7 @@ class Team:
                     else None,
                     refresh_session_before_write=True,
                 )
-                async for member_agent_run_output_event in member_agent_run_output_stream:
+                async for member_agent_run_output_event in member_agent_run_response_stream:
                     check_if_run_cancelled(member_agent_run_output_event)
                     yield member_agent_run_output_event
             else:
@@ -6600,7 +6598,7 @@ class Team:
             use_agent_logger()
 
             # If found in subteam, include the path in the task description
-            member_agent_task = input.get_content_string()
+            member_agent_task = input.get_content_string() if input is not None else ""
 
             # Add history for the member if enabled
             if member_agent.add_history_to_context:
@@ -6635,7 +6633,7 @@ class Team:
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
                 )
-                for member_agent_run_response_chunk in member_agent_run_output_stream:
+                for member_agent_run_response_chunk in member_agent_run_response_stream:
                     check_if_run_cancelled(member_agent_run_response_chunk)
                     yield member_agent_run_response_chunk
             else:
@@ -6693,7 +6691,7 @@ class Team:
             self.add_interaction_to_team_context(
                 session_id=session_id,  # type: ignore
                 member_name=member_name,
-                task=message.get_content_string(),
+                task=member_agent_task,
                 run_response=member_agent.run_response,  # type: ignore
             )
 
@@ -6745,7 +6743,7 @@ class Team:
             use_agent_logger()
 
             # If found in subteam, include the path in the task description
-            member_agent_task = input.get_content_string()
+            member_agent_task = input.get_content_string() if input is not None else ""
 
             # Add history for the member if enabled
             if member_agent.add_history_to_context:
@@ -6781,7 +6779,7 @@ class Team:
                     else None,
                     refresh_session_before_write=True,
                 )
-                async for member_agent_run_output_event in member_agent_run_output_stream:
+                async for member_agent_run_output_event in member_agent_run_response_stream:
                     check_if_run_cancelled(member_agent_run_output_event)
                     yield member_agent_run_output_event
             else:
@@ -6834,7 +6832,7 @@ class Team:
             self.add_interaction_to_team_context(
                 session_id=session_id,  # type: ignore
                 member_name=member_name,
-                task=message.get_content_string(),
+                task=member_agent_task,
                 run_response=member_agent.run_response,  # type: ignore
             )
 
