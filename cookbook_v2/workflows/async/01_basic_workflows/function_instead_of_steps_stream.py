@@ -33,7 +33,7 @@ async def custom_execution_function(
     # Run the Hackernews agent to gather research content
     research_content = ""
     async for response in hackernews_agent.arun(
-        execution_input.message, stream=True, stream_intermediate_steps=True
+        execution_input.input, stream=True, stream_intermediate_steps=True
     ):
         if hasattr(response, "content") and response.content:
             research_content += str(response.content)
@@ -42,7 +42,7 @@ async def custom_execution_function(
     planning_prompt = f"""
         STRATEGIC CONTENT PLANNING REQUEST:
 
-        Core Topic: {execution_input.message}
+        Core Topic: {execution_input.input}
 
         Research Results: {research_content[:500]}
 

@@ -189,7 +189,7 @@ async def investment_analysis_execution(
     """Execute the complete investment analysis workflow"""
 
     # Get inputs
-    message: str = execution_input.message
+    message: str = execution_input.input
     company_symbols: str = companies
 
     if not company_symbols:

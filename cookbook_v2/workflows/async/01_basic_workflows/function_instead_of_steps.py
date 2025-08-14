@@ -47,14 +47,14 @@ async def custom_execution_function(
     print(f"Executing workflow: {workflow.name}")
 
     # Run the research team
-    run_response = research_team.run(execution_input.message)
+    run_response = research_team.run(execution_input.input)
     research_content = run_response.content
 
     # Create intelligent planning prompt
     planning_prompt = f"""
         STRATEGIC CONTENT PLANNING REQUEST:
 
-        Core Topic: {execution_input.message}
+        Core Topic: {execution_input.input}
 
         Research Results: {research_content[:500]}
 

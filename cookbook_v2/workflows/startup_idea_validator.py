@@ -175,7 +175,7 @@ async def startup_validation_execution(
     """Execute the complete startup idea validation workflow"""
 
     # Get inputs
-    message: str = execution_input.message
+    message: str = execution_input.input
     idea: str = startup_idea
 
     if not idea:

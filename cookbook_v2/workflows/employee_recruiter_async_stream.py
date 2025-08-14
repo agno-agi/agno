@@ -138,7 +138,7 @@ async def recruitment_execution(
     """Execute the complete recruitment workflow"""
 
     # Get inputs
-    message: str = execution_input.message
+    message: str = execution_input.input
     jd: str = job_description
     resumes: List[str] = kwargs.get("candidate_resume_urls", [])
 

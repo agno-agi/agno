@@ -270,7 +270,7 @@ class RunResponse:
     # === FOREIGN KEY RELATIONSHIPS ===
     # These fields establish relationships to parent workflow/step structures
     # and should be treated as foreign keys for data integrity
-    workflow_step_id: Optional[str] = None   # FK: Points to StepOutput.step_id
+    workflow_step_id: Optional[str] = None  # FK: Points to StepOutput.step_id
 
     @property
     def is_paused(self):

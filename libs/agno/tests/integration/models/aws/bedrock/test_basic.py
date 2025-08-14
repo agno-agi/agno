@@ -35,7 +35,7 @@ def test_basic():
 def test_basic_stream():
     agent = Agent(model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"), markdown=True, telemetry=False)
 
-    for chunk in agent.run("Share a 2 sentence horror story", stream=True)
+    for chunk in agent.run("Share a 2 sentence horror story", stream=True):
         assert chunk.content is not None
 
 
