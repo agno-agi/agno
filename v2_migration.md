@@ -1,13 +1,50 @@
-# Agno v2 migration guide
+# Agno v2 Migration Guide
 
-This guide aims to help migrating your Agno code to v2.
+This guide walks you through all the changes needed to migrate your Agno applications from v1 to v2. Each section covers a specific framework domain, with before and after examples and detailed explanations where needed.
 
-## [wip] Agents and Teams
+If you have questions during your migration, we're here to help! Reach out to us on [Discord](https://discord.gg/4MtYHHrgA8) or [Discourse](https://community.agno.com/).
 
-- The `arun` methods, used for asynchronously runs, now return an `AsyncIterator` instead of a coroutine.
-<usage example>
+Welcome to Agno v2!
 
-**Renamed**
+## Agents and Teams
+
+- Streaming responses with `arun` now returns an `AsyncIterator`, not a coroutine. This is how you can consume the response events:
+```python v2_arun.py
+async for event in agent.arun(...):
+    ...
+```
+
+- The `RunResponse` class is now `RunOutput`. This is the type of the results you get when running an Agent:
+```python v2_run_output.py
+from agno.run.response import RunOutput
+
+run_output: RunOutput = agent.run(...)
+```
+
+- The events you get when streaming an Agent result have been renamed:
+    - `RunOutputStartedEvent` → `RunStartedEvent`
+    - `RunOutputCompletedEvent` → `RunCompletedEvent`
+    - `RunOutputErrorEvent` → `RunErrorEvent`
+    - `RunOutputCancelledEvent` → `RunCancelledEvent`
+    - `RunOutputContinuedEvent` → `RunContinuedEvent`
+    - `RunOutputPausedEvent` → `RunPausedEvent`
+    - `RunOutputContentEvent` → `RunContentEvent`
+- Similarly, for Team output events:
+    - `TeamRunOutputStartedEvent` → `TeamRunStartedEvent`
+    - `TeamRunOutputCompletedEvent` → `TeamRunCompletedEvent`
+    - `TeamRunOutputErrorEvent` → `TeamRunErrorEvent`
+    - `TeamRunOutputCancelledEvent` → `TeamRunCancelledEvent`
+    - `TeamRunOutputContentEvent` → `TeamRunContentEvent`
+
+```python v2_events.py
+for event in agent.run(stream=True, stream_intermediate_steps=True):
+    ...
+```
+
+**Renamed args and methods**
+- `agent_id` -> `id`
+- `add_session_summary_references` -> `add_session_summary_to_context`
+- `add_memory_references` -> `add_memories_to_context`
 - `add_context` -> `add_dependencies`
 - `add_history_to_messages` -> `add_history_to_context`
 - `add_messages` -> `additional_messages`
@@ -17,10 +54,12 @@ This guide aims to help migrating your Agno code to v2.
 - `context` -> `dependencies`
 - `extra_data` -> `metadata`
 - `goal` -> `success_criteria`
+- Some methods have been made private e.g. `set_id` -> `_set_id`. You can assume methods which name start with underscore are private, and only to be used inside the Agent class itself.
 
-**Deprecated**
+**Deprecated args and methods**
 - `resolve_context`
 - `show_tool_calls`
+
 
 ## Storage
 
@@ -70,6 +109,16 @@ db = SqliteDb(
     # Table to store all your knowledge content
     knowledge_table="your_knowledge_table_name",
 )
+```
+
+- Previously running a `Team` would create a team session and sessions for every team member participating in the run. Now, only the `Team` session is created. The runs for the team leader and all members can be found in the `Team` session.
+```python v2_storage_team_sessions.py
+team.run(...)
+
+team_session = team.get_latest_session()
+
+# The runs for the team leader and all team members are here
+team_session.runs
 ```
 
 You can find examples for all other databases and advanced scenarios in the `/cookbook` folder.
