@@ -6281,7 +6281,9 @@ class Team:
                         if isinstance(self.memory, TeamMemory):
                             self.memory = cast(TeamMemory, self.memory)
                             self.memory.add_interaction_to_team_context(
-                                member_name=member_name, task=task_description, run_response=agent.run_response  # type: ignore
+                                member_name=member_name,
+                                task=task_description,
+                                run_response=agent.run_response,  # type: ignore
                             )
                         else:
                             self.memory = cast(Memory, self.memory)
@@ -6396,9 +6398,7 @@ class Team:
                                 if len(response.content.strip()) > 0:
                                     return f"Agent {member_name}: {response.content}"
                                 elif response.tools is not None and len(response.tools) > 0:
-                                    return (
-                                        f"Agent {member_name}: {','.join([tool.get('content') for tool in response.tools])}"
-                                    )
+                                    return f"Agent {member_name}: {','.join([tool.get('content') for tool in response.tools])}"
                             elif issubclass(type(response.content), BaseModel):
                                 return f"Agent {member_name}: {response.content.model_dump_json(indent=2)}"  # type: ignore
                             else:

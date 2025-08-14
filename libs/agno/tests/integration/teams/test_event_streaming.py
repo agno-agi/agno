@@ -10,7 +10,6 @@ from agno.team import Team, TeamRunEvent
 from agno.tools.calculator import CalculatorTools
 from agno.tools.decorator import tool
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.hackernews import HackerNewsTools
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 
@@ -628,8 +627,6 @@ def test_intermediate_steps_with_member_agents_streaming_off():
     assert len(events[TeamRunEvent.run_completed]) == 1
 
 
-
-
 def test_intermediate_steps_with_member_agents_route():
     agent_1 = Agent(
         name="Analyst",
@@ -696,11 +693,10 @@ def test_intermediate_steps_with_member_agents_route():
 def test_intermediate_steps_with_member_agents_collaborate():
     def get_news_from_hackernews(query: str):
         return "The best way to learn to code is to use the Hackernews API."
-    
+
     def get_news_from_duckduckgo(query: str):
         return "The best way to learn to code is to use the DuckDuckGo API."
-    
-    
+
     agent_1 = Agent(
         name="Web Researcher",
         model=OpenAIChat(id="gpt-4o-mini"),
@@ -763,4 +759,3 @@ def test_intermediate_steps_with_member_agents_collaborate():
     assert len(events[RunEvent.tool_call_started]) > 1
     assert len(events[RunEvent.tool_call_completed]) > 1
     assert len(events[RunEvent.run_response_content]) > 1
-
