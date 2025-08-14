@@ -1321,6 +1321,7 @@ class MySQLDb(BaseDb):
                     "status_message": "status_message",
                     "created_at": "created_at",
                     "updated_at": "updated_at",
+                    "external_id": "external_id",
                 }
 
                 # Build insert and update data only for fields that exist in the table

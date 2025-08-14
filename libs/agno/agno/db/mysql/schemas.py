@@ -72,6 +72,7 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "updated_at": {"type": BigInteger, "nullable": True},
     "status": {"type": String, "nullable": True},
     "status_message": {"type": Text, "nullable": True},
+    "external_id": {"type": String, "nullable": True},
 }
 
 METRICS_TABLE_SCHEMA = {

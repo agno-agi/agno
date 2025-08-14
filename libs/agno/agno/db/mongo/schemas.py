@@ -47,6 +47,7 @@ KNOWLEDGE_COLLECTION_SCHEMA = [
     {"key": "access_count"},
     {"key": "created_at"},
     {"key": "updated_at"},
+    {"key": "external_id"},
 ]
 
 METRICS_COLLECTION_SCHEMA = [
