@@ -372,6 +372,20 @@ class OpenAIResponses(Model):
                     previous_response_id = msg.provider_data["response_id"]
                     break
 
+        # If we are continuing with tool outputs, do not re-send prior function_call items
+        has_tool_output = any((getattr(m, "role", None) == "tool") and getattr(m, "tool_call_id", None) for m in messages)
+
+        # Build a mapping from function_call id (fc_*) → call_id (call_*) from prior assistant tool_calls
+        fc_id_to_call_id: Dict[str, str] = {}
+        for msg in messages:
+            tool_calls = getattr(msg, "tool_calls", None)
+            if tool_calls:
+                for tc in tool_calls:
+                    fc_id = tc.get("id")
+                    call_id = tc.get("call_id") or fc_id
+                    if isinstance(fc_id, str) and isinstance(call_id, str):
+                        fc_id_to_call_id[fc_id] = call_id
+
         for message in messages:
             if message.role in ["user", "system"]:
                 message_dict: Dict[str, Any] = {
@@ -400,24 +414,25 @@ class OpenAIResponses(Model):
 
             elif message.role == "tool":
                 if message.tool_call_id and message.content is not None:
+                    call_id_value = message.tool_call_id
+                    # Normalize: if a fc_* id was provided, translate to its corresponding call_* id
+                    if isinstance(call_id_value, str) and call_id_value in fc_id_to_call_id:
+                        call_id_value = fc_id_to_call_id[call_id_value]
                     formatted_messages.append(
-                        {"type": "function_call_output", "call_id": message.tool_call_id, "output": message.content}
+                        {"type": "function_call_output", "call_id": call_id_value, "output": message.content}
                     )
             elif message.tool_calls is not None and len(message.tool_calls) > 0:
-                if self._using_reasoning_model():
-                    # Only include prior function_call items when we are NOT using
-                    # previous_response_id. When previous_response_id is present, the
-                    # Responses API already knows about earlier output items (including
-                    # reasoning/function_call), and re-sending them can trigger validation
-                    # errors (e.g., missing required reasoning item).
-                    if previous_response_id is not None:
-                        continue
+                # Only skip re-sending prior function_call items when we have a previous_response_id
+                # (reasoning models). For non-reasoning models, we must include the prior function_call
+                # so the API can associate the subsequent function_call_output by call_id.
+                if self._using_reasoning_model() and previous_response_id is not None:
+                    continue
 
                 for tool_call in message.tool_calls:
                     formatted_messages.append(
                         {
                             "type": "function_call",
-                            "id": tool_call.get("call_id", tool_call.get("id")),
+                            "id": tool_call.get("id"),
                             "call_id": tool_call.get("call_id", tool_call.get("id")),
                             "name": tool_call["function"]["name"],
                             "arguments": tool_call["function"]["arguments"],
@@ -718,8 +733,8 @@ class OpenAIResponses(Model):
                     model_response.tool_calls = []
                 model_response.tool_calls.append(
                     {
-                        "id": output.call_id,
-                        "call_id": output.call_id,
+                        "id": output.id,
+                        "call_id": output.call_id or output.id,
                         "type": "function",
                         "function": {
                             "name": output.name,
@@ -809,8 +824,8 @@ class OpenAIResponses(Model):
             item = stream_event.item
             if item.type == "function_call":
                 tool_use = {
-                    "id": getattr(item, "call_id", None) or getattr(item, "id", None),
-                    "call_id": item.call_id,
+                    "id": getattr(item, "id", None),
+                    "call_id": getattr(item, "call_id", None) or getattr(item, "id", None),
                     "type": "function",
                     "function": {
                         "name": item.name,
