@@ -1,4 +1,3 @@
-import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
@@ -205,7 +204,6 @@ class AgentResponse(BaseModel):
             "num_history_runs": agent.num_history_runs,
             "search_session_history": agent.search_session_history,
             "num_history_sessions": agent.num_history_sessions,
-            "add_session_summary_references": agent.add_session_summary_references,
             "cache_session": agent.cache_session,
         }
 
@@ -213,7 +211,6 @@ class AgentResponse(BaseModel):
             "knowledge_table": knowledge_table,
             "enable_agentic_knowledge_filters": agent.enable_agentic_knowledge_filters,
             "knowledge_filters": agent.knowledge_filters,
-            "add_references": agent.add_references,
             "references_format": agent.references_format,
         }
 
@@ -225,8 +222,7 @@ class AgentResponse(BaseModel):
                 "app_url": memory_app.router_prefix if memory_app else None,
                 "enable_agentic_memory": agent.enable_agentic_memory,
                 "enable_user_memories": agent.enable_user_memories,
-                "add_memory_references": agent.add_memory_references,
-                "metadata": agent.extra_data,
+                "metadata": agent.metadata,
                 "memory_table": agent.db.memory_table_name if agent.db and agent.enable_user_memories else None,
             }
 
@@ -433,7 +429,6 @@ class TeamResponse(BaseModel):
             "add_history_to_context": team.add_history_to_context,
             "enable_session_summaries": team.enable_session_summaries,
             "num_history_runs": team.num_history_runs,
-            "add_session_summary_references": team.add_session_summary_references,
             "cache_session": team.cache_session,
         }
 
@@ -441,7 +436,6 @@ class TeamResponse(BaseModel):
             "knowledge_table": knowledge_table,
             "enable_agentic_knowledge_filters": team.enable_agentic_knowledge_filters,
             "knowledge_filters": team.knowledge_filters,
-            "add_references": team.add_references,
             "references_format": team.references_format,
         }
 
@@ -453,7 +447,7 @@ class TeamResponse(BaseModel):
                 "app_url": memory_app.router_prefix if memory_app else None,
                 "enable_agentic_memory": team.enable_agentic_memory,
                 "enable_user_memories": team.enable_user_memories,
-                "add_memory_references": team.add_memory_references,
+                "metadata": team.metadata,
                 "memory_table": team.db.memory_table_name if team.db and team.enable_user_memories else None,
             }
 
