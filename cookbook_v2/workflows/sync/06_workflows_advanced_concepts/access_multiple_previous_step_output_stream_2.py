@@ -36,7 +36,7 @@ def create_comprehensive_report(step_input: StepInput) -> StepOutput:
     """
 
     # Access original workflow input
-    original_topic = step_input.message or ""
+    original_topic = step_input.input or ""
 
     # Access specific step outputs by name
     hackernews_data = step_input.get_step_content("step_1") or ""

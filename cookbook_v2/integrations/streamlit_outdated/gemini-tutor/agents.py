@@ -142,4 +142,4 @@ class TutorAppAgent:
 
         # Create message
         user_message = Message(role="user", content=prompt)
-        return self.agent.run(prompt=prompt, messages=[user_message], stream=True)
+        return self.agent.run(prompt=prompt, input=[user_message], stream=True)

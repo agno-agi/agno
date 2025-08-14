@@ -221,7 +221,7 @@ class Step:
                 else:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(
-                        step_input.message,
+                        step_input.input,
                         step_input.previous_step_outputs,
                     )
 
@@ -246,7 +246,7 @@ class Step:
                             kwargs["store_member_responses"] = True
 
                         response = self.active_executor.run(  # type: ignore[misc]
-                            message=message,
+                            input=message,
                             images=images,
                             videos=videos,
                             audio=audios,
@@ -359,7 +359,7 @@ class Step:
                 else:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(
-                        step_input.message,
+                        step_input.input,
                         step_input.previous_step_outputs,
                     )
 
@@ -383,7 +383,7 @@ class Step:
                             kwargs["store_member_responses"] = True
 
                         response_stream = self.active_executor.run(  # type: ignore[call-overload, misc]
-                            message=message,
+                            input=message,
                             images=images,
                             videos=videos,
                             audio=audios,
@@ -532,7 +532,7 @@ class Step:
                 else:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(
-                        step_input.message,
+                        step_input.input,
                         step_input.previous_step_outputs,
                     )
 
@@ -557,7 +557,7 @@ class Step:
                             kwargs["store_member_responses"] = True
 
                         response = await self.active_executor.arun(  # type: ignore
-                            message=message,
+                            input=message,
                             images=images,
                             videos=videos,
                             audio=audios,
@@ -688,7 +688,7 @@ class Step:
                 else:
                     # For agents and teams, prepare message with context
                     message = self._prepare_message(
-                        step_input.message,
+                        step_input.input,
                         step_input.previous_step_outputs,
                     )
 
@@ -712,7 +712,7 @@ class Step:
                             kwargs["store_member_responses"] = True
 
                         response_stream = self.active_executor.arun(  # type: ignore
-                            message=message,
+                            input=message,
                             images=images,
                             videos=videos,
                             audio=audios,

@@ -47,7 +47,7 @@ def test_print_response_with_message_panel():
 
                 # Run print_response with a message
                 agent.print_response(
-                    message="What is the weather in Tokyo?", show_message=True, console=mock_console, stream=False
+                    input="What is the weather in Tokyo?", show_message=True, console=mock_console, stream=False
                 )
 
                 # More specific verification - check exact call arguments
@@ -101,7 +101,7 @@ def test_panel_creation_and_structure():
                 mock_response.get_content_as_string.return_value = "Test response content"
                 mock_run.return_value = mock_response
 
-                agent.print_response(message="Test message", show_message=True, console=mock_console, stream=False)
+                agent.print_response(input="Test message", show_message=True, console=mock_console, stream=False)
 
                 # Verify the structure of what was created
                 calls = mock_create_panel.call_args_list
@@ -153,7 +153,7 @@ def test_print_response_content_verification():
                 mock_response.get_content_as_string.return_value = expected_response
                 mock_run.return_value = mock_response
 
-                agent.print_response(message="What's the weather?", console=mock_console, stream=False)
+                agent.print_response(input="What's the weather?", console=mock_console, stream=False)
 
                 # Find the response panel call
                 response_panel_calls = [
@@ -203,7 +203,7 @@ def test_markdown_content_type():
                 mock_response.metadata = None
                 mock_run.return_value = mock_response
 
-                agent.print_response(message="Test markdown", console=mock_console, stream=False)
+                agent.print_response(input="Test markdown", console=mock_console, stream=False)
 
                 # Just verify that agent.markdown is True and panels were created
                 assert agent.markdown, "Agent should have markdown=True"
@@ -248,7 +248,7 @@ def test_tool_calls_panel_creation():
                 mock_response.get_content_as_string = Mock(return_value="Response with tool calls")
                 mock_run.return_value = mock_response
 
-                agent.print_response(message="What's the weather?", console=mock_console, stream=False)
+                agent.print_response(input="What's the weather?", console=mock_console, stream=False)
 
                 # Debug: Print all create_panel calls
                 print("All create_panel calls for tool test:")
@@ -301,7 +301,7 @@ def test_live_update_calls():
                 mock_response.get_content_as_string = Mock(return_value="Simple response")
                 mock_run.return_value = mock_response
 
-                agent.print_response(message="Test", show_message=True, console=mock_console, stream=False)
+                agent.print_response(input="Test", show_message=True, console=mock_console, stream=False)
 
                 # Live.update should be called multiple times as panels are added
                 assert mock_live.update.call_count >= 2, "Live.update should be called multiple times"
@@ -336,7 +336,7 @@ def test_simple_functionality():
                 mock_run.return_value = mock_response
 
                 # Call print_response
-                agent.print_response(message="Test message", console=mock_console, stream=False)
+                agent.print_response(input="Test message", console=mock_console, stream=False)
 
                 # Basic verifications that should always pass
                 assert mock_run.called, "run() should be called"
@@ -372,7 +372,7 @@ def test_error_handling():
 
             # Check that the exception is propagated (which seems to be the current behavior)
             with pytest.raises(Exception) as exc_info:
-                agent.print_response(message="Test error handling", console=mock_console, stream=False)
+                agent.print_response(input="Test error handling", console=mock_console, stream=False)
 
             # Verify it's our test exception
             assert "Test error" in str(exc_info.value)
@@ -410,7 +410,7 @@ def test_stream_vs_non_stream_behavior():
                 mock_response.get_content_as_string = Mock(return_value="Non-streaming response")
                 mock_run.return_value = mock_response
 
-                agent.print_response(message="Test", console=mock_console, stream=False)
+                agent.print_response(input="Test", console=mock_console, stream=False)
 
                 # Reset mocks
                 mock_run.reset_mock()
@@ -419,7 +419,7 @@ def test_stream_vs_non_stream_behavior():
                 # Test streaming
                 mock_run.return_value = [mock_response]  # Return iterable for streaming
 
-                agent.print_response(message="Test", console=mock_console, stream=True)
+                agent.print_response(input="Test", console=mock_console, stream=True)
 
                 # Verify run was called with stream=True
                 assert any(call.kwargs.get("stream") for call in mock_run.call_args_list), (

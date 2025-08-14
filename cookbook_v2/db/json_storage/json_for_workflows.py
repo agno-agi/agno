@@ -67,7 +67,6 @@ if __name__ == "__main__":
         db=db,
         steps=[research_step, content_planning_step],
     )
-    content_creation_workflow.print_response(
-        message="AI trends in 2024",
+    content_creation_workflow.print_response(input="AI trends in 2024",
         markdown=True,
     )

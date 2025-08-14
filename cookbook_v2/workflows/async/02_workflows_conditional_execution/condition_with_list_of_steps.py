@@ -81,7 +81,7 @@ write_step = Step(
 # === CONDITION EVALUATORS ===
 def check_if_we_should_search_hn(step_input: StepInput) -> bool:
     """Check if we should search Hacker News"""
-    topic = step_input.message or step_input.previous_step_content or ""
+    topic = step_input.input or step_input.previous_step_content or ""
     tech_keywords = [
         "ai",
         "machine learning",
@@ -96,7 +96,7 @@ def check_if_we_should_search_hn(step_input: StepInput) -> bool:
 
 def check_if_comprehensive_research_needed(step_input: StepInput) -> bool:
     """Check if comprehensive multi-step research is needed"""
-    topic = step_input.message or step_input.previous_step_content or ""
+    topic = step_input.input or step_input.previous_step_content or ""
     comprehensive_keywords = [
         "comprehensive",
         "detailed",
@@ -139,8 +139,7 @@ if __name__ == "__main__":
 
     try:
         asyncio.run(
-            workflow.aprint_response(
-                message="Comprehensive analysis of climate change research",
+            workflow.aprint_response(input="Comprehensive analysis of climate change research",
             )
         )
     except Exception as e:

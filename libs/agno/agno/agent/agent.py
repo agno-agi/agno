@@ -1697,7 +1697,7 @@ class Agent:
 
             # Prepare run messages
             self.run_messages = self.get_continue_run_messages(
-                messages=messages,
+                input=input,
             )
 
             # Set run_input
@@ -2114,7 +2114,7 @@ class Agent:
 
             # Prepare run messages
             run_messages: RunMessages = self.get_continue_run_messages(
-                messages=messages,
+                input=input,
             )
 
             # Reset the run paused state
@@ -6660,8 +6660,7 @@ class Agent:
                     live_log.update(Group(*panels))
 
                 result = self.arun(
-                    message=message,
-                    messages=messages,
+                    input=input,
                     session_id=session_id,
                     session_state=session_state,
                     user_id=user_id,
@@ -6880,8 +6879,7 @@ class Agent:
 
                 # Run the agent
                 run_response = await self.arun(
-                    message=message,
-                    messages=messages,
+                    input=input,
                     session_id=session_id,
                     session_state=session_state,
                     user_id=user_id,
@@ -7286,9 +7284,9 @@ class Agent:
                 if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
                     raise NotImplementedError("Use `acli_app` to use MCP tools.")
 
-        if message:
+        if input:
             self.print_response(
-                message=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
+                input=input, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
             )
 
         _exit_on = exit_on or ["exit", "quit", "bye"]
@@ -7298,7 +7296,7 @@ class Agent:
                 break
 
             self.print_response(
-                message=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
+                input=input, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
             )
 
     async def acli_app(
@@ -7319,9 +7317,9 @@ class Agent:
         """
         from rich.prompt import Prompt
 
-        if message:
+        if input:
             await self.aprint_response(
-                message=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
+                input=input, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
             )
 
         _exit_on = exit_on or ["exit", "quit", "bye"]
@@ -7331,7 +7329,7 @@ class Agent:
                 break
 
             await self.aprint_response(
-                message=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
+                input=input, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
             )
 
     ###########################################################################

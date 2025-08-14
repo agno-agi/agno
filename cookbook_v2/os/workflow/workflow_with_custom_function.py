@@ -47,7 +47,7 @@ def custom_content_planning_function(step_input: StepInput) -> StepOutput:
     """
     Custom function that does intelligent content planning with context awareness
     """
-    message = step_input.message
+    message = step_input.input
     previous_step_content = step_input.previous_step_content
 
     # Create intelligent planning prompt

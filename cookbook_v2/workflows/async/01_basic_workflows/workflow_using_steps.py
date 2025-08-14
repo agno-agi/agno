@@ -62,8 +62,7 @@ if __name__ == "__main__":
     )
 
     asyncio.run(
-        article_workflow.aprint_response(
-            message="Write an article about the benefits of renewable energy",
+        article_workflow.aprint_response(input="Write an article about the benefits of renewable energy",
             markdown=True,
         )
     )

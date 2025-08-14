@@ -43,6 +43,7 @@ from agno.run.workflow import (
     StepsExecutionStartedEvent,
     StepStartedEvent,
     WorkflowCompletedEvent,
+    WorkflowErrorEvent,
     WorkflowRunEvent,
     WorkflowRunOutput,
     WorkflowRunOutputEvent,
@@ -434,7 +435,7 @@ class Workflow:
             log_debug(f"Using previous step content from: {list(previous_step_outputs.keys())[-1]}")
 
         return StepInput(
-            message=execution_input.message,
+            input=execution_input.input,
             previous_step_content=previous_step_content,
             previous_step_outputs=previous_step_outputs,
             additional_data=execution_input.additional_data,
@@ -1564,9 +1565,9 @@ class Workflow:
     ) -> Union[WorkflowRunOutput, AsyncIterator[WorkflowRunOutputEvent]]:
         """Execute the workflow synchronously with optional streaming"""
 
-        validated_input = self._validate_input(message)
+        validated_input = self._validate_input(input)
         if validated_input is not None:
-            message = validated_input
+            input = validated_input
 
         websocket_handler = None
         if websocket:
@@ -3351,17 +3352,21 @@ class Workflow:
                                 response,
                                 (RunContentEvent, TeamRunContentEvent, WorkflowRunOutputEvent),  # type: ignore
                             ):  # type: ignore
-                                # Extract the content from the streaming event
-                                response_str = response.content  # type: ignore
+                                # Handle WorkflowErrorEvent specifically
+                                if isinstance(response, WorkflowErrorEvent):  # type: ignore
+                                    response_str = response.error or "Workflow execution error"  # type: ignore
+                                else:
+                                    # Extract the content from the streaming event
+                                    response_str = response.content  # type: ignore
 
-                                # Check if this is a team's final structured output
-                                is_structured_output = (
-                                    isinstance(response, TeamRunContentEvent)
-                                    and hasattr(response, "content_type")
-                                    and response.content_type != "str"
-                                    and response.content_type != ""
-                                )
-                            elif isinstance(response, RunContentEvent) and current_step_executor_type != "team":
+                                    # Check if this is a team's final structured output
+                                    is_structured_output = (
+                                        isinstance(response, TeamRunResponseContentEvent)
+                                        and hasattr(response, "content_type")
+                                        and response.content_type != "str"
+                                        and response.content_type != ""
+                                    )
+                            elif isinstance(response, RunResponseContentEvent) and current_step_executor_type != "team":
                                 response_str = response.content  # type: ignore
                             else:
                                 continue

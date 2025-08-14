@@ -95,7 +95,7 @@ def test_structured_output_function_flow_sync(workflow_db):
         ],
     )
 
-    response = workflow.run(message="test structured flow")
+    response = workflow.run(input="test structured flow")
 
     # Verify we have all step responses
     assert len(response.step_results) == 3
@@ -128,7 +128,7 @@ def test_structured_output_function_flow_streaming(workflow_db):
         ],
     )
 
-    events = list(workflow.run(message="test structured flow", stream=True))
+    events = list(workflow.run(input="test structured flow", stream=True))
 
     # Find the workflow completed event
     from agno.run.workflow import WorkflowCompletedEvent
@@ -155,7 +155,7 @@ async def test_structured_output_function_flow_async(workflow_db):
         ],
     )
 
-    response = await workflow.arun(message="test structured flow")
+    response = await workflow.arun(input="test structured flow")
 
     # Verify we have all step responses
     assert len(response.step_results) == 3
@@ -180,7 +180,7 @@ async def test_structured_output_function_flow_async_streaming(workflow_db):
     )
 
     events = []
-    async for event in await workflow.arun(message="test structured flow", stream=True):
+    async for event in await workflow.arun(input="test structured flow", stream=True):
         events.append(event)
 
     # Find the workflow completed event
@@ -229,7 +229,7 @@ def test_structured_output_agent_flow_sync(workflow_db):
         ],
     )
 
-    response = workflow.run(message="Research AI testing methodologies")
+    response = workflow.run(input="Research AI testing methodologies")
 
     # Verify we have all step responses
     assert len(response.step_results) == 3
@@ -271,7 +271,7 @@ def test_structured_output_agent_flow_streaming(workflow_db):
         ],
     )
 
-    events = list(workflow.run(message="Research AI testing methodologies", stream=True))
+    events = list(workflow.run(input="Research AI testing methodologies", stream=True))
 
     # Find the workflow completed event
     from agno.run.workflow import WorkflowCompletedEvent
@@ -311,7 +311,7 @@ async def test_structured_output_agent_flow_async(workflow_db):
         ],
     )
 
-    response = await workflow.arun(message="Research AI testing methodologies")
+    response = await workflow.arun(input="Research AI testing methodologies")
 
     # Verify we have all step responses
     assert len(response.step_results) == 2
@@ -352,7 +352,7 @@ async def test_structured_output_agent_flow_async_streaming(workflow_db):
     )
 
     events = []
-    async for event in await workflow.arun(message="Research AI testing methodologies", stream=True):
+    async for event in await workflow.arun(input="Research AI testing methodologies", stream=True):
         events.append(event)
 
     # Find the workflow completed event
@@ -391,7 +391,7 @@ def test_structured_output_team_flow_sync(workflow_db):
         ],
     )
 
-    response = workflow.run(message="Brief AI research")
+    response = workflow.run(input="Brief AI research")
 
     # Verify structured output
     assert len(response.step_results) == 1
@@ -424,7 +424,7 @@ def test_structured_output_team_flow_streaming(workflow_db):
         ],
     )
 
-    events = list(workflow.run(message="Brief AI research", stream=True))
+    events = list(workflow.run(input="Brief AI research", stream=True))
 
     # Find the workflow completed event
     from agno.run.workflow import WorkflowCompletedEvent
@@ -463,7 +463,7 @@ async def test_structured_output_team_flow_async(workflow_db):
         ],
     )
 
-    response = await workflow.arun(message="Brief AI research")
+    response = await workflow.arun(input="Brief AI research")
 
     # Verify structured output
     assert len(response.step_results) == 1
@@ -498,7 +498,7 @@ async def test_structured_output_team_flow_async_streaming(workflow_db):
     )
 
     events = []
-    async for event in await workflow.arun(message="Brief AI research", stream=True):
+    async for event in await workflow.arun(input="Brief AI research", stream=True):
         events.append(event)
 
     # Find the workflow completed event
@@ -547,7 +547,7 @@ def test_mixed_structured_output_flow(workflow_db):
         ],
     )
 
-    response = workflow.run(message="test mixed flow")
+    response = workflow.run(input="test mixed flow")
 
     # Verify we have all step responses
     assert len(response.step_results) == 3
@@ -602,7 +602,7 @@ def test_structured_output_with_workflow_components(workflow_db):
         ],
     )
 
-    response = workflow.run(message="test simple component flow")
+    response = workflow.run(input="test simple component flow")
 
     # Verify we have all step responses
     assert len(response.step_results) == 3

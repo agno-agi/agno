@@ -49,7 +49,7 @@ def custom_content_planning_function(
     """
     Custom function that does intelligent content planning with context awareness
     """
-    message = step_input.message
+    message = step_input.input
     previous_step_content = step_input.previous_step_content
 
     # Create intelligent planning prompt
@@ -135,8 +135,7 @@ if __name__ == "__main__":
         ],
     )
 
-    streaming_content_workflow.print_response(
-        message="AI trends in 2024",
+    streaming_content_workflow.print_response(input="AI trends in 2024",
         markdown=True,
         stream=True,
         stream_intermediate_steps=True,

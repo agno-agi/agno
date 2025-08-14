@@ -115,7 +115,7 @@ class Loop:
             updated_previous_step_outputs.update(loop_step_outputs)
 
         return StepInput(
-            message=step_input.message,
+            input=step_input.input,
             previous_step_content=previous_step_content,
             previous_step_outputs=updated_previous_step_outputs,
             additional_data=step_input.additional_data,

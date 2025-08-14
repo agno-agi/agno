@@ -76,8 +76,7 @@ agent_team = Team(
 
 async def main():
     """Main async function demonstrating collaborative team mode."""
-    await agent_team.aprint_response(
-        message="Start the discussion on the topic: 'What is the best way to learn to code?'",
+    await agent_team.aprint_response(input="Start the discussion on the topic: 'What is the best way to learn to code?'",
         # stream=True,
         # stream_intermediate_steps=True,
     )

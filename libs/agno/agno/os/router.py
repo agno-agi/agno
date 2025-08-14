@@ -128,7 +128,7 @@ async def agent_response_streamer(
 ) -> AsyncGenerator:
     try:
         run_response = agent.arun(
-            message,
+            input=message,
             session_id=session_id,
             user_id=user_id,
             images=images,
@@ -192,7 +192,7 @@ async def team_response_streamer(
     """Run the given team asynchronously and yield its response"""
     try:
         run_response = team.arun(
-            message,
+            input=message,
             session_id=session_id,
             user_id=user_id,
             images=images,
@@ -239,7 +239,7 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
 
         # Execute workflow in background with streaming
         await workflow.arun(
-            message=user_message,
+            input=user_message,
             session_id=session_id,
             user_id=user_id,
             stream=True,
@@ -255,14 +255,14 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
 
 async def workflow_response_streamer(
     workflow: Workflow,
-    message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
+    input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
     try:
         run_response = await workflow.arun(
-            message,
+            input=input,
             session_id=session_id,
             user_id=user_id,
             stream=True,
@@ -489,7 +489,7 @@ def get_base_router(
             run_response = cast(
                 RunOutput,
                 await agent.arun(
-                    message=message,
+                    input=message,
                     session_id=session_id,
                     user_id=user_id,
                     images=base64_images if base64_images else None,
@@ -799,7 +799,7 @@ def get_base_router(
             )
         else:
             run_response = await team.arun(
-                message=message,
+                input=message,
                 session_id=session_id,
                 user_id=user_id,
                 images=base64_images if base64_images else None,
@@ -1046,7 +1046,7 @@ def get_base_router(
                 return StreamingResponse(
                     workflow_response_streamer(
                         workflow,
-                        message=message,
+                        input=message,
                         session_id=session_id,
                         user_id=user_id,
                         **kwargs,
@@ -1055,7 +1055,7 @@ def get_base_router(
                 )
             else:
                 run_response = await workflow.arun(
-                    message=message,
+                    input=message,
                     session_id=session_id,
                     user_id=user_id,
                     stream=False,

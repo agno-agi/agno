@@ -388,7 +388,7 @@ if __name__ == "__main__":
         print("=" * 70)
 
         result = await startup_validation_workflow.arun(
-            message="Please validate this startup idea with comprehensive market research and competitive analysis",
+            input="Please validate this startup idea with comprehensive market research and competitive analysis",
             startup_idea=idea,
         )
 

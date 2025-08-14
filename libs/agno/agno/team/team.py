@@ -4799,10 +4799,10 @@ class Team:
 
         if self.mode == "route":
             user_message = self._get_user_message(
-                message, audio=audio, images=images, videos=videos, files=files, user_id=user_id
+                input, audio=audio, images=images, videos=videos, files=files, user_id=user_id
             )
             forward_task_func: Function = self.get_forward_task_function(
-                message=user_message,
+                input=user_message,
                 user_id=user_id,
                 session_id=session_id,
                 stream=self.stream or False,
@@ -5394,17 +5394,17 @@ class Team:
     ):
         # Get references from the knowledge base to use in the user message
         references = None
-        self.run_response = cast(TeamRunOutput, self.run_response)
-        if self.add_knowledge_to_context and message:
+        self.run_response = cast(TeamRunResponse, self.run_response)
+        if self.add_knowledge_to_context and input:
             message_str: str
-            if isinstance(message, str):
-                message_str = message
-            elif callable(message):
-                message_str = message(agent=self)
-            elif isinstance(message, BaseModel):
-                message_str = message.model_dump_json(indent=2, exclude_none=True)
+            if isinstance(input, str):
+                message_str = input
+            elif callable(input):
+                message_str = input(agent=self)
+            elif isinstance(input, BaseModel):
+                message_str = input.model_dump_json(indent=2, exclude_none=True)
             else:
-                raise Exception("message must be a string or a callable when add_knowledge_to_context is True")
+                raise Exception("input must be a string or a callable when add_knowledge_to_context is True")
 
             try:
                 retrieval_timer = Timer()
@@ -5489,18 +5489,18 @@ class Team:
                     **kwargs,
                 )
             else:
-                # If the message is None, return None
+                # If the input is None, return None
                 return None
 
-        # If message is provided as a Message, use it directly
-        elif isinstance(message, Message):
-            return message
-        # If message is provided as a dict, try to validate it as a Message
-        elif isinstance(message, dict):
+        # If input is provided as a Message, use it directly
+        elif isinstance(input, Message):
+            return input
+        # If input is provided as a dict, try to validate it as a Message
+        elif isinstance(input, dict):
             try:
-                return Message.model_validate(message)
+                return Message.model_validate(input)
             except Exception as e:
-                log_warning(f"Failed to validate message: {e}")
+                log_warning(f"Failed to validate input: {e}")
 
     def get_messages_for_parser_model(
         self, model_response: ModelResponse, response_format: Optional[Union[Dict, Type[BaseModel]]]
@@ -5913,8 +5913,8 @@ class Team:
                         history.append(Message(role="user", content=member_agent_task))
 
                 if stream:
-                    member_agent_run_output_stream = member_agent.run(
-                        message=member_agent_task if history is None else None,
+                    member_agent_run_response_stream = member_agent.run(
+                        input=member_agent_task if history is None else None,
                         user_id=user_id,
                         # All members have the same session_id
                         session_id=session_id,
@@ -5932,7 +5932,7 @@ class Team:
                         yield member_agent_run_response_chunk
                 else:
                     member_agent_run_response = member_agent.run(
-                        message=member_agent_task if history is None else None,
+                        input=member_agent_task if history is None else None,
                         user_id=user_id,
                         # All members have the same session_id
                         session_id=session_id,
@@ -6218,8 +6218,8 @@ class Team:
                 member_agent.enable_agentic_knowledge_filters = self.enable_agentic_knowledge_filters
 
             if stream:
-                member_agent_run_output_stream = member_agent.run(
-                    message=member_agent_task if history is None else None,
+                member_agent_run_response_stream = member_agent.run(
+                    input=member_agent_task if history is None else None,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session_id,
@@ -6242,7 +6242,7 @@ class Team:
                     yield member_agent_run_output_event
             else:
                 member_agent_run_response = member_agent.run(
-                    message=member_agent_task if history is None else None,
+                    input=member_agent_task if history is None else None,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session_id,
@@ -6369,8 +6369,8 @@ class Team:
                 member_agent.enable_agentic_knowledge_filters = self.enable_agentic_knowledge_filters
 
             if stream:
-                member_agent_run_output_stream = member_agent.arun(
-                    message=member_agent_task if history is None else None,
+                member_agent_run_response_stream = member_agent.arun(
+                    input=member_agent_task if history is None else None,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session_id,
@@ -6392,7 +6392,7 @@ class Team:
                     yield member_agent_run_output_event
             else:
                 member_agent_run_response = await member_agent.arun(
-                    message=member_agent_task if history is None else None,
+                    input=member_agent_task if history is None else None,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session_id,
@@ -6543,7 +6543,7 @@ class Team:
 
     def get_forward_task_function(
         self,
-        message: Message,
+        input: Message,
         session_id: str,
         user_id: Optional[str] = None,
         stream: bool = False,
@@ -6600,7 +6600,7 @@ class Team:
             use_agent_logger()
 
             # If found in subteam, include the path in the task description
-            member_agent_task = message.get_content_string()
+            member_agent_task = input.get_content_string()
 
             # Add history for the member if enabled
             if member_agent.add_history_to_context:
@@ -6618,8 +6618,8 @@ class Team:
 
             # 2. Get the response from the member agent
             if stream:
-                member_agent_run_output_stream = member_agent.run(
-                    message=member_agent_task if history is None else None,
+                member_agent_run_response_stream = member_agent.run(
+                    input=member_agent_task if history is None else None,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session_id,
@@ -6640,7 +6640,7 @@ class Team:
                     yield member_agent_run_response_chunk
             else:
                 member_agent_run_response = member_agent.run(
-                    message=member_agent_task if history is None else None,
+                    input=member_agent_task if history is None else None,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session_id,
@@ -6745,7 +6745,7 @@ class Team:
             use_agent_logger()
 
             # If found in subteam, include the path in the task description
-            member_agent_task = message.get_content_string()
+            member_agent_task = input.get_content_string()
 
             # Add history for the member if enabled
             if member_agent.add_history_to_context:
@@ -6763,8 +6763,8 @@ class Team:
 
             # 2. Get the response from the member agent
             if stream:
-                member_agent_run_output_stream = member_agent.arun(
-                    message=member_agent_task if history is None else None,
+                member_agent_run_response_stream = member_agent.arun(
+                    input=member_agent_task if history is None else None,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session_id,
@@ -6786,7 +6786,7 @@ class Team:
                     yield member_agent_run_output_event
             else:
                 member_agent_run_response = await member_agent.arun(
-                    message=member_agent_task if history is None else None,
+                    input=member_agent_task if history is None else None,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session_id,

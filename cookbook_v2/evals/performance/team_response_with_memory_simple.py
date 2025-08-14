@@ -57,8 +57,7 @@ team = Team(
 
 async def run_team():
     random_city = random.choice(cities)
-    _ = team.arun(
-        message=f"I love {random_city}! What weather can I expect in {random_city}?",
+    _ = team.arun(input=f"I love {random_city}! What weather can I expect in {random_city}?",
         stream=True,
         stream_intermediate_steps=True,
     )

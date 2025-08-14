@@ -81,8 +81,8 @@ def test_basic_access(workflow_db):
     """Test basic access to previous steps."""
     workflow = Workflow(name="Basic Access", db=workflow_db, steps=[research_step, analysis_step, report_step])
 
-    response = workflow.run(message="test topic")
-    assert isinstance(response, WorkflowRunOutput)
+    response = workflow.run(input="test topic")
+    assert isinstance(response, WorkflowRunResponse)
     assert len(response.step_results) == 3
 
     # Verify report contains data from previous steps
@@ -97,7 +97,7 @@ def test_streaming_access(workflow_db):
     """Test streaming with multiple step access."""
     workflow = Workflow(name="Streaming Access", db=workflow_db, steps=[research_step, analysis_step, report_step])
 
-    events = list(workflow.run(message="test topic", stream=True))
+    events = list(workflow.run(input="test topic", stream=True))
 
     # Verify events
     completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
@@ -110,8 +110,8 @@ async def test_async_access(workflow_db):
     """Test async execution with multiple step access."""
     workflow = Workflow(name="Async Access", db=workflow_db, steps=[research_step, analysis_step, report_step])
 
-    response = await workflow.arun(message="test topic")
-    assert isinstance(response, WorkflowRunOutput)
+    response = await workflow.arun(input="test topic")
+    assert isinstance(response, WorkflowRunResponse)
     assert len(response.step_results) == 3
     assert "Report:" in response.content
 
@@ -122,7 +122,7 @@ async def test_async_streaming_access(workflow_db):
     workflow = Workflow(name="Async Streaming", db=workflow_db, steps=[research_step, analysis_step, report_step])
 
     events = []
-    async for event in await workflow.arun(message="test topic", stream=True):
+    async for event in await workflow.arun(input="test topic", stream=True):
         events.append(event)
 
     completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
@@ -139,8 +139,8 @@ def test_parallel_step_access(workflow_db):
         steps=[Parallel(step_a, step_b, step_c, name="Parallel Processing"), parallel_aggregator_step],
     )
 
-    response = workflow.run(message="test data")
-    assert isinstance(response, WorkflowRunOutput)
+    response = workflow.run(input="test data")
+    assert isinstance(response, WorkflowRunResponse)
     assert len(response.step_results) == 2
 
     # Verify the aggregator step received parallel data correctly
@@ -163,8 +163,8 @@ async def test_async_parallel_step_access(workflow_db):
         steps=[Parallel(step_a, step_b, step_c, name="Parallel Processing"), parallel_aggregator_step],
     )
 
-    response = await workflow.arun(message="async test data")
-    assert isinstance(response, WorkflowRunOutput)
+    response = await workflow.arun(input="async test data")
+    assert isinstance(response, WorkflowRunResponse)
     assert len(response.step_results) == 2
 
     # Verify the aggregator step received parallel data correctly
@@ -184,8 +184,8 @@ def test_single_parallel_step_access(workflow_db):
         steps=[Parallel(step_a, name="Parallel Processing"), parallel_aggregator_step],
     )
 
-    response = workflow.run(message="single test")
-    assert isinstance(response, WorkflowRunOutput)
+    response = workflow.run(input="single test")
+    assert isinstance(response, WorkflowRunResponse)
     assert len(response.step_results) == 2
 
     # Verify even single parallel steps return dict structure

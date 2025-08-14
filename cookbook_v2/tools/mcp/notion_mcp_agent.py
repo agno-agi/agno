@@ -55,7 +55,7 @@ async def run_agent():
         )
 
         await agent.acli_app(
-            message="You are a helpful assistant that can access Notion workspaces and pages.",
+            input="You are a helpful assistant that can access Notion workspaces and pages.",
             stream=True,
             markdown=True,
             exit_on=["exit", "quit"],

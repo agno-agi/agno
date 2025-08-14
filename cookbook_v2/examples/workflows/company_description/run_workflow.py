@@ -41,7 +41,7 @@ competitor_step = Step(
 
 
 def generate_supplier_profile(step_input: StepInput) -> StepOutput:
-    supplier_profile: SupplierProfile = step_input.message
+    supplier_profile: SupplierProfile = step_input.input
 
     supplier_name: str = supplier_profile.supplier_name
     supplier_homepage_url: str = supplier_profile.supplier_homepage_url
@@ -98,7 +98,7 @@ generate_supplier_profile_step = Step(
 
 
 def send_email(step_input: StepInput):
-    supplier_profile: SupplierProfile = step_input.message
+    supplier_profile: SupplierProfile = step_input.input
     supplier_name: str = supplier_profile.supplier_name
     user_email: str = supplier_profile.user_email
 
@@ -150,6 +150,5 @@ if __name__ == "__main__":
         supplier_homepage_url="https://www.agno.com",
         user_email="yash@agno.com",
     )
-    company_description_workflow.print_response(
-        message=supplier_profile_request,
+    company_description_workflow.print_response(input=supplier_profile_request,
     )

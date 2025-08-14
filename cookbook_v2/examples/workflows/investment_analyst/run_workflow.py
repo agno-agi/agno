@@ -19,7 +19,7 @@ def should_run_analysis(analysis_type: str) -> callable:
     """Create conditional evaluator for analysis types"""
 
     def evaluator(step_input: StepInput) -> bool:
-        request_data = step_input.message
+        request_data = step_input.input
         if isinstance(request_data, InvestmentAnalysisRequest):
             return analysis_type in request_data.analyses_requested
         return False
@@ -29,7 +29,7 @@ def should_run_analysis(analysis_type: str) -> callable:
 
 def is_high_risk_investment(step_input: StepInput) -> bool:
     """Check if this is a high-risk investment requiring additional analysis"""
-    request_data = step_input.message
+    request_data = step_input.input
     if isinstance(request_data, InvestmentAnalysisRequest):
         return (
             request_data.risk_tolerance == RiskLevel.HIGH
@@ -43,7 +43,7 @@ def is_high_risk_investment(step_input: StepInput) -> bool:
 
 def is_large_investment(step_input: StepInput) -> bool:
     """Check if this is a large investment requiring additional due diligence"""
-    request_data = step_input.message
+    request_data = step_input.input
     if isinstance(request_data, InvestmentAnalysisRequest):
         return (
             request_data.investment_amount
@@ -54,7 +54,7 @@ def is_large_investment(step_input: StepInput) -> bool:
 
 def requires_esg_analysis(step_input: StepInput) -> bool:
     """Check if ESG analysis is required"""
-    request_data = step_input.message
+    request_data = step_input.input
     if isinstance(request_data, InvestmentAnalysisRequest):
         return "esg_analysis" in request_data.analyses_requested
     return False
@@ -62,7 +62,7 @@ def requires_esg_analysis(step_input: StepInput) -> bool:
 
 def is_multi_company_analysis(step_input: StepInput) -> bool:
     """Check if analyzing multiple companies"""
-    request_data = step_input.message
+    request_data = step_input.input
     if isinstance(request_data, InvestmentAnalysisRequest):
         return len(request_data.companies) > 1
     return False
@@ -71,7 +71,7 @@ def is_multi_company_analysis(step_input: StepInput) -> bool:
 ### Routers
 def select_valuation_approach(step_input: StepInput) -> Step:
     """Router to select appropriate valuation approach based on investment type"""
-    request_data = step_input.message
+    request_data = step_input.input
     if isinstance(request_data, InvestmentAnalysisRequest):
         if request_data.investment_type in [
             InvestmentType.VENTURE,
@@ -95,7 +95,7 @@ def select_valuation_approach(step_input: StepInput) -> Step:
 
 def select_risk_framework(step_input: StepInput) -> Step:
     """Router to select risk assessment framework"""
-    request_data = step_input.message
+    request_data = step_input.input
     if isinstance(request_data, InvestmentAnalysisRequest):
         if request_data.investment_type == InvestmentType.VENTURE:
             return Step(
@@ -420,8 +420,7 @@ if __name__ == "__main__":
         benchmark_indices=["S&P 500", "NASDAQ"],
         comparable_companies=["Microsoft", "Google"],
     )
-    response = investment_analysis_workflow.print_response(
-        message=request,
+    response = investment_analysis_workflow.print_response(input=request,
         stream=True,
         stream_intermediate_steps=True,
     )

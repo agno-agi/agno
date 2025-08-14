@@ -87,7 +87,7 @@ def research_strategy_router(step_input: StepInput) -> List[Step]:
     Returns either a single web research step or a tech research loop.
     """
     # Use the original workflow message if this is the first step
-    topic = step_input.previous_step_content or step_input.message or ""
+    topic = step_input.previous_step_content or step_input.input or ""
     topic = topic.lower()
 
     # Check if the topic requires deep tech research

@@ -82,6 +82,5 @@ if __name__ == "__main__":
         ),
         steps=custom_execution_function,
     )
-    content_creation_workflow.print_response(
-        message="AI trends in 2024",
+    content_creation_workflow.print_response(input="AI trends in 2024",
     )

@@ -297,7 +297,7 @@ if __name__ == "__main__":
     print("=" * 60)
 
     result = recruitment_workflow.print_response(
-        message="Process candidates for backend engineer position",
+        input="Process candidates for backend engineer position",
         candidate_resume_urls=[
             "https://agno-public.s3.us-east-1.amazonaws.com/demo_data/filters/cv_1.pdf",
             "https://agno-public.s3.us-east-1.amazonaws.com/demo_data/filters/cv_2.pdf",

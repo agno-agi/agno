@@ -20,8 +20,8 @@ def test_basic_sequence(workflow_db):
 
     workflow = Workflow(name="Basic Sequence", db=workflow_db, steps=[step1, step2])
 
-    response = workflow.run(message="test")
-    assert isinstance(response, WorkflowRunOutput)
+    response = workflow.run(input="test")
+    assert isinstance(response, WorkflowRunResponse)
     assert len(response.step_results) == 2
     assert "Second: First: test" in response.content
 
@@ -34,8 +34,8 @@ def test_function_and_agent_sequence(workflow_db, test_agent):
 
     workflow = Workflow(name="Agent Sequence", db=workflow_db, steps=[step, test_agent])
 
-    response = workflow.run(message="test")
-    assert isinstance(response, WorkflowRunOutput)
+    response = workflow.run(input="test")
+    assert isinstance(response, WorkflowRunResponse)
     assert len(response.step_results) == 2
     assert response.step_results[1].success
 
@@ -48,8 +48,8 @@ def test_function_and_team_sequence(workflow_db, test_team):
 
     workflow = Workflow(name="Team Sequence", db=workflow_db, steps=[step, test_team])
 
-    response = workflow.run(message="test")
-    assert isinstance(response, WorkflowRunOutput)
+    response = workflow.run(input="test")
+    assert isinstance(response, WorkflowRunResponse)
     assert len(response.step_results) == 2
     assert response.step_results[1].success
 
@@ -62,7 +62,7 @@ def test_function_streaming_sequence(workflow_db):
 
     workflow = Workflow(name="Streaming", db=workflow_db, steps=[streaming_step])
 
-    events = list(workflow.run(message="test", stream=True))
+    events = list(workflow.run(input="test", stream=True))
     step_events = [e for e in events if isinstance(e, StepOutputEvent)]
     completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
 
@@ -80,8 +80,8 @@ async def test_async_function_sequence(workflow_db):
 
     workflow = Workflow(name="Async", db=workflow_db, steps=[async_step])
 
-    response = await workflow.arun(message="test")
-    assert isinstance(response, WorkflowRunOutput)
+    response = await workflow.arun(input="test")
+    assert isinstance(response, WorkflowRunResponse)
     assert "Async: test" in response.content
 
 
@@ -95,7 +95,7 @@ async def test_async_function_streaming(workflow_db):
     workflow = Workflow(name="Async Streaming", db=workflow_db, steps=[async_streaming_step])
 
     events = []
-    async for event in await workflow.arun(message="test", stream=True):
+    async for event in await workflow.arun(input="test", stream=True):
         events.append(event)
 
     step_events = [e for e in events if isinstance(e, StepOutputEvent)]
@@ -113,8 +113,8 @@ def test_mixed_sequence(workflow_db, test_agent, test_team):
 
     workflow = Workflow(name="Mixed", db=workflow_db, steps=[step, test_agent, test_team])
 
-    response = workflow.run(message="test")
-    assert isinstance(response, WorkflowRunOutput)
+    response = workflow.run(input="test")
+    assert isinstance(response, WorkflowRunResponse)
     assert len(response.step_results) == 3
     assert "Function: test" in response.step_results[0].content
     assert all(step.success for step in response.step_results[1:])

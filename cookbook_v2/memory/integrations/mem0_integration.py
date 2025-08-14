@@ -12,7 +12,7 @@ except ImportError:
 client = MemoryClient()
 
 user_id = "agno"
-messages = [
+input=[
     {"role": "user", "content": "My name is John Billings."},
     {"role": "user", "content": "I live in NYC."},
     {"role": "user", "content": "I'm going to a concert tomorrow."},
@@ -29,5 +29,5 @@ run: RunOutput = agent.run("What do you know about me?")
 
 pprint_run_response(run)
 
-messages = [{"role": i.role, "content": str(i.content)} for i in (run.messages or [])]
+input=[{"role": i.role, "content": str(i.content)} for i in (run.messages or [])]
 client.add(messages, user_id=user_id)

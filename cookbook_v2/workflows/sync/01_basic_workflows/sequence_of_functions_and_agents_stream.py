@@ -33,7 +33,7 @@ writer_agent = Agent(
 
 def prepare_input_for_web_search(step_input: StepInput) -> Iterator[StepOutput]:
     """Generator function that yields StepOutput"""
-    topic = step_input.message
+    topic = step_input.input
 
     # Create proper StepOutput content
     content = dedent(f"""\
@@ -51,7 +51,7 @@ def prepare_input_for_web_search(step_input: StepInput) -> Iterator[StepOutput]:
 
 def prepare_input_for_writer(step_input: StepInput) -> Iterator[StepOutput]:
     """Generator function that yields StepOutput"""
-    topic = step_input.message
+    topic = step_input.input
     research_team_output = step_input.previous_step_content
 
     # Create proper StepOutput content
@@ -96,8 +96,7 @@ if __name__ == "__main__":
             writer_agent,
         ],
     )
-    content_creation_workflow.print_response(
-        message="AI trends in 2024",
+    content_creation_workflow.print_response(input="AI trends in 2024",
         markdown=True,
         stream=True,
         stream_intermediate_steps=True,

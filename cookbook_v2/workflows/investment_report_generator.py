@@ -361,7 +361,7 @@ if __name__ == "__main__":
         print("=" * 70)
 
         result = await investment_workflow.arun(
-            message="Generate comprehensive investment analysis and portfolio allocation recommendations",
+            input="Generate comprehensive investment analysis and portfolio allocation recommendations",
             companies=companies,
         )
 

@@ -223,8 +223,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print("📝 Example 1: Add Multiple Steps")
     print("=" * 60)
-    project_workflow.print_response(
-        message="Add a high priority step called 'Setup Database' assigned to Alice, and a medium priority step called 'Create API' assigned to Bob"
+    project_workflow.print_response(input="Add a high priority step called 'Setup Database' assigned to Alice, and a medium priority step called 'Create API' assigned to Bob"
     )
     print_current_steps(project_workflow)
     print(f"🔍 Workflow Session State: {project_workflow.workflow_session_state}")
@@ -234,8 +233,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print("🔄 Example 2: Update Step Status")
     print("=" * 60)
-    project_workflow.print_response(
-        message="Mark 'Setup Database' as in_progress with notes 'Started database schema design'"
+    project_workflow.print_response(input="Mark 'Setup Database' as in_progress with notes 'Started database schema design'"
     )
     print_current_steps(project_workflow)
     print(f"🔍 Workflow Session State: {project_workflow.workflow_session_state}")
@@ -245,8 +243,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print("✅ Example 3: Reassign and Complete Step")
     print("=" * 60)
-    project_workflow.print_response(
-        message="Reassign 'Create API' to Charlie, then mark it as completed with notes 'API endpoints implemented and tested'"
+    project_workflow.print_response(input="Reassign 'Create API' to Charlie, then mark it as completed with notes 'API endpoints implemented and tested'"
     )
     print_current_steps(project_workflow)
     print(f"🔍 Workflow Session State: {project_workflow.workflow_session_state}")
@@ -256,8 +253,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print("📋 Example 4: Add and Manage More Steps")
     print("=" * 60)
-    project_workflow.print_response(
-        message="Add a low priority step 'Write Tests' assigned to Dave, then mark 'Setup Database' as completed"
+    project_workflow.print_response(input="Add a low priority step 'Write Tests' assigned to Dave, then mark 'Setup Database' as completed"
     )
     print_current_steps(project_workflow)
     print(f"🔍 Workflow Session State: {project_workflow.workflow_session_state}")
@@ -267,8 +263,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print("🗑️ Example 5: Delete Step")
     print("=" * 60)
-    project_workflow.print_response(
-        message="Delete the 'Write Tests' step and add a high priority 'Deploy to Production' step assigned to Eve"
+    project_workflow.print_response(input="Delete the 'Write Tests' step and add a high priority 'Deploy to Production' step assigned to Eve"
     )
     print_current_steps(project_workflow)
     print(f"🔍 Workflow Session State: {project_workflow.workflow_session_state}")
