@@ -1353,6 +1353,10 @@ class Team:
                         **kwargs,
                     )
 
+                self.run_messages = run_messages
+                if len(run_messages.messages) == 0:
+                    log_error("No messages to be sent to the model.")
+
                 if stream:
                     response_iterator = self._arun_stream(
                         run_response=self.run_response,
@@ -5339,7 +5343,7 @@ class Team:
         system_message_content += "\n<how_to_respond>\n"
         if self.mode == "coordinate":
             system_message_content += (
-                "- You can either respond directly or transfer tasks to members in your team with the highest likelihood of completing the user's request.\n"
+                "- Your role is to forward tasks to members in your team with the highest likelihood of completing the user's request.\n"
                 "- Carefully analyze the tools available to the members and their roles before transferring tasks.\n"
                 "- You cannot use a member tool directly. You can only transfer tasks to members.\n"
                 "- When you transfer a task to another member, make sure to include:\n"
@@ -5350,15 +5354,19 @@ class Team:
                 "- You must always analyze the responses from members before responding to the user.\n"
                 "- After analyzing the responses from the members, if you feel the task has been completed, you can stop and respond to the user.\n"
                 "- If you are not satisfied with the responses from the members, you should re-assign the task.\n"
+                "- For simple greetings, thanks, or questions about the team itself, you should respond directly.\n"
+                "- For all work requests, tasks, or questions requiring expertise, route to appropriate team members.\n"
             )
         elif self.mode == "route":
             system_message_content += (
-                "- You can either respond directly or forward tasks to members in your team with the highest likelihood of completing the user's request.\n"
+                "- Your role is to forward tasks to members in your team with the highest likelihood of completing the user's request.\n"
                 "- Carefully analyze the tools available to the members and their roles before forwarding tasks.\n"
                 "- When you forward a task to another Agent, make sure to include:\n"
                 "  - member_id (str): The ID of the member to forward the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.\n"
                 "  - expected_output (str): The expected output.\n"
                 "- You can forward tasks to multiple members at once.\n"
+                "- For simple greetings, thanks, or questions about the team itself, you should respond directly.\n"
+                "- For all work requests, tasks, or questions requiring expertise, route to appropriate team members.\n"
             )
         elif self.mode == "collaborate":
             system_message_content += (

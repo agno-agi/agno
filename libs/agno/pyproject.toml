@@ -117,6 +117,7 @@ youtube = ["youtube_transcript_api"]
 zep = ["zep-cloud"]
 daytona=["daytona"]
 oxylabs = ["oxylabs"]
+trafilatura = ["trafilatura"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -222,6 +223,7 @@ tools = [
   "agno[mem0]",
   "agno[google_bigquery]",
   "agno[psycopg]",
+  "agno[trafilatura]",
 ]
 
 # All storage
@@ -453,6 +455,7 @@ module = [
   "acouchbase.*",
   "zep_cloud.*",
   "oxylabs.*",
-  "surrealdb.*"
+  "surrealdb.*",
+  "trafilatura.*"
 ]
 ignore_missing_imports = true

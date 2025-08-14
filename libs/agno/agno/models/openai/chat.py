@@ -694,6 +694,9 @@ class OpenAIChat(Model):
                 if choice_delta.tool_calls is not None:
                     model_response.tool_calls = choice_delta.tool_calls  # type: ignore
 
+                if hasattr(choice_delta, "reasoning_content") and choice_delta.reasoning_content is not None:
+                    model_response.reasoning_content = choice_delta.reasoning_content
+
                 # Add audio if present
                 if hasattr(choice_delta, "audio") and choice_delta.audio is not None:
                     try:
