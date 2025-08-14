@@ -10,7 +10,6 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 
 from agno.agent.agent import Agent
-from agno.app.utils import generate_id
 from agno.cli.console import console
 from agno.os.apps import (
     EvalApp,
@@ -23,9 +22,10 @@ from agno.os.apps.base import BaseApp
 from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router
 from agno.os.settings import AgnoAPISettings
+from agno.os.utils import generate_id
 from agno.team.team import Team
 from agno.utils.log import log_debug, log_warning
-from agno.workflow.v2.workflow import Workflow
+from agno.workflow.workflow import Workflow
 
 
 class AgentOS:
@@ -96,8 +96,8 @@ class AgentOS:
             for workflow in self.workflows:
                 if not workflow.os_id:
                     workflow.os_id = self.os_id
-                if not workflow.workflow_id:
-                    workflow.workflow_id = generate_id(workflow.name)
+                if not workflow.id:
+                    workflow.id = generate_id(workflow.name)
 
     def _auto_discover_apps(self) -> List[BaseApp]:
         """Auto-discover apps from agents, teams, and workflows."""
@@ -271,12 +271,12 @@ class AgentOS:
         from rich.align import Align
         from rich.console import Group
 
-        public_endpoint = Align.center(f"[bold cyan]{public_endpoint}[/bold cyan]")
+        aligned_endpoint = Align.center(f"[bold cyan]{public_endpoint}[/bold cyan]")
         connection_endpoint = f"\n\n[bold dark_orange]Running on:[/bold dark_orange] http://{host}:{port}"
 
         console.print(
             Panel(
-                Group(public_endpoint, connection_endpoint),
+                Group(aligned_endpoint, connection_endpoint),
                 title="AgentOS",
                 expand=False,
                 border_style="dark_orange",

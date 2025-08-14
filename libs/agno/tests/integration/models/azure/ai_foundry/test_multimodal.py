@@ -11,5 +11,5 @@ def test_image_input():
         images=[Image(url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg")],
     )
 
-    assert "golden" in response.content.lower()
-    assert "bridge" in response.content.lower()
+    assert "golden" in response.content.lower() if response.content else False
+    assert "bridge" in response.content.lower() if response.content else False

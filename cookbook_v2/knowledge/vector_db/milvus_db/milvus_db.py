@@ -1,3 +1,5 @@
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.milvus import Milvus
@@ -20,10 +22,12 @@ knowledge = Knowledge(
     vector_db=vector_db,
 )
 
-knowledge.add_content(
-    name="Recipes",
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-    metadata={"doc_type": "recipe_book"},
+asyncio.run(
+    knowledge.add_content(
+        name="Recipes",
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+        metadata={"doc_type": "recipe_book"},
+    )
 )
 
 # Create and use the agent

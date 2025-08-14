@@ -1,5 +1,3 @@
-import urllib.parse
-
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.mongodb import MongoDb
@@ -9,7 +7,7 @@ Example connection strings:
 "mongodb+srv://<username>:<encoded_password>@cluster0.mongocluster.cosmos.azure.com/?tls=true&authMechanism=SCRAM-SHA-256&retrywrites=false&maxIdleTimeMS=120000"
 """
 
-mdb_connection_string = f"mongodb+srv://<username>:<encoded_password>@cluster0.mongocluster.cosmos.azure.com/?tls=true&authMechanism=SCRAM-SHA-256&retrywrites=false&maxIdleTimeMS=120000"
+mdb_connection_string = "mongodb+srv://<username>:<encoded_password>@cluster0.mongocluster.cosmos.azure.com/?tls=true&authMechanism=SCRAM-SHA-256&retrywrites=false&maxIdleTimeMS=120000"
 
 knowledge_base = Knowledge(
     vector_db=MongoDb(

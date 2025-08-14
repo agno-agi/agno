@@ -1,5 +1,5 @@
-from agno.agent import AgentKnowledge
 from agno.embedder.jina import JinaEmbedder
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
 
 # Basic usage - automatically loads from JINA_API_KEY environment variable
@@ -25,8 +25,8 @@ print(f"Embedding dimensions: {len(embedding)}")
 if usage:
     print(f"Usage info: {usage}")
 
-# Example usage with AgentKnowledge
-knowledge_base = AgentKnowledge(
+# Example usage with Knowledge
+knowledge = Knowledge(
     vector_db=PgVector(
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
         table_name="jina_embeddings",

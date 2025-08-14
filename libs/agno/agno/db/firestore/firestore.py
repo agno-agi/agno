@@ -450,7 +450,7 @@ class FirestoreDb(BaseDb):
                     "agent_data": serialized_session_dict.get("agent_data"),
                     "session_data": serialized_session_dict.get("session_data"),
                     "summary": serialized_session_dict.get("summary"),
-                    "extra_data": serialized_session_dict.get("extra_data"),
+                    "metadata": serialized_session_dict.get("metadata"),
                     "created_at": serialized_session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
@@ -466,7 +466,7 @@ class FirestoreDb(BaseDb):
                     "team_data": serialized_session_dict.get("team_data"),
                     "session_data": serialized_session_dict.get("session_data"),
                     "summary": serialized_session_dict.get("summary"),
-                    "extra_data": serialized_session_dict.get("extra_data"),
+                    "metadata": serialized_session_dict.get("metadata"),
                     "created_at": serialized_session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
@@ -481,7 +481,7 @@ class FirestoreDb(BaseDb):
                     "workflow_data": serialized_session_dict.get("workflow_data"),
                     "session_data": serialized_session_dict.get("session_data"),
                     "summary": serialized_session_dict.get("summary"),
-                    "extra_data": serialized_session_dict.get("extra_data"),
+                    "metadata": serialized_session_dict.get("metadata"),
                     "created_at": serialized_session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
@@ -909,7 +909,7 @@ class FirestoreDb(BaseDb):
                     return result_date
 
             # No metrics records. Return the date of the first recorded session.
-            first_session_result = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1)
+            first_session_result = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
             first_session_date = None
 
             if isinstance(first_session_result, list) and len(first_session_result) > 0:

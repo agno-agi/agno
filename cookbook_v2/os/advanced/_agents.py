@@ -7,7 +7,6 @@ from agno.db.postgres import PostgresDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic.claude import Claude
-from agno.models.openai.chat import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.file import FileTools
@@ -110,7 +109,7 @@ EXPECTED_OUTPUT_TEMPLATE = dedent("""\
 
 sage = Agent(
     name="Sage",
-    agent_id="sage",
+    id="sage",
     model=Claude(id="claude-3-7-sonnet-latest"),
     db=PostgresDb(db_url=db_url, session_table="sage_sessions"),
     tools=[

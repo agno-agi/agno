@@ -80,7 +80,7 @@ def create_team_run_response_completed_event(from_run_response: TeamRunResponse)
         videos=from_run_response.videos,  # type: ignore
         audio=from_run_response.audio,  # type: ignore
         response_audio=from_run_response.response_audio,  # type: ignore
-        extra_data=from_run_response.extra_data,  # type: ignore
+        metadata=from_run_response.metadata,  # type: ignore
         member_responses=from_run_response.member_responses,  # type: ignore
     )
 
@@ -101,7 +101,7 @@ def create_run_response_completed_event(from_run_response: RunResponse) -> RunRe
         videos=from_run_response.videos,  # type: ignore
         audio=from_run_response.audio,  # type: ignore
         response_audio=from_run_response.response_audio,  # type: ignore
-        extra_data=from_run_response.extra_data,  # type: ignore
+        metadata=from_run_response.metadata,  # type: ignore
     )
 
 
@@ -375,7 +375,7 @@ def create_run_response_content_event(
         citations=citations,
         response_audio=response_audio,
         image=image,
-        extra_data=from_run_response.extra_data,
+        metadata=from_run_response.metadata,
     )
 
 
@@ -402,7 +402,7 @@ def create_team_run_response_content_event(
         citations=citations,
         response_audio=response_audio,
         image=image,
-        extra_data=from_run_response.extra_data,
+        metadata=from_run_response.metadata,
     )
 
 

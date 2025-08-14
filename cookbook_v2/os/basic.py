@@ -1,4 +1,4 @@
-"""Minimal setup example for AgentOS."""
+"""Minimal example for AgentOS."""
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
@@ -7,8 +7,8 @@ from agno.os import AgentOS
 from agno.os.interfaces.slack import Slack
 from agno.os.interfaces.whatsapp import Whatsapp
 from agno.team import Team
-from agno.workflow.v2.step import Step
-from agno.workflow.v2.workflow import Workflow
+from agno.workflow.step import Step
+from agno.workflow.workflow import Workflow
 
 # Setup the database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
@@ -16,8 +16,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 # Setup basic agents, teams and workflows
 basic_agent = Agent(
     name="Basic Agent",
-    agent_id="basic-agent",
-    model=OpenAIChat(id="gpt-4o"),
+    id="basic-agent",
     db=db,
     enable_session_summaries=True,
     enable_user_memories=True,
@@ -27,7 +26,7 @@ basic_agent = Agent(
     markdown=True,
 )
 basic_team = Team(
-    team_id="basic-team",
+    id="basic-team",
     name="Basic Team",
     model=OpenAIChat(id="gpt-4o"),
     db=db,
@@ -35,9 +34,10 @@ basic_team = Team(
     enable_user_memories=True,
 )
 basic_workflow = Workflow(
-    workflow_id="basic-workflow",
+    id="basic-workflow",
     name="Basic Workflow",
     description="Just a simple workflow",
+    db=db,
     steps=[
         Step(
             name="step1",

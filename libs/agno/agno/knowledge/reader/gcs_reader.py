@@ -42,5 +42,5 @@ class GCSReader(Reader):
             return chunked_documents
         return documents
 
-    async def async_read(self, blob: storage.Blob) -> List[Document]:
-        return await asyncio.to_thread(self.read, blob)
+    async def async_read(self, name: Optional[str], blob: storage.Blob) -> List[Document]:
+        return await asyncio.to_thread(self.read, name, blob)

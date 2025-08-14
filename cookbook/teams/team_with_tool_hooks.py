@@ -29,7 +29,7 @@ def logger_hook(function_name: str, function_call: Callable, arguments: Dict[str
 
 reddit_agent = Agent(
     name="Reddit Agent",
-    agent_id="reddit-agent",
+    id="reddit-agent",
     role="Search reddit for information",
     model=MistralChat(id="mistral-large-latest"),
     tools=[RedditTools(cache_results=True)],
@@ -41,7 +41,7 @@ reddit_agent = Agent(
 
 website_agent = Agent(
     name="Website Agent",
-    agent_id="website-agent",
+    id="website-agent",
     role="Search the website for information",
     model=OpenAIChat(id="gpt-4o"),
     tools=[DuckDuckGoTools(cache_results=True)],

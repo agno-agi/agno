@@ -96,6 +96,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
             metadata=parsed_metadata,
             file_data=file_data,
             size=file.size if file else None if text_content else None,
+            upload_file=file,
         )
 
         background_tasks.add_task(process_content, knowledge, content_id, content, reader_id)
@@ -268,14 +269,14 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
     return router
 
 
-def process_content(knowledge: Knowledge, content_id: str, content: Content, reader_id: Optional[str] = None):
+async def process_content(knowledge: Knowledge, content_id: str, content: Content, reader_id: Optional[str] = None):
     """Background task to process the content"""
     log_info(f"Processing content {content_id}")
     try:
-        content.id = content_id
+        content.id = content_id or str(uuid4())
         if reader_id:
             content.reader = knowledge.readers[reader_id]
-        knowledge.process_content(content)
+        await knowledge._load_content(content, upsert=False, skip_if_exists=True)
         log_info(f"Content {content_id} processed successfully")
     except Exception as e:
         log_info(f"Error processing content {content_id}: {e}")

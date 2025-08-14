@@ -31,19 +31,19 @@ async def loaded_knowledge_base():
             embedder=OpenAIEmbedder(),
         ),
     )
-    await knowledge.async_add_content(
+    await knowledge.add_content(
         url="https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
     )
     return knowledge
 
 
 @pytest.mark.asyncio
-async def test_add_references(loaded_knowledge):
+async def test_add_knowledge_to_context(loaded_knowledge):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         knowledge=loaded_knowledge,
-        # Enable RAG by adding references from AgentKnowledge to the user prompt.
-        add_references=True,
+        # Enable RAG by adding references from Knowledge to the user prompt.
+        add_knowledge_to_context=True,
         # Set as False because Agents default to `search_knowledge=True`
         search_knowledge=False,
         markdown=True,

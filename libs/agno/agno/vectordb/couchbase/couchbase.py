@@ -299,6 +299,11 @@ class CouchbaseSearch(VectorDb):
 
         docs_to_insert: Dict[str, Any] = {}
         for document in documents:
+            if document.embedding is None:
+                document.embed(embedder=self.embedder)
+
+            if document.embedding is None:
+                raise ValueError(f"Failed to generate embedding for document: {document.name}")
             try:
                 doc_data = self.prepare_doc(content_hash, document)
                 if filters:
@@ -387,6 +392,12 @@ class CouchbaseSearch(VectorDb):
         docs_to_upsert: Dict[str, Any] = {}
         for document in documents:
             try:
+                if document.embedding is None:
+                    document.embed(embedder=self.embedder)
+
+                if document.embedding is None:
+                    raise ValueError(f"Failed to generate embedding for document: {document.name}")
+
                 doc_data = self.prepare_doc(content_hash, document)
                 if filters:
                     doc_data["filters"] = filters
@@ -568,13 +579,6 @@ class CouchbaseSearch(VectorDb):
             raise ValueError(f"Document {document.name} has no content")
 
         logger.debug(f"Preparing document: {document.name}")
-
-        # Generate embedding if needed
-        if document.embedding is None:
-            document.embed(embedder=self.embedder)
-
-        if document.embedding is None:
-            raise ValueError(f"Failed to generate embedding for document: {document.name}")
 
         # Clean content and generate ID
         cleaned_content = document.content.replace("\x00", "\ufffd")
@@ -867,6 +871,9 @@ class CouchbaseSearch(VectorDb):
         async_collection_instance = await self.get_async_collection()
         all_docs_to_insert: Dict[str, Any] = {}
 
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
+
         for document in documents:
             try:
                 # User edit: self.prepare_doc is no longer awaited with to_thread
@@ -929,6 +936,9 @@ class CouchbaseSearch(VectorDb):
 
         async_collection_instance = await self.get_async_collection()
         all_docs_to_upsert: Dict[str, Any] = {}
+
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
 
         for document in documents:
             try:

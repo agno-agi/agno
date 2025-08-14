@@ -20,7 +20,7 @@ SESSION_TABLE_SCHEMA = {
     "agent_data": {"type": JSON, "nullable": True},
     "team_data": {"type": JSON, "nullable": True},
     "workflow_data": {"type": JSON, "nullable": True},
-    "extra_data": {"type": JSON, "nullable": True},
+    "metadata": {"type": JSON, "nullable": True},
     "chat_history": {"type": JSON, "nullable": True},
     "runs": {"type": JSON, "nullable": True},
     "summary": {"type": JSON, "nullable": True},
@@ -109,7 +109,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "sessions": SESSION_TABLE_SCHEMA,
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
-        "user_memories": USER_MEMORY_TABLE_SCHEMA,
+        "memories": USER_MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
     }
     schema = schemas.get(table_type, {})

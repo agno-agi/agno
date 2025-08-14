@@ -4,7 +4,7 @@ import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from agno.utils.log import log_warning
 
@@ -182,10 +182,10 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
         "input_tokens": 0,
         "output_tokens": 0,
         "total_tokens": 0,
-        "audio_tokens": 0,
-        "input_audio_tokens": 0,
-        "output_audio_tokens": 0,
-        "cached_tokens": 0,
+        "audio_total_tokens": 0,
+        "audio_input_tokens": 0,
+        "audio_output_tokens": 0,
+        "cache_read_tokens": 0,
         "cache_write_tokens": 0,
         "reasoning_tokens": 0,
     }
@@ -226,8 +226,11 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
     metrics["users_count"] = len(all_user_ids)
     current_time = int(time.time())
 
+    # Create a deterministic ID based on date and aggregation period. This simplifies avoiding duplicates
+    metric_id = f"{date_to_process.isoformat()}_daily"
+
     return {
-        "id": str(uuid4()),
+        "id": metric_id,
         "date": date_to_process,
         "completed": date_to_process < datetime.now(timezone.utc).date(),
         "token_metrics": token_metrics,

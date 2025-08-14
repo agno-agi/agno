@@ -207,11 +207,6 @@ class Milvus(VectorDb):
             Dictionary with document data where values can be strings, vectors (List[float]),
             sparse vectors (Dict[int, float]), or None
         """
-        # Ensure document is embedded if vectors are needed
-        if include_vectors and document.embedding is None:
-            document.embed(embedder=self.embedder)
-            if document.embedding is None:
-                raise ValueError(f"Failed to embed document: {document.name}")
 
         cleaned_content = document.content.replace("\x00", "\ufffd")
         doc_id = md5(cleaned_content.encode()).hexdigest()
@@ -401,7 +396,7 @@ class Milvus(VectorDb):
     def _insert_hybrid_document(self, content_hash: str, document: Document) -> None:
         """Insert a document with both dense and sparse vectors."""
         data = self._prepare_document_data(content_hash=document.content_hash, document=document, include_vectors=True)
-
+        document.embed(embedder=self.embedder)
         self.client.insert(
             collection_name=self.collection,
             data=data,
@@ -458,6 +453,9 @@ class Milvus(VectorDb):
     ) -> None:
         """Insert documents asynchronously based on search type."""
         log_info(f"Inserting {len(documents)} documents asynchronously")
+
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
 
         if self.search_type == SearchType.hybrid:
             await asyncio.gather(
@@ -543,8 +541,10 @@ class Milvus(VectorDb):
     ) -> None:
         log_debug(f"Upserting {len(documents)} documents asynchronously")
 
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
+
         async def process_document(document):
-            document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = md5(cleaned_content.encode()).hexdigest()
             data = {

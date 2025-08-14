@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, Dict, List, Optional
 
 try:
@@ -487,9 +488,78 @@ class UpstashVectorDb(VectorDb):
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
     async def async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        namespace: Optional[str] = None,
     ) -> None:
-        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+        """Async Upsert documents into the index.
+
+        Args:
+            documents (List[Document]): The documents to upsert.
+            filters (Optional[Dict[str, Any]], optional): The filters for the upsert. Defaults to None.
+            namespace (Optional[str], optional): The namespace for the documents. Defaults to None, which uses the instance namespace.
+        """
+        _namespace = self.namespace if namespace is None else namespace
+        vectors = []
+
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
+
+        for i, document in enumerate(documents):
+            if document.id is None:
+                logger.error(f"Document ID must not be None. Skipping document: {document.content[:100]}...")
+                continue
+
+            logger.debug(
+                f"Processing document {i + 1}: ID={document.id}, name={document.name}, "
+                f"content_id={getattr(document, 'content_id', 'N/A')}"
+            )
+
+            # Create a copy of metadata to avoid modifying the original document
+            meta_data = document.meta_data.copy() if document.meta_data else {}
+
+            # Add filters to document metadata if provided
+            if filters:
+                meta_data.update(filters)
+
+            meta_data["text"] = document.content
+
+            # Add content_id to metadata if it exists
+            if hasattr(document, "content_id") and document.content_id:
+                meta_data["content_id"] = document.content_id
+            else:
+                logger.warning(f"Document {document.id} has no content_id")
+
+            meta_data["content_hash"] = content_hash
+
+            # Add name to metadata if it exists
+            if document.name:
+                meta_data["name"] = document.name
+            else:
+                logger.warning(f"Document {document.id} has no name")
+
+            if not self.use_upstash_embeddings:
+                if self.embedder is None:
+                    logger.error("Embedder is None but use_upstash_embeddings is False")
+                    continue
+
+                if document.embedding is None:
+                    logger.error(f"Failed to generate embedding for document: {document.id}")
+                    continue
+
+                vector = Vector(id=document.id, vector=document.embedding, metadata=meta_data, data=document.content)
+            else:
+                vector = Vector(id=document.id, data=document.content, metadata=meta_data)
+            vectors.append(vector)
+
+        if not vectors:
+            logger.warning("No valid documents to upsert")
+            return
+
+        logger.info(f"Upserting {len(vectors)} vectors to Upstash with IDs: {[v.id for v in vectors[:5]]}...")
+        self.index.upsert(vectors, namespace=_namespace)
 
     async def async_search(
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None

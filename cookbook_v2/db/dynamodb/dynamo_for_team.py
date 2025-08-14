@@ -5,6 +5,8 @@ Set the following environment variables to connect to your DynamoDb instance:
 - AWS_SECRET_ACCESS_KEY
 - AWS_REGION
 
+Or pass those parameters when initializing the DynamoDb instance.
+
 Run `pip install openai duckduckgo-search newspaper4k lxml_html_clean agno` to install the dependencies
 """
 
@@ -18,6 +20,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from pydantic import BaseModel
 
+# Setup the DynamoDB database
 db = DynamoDb()
 
 
@@ -41,7 +44,6 @@ web_searcher = Agent(
     tools=[DuckDuckGoTools()],
     add_datetime_to_context=True,
 )
-
 
 hn_team = Team(
     name="HackerNews Team",

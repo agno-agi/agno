@@ -44,3 +44,19 @@ class FastEmbedEmbedder(Embedder):
         usage = None
 
         return embedding, usage
+
+    async def async_get_embedding(self, text: str) -> List[float]:
+        """Async version using thread executor for CPU-bound operations."""
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        # Run the CPU-bound operation in a thread executor
+        return await loop.run_in_executor(None, self.get_embedding, text)
+
+    async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
+        """Async version using thread executor for CPU-bound operations."""
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        # Run the CPU-bound operation in a thread executor
+        return await loop.run_in_executor(None, self.get_embedding_and_usage, text)

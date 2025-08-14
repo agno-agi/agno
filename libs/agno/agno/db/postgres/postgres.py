@@ -558,7 +558,7 @@ class PostgresDb(BaseDb):
                         agent_data=session_dict.get("agent_data"),
                         session_data=session_dict.get("session_data"),
                         summary=session_dict.get("summary"),
-                        metadata=session_dict.get("extra_data"),
+                        metadata=session_dict.get("metadata"),
                         created_at=session_dict.get("created_at"),
                         updated_at=session_dict.get("created_at"),
                     )
@@ -570,7 +570,7 @@ class PostgresDb(BaseDb):
                             agent_data=session_dict.get("agent_data"),
                             session_data=session_dict.get("session_data"),
                             summary=session_dict.get("summary"),
-                            metadata=session_dict.get("extra_data"),
+                            metadata=session_dict.get("metadata"),
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
@@ -596,7 +596,7 @@ class PostgresDb(BaseDb):
                         team_data=session_dict.get("team_data"),
                         session_data=session_dict.get("session_data"),
                         summary=session_dict.get("summary"),
-                        metadata=session_dict.get("extra_data"),
+                        metadata=session_dict.get("metadata"),
                         created_at=session_dict.get("created_at"),
                         updated_at=session_dict.get("created_at"),
                     )
@@ -608,7 +608,7 @@ class PostgresDb(BaseDb):
                             team_data=session_dict.get("team_data"),
                             session_data=session_dict.get("session_data"),
                             summary=session_dict.get("summary"),
-                            metadata=session_dict.get("extra_data"),
+                            metadata=session_dict.get("metadata"),
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
@@ -634,7 +634,7 @@ class PostgresDb(BaseDb):
                         workflow_data=session_dict.get("workflow_data"),
                         session_data=session_dict.get("session_data"),
                         summary=session_dict.get("summary"),
-                        metadata=session_dict.get("extra_data"),
+                        metadata=session_dict.get("metadata"),
                         created_at=session_dict.get("created_at"),
                         updated_at=session_dict.get("created_at"),
                     )
@@ -646,7 +646,7 @@ class PostgresDb(BaseDb):
                             workflow_data=session_dict.get("workflow_data"),
                             session_data=session_dict.get("session_data"),
                             summary=session_dict.get("summary"),
-                            metadata=session_dict.get("extra_data"),
+                            metadata=session_dict.get("metadata"),
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
@@ -779,7 +779,6 @@ class PostgresDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
         topics: Optional[List[str]] = None,
         search_content: Optional[str] = None,
         limit: Optional[int] = None,
@@ -794,7 +793,6 @@ class PostgresDb(BaseDb):
             user_id (Optional[str]): The ID of the user to filter by.
             agent_id (Optional[str]): The ID of the agent to filter by.
             team_id (Optional[str]): The ID of the team to filter by.
-            workflow_id (Optional[str]): The ID of the workflow to filter by.
             topics (Optional[List[str]]): The topics to filter by.
             search_content (Optional[str]): The content to search for.
             limit (Optional[int]): The maximum number of memories to return.
@@ -1305,6 +1303,7 @@ class PostgresDb(BaseDb):
                     "status_message": "status_message",
                     "created_at": "created_at",
                     "updated_at": "updated_at",
+                    "external_id": "external_id",
                 }
 
                 # Build insert and update data only for fields that exist in the table

@@ -5,6 +5,7 @@ def test_agent_with_state_in_messages():
     # Define a tool that increments our counter and returns the new value
     def add_item(agent: Agent, item: str) -> str:
         """Add an item to the shopping list."""
+        assert agent.session_state is not None
         agent.session_state["shopping_list"].append(item)
         return f"The shopping list is now {agent.session_state['shopping_list']}"
 
@@ -22,6 +23,6 @@ def test_agent_with_state_in_messages():
         'Current shopping list: {shopping_list}. Other random json ```json { "properties": { "title": { "title": "a" } } }```'
     )
     assert (
-        response.messages[1].content
+        response.messages[1].content  # type: ignore
         == 'Current shopping list: [\'oranges\']. Other random json ```json { "properties": { "title": { "title": "a" } } }```'
     )

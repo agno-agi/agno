@@ -3,6 +3,8 @@
 1. Run: `python cookbook/agent_concepts/knowledge/09_from_youtube.py` to run the cookbook
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
@@ -17,10 +19,12 @@ knowledge = Knowledge(
 )
 
 # Add from Youtube link to knowledge. Youtube links are automatically detected and the reader is assigned automatically.
-knowledge.add_content(
-    name="Agents from Scratch",
-    url="https://www.youtube.com/watch?v=nLkBNnnA8Ac",
-    metadata={"user_tag": "Youtube video"},
+asyncio.run(
+    knowledge.add_content(
+        name="Agents from Scratch",
+        url="https://www.youtube.com/watch?v=nLkBNnnA8Ac",
+        metadata={"user_tag": "Youtube video"},
+    )
 )
 
 

@@ -451,7 +451,7 @@ class MongoDb(BaseDb):
                     "session_data": serialized_session_dict.get("session_data"),
                     "chat_history": serialized_session_dict.get("chat_history"),
                     "summary": serialized_session_dict.get("summary"),
-                    "extra_data": serialized_session_dict.get("extra_data"),
+                    "metadata": serialized_session_dict.get("metadata"),
                     "created_at": serialized_session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
@@ -467,7 +467,7 @@ class MongoDb(BaseDb):
 
                 session = deserialize_session_json_fields(result)  # type: ignore
 
-                log_debug(f"Upserted session with id '{session.session_id}'")
+                log_debug("Upserted session'")
 
                 if not deserialize:
                     return session
@@ -485,7 +485,7 @@ class MongoDb(BaseDb):
                     "team_data": serialized_session_dict.get("team_data"),
                     "session_data": serialized_session_dict.get("session_data"),
                     "summary": serialized_session_dict.get("summary"),
-                    "extra_data": serialized_session_dict.get("extra_data"),
+                    "metadata": serialized_session_dict.get("metadata"),
                     "chat_history": serialized_session_dict.get("chat_history"),
                     "created_at": serialized_session_dict.get("created_at"),
                     "updated_at": int(time.time()),
@@ -519,7 +519,7 @@ class MongoDb(BaseDb):
                     "workflow_data": serialized_session_dict.get("workflow_data"),
                     "session_data": serialized_session_dict.get("session_data"),
                     "summary": serialized_session_dict.get("summary"),
-                    "extra_data": serialized_session_dict.get("extra_data"),
+                    "metadata": serialized_session_dict.get("metadata"),
                     "chat_history": serialized_session_dict.get("chat_history"),
                     "created_at": serialized_session_dict.get("created_at"),
                     "updated_at": int(time.time()),
@@ -885,8 +885,8 @@ class MongoDb(BaseDb):
                     return result_date
 
             # No metrics records. Return the date of the first recorded session.
-            first_session_result = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1)
-            first_session_date = first_session_result[0].created_at if first_session_result[0] else None  # type: ignore
+            first_session_result = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
+            first_session_date = first_session_result[0][0]["created_at"] if first_session_result[0] else None  # type: ignore
 
             if first_session_date is None:
                 return None
@@ -963,12 +963,12 @@ class MongoDb(BaseDb):
 
             query = {}
             if starting_date:
-                query["date"] = {"$gte": starting_date}
+                query["date"] = {"$gte": starting_date.isoformat()}
             if ending_date:
                 if "date" in query:
-                    query["date"]["$lte"] = ending_date
+                    query["date"]["$lte"] = ending_date.isoformat()
                 else:
-                    query["date"] = {"$lte": ending_date}
+                    query["date"] = {"$lte": ending_date.isoformat()}
 
             records = list(collection.find(query))
             if not records:

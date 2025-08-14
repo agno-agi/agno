@@ -512,7 +512,7 @@ class MongoDb(VectorDb):
             logger.error(f"Error checking content_hash existence: {e}")
             return False
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents into the MongoDB collection."""
         log_debug(f"Inserting {len(documents)} documents")
         collection = self._get_collection()
@@ -520,6 +520,9 @@ class MongoDb(VectorDb):
         prepared_docs = []
         for document in documents:
             try:
+                document.embed(embedder=self.embedder)
+                if document.embedding is None:
+                    raise ValueError(f"Failed to generate embedding for document: {document.id}")
                 doc_data = self.prepare_doc(content_hash, document, filters)
                 prepared_docs.append(doc_data)
             except ValueError as e:
@@ -543,7 +546,10 @@ class MongoDb(VectorDb):
 
         for document in documents:
             try:
-                doc_data = self.prepare_doc(content_hash, document)
+                document.embed(embedder=self.embedder)
+                if document.embedding is None:
+                    raise ValueError(f"Failed to generate embedding for document: {document.id}")
+                doc_data = self.prepare_doc(content_hash, document, filters)
                 collection.update_one(
                     {"_id": doc_data["_id"]},
                     {"$set": doc_data},
@@ -955,9 +961,6 @@ class MongoDb(VectorDb):
         self, content_hash: str, document: Document, filters: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Prepare a document for insertion or upsertion into MongoDB."""
-        document.embed(embedder=self.embedder)
-        if document.embedding is None:
-            raise ValueError(f"Failed to generate embedding for document: {document.id}")
 
         # Add filters to document metadata if provided
         if filters:
@@ -1010,6 +1013,9 @@ class MongoDb(VectorDb):
         log_debug(f"Inserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
 
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
+
         prepared_docs = []
         for document in documents:
             try:
@@ -1035,6 +1041,9 @@ class MongoDb(VectorDb):
         """Upsert documents asynchronously."""
         log_info(f"Upserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
+
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
 
         for document in documents:
             try:
@@ -1232,25 +1241,6 @@ class MongoDb(VectorDb):
             return True
         except Exception as e:
             logger.error(f"Error deleting documents with metadata '{metadata}': {e}")
-            return False
-
-    def content_hash_exists(self, content_hash: str) -> bool:
-        """Check if documents with the given content hash exist in the collection.
-
-        Args:
-            content_hash (str): The content hash to check.
-
-        Returns:
-            bool: True if documents with the content hash exist, False otherwise.
-        """
-        try:
-            collection = self._get_collection()
-            result = collection.find_one({"content_hash": content_hash})
-            exists = result is not None
-            log_debug(f"Document with content_hash '{content_hash}' {'exists' if exists else 'does not exist'}")
-            return exists
-        except Exception as e:
-            logger.error(f"Error checking content_hash existence: {e}")
             return False
 
     def _delete_by_content_hash(self, content_hash: str) -> bool:

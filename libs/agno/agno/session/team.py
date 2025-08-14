@@ -30,8 +30,8 @@ class TeamSession:
     team_data: Optional[Dict[str, Any]] = None
     # Session Data: session_name, session_state, images, videos, audio
     session_data: Optional[Dict[str, Any]] = None
-    # Extra Data stored with this agent
-    extra_data: Optional[Dict[str, Any]] = None
+    # Metadata stored with this team
+    metadata: Optional[Dict[str, Any]] = None
     # List of all runs in the session
     runs: Optional[list[Union[TeamRunResponse, RunResponse]]] = None
     # Summary of the session
@@ -82,7 +82,7 @@ class TeamSession:
             workflow_id=data.get("workflow_id"),
             team_data=data.get("team_data"),
             session_data=data.get("session_data"),
-            extra_data=data.get("extra_data"),
+            metadata=data.get("metadata"),
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
             runs=serialized_runs,
@@ -93,9 +93,12 @@ class TeamSession:
         """Adds a RunResponse, together with some calculated data, to the runs list."""
 
         messages = run.messages
+        if messages is None:
+            return
+
         for m in messages:
             if m.metrics is not None:
-                m.metrics.timer = None
+                m.metrics.duration = None
 
         if not self.runs:
             self.runs = []
@@ -178,6 +181,9 @@ class TeamSession:
 
         tool_calls = []
         session_runs = self.runs
+        if session_runs is None:
+            return []
+
         for run_response in session_runs[::-1]:
             if run_response and run_response.messages:
                 for message in run_response.messages:
@@ -202,6 +208,9 @@ class TeamSession:
 
         final_messages: List[Message] = []
         session_runs = self.runs
+        if session_runs is None:
+            return []
+
         for run_response in session_runs:
             if run_response and run_response.messages:
                 user_message_from_run = None
@@ -233,13 +242,21 @@ class TeamSession:
 
         if self.summary is None:
             return None
-        return self.summary
+
+        return self.summary  # type: ignore
 
     # Chat History functions
     def get_chat_history(self) -> List[Message]:
         """Get the chat history for the session"""
 
         messages = []
+        if self.runs is None:
+            return []
+
         for run in self.runs:
+            if run.messages is None:
+                continue
+
             messages.extend([msg for msg in run.messages if not msg.from_history])
+
         return messages

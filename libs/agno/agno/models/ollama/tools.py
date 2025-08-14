@@ -5,7 +5,8 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Mapping, Optional, 
 
 from pydantic import BaseModel
 
-from agno.models.message import Message, MessageMetrics
+from agno.agent.agent import RunResponse
+from agno.models.message import Message, Metrics
 from agno.models.ollama.chat import ChatResponse, Ollama
 from agno.models.response import ModelResponse
 from agno.tools.function import Function, FunctionCall
@@ -65,7 +66,7 @@ class OllamaTools(Ollama):
             request_params.update(self.request_params)
         return request_params
 
-    def parse_provider_response(self, response: ChatResponse, **kwargs) -> ModelResponse:
+    def _parse_provider_response(self, response: ChatResponse, **kwargs) -> ModelResponse:
         """
         Parse the provider response.
 
@@ -116,18 +117,7 @@ class OllamaTools(Ollama):
 
         # Get response usage
         if response.get("done"):
-            model_response.response_usage = OllamaResponseUsage(
-                input_tokens=response.get("prompt_eval_count", 0),
-                output_tokens=response.get("eval_count", 0),
-                total_duration=response.get("total_duration", 0),
-                load_duration=response.get("load_duration", 0),
-                prompt_eval_duration=response.get("prompt_eval_duration", 0),
-                eval_duration=response.get("eval_duration", 0),
-            )
-            if model_response.response_usage.input_tokens or model_response.response_usage.output_tokens:
-                model_response.response_usage.total_tokens = (
-                    model_response.response_usage.input_tokens + model_response.response_usage.output_tokens
-                )
+            model_response.response_usage = self._get_metrics(response)
 
         return model_response
 
@@ -149,7 +139,7 @@ class OllamaTools(Ollama):
             tool_args=function_call.arguments,
             tool_call_error=not success,
             stop_after_tool_call=function_call.function.stop_after_tool_call,
-            metrics=MessageMetrics(time=timer.elapsed),
+            metrics=Metrics(duration=timer.elapsed),
         )
 
     def format_function_call_results(self, function_call_results: List[Message], messages: List[Message]) -> None:
@@ -205,22 +195,28 @@ class OllamaTools(Ollama):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> Iterator[ModelResponse]:
         """
         Process a streaming response from the model.
         """
-        tool_call_data = ToolCall()
 
         for response_delta in self.invoke_stream(
-            messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+            messages=messages,
+            assistant_message=assistant_message,
+            response_format=response_format,
+            tools=tools,
+            tool_choice=tool_choice,
+            run_response=run_response,
         ):
-            model_response_delta = self.parse_provider_response_delta(response_delta, tool_call_data)
-            if model_response_delta:
+            if response_delta:
                 yield from self._populate_stream_data_and_assistant_message(
                     stream_data=stream_data,
                     assistant_message=assistant_message,
-                    model_response_delta=model_response_delta,
+                    model_response_delta=response_delta,
                 )
+
+        self._populate_assistant_message(assistant_message=assistant_message, provider_response=response_delta)
 
     async def aprocess_response_stream(
         self,
@@ -230,25 +226,32 @@ class OllamaTools(Ollama):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunResponse] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Process a streaming response from the model.
         """
-        tool_call_data = ToolCall()
-
         async for response_delta in self.ainvoke_stream(
-            messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+            messages=messages,
+            assistant_message=assistant_message,
+            response_format=response_format,
+            tools=tools,
+            tool_choice=tool_choice,
+            run_response=run_response,
         ):
-            model_response_delta = self.parse_provider_response_delta(response_delta, tool_call_data)
-            if model_response_delta:
+            if response_delta:
                 for model_response in self._populate_stream_data_and_assistant_message(
                     stream_data=stream_data,
                     assistant_message=assistant_message,
-                    model_response_delta=model_response_delta,
+                    model_response_delta=response_delta,
                 ):
                     yield model_response
 
-    def parse_provider_response_delta(self, response_delta, tool_call_data: ToolCall) -> ModelResponse:
+        self._populate_assistant_message(assistant_message=assistant_message, provider_response=model_response)
+
+    def _parse_provider_response_delta(
+        self, response_delta: ChatResponse, tool_call_data: Optional[ToolCall] = None
+    ) -> ModelResponse:
         """
         Parse the provider response delta.
 
@@ -259,13 +262,15 @@ class OllamaTools(Ollama):
             Iterator[ModelResponse]: An iterator of the model response.
         """
         model_response = ModelResponse()
+        if not tool_call_data:
+            tool_call_data = ToolCall()
 
         response_message = response_delta.get("message")
 
         # log_info(f"Response message: {response_delta}")
 
         if response_message is not None:
-            content_delta = response_message.get("content", "")
+            content_delta = response_message.get("content")
             if content_delta is not None and content_delta != "":
                 # Append content delta to tool call content
                 tool_call_data.tool_call_content += content_delta
@@ -308,17 +313,7 @@ class OllamaTools(Ollama):
                 model_response.content = content_delta
 
         if response_delta.get("done"):
-            model_response.response_usage = {
-                "input_tokens": response_delta.get("prompt_eval_count", 0),
-                "output_tokens": response_delta.get("eval_count", 0),
-                "total_tokens": response_delta.get("prompt_eval_count", 0) + response_delta.get("eval_count", 0),
-                "additional_metrics": {
-                    "total_duration": response_delta.get("total_duration", 0),
-                    "load_duration": response_delta.get("load_duration", 0),
-                    "prompt_eval_duration": response_delta.get("prompt_eval_duration", 0),
-                    "eval_duration": response_delta.get("eval_duration", 0),
-                },
-            }
+            model_response.response_usage = self._get_metrics(response_delta)
 
         return model_response
 
@@ -381,6 +376,24 @@ class OllamaTools(Ollama):
 
     def get_instructions_for_model(self, tools: Optional[List[Any]] = None) -> Optional[List[str]]:
         return self.get_instructions_to_generate_tool_calls(tools)
+
+    def _get_metrics(self, response: ChatResponse) -> Metrics:
+        """
+        Parse the given Ollama usage into an Agno Metrics object.
+
+        Args:
+            response: The response from the provider.
+
+        Returns:
+            Metrics: Parsed metrics data
+        """
+        metrics = Metrics()
+
+        metrics.input_tokens = response.get("prompt_eval_count", 0)
+        metrics.output_tokens = response.get("eval_count", 0)
+        metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
+
+        return metrics
 
 
 def _parse_tool_calls_from_content(response_content: str) -> List[Dict[str, Any]]:

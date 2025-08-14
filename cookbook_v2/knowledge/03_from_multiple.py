@@ -2,6 +2,8 @@
 1. Run: `python cookbook/agent_concepts/knowledge/03_from_multiple.py` to run the cookbook
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
@@ -16,28 +18,32 @@ knowledge = Knowledge(
 )
 
 # As a list
-knowledge.add_contents(
-    [
-        {
-            "name": "CV's",
-            "path": "cookbook_v2/knowledge/data/filters/cv_1.pdf",
-            "metadata": {"user_tag": "Engineering candidates"},
-        },
-        {
-            "name": "Docs",
-            "url": "https://docs.agno.com/introduction",
-            "metadata": {"user_tag": "Documents"},
-        },
-    ]
+asyncio.run(
+    knowledge.add_contents(
+        [
+            {
+                "name": "CV's",
+                "path": "cookbook_v2/knowledge/data/filters/cv_1.pdf",
+                "metadata": {"user_tag": "Engineering candidates"},
+            },
+            {
+                "name": "Docs",
+                "url": "https://docs.agno.com/introduction",
+                "metadata": {"user_tag": "Documents"},
+            },
+        ]
+    )
 )
 
 # Using specifc fields
-knowledge.add_contents(
-    urls=[
-        "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-        "https://docs.agno.com/introduction",
-        "https://docs.agno.com/agents/knowledge.md",
-    ],
+asyncio.run(
+    knowledge.add_contents(
+        urls=[
+            "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+            "https://docs.agno.com/introduction",
+            "https://docs.agno.com/agents/knowledge.md",
+        ],
+    )
 )
 
 agent = Agent(knowledge=knowledge)

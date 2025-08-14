@@ -21,7 +21,7 @@ db = SingleStoreDb(
 # Setup a basic agent and a basic team
 agent = Agent(
     name="Basic Agent",
-    agent_id="basic-agent",
+    id="basic-agent",
     model=OpenAIChat(id="gpt-4o"),
     db=db,
     enable_user_memories=True,
@@ -32,7 +32,7 @@ agent = Agent(
     markdown=True,
 )
 team = Team(
-    team_id="basic-team",
+    id="basic-team",
     name="Team Agent",
     model=OpenAIChat(id="gpt-4o"),
     db=db,
@@ -53,7 +53,7 @@ evaluation = AccuracyEval(
 # evaluation.run(print_results=True)
 
 agent_os = AgentOS(
-    description="Example app for basic agent with playground capabilities",
+    description="Example OS setup",
     os_id="basic-app",
     agents=[agent],
     teams=[team],

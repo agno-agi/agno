@@ -490,7 +490,7 @@ class RedisDb(BaseDb):
                     "session_data": session_dict.get("session_data"),
                     "chat_history": session_dict.get("chat_history"),
                     "summary": session_dict.get("summary"),
-                    "extra_data": session_dict.get("extra_data"),
+                    "metadata": session_dict.get("metadata"),
                     "created_at": session_dict.get("created_at") or int(time.time()),
                     "updated_at": int(time.time()),
                 }
@@ -524,7 +524,7 @@ class RedisDb(BaseDb):
                     "workflow_data": None,
                     "session_data": session_dict.get("session_data"),
                     "summary": session_dict.get("summary"),
-                    "extra_data": session_dict.get("extra_data"),
+                    "metadata": session_dict.get("metadata"),
                     "chat_history": session_dict.get("chat_history"),
                     "created_at": session_dict.get("created_at") or int(time.time()),
                     "updated_at": int(time.time()),
@@ -553,7 +553,7 @@ class RedisDb(BaseDb):
                     "runs": session_dict.get("runs"),
                     "workflow_data": session_dict.get("workflow_data"),
                     "session_data": session_dict.get("session_data"),
-                    "extra_data": session_dict.get("extra_data"),
+                    "metadata": session_dict.get("metadata"),
                     "created_at": session_dict.get("created_at") or int(time.time()),
                     "updated_at": int(time.time()),
                     "agent_id": None,
@@ -928,7 +928,7 @@ class RedisDb(BaseDb):
                         return datetime.fromisoformat(earliest_incomplete["date"]).date()
 
             # No metrics records, find first session
-            sessions_raw, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1)
+            sessions_raw, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
             if sessions_raw:
                 first_session_date = sessions_raw[0]["created_at"]  # type: ignore
                 return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
@@ -984,6 +984,12 @@ class RedisDb(BaseDb):
                     continue
 
                 metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
+
+                # Check if a record already exists for this date and aggregation period
+                existing_record = self._get_record("metrics", metrics_record["id"])
+                if existing_record:
+                    # Update the existing record while preserving created_at
+                    metrics_record["created_at"] = existing_record.get("created_at", metrics_record["created_at"])
 
                 success = self._store_record("metrics", metrics_record["id"], metrics_record)
                 if success:

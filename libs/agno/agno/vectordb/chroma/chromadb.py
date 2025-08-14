@@ -15,7 +15,7 @@ except ImportError:
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.reranker.base import Reranker
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_error, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 
@@ -164,7 +164,50 @@ class ChromaDb(VectorDb):
         self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
     ) -> None:
         """Insert documents asynchronously by running in a thread."""
-        await asyncio.to_thread(self.insert, content_hash, documents, filters)
+        log_info(f"Async Inserting {len(documents)} documents")
+        ids: List = []
+        docs: List = []
+        docs_embeddings: List = []
+        docs_metadata: List = []
+
+        if not self._collection:
+            self._collection = self.client.get_collection(name=self.collection_name)
+
+        try:
+            embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+            await asyncio.gather(*embed_tasks, return_exceptions=True)
+        except Exception as e:
+            log_error(f"Error processing document: {e}")
+
+        for document in documents:
+            cleaned_content = document.content.replace("\x00", "\ufffd")
+            doc_id = md5(cleaned_content.encode()).hexdigest()
+
+            # Handle metadata and filters
+            metadata = document.meta_data or {}
+            if filters:
+                metadata.update(filters)
+
+            # Add name, content_id to metadata
+            if document.name is not None:
+                metadata["name"] = document.name
+            if document.content_id is not None:
+                metadata["content_id"] = document.content_id
+
+            metadata["content_hash"] = content_hash
+
+            docs_embeddings.append(document.embedding)
+            docs.append(cleaned_content)
+            ids.append(doc_id)
+            docs_metadata.append(metadata)
+            log_debug(f"Prepared document: {document.id} | {document.name} | {metadata}")
+
+        if self._collection is None:
+            logger.warning("Collection does not exist")
+        else:
+            if len(docs) > 0:
+                self._collection.add(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
+                log_debug(f"Committed {len(docs)} documents")
 
     def upsert_available(self) -> bool:
         """Check if upsert is available in ChromaDB."""
@@ -232,11 +275,68 @@ class ChromaDb(VectorDb):
                 self._collection.upsert(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
                 log_debug(f"Committed {len(docs)} documents")
 
+    async def _async_upsert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Upsert documents into the collection.
+
+        Args:
+            documents (List[Document]): List of documents to upsert
+            filters (Optional[Dict[str, Any]]): Filters to apply while upserting
+        """
+        log_info(f"Async Upserting {len(documents)} documents")
+        ids: List = []
+        docs: List = []
+        docs_embeddings: List = []
+        docs_metadata: List = []
+
+        if not self._collection:
+            self._collection = self.client.get_collection(name=self.collection_name)
+
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
+
+        for document in documents:
+            cleaned_content = document.content.replace("\x00", "\ufffd")
+            doc_id = md5(cleaned_content.encode()).hexdigest()
+
+            # Handle metadata and filters
+            metadata = document.meta_data or {}
+            if filters:
+                metadata.update(filters)
+
+            # Add name, content_id to metadata
+            if document.name is not None:
+                metadata["name"] = document.name
+            if document.content_id is not None:
+                metadata["content_id"] = document.content_id
+
+            metadata["content_hash"] = content_hash
+
+            docs_embeddings.append(document.embedding)
+            docs.append(cleaned_content)
+            ids.append(doc_id)
+            docs_metadata.append(metadata)
+            log_debug(f"Upserted document: {document.id} | {document.name} | {metadata}")
+
+        if self._collection is None:
+            logger.warning("Collection does not exist")
+        else:
+            if len(docs) > 0:
+                self._collection.upsert(ids=ids, embeddings=docs_embeddings, documents=docs, metadatas=docs_metadata)
+                log_debug(f"Committed {len(docs)} documents")
+
     async def async_upsert(
         self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
     ) -> None:
         """Upsert documents asynchronously by running in a thread."""
-        await asyncio.to_thread(self.upsert, content_hash, documents, filters)
+        try:
+            if self.content_hash_exists(content_hash):
+                self._delete_by_content_hash(content_hash)
+            await self._async_upsert(content_hash, documents, filters)
+        except Exception as e:
+            logger.error(f"Error upserting documents by content hash: {e}")
+            raise
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Search the collection for a query.
@@ -526,7 +626,7 @@ class ChromaDb(VectorDb):
 
         try:
             collection: Collection = self.client.get_collection(name=self.collection_name)
-
+            print("COLLECTION_----------", collection)
             # Try to get the document by ID
             result = collection.get(ids=[id])
             found_ids = result.get("ids", [])
@@ -546,12 +646,36 @@ class ChromaDb(VectorDb):
         try:
             collection: Collection = self.client.get_collection(name=self.collection_name)
 
-            # Find all documents with the given content_hash
-            result = collection.get(where={"content_hash": {"$eq": content_hash}})
-            found_ids = result.get("ids", [])
+            # Try to query for documents with the given content_hash
+            try:
+                result = collection.get(where={"content_hash": {"$eq": content_hash}})
+                # Safely extract ids from result
+                if hasattr(result, "get") and callable(result.get):
+                    found_ids = result.get("ids", [])
+                elif hasattr(result, "__getitem__") and "ids" in result:
+                    found_ids = result["ids"]
+                else:
+                    found_ids = []
 
-            # Return True if any documents were found
-            return len(found_ids) > 0
+                # Return True if any documents were found
+                if isinstance(found_ids, (list, tuple)):
+                    return len(found_ids) > 0
+                elif isinstance(found_ids, int):
+                    # Some ChromaDB versions might return a count instead of a list
+                    return found_ids > 0
+                else:
+                    return False
+
+            except TypeError as te:
+                if "object of type 'int' has no len()" in str(te):
+                    # Known issue with ChromaDB 0.5.0 - internal bug
+                    # As a workaround, assume content doesn't exist to allow processing to continue
+                    logger.warning(
+                        f"ChromaDB internal error (version 0.5.0 bug): {te}. Assuming content_hash '{content_hash}' does not exist."
+                    )
+                    return False
+                else:
+                    raise te
 
         except Exception as e:
             logger.error(f"Error checking if content_hash '{content_hash}' exists: {e}")

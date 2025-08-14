@@ -18,7 +18,6 @@ SESSION_TABLE_SCHEMA = {
     "agent_data": {"type": JSON, "nullable": True},
     "team_data": {"type": JSON, "nullable": True},
     "workflow_data": {"type": JSON, "nullable": True},
-    "extra_data": {"type": JSON, "nullable": True},
     "metadata": {"type": JSON, "nullable": True},
     "runs": {"type": JSON, "nullable": True},
     "summary": {"type": JSON, "nullable": True},
@@ -71,6 +70,7 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "status_message": {"type": String, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": True},
     "updated_at": {"type": BigInteger, "nullable": True},
+    "external_id": {"type": String, "nullable": True},
 }
 
 METRICS_TABLE_SCHEMA = {

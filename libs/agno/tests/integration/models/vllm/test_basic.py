@@ -2,7 +2,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse
-from agno.db.sqlite import SqliteStorage
+from agno.db.sqlite.sqlite import SqliteDb
 from agno.exceptions import ModelProviderError
 from agno.models.vllm import vLLM
 
@@ -11,14 +11,15 @@ VLLM_MODEL_ID = "Qwen/Qwen2.5-7B-Instruct"
 
 
 def _assert_metrics(response: RunResponse):
-    input_tokens = response.metrics.get("input_tokens", [])
-    output_tokens = response.metrics.get("output_tokens", [])
-    total_tokens = response.metrics.get("total_tokens", [])
+    assert response.metrics is not None
+    input_tokens = response.metrics.input_tokens
+    output_tokens = response.metrics.output_tokens
+    total_tokens = response.metrics.total_tokens
 
-    assert sum(input_tokens) > 0
-    assert sum(output_tokens) > 0
-    assert sum(total_tokens) > 0
-    assert sum(total_tokens) == sum(input_tokens) + sum(output_tokens)
+    assert input_tokens > 0
+    assert output_tokens > 0
+    assert total_tokens > 0
+    assert total_tokens == input_tokens + output_tokens
 
 
 def test_basic():
@@ -28,6 +29,7 @@ def test_basic():
     response: RunResponse = agent.run("Share a 2 sentence comedy story")
 
     assert response.content is not None
+    assert response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
 
@@ -37,16 +39,10 @@ def test_basic():
 def test_basic_stream():
     agent = Agent(model=vLLM(id=VLLM_MODEL_ID), markdown=True, telemetry=False)
 
-    response_stream = agent.run("Share a 2 sentence horror story", stream=True)
-
-    # Verify it's an iterator
-    assert hasattr(response_stream, "__iter__")
-
-    responses = list(response_stream)
-    assert len(responses) > 0
-    for response in responses:
+    for response in agent.run("Share a 2 sentence horror story", stream=True):
         assert response.content is not None
 
+    assert agent.run_response is not None
     _assert_metrics(agent.run_response)
 
 
@@ -57,6 +53,7 @@ async def test_async_basic():
     response = await agent.arun("Share a 2 sentence horror story")
 
     assert response.content is not None
+    assert response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
     _assert_metrics(response)
@@ -66,11 +63,10 @@ async def test_async_basic():
 async def test_async_basic_stream():
     agent = Agent(model=vLLM(id=VLLM_MODEL_ID), markdown=True, telemetry=False)
 
-    response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
-
-    async for response in response_stream:
+    async for response in agent.arun("Share a 2 sentence horror story", stream=True):
         assert response.content is not None
 
+    assert agent.run_response is not None
     _assert_metrics(agent.run_response)
 
 
@@ -78,7 +74,6 @@ def test_with_memory():
     agent = Agent(
         model=vLLM(id=VLLM_MODEL_ID),
         add_history_to_context=True,
-        num_history_responses=5,
         markdown=True,
         telemetry=False,
     )
@@ -89,6 +84,7 @@ def test_with_memory():
 
     # Second interaction should remember the name
     response2 = agent.run("What's my name?")
+    assert response2.content is not None
     assert "John Smith" in response2.content
 
     # Verify memories were created
@@ -146,11 +142,13 @@ def test_json_response_mode():
 def test_history():
     agent = Agent(
         model=vLLM(id=VLLM_MODEL_ID),
-        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
+        db=SqliteDb(db_file="tmp/vllm/test_basic.db"),
         add_history_to_context=True,
         telemetry=False,
     )
     agent.run("Hello")
+    assert agent.run_response is not None
+    assert agent.run_response.messages is not None
     assert len(agent.run_response.messages) == 2
     agent.run("Hello 2")
     assert len(agent.run_response.messages) == 4

@@ -2,6 +2,8 @@
 1. Run: `python cookbook/agent_concepts/knowledge/12_from_gcs.py` to run the cookbook
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
@@ -24,10 +26,14 @@ knowledge = Knowledge(
 )
 
 # Add from GCS
-knowledge.add_content(
-    name="GCS PDF",
-    remote_content=GCSContent(bucket_name="thai-recepies", blob_name="ThaiRecipes.pdf"),
-    metadata={"remote_content": "GCS"},
+asyncio.run(
+    knowledge.add_content(
+        name="GCS PDF",
+        remote_content=GCSContent(
+            bucket_name="thai-recepies", blob_name="ThaiRecipes.pdf"
+        ),
+        metadata={"remote_content": "GCS"},
+    )
 )
 
 

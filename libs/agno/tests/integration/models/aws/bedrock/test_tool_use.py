@@ -7,6 +7,7 @@ from agno.models.aws import AwsBedrock
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
+from agno.utils.log import log_info
 
 
 def test_tool_use():
@@ -20,6 +21,7 @@ def test_tool_use():
     response = agent.run("What is the current price of TSLA?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
 
@@ -38,18 +40,16 @@ def test_tool_use_stream():
     tool_call_seen = False
 
     for chunk in response_stream:
+        log_info(chunk)
         responses.append(chunk)
 
         # Check for ToolCallStartedEvent or ToolCallCompletedEvent
-        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
-            if chunk.tool.tool_name:
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:  # type: ignore
+            if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    full_content = ""
-    for r in responses:
-        full_content += r.content or ""
 
 
 def test_parallel_tool_calls():
@@ -64,6 +64,7 @@ def test_parallel_tool_calls():
 
     # Verify tool usage
     tool_calls = []
+    assert response.messages is not None
     for msg in response.messages:
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
@@ -83,6 +84,7 @@ def test_multiple_tool_calls():
 
     # Verify tool usage
     tool_calls = []
+    assert response.messages is not None
     for msg in response.messages:
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
@@ -107,6 +109,7 @@ def test_tool_call_custom_tool_no_parameters():
     response = agent.run("What is the weather in Tokyo?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
     assert "70" in response.content
@@ -135,6 +138,7 @@ def test_tool_call_custom_tool_optional_parameters():
     response = agent.run("What is the weather in Paris?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
     assert "70" in response.content
@@ -154,6 +158,7 @@ def test_tool_call_list_parameters():
     )
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     tool_calls = []
     for msg in response.messages:
@@ -181,6 +186,7 @@ async def test_async_tool_use():
     response = await agent.arun("What is the current price of TSLA?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
 
@@ -195,22 +201,11 @@ async def test_async_tool_use_stream():
         telemetry=False,
     )
 
-    response_stream = await agent.arun(
-        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
-    )
-
-    responses = []
-    tool_call_seen = False
-
-    async for chunk in response_stream:
-        responses.append(chunk)
-
-        # Check for ToolCallStartedEvent or ToolCallCompletedEvent
-        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
-            if chunk.tool.tool_name:
+    async for response in agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+        if response.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(response, "tool") and response.tool:  # type: ignore
+            if response.tool.tool_name:  # type: ignore
                 tool_call_seen = True
 
-    assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
 
 
@@ -228,6 +223,7 @@ async def test_async_parallel_tool_calls():
 
     # Verify tool usage
     tool_calls = []
+    assert response.messages is not None
     for msg in response.messages:
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
@@ -249,6 +245,7 @@ async def test_async_multiple_tool_calls():
 
     # Verify tool usage
     tool_calls = []
+    assert response.messages is not None
     for msg in response.messages:
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
@@ -276,6 +273,7 @@ async def test_async_tool_call_custom_tool_no_parameters():
     response = await agent.arun("What is the weather in Tokyo?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
     assert "70" in response.content
@@ -307,6 +305,7 @@ async def test_async_tool_call_custom_tool_optional_parameters():
     response = await agent.arun("What is the weather in Paris?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
     assert "70" in response.content
@@ -328,6 +327,7 @@ async def test_async_tool_call_list_parameters():
     )
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     tool_calls = []
     for msg in response.messages:
@@ -352,6 +352,7 @@ async def test_async_nova_tool_use():
     response = await agent.arun("What is the current price of TSLA?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
 
@@ -366,20 +367,9 @@ async def test_async_nova_tool_use_stream():
         telemetry=False,
     )
 
-    response_stream = await agent.arun(
-        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
-    )
-
-    responses = []
-    tool_call_seen = False
-
-    async for chunk in response_stream:
-        responses.append(chunk)
-
-        # Check for ToolCallStartedEvent or ToolCallCompletedEvent
-        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
-            if chunk.tool.tool_name:
+    async for response in agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+        if response.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(response, "tool") and response.tool:  # type: ignore
+            if response.tool.tool_name:  # type: ignore
                 tool_call_seen = True
 
-    assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"

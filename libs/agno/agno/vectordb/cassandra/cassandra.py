@@ -3,7 +3,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
-from agno.utils.log import log_debug, log_info
+from agno.utils.log import log_debug, log_error, log_info
 from agno.vectordb.base import VectorDb
 from agno.vectordb.cassandra.index import AgnoMetadataVectorCassandraTable
 
@@ -111,10 +111,39 @@ class Cassandra(VectorDb):
             f.result()
 
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Insert documents asynchronously by running in a thread."""
-        await asyncio.to_thread(self.insert, content_hash, documents, filters)
+        log_info(f"Cassandra VectorDB : Inserting Documents to the table {self.table_name}")
+
+        for doc in documents:
+            try:
+                embed_tasks = [doc.async_embed(embedder=self.embedder)]
+                await asyncio.gather(*embed_tasks, return_exceptions=True)
+            except Exception as e:
+                log_error(f"Error processing document '{doc.name}': {e}")
+
+        futures = []
+        for doc in documents:
+            metadata = {key: str(value) for key, value in doc.meta_data.items()}
+            metadata.update(filters or {})
+            metadata["content_id"] = doc.content_id
+            metadata["content_hash"] = content_hash
+            futures.append(
+                self.table.put_async(
+                    row_id=doc.id,
+                    vector=doc.embedding,
+                    metadata=metadata or {},
+                    body_blob=doc.content,
+                    document_name=doc.name,
+                )
+            )
+
+        for f in futures:
+            f.result()
 
     def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert or update documents based on primary key."""
@@ -126,7 +155,9 @@ class Cassandra(VectorDb):
         self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
     ) -> None:
         """Upsert documents asynchronously by running in a thread."""
-        await asyncio.to_thread(self.upsert, content_hash, documents, filters)
+        if self.content_hash_exists(content_hash):
+            self.delete_by_content_hash(content_hash)
+        self.async_insert(content_hash, documents, filters)
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Keyword-based search on document metadata."""

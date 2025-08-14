@@ -401,14 +401,14 @@ Remember: You must only compare the agent_output to the expected_output. The exp
 
         # Log results to the Agno DB if requested
         if self.agent is not None:
-            agent_id = self.agent.agent_id
+            agent_id = self.agent.id
             team_id = None
             model_id = self.agent.model.id if self.agent.model is not None else None
             model_provider = self.agent.model.provider if self.agent.model is not None else None
             evaluated_component_name = self.agent.name
         elif self.team is not None:
             agent_id = None
-            team_id = self.team.team_id
+            team_id = self.team.id
             model_id = self.team.model.id if self.team.model is not None else None
             model_provider = self.team.model.provider if self.team.model is not None else None
             evaluated_component_name = self.team.name
@@ -524,14 +524,14 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             self.result.print_summary(console)
 
         if self.agent is not None:
-            agent_id = self.agent.agent_id
+            agent_id = self.agent.id
             team_id = None
             model_id = self.agent.model.id if self.agent.model is not None else None
             model_provider = self.agent.model.provider if self.agent.model is not None else None
             evaluated_component_name = self.agent.name
         elif self.team is not None:
             agent_id = None
-            team_id = self.team.team_id
+            team_id = self.team.id
             model_id = self.team.model.id if self.team.model is not None else None
             model_provider = self.team.model.provider if self.team.model is not None else None
             evaluated_component_name = self.team.name
@@ -616,14 +616,14 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         # Log results to the Agno DB if requested
         if self.db:
             if self.agent is not None:
-                agent_id = self.agent.agent_id
+                agent_id = self.agent.id
                 team_id = None
                 model_id = self.agent.model.id if self.agent.model is not None else None
                 model_provider = self.agent.model.provider if self.agent.model is not None else None
                 evaluated_component_name = self.agent.name
             elif self.team is not None:
                 agent_id = None
-                team_id = self.team.team_id
+                team_id = self.team.id
                 model_id = self.team.model.id if self.team.model is not None else None
                 model_provider = self.team.model.provider if self.team.model is not None else None
                 evaluated_component_name = self.team.name
@@ -712,14 +712,14 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         # Log results to the Agno DB if requested
         if self.db:
             if self.agent is not None:
-                agent_id = self.agent.agent_id
+                agent_id = self.agent.id
                 team_id = None
                 model_id = self.agent.model.id if self.agent.model is not None else None
                 model_provider = self.agent.model.provider if self.agent.model is not None else None
                 evaluated_component_name = self.agent.name
             elif self.team is not None:
                 agent_id = None
-                team_id = self.team.team_id
+                team_id = self.team.id
                 model_id = self.team.model.id if self.team.model is not None else None
                 model_provider = self.team.model.provider if self.team.model is not None else None
                 evaluated_component_name = self.team.name

@@ -4,7 +4,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
-from agno.db.agent.sqlite import SqliteAgentStorage
+from agno.db.sqlite import SqliteDb
 from agno.exceptions import ModelProviderError
 from agno.models.openai import OpenAIResponses
 
@@ -16,14 +16,15 @@ def _assert_metrics(response: RunResponse):
     Args:
         response: The RunResponse to validate metrics for
     """
-    input_tokens = response.metrics.get("input_tokens", [])
-    output_tokens = response.metrics.get("output_tokens", [])
-    total_tokens = response.metrics.get("total_tokens", [])
+    assert response.metrics is not None
+    input_tokens = response.metrics.input_tokens
+    output_tokens = response.metrics.output_tokens
+    total_tokens = response.metrics.total_tokens
 
-    assert sum(input_tokens) > 0
-    assert sum(output_tokens) > 0
-    assert sum(total_tokens) > 0
-    assert sum(total_tokens) == sum(input_tokens) + sum(output_tokens)
+    assert input_tokens > 0
+    assert output_tokens > 0
+    assert total_tokens > 0
+    assert total_tokens == input_tokens + output_tokens
 
 
 def test_basic():
@@ -33,7 +34,7 @@ def test_basic():
     # Run a simple query
     response: RunResponse = agent.run("Share a 2 sentence horror story")
 
-    assert response.content is not None
+    assert response.content is not None and response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
 
@@ -44,16 +45,11 @@ def test_basic_stream():
     """Test basic streaming functionality of the OpenAIResponses model."""
     agent = Agent(model=OpenAIResponses(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
-    response_stream = agent.run("Share a 2 sentence horror story", stream=True)
+    run_stream = agent.run("Say 'hi'", stream=True)
+    for chunk in run_stream:
+        assert chunk.content is not None
 
-    # Verify it's an iterator
-    assert hasattr(response_stream, "__iter__")
-
-    responses = list(response_stream)
-    assert len(responses) > 0
-    for response in responses:
-        assert response.content is not None
-
+    assert agent.run_response is not None
     _assert_metrics(agent.run_response)
 
 
@@ -65,6 +61,7 @@ async def test_async_basic():
     response = await agent.arun("Share a 2 sentence horror story")
 
     assert response.content is not None
+    assert response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
     _assert_metrics(response)
@@ -75,10 +72,10 @@ async def test_async_basic_stream():
     """Test basic async streaming functionality of the OpenAIResponses model."""
     agent = Agent(model=OpenAIResponses(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
-    response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
-
-    async for response in response_stream:
+    async for response in agent.arun("Share a 2 sentence horror story", stream=True):
         assert response.content is not None
+
+    assert agent.run_response is not None
     _assert_metrics(agent.run_response)
 
 
@@ -99,7 +96,6 @@ def test_with_memory():
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
         add_history_to_context=True,
-        num_history_responses=5,
         markdown=True,
         telemetry=False,
     )
@@ -110,7 +106,7 @@ def test_with_memory():
 
     # Second interaction should remember the name
     response2 = agent.run("What's my name?")
-    assert "John Smith" in response2.content
+    assert response2.content is not None and "John Smith" in response2.content
 
     # Verify memories were created
     messages = agent.get_messages_for_session()
@@ -174,15 +170,26 @@ def test_history():
     """Test conversation history in the agent."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        storage=SqliteAgentStorage(table_name="responses_agent_sessions", db_file="tmp/agent_storage.db"),
+        db=SqliteDb(db_file="tmp/openai/responses/test_basic.db"),
         add_history_to_context=True,
         telemetry=False,
     )
     agent.run("Hello")
+    assert agent.run_response is not None
+    assert agent.run_response.messages is not None
     assert len(agent.run_response.messages) == 2
+
     agent.run("Hello 2")
+    assert agent.run_response is not None
+    assert agent.run_response.messages is not None
     assert len(agent.run_response.messages) == 4
+
     agent.run("Hello 3")
+    assert agent.run_response is not None
+    assert agent.run_response.messages is not None
     assert len(agent.run_response.messages) == 6
+
     agent.run("Hello 4")
+    assert agent.run_response is not None
+    assert agent.run_response.messages is not None
     assert len(agent.run_response.messages) == 8

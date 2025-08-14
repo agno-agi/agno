@@ -54,7 +54,7 @@ hn_team = Team(
     response_model=Article,
     markdown=True,
     show_members_responses=True,
-    add_member_tools_to_system_message=False,
+    add_member_tools_to_context=False,
 )
 
 hn_team.print_response("Write an article about the top 2 stories on hackernews")

@@ -21,6 +21,7 @@ def test_image_input_file():
         images=[Image(filepath=image_path)],
     )
 
+    assert response.content is not None
     assert "golden" in response.content.lower()
     assert "bridge" in response.content.lower()
 
@@ -35,5 +36,6 @@ def test_image_input_bytes():
         images=[Image(content=image_bytes)],
     )
 
+    assert response.content is not None
     assert "golden" in response.content.lower()
     assert "bridge" in response.content.lower()

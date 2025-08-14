@@ -35,7 +35,7 @@ def sample_agent_session() -> AgentSession:
     """Fixture returning a sample AgentSession"""
     agent_run = RunResponse(
         run_id="test_agent_run_1",
-        agent_id="test_agent_1",
+        id="test_agent_1",
         user_id="test_user_1",
         status=RunStatus.completed,
         messages=[],
@@ -49,7 +49,7 @@ def sample_agent_session() -> AgentSession:
         workflow_id="test_workflow_1",
         session_data={"session_name": "Test Agent Session", "key": "value"},
         agent_data={"name": "Test Agent", "model": "gpt-4"},
-        extra_data={"extra_key": "extra_value"},
+        metadata={"extra_key": "extra_value"},
         runs=[agent_run],
         summary=None,
         created_at=int(time.time()),
@@ -62,7 +62,7 @@ def sample_team_session() -> TeamSession:
     """Fixture returning a sample TeamSession"""
     team_run = TeamRunResponse(
         run_id="test_team_run_1",
-        team_id="test_team_1",
+        id="test_team_1",
         status=RunStatus.completed,
         messages=[],
         created_at=int(time.time()),
@@ -75,7 +75,7 @@ def sample_team_session() -> TeamSession:
         workflow_id="test_workflow_1",
         session_data={"session_name": "Test Team Session", "key": "value"},
         team_data={"name": "Test Team", "model": "gpt-4"},
-        extra_data={"extra_key": "extra_value"},
+        metadata={"extra_key": "extra_value"},
         runs=[team_run],
         summary=None,
         created_at=int(time.time()),
@@ -580,7 +580,7 @@ def test_upsert_session_handles_all_agent_session_fields(postgres_db_real: Postg
     # Create comprehensive AgentSession with all possible fields populated
     agent_run = RunResponse(
         run_id="test_run_comprehensive",
-        agent_id="comprehensive_agent",
+        id="comprehensive_agent",
         user_id="comprehensive_user",
         status=RunStatus.completed,
         messages=[],
@@ -599,7 +599,7 @@ def test_upsert_session_handles_all_agent_session_fields(postgres_db_real: Postg
             "audio": ["audio1.wav"],
             "custom_field": "custom_value",
         },
-        extra_data={"extra_key1": "extra_value1", "extra_key2": {"nested": "data"}, "extra_list": [1, 2, 3]},
+        metadata={"extra_key1": "extra_value1", "extra_key2": {"nested": "data"}, "extra_list": [1, 2, 3]},
         agent_data={
             "name": "Comprehensive Agent",
             "model": "gpt-4",
@@ -625,7 +625,7 @@ def test_upsert_session_handles_all_agent_session_fields(postgres_db_real: Postg
     assert result.user_id == comprehensive_agent_session.user_id
     assert result.workflow_id == comprehensive_agent_session.workflow_id
     assert result.session_data == comprehensive_agent_session.session_data
-    assert result.extra_data == comprehensive_agent_session.extra_data
+    assert result.metadata == comprehensive_agent_session.metadata
     assert result.agent_data == comprehensive_agent_session.agent_data
     assert result.created_at == comprehensive_agent_session.created_at
     assert result.updated_at == comprehensive_agent_session.updated_at
@@ -639,7 +639,7 @@ def test_upsert_session_handles_all_team_session_fields(postgres_db_real: Postgr
     # Create comprehensive TeamSession with all possible fields populated
     team_run = TeamRunResponse(
         run_id="test_team_run_comprehensive",
-        team_id="comprehensive_team",
+        id="comprehensive_team",
         status=RunStatus.completed,
         messages=[],
         created_at=int(time.time()),
@@ -670,7 +670,7 @@ def test_upsert_session_handles_all_team_session_fields(postgres_db_real: Postgr
             "audio": ["team_audio1.wav"],
             "team_custom_field": "team_custom_value",
         },
-        extra_data={
+        metadata={
             "team_extra_key1": "team_extra_value1",
             "team_extra_key2": {"nested": "team_data"},
             "team_metrics": {"efficiency": 0.95},
@@ -693,7 +693,7 @@ def test_upsert_session_handles_all_team_session_fields(postgres_db_real: Postgr
     assert result.user_id == comprehensive_team_session.user_id
     assert result.team_data == comprehensive_team_session.team_data
     assert result.session_data == comprehensive_team_session.session_data
-    assert result.extra_data == comprehensive_team_session.extra_data
+    assert result.metadata == comprehensive_team_session.metadata
     assert isinstance(result.summary, SessionSummary)
     assert result.summary.to_dict() == comprehensive_team_session.summary
     assert result.created_at == comprehensive_team_session.created_at
