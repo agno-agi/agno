@@ -248,7 +248,7 @@ class AgentResponse(BaseModel):
             "system_message_role": agent.system_message_role,
             "build_context": agent.build_context,
             "description": agent.description,
-            "instructions": str(agent.instructions) if agent.instructions else None,
+            "instructions": agent.instructions if agent.instructions else None,
             "expected_output": agent.expected_output,
             "additional_context": agent.additional_context,
             "markdown": agent.markdown,
