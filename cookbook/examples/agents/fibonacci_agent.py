@@ -4,6 +4,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.calculator import CalculatorTools
 
+
 def get_fibonacci_series(count: int = 5) -> str:
     """Generate a Fibonacci series up to the specified count."""
     if count <= 0:
@@ -15,23 +16,22 @@ def get_fibonacci_series(count: int = 5) -> str:
 
     return json.dumps(fib_series[:count])
 
+
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[
         get_fibonacci_series,
-        CalculatorTools(
-            add=True,
-            subtract=True,
-            exponentiate=True,
-            is_prime=True
-        )
+        CalculatorTools(add=True, subtract=True, exponentiate=True, is_prime=True),
     ],
     show_tool_calls=True,
-    markdown=True
+    markdown=True,
 )
 
-agent.print_response("""
+agent.print_response(
+    """
     1. Get 10 elements of fibonacci series
     2. Calculate the sum of cubes of the prime numbers in the series
     3. Subtract 4
-""", stream=True)
+""",
+    stream=True,
+)

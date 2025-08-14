@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 
 from agno.models.openai.chat import OpenAIChat
@@ -142,3 +144,50 @@ def test_team_session_state_on_run(route_team):
         "test_key": "test_value",
         "something_else": "other_value",
     }, "Merging session state should work"
+
+
+def test_session_state_db_precedence(route_team, team_storage):
+    """Test that DB session_state takes precedence over agent's in-memory session_state when switching sessions."""
+    # Set up two sessions with different session_state
+    session_id_1 = "session_db"
+    session_id_2 = "session_mem"
+
+    # Simulate a session in storage with a specific session_state
+    db_state = {"db_key": "db_value", "shared_key": "db"}
+    team_storage.upsert(
+        session=type(
+            "TeamSession",
+            (),
+            {
+                "session_id": session_id_1,
+                "session_data": {"session_state": db_state.copy(), "session_name": "db_session"},
+                "team_session_id": str(uuid.uuid4()),
+                "team_id": str(uuid.uuid4()),
+                "user_id": None,
+                "team_data": None,
+                "extra_data": None,
+            },
+        )()
+    )
+
+    # Set agent's in-memory session_state to something different
+    route_team.session_state = {"mem_key": "mem_value", "shared_key": "mem"}
+    route_team.session_id = session_id_2
+    route_team.session_name = "mem_session"
+
+    # Run with the in-memory session (should use in-memory state)
+    route_team.run("Test in-memory", session_id=session_id_2)
+    assert route_team.session_state == {"current_session_id": session_id_2, "mem_key": "mem_value", "shared_key": "mem"}
+    assert route_team.session_name == "mem_session"
+
+    # Now switch to the DB session (should load and take precedence)
+    route_team.run("Test DB", session_id=session_id_1)
+    # The session_state should now match the DB's, not the in-memory one
+    expected_state = {"current_session_id": session_id_1, **db_state}
+    assert route_team.session_state == expected_state
+    assert route_team.session_name == "db_session"
+
+    # If we switch back to the in-memory session, it should restore the old state
+    route_team.run("Test in-memory again", session_id=session_id_2)
+    assert route_team.session_state == {"current_session_id": session_id_2, "mem_key": "mem_value", "shared_key": "mem"}
+    assert route_team.session_name == "mem_session"

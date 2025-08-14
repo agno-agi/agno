@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.7.7"
+version = "1.7.10"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -34,6 +34,7 @@ dependencies = [
   "docstring-parser",
   "gitpython",
   "httpx",
+  "packaging",
   "pydantic-settings",
   "pydantic",
   "python-dotenv",
@@ -116,6 +117,7 @@ youtube = ["youtube_transcript_api"]
 zep = ["zep-cloud"]
 daytona=["daytona"]
 oxylabs = ["oxylabs"]
+trafilatura = ["trafilatura"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -221,6 +223,7 @@ tools = [
   "agno[mem0]",
   "agno[google_bigquery]",
   "agno[psycopg]",
+  "agno[trafilatura]",
 ]
 
 # All storage
@@ -452,6 +455,7 @@ module = [
   "acouchbase.*",
   "zep_cloud.*",
   "oxylabs.*",
-  "surrealdb.*"
+  "surrealdb.*",
+  "trafilatura.*"
 ]
 ignore_missing_imports = true
