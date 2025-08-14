@@ -27,10 +27,9 @@ def execute_shell_command(command: str) -> str:
     Returns:
         str: The output of the shell command
     """
-    if command.startswith("ls"):
+    if command.startswith("ls ") or command == "ls" or command.startswith("cat ") or command.startswith("head "):
         return subprocess.check_output(command, shell=True).decode("utf-8")
-    else:
-        raise Exception(f"Unsupported command: {command}")
+    raise Exception(f"Unsupported command: {command}")
 
 
 agent = Agent(
@@ -42,17 +41,20 @@ agent = Agent(
 )
 
 run_response = asyncio.run(agent.arun("What files do I have in my current directory?"))
-if run_response.is_paused:  # Or agent.run_response.is_paused
+
+# Keep executing externally-required tools until the run completes
+while run_response.is_paused and len(run_response.tools_awaiting_external_execution) > 0:
     for tool in run_response.tools_awaiting_external_execution:
         if tool.tool_name == execute_shell_command.name:
             print(f"Executing {tool.tool_name} with args {tool.tool_args} externally")
-            # We execute the tool ourselves. You can also execute something completely external here.
             result = execute_shell_command.entrypoint(**tool.tool_args)
-            # We have to set the result on the tool execution object so that the agent can continue
             tool.result = result
+        else:
+            print(f"Skipping unsupported external tool: {tool.tool_name}")
 
     run_response = asyncio.run(agent.acontinue_run(run_response=run_response))
-    pprint.pprint_run_response(run_response)
+
+pprint.pprint_run_response(run_response)
 
 
 # Or for simple debug flow
