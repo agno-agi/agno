@@ -381,7 +381,6 @@ class TeamResponse(BaseModel):
             "markdown": False,
             "add_datetime_to_context": False,
             "add_location_to_context": False,
-            "add_member_tools_to_system_message": False,
             "add_state_in_messages": False,
             # Response settings defaults
             "parse_response": True,
@@ -492,7 +491,6 @@ class TeamResponse(BaseModel):
             "markdown": team.markdown,
             "add_datetime_to_context": team.add_datetime_to_context,
             "add_location_to_context": team.add_location_to_context,
-            "add_member_tools_to_system_message": team.add_member_tools_to_system_message,
             "add_state_in_messages": team.add_state_in_messages,
         }
 
