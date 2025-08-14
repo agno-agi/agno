@@ -5,7 +5,6 @@ from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.openai import OpenAIResponses
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
 
@@ -153,6 +152,7 @@ def test_parallel_tool_calls():
 
 def test_multiple_tool_calls():
     """Test multiple different tool types with the responses API."""
+
     def get_the_weather(city: str):
         return f"It is currently 70 degrees and cloudy in {city}"
 

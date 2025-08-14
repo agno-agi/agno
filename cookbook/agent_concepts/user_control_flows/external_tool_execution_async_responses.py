@@ -27,7 +27,12 @@ def execute_shell_command(command: str) -> str:
     Returns:
         str: The output of the shell command
     """
-    if command.startswith("ls ") or command == "ls" or command.startswith("cat ") or command.startswith("head "):
+    if (
+        command.startswith("ls ")
+        or command == "ls"
+        or command.startswith("cat ")
+        or command.startswith("head ")
+    ):
         return subprocess.check_output(command, shell=True).decode("utf-8")
     raise Exception(f"Unsupported command: {command}")
 
@@ -41,7 +46,9 @@ agent = Agent(
 run_response = asyncio.run(agent.arun("What files do I have in my current directory?"))
 
 # Keep executing externally-required tools until the run completes
-while run_response.is_paused and len(run_response.tools_awaiting_external_execution) > 0:
+while (
+    run_response.is_paused and len(run_response.tools_awaiting_external_execution) > 0
+):
     for tool in run_response.tools_awaiting_external_execution:
         if tool.tool_name == execute_shell_command.name:
             print(f"Executing {tool.tool_name} with args {tool.tool_args} externally")
@@ -57,5 +64,3 @@ pprint.pprint_run_response(run_response)
 
 # Or for simple debug flow
 # agent.print_response("What files do I have in my current directory?")
-
-

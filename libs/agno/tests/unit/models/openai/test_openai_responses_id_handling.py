@@ -1,9 +1,9 @@
 from typing import Any, Dict, List, Optional
 
+from agno.models.base import MessageData
 from agno.models.message import Message
 from agno.models.openai.responses import OpenAIResponses
 from agno.models.response import ModelResponse
-from agno.models.base import MessageData
 
 
 class _FakeError:
@@ -47,7 +47,15 @@ class _FakeStreamItem:
 
 
 class _FakeStreamEvent:
-    def __init__(self, *, type: str, item: Optional[_FakeStreamItem] = None, delta: str = "", response: Any = None, annotation: Any = None):
+    def __init__(
+        self,
+        *,
+        type: str,
+        item: Optional[_FakeStreamItem] = None,
+        delta: str = "",
+        response: Any = None,
+        annotation: Any = None,
+    ):
         self.type = type
         self.item = item
         self.delta = delta
@@ -66,7 +74,7 @@ def test_format_messages_maps_tool_output_fc_to_call_id():
                 "id": "fc_abc123",
                 "call_id": "call_def456",
                 "type": "function",
-                "function": {"name": "execute_shell_command", "arguments": "{\"command\": \"ls -la\"}"},
+                "function": {"name": "execute_shell_command", "arguments": '{"command": "ls -la"}'},
             }
         ],
     )
@@ -74,7 +82,14 @@ def test_format_messages_maps_tool_output_fc_to_call_id():
     # Tool output referring to the fc_* id should be normalized to call_*
     tool_output = Message(role="tool", tool_call_id="fc_abc123", content="ok")
 
-    fm = model._format_messages(messages=[Message(role="system", content="s"), Message(role="user", content="u"), assistant_with_tool_call, tool_output])
+    fm = model._format_messages(
+        messages=[
+            Message(role="system", content="s"),
+            Message(role="user", content="u"),
+            assistant_with_tool_call,
+            tool_output,
+        ]
+    )
 
     # Expect one function_call and one function_call_output normalized
     fc_items = [x for x in fm if x.get("type") == "function_call"]
@@ -114,7 +129,10 @@ def test_process_stream_response_builds_tool_calls():
     stream_data = MessageData()
 
     # Simulate function_call added and then completed
-    added = _FakeStreamEvent(type="response.output_item.added", item=_FakeStreamItem(_id="fc_abc123", call_id="call_def456", name="execute", arguments="{}"))
+    added = _FakeStreamEvent(
+        type="response.output_item.added",
+        item=_FakeStreamItem(_id="fc_abc123", call_id="call_def456", name="execute", arguments="{}"),
+    )
     mr, tool_use = model._process_stream_response(added, assistant_message, stream_data, {})
     assert mr is None
 
@@ -155,9 +173,14 @@ def test_reasoning_previous_response_skips_prior_function_call_items(monkeypatch
         ],
     )
 
-    fm = model._format_messages(messages=[Message(role="system", content="s"), Message(role="user", content="u"), assistant_with_prev, assistant_with_tool_call])
+    fm = model._format_messages(
+        messages=[
+            Message(role="system", content="s"),
+            Message(role="user", content="u"),
+            assistant_with_prev,
+            assistant_with_tool_call,
+        ]
+    )
 
     # Expect no re-sent function_call when previous_response_id is present for reasoning models
     assert all(x.get("type") != "function_call" for x in fm)
-
-
