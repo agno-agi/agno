@@ -372,9 +372,6 @@ class OpenAIResponses(Model):
                     previous_response_id = msg.provider_data["response_id"]
                     break
 
-        # If we are continuing with tool outputs, do not re-send prior function_call items
-        has_tool_output = any((getattr(m, "role", None) == "tool") and getattr(m, "tool_call_id", None) for m in messages)
-
         # Build a mapping from function_call id (fc_*) → call_id (call_*) from prior assistant tool_calls
         fc_id_to_call_id: Dict[str, str] = {}
         for msg in messages:
