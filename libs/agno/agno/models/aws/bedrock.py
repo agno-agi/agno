@@ -27,19 +27,9 @@ except ImportError:
     AIOBOTO3_AVAILABLE = False
 
 
-# AWS Bedrock supported media formats
-class BedrockSupportedFormats:
-    """Supported media formats for AWS Bedrock models."""
-
-    # Supported image formats
-    IMAGES = ["png", "jpeg", "webp", "gif"]
-
-    # Supported video formats
-    VIDEOS = ["mp4", "mov", "mkv", "webm", "flv", "mpeg", "mpg", "wmv", "three_gp"]
-
-    # Supported document/file formats
-    FILES = ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"]
-
+BEDROCK_SUPPORTED_IMAGE_FORMATS = ["png", "jpeg", "webp", "gif"]
+BEDROCK_SUPPORTED_VIDEO_FORMATS = ["mp4", "mov", "mkv", "webm", "flv", "mpeg", "mpg", "wmv", "three_gp"]
+BEDROCK_SUPPORTED_FILE_FORMATS = ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"]
 
 @dataclass
 class AwsBedrock(Model):
@@ -281,10 +271,10 @@ class AwsBedrock(Model):
                         if not image.format:
                             raise ValueError("Image format is required for AWS Bedrock.")
 
-                        if image.format not in BedrockSupportedFormats.IMAGES:
+                        if image.format not in BEDROCK_SUPPORTED_IMAGE_FORMATS:
                             raise ValueError(
                                 f"Unsupported image format: {image.format}. "
-                                f"Supported formats: {BedrockSupportedFormats.IMAGES}"
+                                f"Supported formats: {BEDROCK_SUPPORTED_IMAGE_FORMATS}"
                             )
 
                         formatted_message["content"].append(
@@ -307,10 +297,10 @@ class AwsBedrock(Model):
                         if not video.format:
                             raise ValueError("Video format is required for AWS Bedrock.")
 
-                        if video.format not in BedrockSupportedFormats.VIDEOS:
+                        if video.format not in BEDROCK_SUPPORTED_VIDEO_FORMATS:
                             raise ValueError(
                                 f"Unsupported video format: {video.format}. "
-                                f"Supported formats: {BedrockSupportedFormats.VIDEOS}"
+                                f"Supported formats: {BEDROCK_SUPPORTED_VIDEO_FORMATS}"
                             )
 
                         formatted_message["content"].append(
@@ -333,10 +323,10 @@ class AwsBedrock(Model):
                         if not file.name:
                             raise ValueError("File name is required for AWS Bedrock document input.")
 
-                        if file.format not in BedrockSupportedFormats.FILES:
+                        if file.format not in BEDROCK_SUPPORTED_FILE_FORMATS:
                             raise ValueError(
                                 f"Unsupported file format: {file.format}. "
-                                f"Supported formats: {BedrockSupportedFormats.FILES}"
+                                f"Supported formats: {BEDROCK_SUPPORTED_FILE_FORMATS}"
                             )
 
                         formatted_message["content"].append(
