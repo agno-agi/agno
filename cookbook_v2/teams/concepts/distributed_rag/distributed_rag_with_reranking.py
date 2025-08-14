@@ -15,6 +15,7 @@ Setup:
 """
 
 import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
@@ -38,7 +39,7 @@ reranked_knowledge = Knowledge(
 validation_knowledge = Knowledge(
     vector_db=LanceDb(
         table_name="recipes_validation",
-        uri="tmp/lancedb", 
+        uri="tmp/lancedb",
         search_type=SearchType.vector,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
@@ -120,7 +121,12 @@ distributed_reranking_team = Team(
     name="Distributed Reranking RAG Team",
     mode="coordinate",  # Sequential coordination for reranking optimization
     model=OpenAIChat(id="gpt-4o"),
-    members=[initial_retriever, reranking_specialist, context_analyzer, final_synthesizer],
+    members=[
+        initial_retriever,
+        reranking_specialist,
+        context_analyzer,
+        final_synthesizer,
+    ],
     instructions=[
         "Work together to provide optimal RAG responses using advanced reranking.",
         "Initial Retriever: First perform broad comprehensive retrieval.",
@@ -138,55 +144,49 @@ distributed_reranking_team = Team(
 async def async_reranking_rag_demo():
     """Demonstrate async distributed reranking RAG processing."""
     print("🎯 Async Distributed Reranking RAG Demo")
-    print("="*45)
-    
+    print("=" * 45)
+
     query = "What's the best way to prepare authentic Tom Kha Gai? I want traditional methods and modern variations."
-        
+
     # Run async distributed reranking RAG
     await distributed_reranking_team.aprint_response(
-        query,
-        stream=True,
-        stream_intermediate_steps=True
+        query, stream=True, stream_intermediate_steps=True
     )
 
 
 def sync_reranking_rag_demo():
     """Demonstrate sync distributed reranking RAG processing."""
     print("🎯 Distributed Reranking RAG Demo")
-    print("="*35)
-    
+    print("=" * 35)
+
     query = "What's the best way to prepare authentic Tom Kha Gai? I want traditional methods and modern variations."
-        
+
     # Run distributed reranking RAG
     distributed_reranking_team.print_response(
-        query,
-        stream=True,
-        stream_intermediate_steps=True
+        query, stream=True, stream_intermediate_steps=True
     )
 
 
 def advanced_culinary_demo():
     """Demonstrate advanced reranking for complex culinary queries."""
     print("👨‍🍳 Advanced Culinary Analysis with Reranking RAG")
-    print("="*55)
-    
+    print("=" * 55)
+
     query = """I want to understand the science behind Thai curry pastes. Can you explain:
     - Traditional preparation methods vs modern techniques
     - How different ingredients affect flavor profiles
     - Regional variations and their historical origins
     - Best practices for storage and usage
     - How to adapt recipes for different dietary needs"""
-        
+
     distributed_reranking_team.print_response(
-        query,
-        stream=True,
-        stream_intermediate_steps=True
+        query, stream=True, stream_intermediate_steps=True
     )
 
 
 if __name__ == "__main__":
     # Choose which demo to run
-    
+
     # asyncio.run(async_reranking_rag_demo())
 
     # advanced_culinary_demo()

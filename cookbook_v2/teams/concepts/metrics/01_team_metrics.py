@@ -51,7 +51,7 @@ if team.run_response.messages:
                 print(f"📝 Message: {message.content[:100]}...")
             elif message.tool_calls:
                 print(f"🔧 Tool calls: {message.tool_calls}")
-            
+
             print("-" * 30, "Metrics", "-" * 30)
             pprint(message.metrics)
             print("-" * 70)
@@ -82,7 +82,7 @@ if team.run_response.member_responses:
                         print(f"📝 Member Message: {message.content[:100]}...")
                     elif message.tool_calls:
                         print(f"🔧 Member Tool calls: {message.tool_calls}")
-                    
+
                     print("-" * 20, "Member Metrics", "-" * 20)
                     pprint(message.metrics)
                     print("-" * 60)

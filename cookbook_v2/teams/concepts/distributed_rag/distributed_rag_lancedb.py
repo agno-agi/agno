@@ -15,6 +15,7 @@ Setup:
 """
 
 import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
@@ -35,7 +36,7 @@ primary_knowledge = Knowledge(
 # Secondary knowledge base for context expansion
 context_knowledge = Knowledge(
     vector_db=LanceDb(
-        table_name="recipes_context", 
+        table_name="recipes_context",
         uri="tmp/lancedb",
         search_type=SearchType.hybrid,
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
@@ -90,7 +91,7 @@ answer_synthesizer = Agent(
     instructions=[
         "Combine information from the Primary Retriever and Context Expander.",
         "Create a comprehensive, well-structured response.",
-        "Ensure logical flow and coherence in the final answer.", 
+        "Ensure logical flow and coherence in the final answer.",
         "Include relevant details while maintaining clarity.",
         "Organize information in a user-friendly format.",
     ],
@@ -117,7 +118,12 @@ distributed_rag_team = Team(
     name="Distributed RAG Team",
     mode="coordinate",  # Sequential coordination for RAG processing
     model=OpenAIChat(id="gpt-4o"),
-    members=[primary_retriever, context_expander, answer_synthesizer, quality_validator],
+    members=[
+        primary_retriever,
+        context_expander,
+        answer_synthesizer,
+        quality_validator,
+    ],
     instructions=[
         "Work together to provide comprehensive, high-quality RAG responses.",
         "Primary Retriever: First retrieve core relevant information.",
@@ -134,53 +140,47 @@ distributed_rag_team = Team(
 async def async_distributed_rag_demo():
     """Demonstrate async distributed RAG processing."""
     print("📚 Async Distributed RAG with LanceDB Demo")
-    print("="*50)
-    
+    print("=" * 50)
+
     query = "How do I make chicken and galangal in coconut milk soup? Include cooking tips and variations."
-        
+
     # Run async distributed RAG
     await distributed_rag_team.aprint_response(
-        query,
-        stream=True,
-        stream_intermediate_steps=True
+        query, stream=True, stream_intermediate_steps=True
     )
 
 
 def sync_distributed_rag_demo():
     """Demonstrate sync distributed RAG processing."""
     print("📚 Distributed RAG with LanceDB Demo")
-    print("="*40)
-    
+    print("=" * 40)
+
     query = "How do I make chicken and galangal in coconut milk soup? Include cooking tips and variations."
-        
+
     # Run distributed RAG
     distributed_rag_team.print_response(
-        query,
-        stream=True,
-        stream_intermediate_steps=True
+        query, stream=True, stream_intermediate_steps=True
     )
 
 
 def multi_course_meal_demo():
     """Demonstrate distributed RAG for complex multi-part queries."""
     print("🍽️ Multi-Course Meal Planning with Distributed RAG")
-    print("="*55)
-    
+    print("=" * 55)
+
     query = """Hi, I want to make a 3 course Thai meal. Can you recommend some recipes? 
     I'd like to start with a soup, then a thai curry for the main course and finish with a dessert.
     Please include cooking techniques and any special tips."""
-        
+
     distributed_rag_team.print_response(
-        query,
-        stream=True,
-        stream_intermediate_steps=True
+        query, stream=True, stream_intermediate_steps=True
     )
 
 
 if __name__ == "__main__":
     # Choose which demo to run
     # asyncio.run(async_distributed_rag_demo())
-    
+
     # multi_course_meal_demo()
-    
+
     sync_distributed_rag_demo()

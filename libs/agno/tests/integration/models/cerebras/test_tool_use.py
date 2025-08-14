@@ -1,6 +1,6 @@
 import pytest
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.cerebras import Cerebras
 from agno.tools.duckduckgo import DuckDuckGoTools
 

@@ -20,6 +20,7 @@ Setup:
 """
 
 import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.knowledge import Knowledge
@@ -36,8 +37,7 @@ knowledge_primary = Knowledge(
         search_type=SearchType.hybrid,
         embedder=CohereEmbedder(id="embed-v4.0"),
         reranker=InfinityReranker(
-            base_url="http://localhost:7997/rerank",
-            model="BAAI/bge-reranker-base"
+            base_url="http://localhost:7997/rerank", model="BAAI/bge-reranker-base"
         ),
     ),
 )
@@ -45,13 +45,12 @@ knowledge_primary = Knowledge(
 # Secondary knowledge base for targeted search
 knowledge_secondary = Knowledge(
     vector_db=LanceDb(
-        uri="tmp/lancedb", 
+        uri="tmp/lancedb",
         table_name="agno_docs_secondary",
         search_type=SearchType.hybrid,
         embedder=CohereEmbedder(id="embed-v4.0"),
         reranker=InfinityReranker(
-            base_url="http://localhost:7997/rerank",
-            model="BAAI/bge-reranker-base"
+            base_url="http://localhost:7997/rerank", model="BAAI/bge-reranker-base"
         ),
     ),
 )
@@ -125,7 +124,12 @@ distributed_search_team = Team(
     name="Distributed Search Team with Infinity Reranker",
     mode="coordinate",  # Sequential coordination for search distribution
     model=Claude(id="claude-3-7-sonnet-latest"),
-    members=[primary_searcher, secondary_searcher, cross_reference_validator, result_synthesizer],
+    members=[
+        primary_searcher,
+        secondary_searcher,
+        cross_reference_validator,
+        result_synthesizer,
+    ],
     instructions=[
         "Work together to provide comprehensive search results using distributed processing.",
         "Primary Searcher: Conduct broad comprehensive search first.",
@@ -143,39 +147,35 @@ distributed_search_team = Team(
 async def async_distributed_search():
     """Demonstrate async distributed search with infinity reranking."""
     print("⚡ Async Distributed Search with Infinity Reranker Demo")
-    print("="*65)
-    
+    print("=" * 65)
+
     query = "How do Agents work with tools and what are the performance considerations?"
-        
+
     # Run async distributed search
     await distributed_search_team.aprint_response(
-        query,
-        stream=True,
-        stream_intermediate_steps=True
+        query, stream=True, stream_intermediate_steps=True
     )
 
 
 def sync_distributed_search():
     """Demonstrate sync distributed search with infinity reranking."""
     print("⚡ Distributed Search with Infinity Reranker Demo")
-    print("="*55)
-    
+    print("=" * 55)
+
     query = "How do Agents work with tools and what are the performance considerations?"
-        
+
     # Run distributed search
     distributed_search_team.print_response(
-        query,
-        stream=True,
-        stream_intermediate_steps=True
+        query, stream=True, stream_intermediate_steps=True
     )
 
 
 if __name__ == "__main__":
     # Choose which demo to run
-    
+
     try:
         # asyncio.run(async_distributed_search())
-        
+
         sync_distributed_search()
     except Exception as e:
         print(f"❌ Error: {e}")

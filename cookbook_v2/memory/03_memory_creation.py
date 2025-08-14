@@ -2,10 +2,10 @@
 Create user memories with an Agent by providing a either text or a list of messages.
 """
 
-from agno.memory import MemoryManager, UserMemory
 from agno.db.postgres import PostgresDb
-from agno.models.openai import OpenAIChat
+from agno.memory import MemoryManager, UserMemory
 from agno.models.message import Message
+from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
@@ -25,7 +25,8 @@ playing chess with friends,
 and attending live music concerts whenever possible.
 Photography has become a recent passion of mine, especially capturing landscapes and street scenes.
 I also like to meditate in the mornings and practice yoga to stay centered.
-"""),
+"""
+    ),
     user_id=john_doe_id,
 )
 

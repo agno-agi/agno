@@ -15,7 +15,7 @@ from agno.models.base import Model
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
-from agno.run.response import RunResponse
+from agno.run.response import RunOutput
 from agno.utils.gemini import convert_schema, format_function_definitions, format_image_for_message
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.models.schema_utils import get_response_schema_for_provider
@@ -245,7 +245,7 @@ class Gemini(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunResponse] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> ModelResponse:
         """
         Invokes the model with a list of messages and returns the response.
@@ -288,7 +288,7 @@ class Gemini(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunResponse] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> Iterator[ModelResponse]:
         """
         Invokes the model with a list of messages and returns the response as a stream.
@@ -329,7 +329,7 @@ class Gemini(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunResponse] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> ModelResponse:
         """
         Invokes the model with a list of messages and returns the response.
@@ -373,7 +373,7 @@ class Gemini(Model):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunResponse] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Invokes the model with a list of messages and returns the response as a stream.

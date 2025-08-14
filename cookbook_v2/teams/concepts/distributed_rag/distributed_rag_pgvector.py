@@ -16,6 +16,7 @@ Setup:
 """
 
 import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
@@ -139,16 +140,14 @@ distributed_pgvector_team = Team(
 async def async_pgvector_rag_demo():
     """Demonstrate async distributed PgVector RAG processing."""
     print("🐘 Async Distributed PgVector RAG Demo")
-    print("="*40)
+    print("=" * 40)
 
     query = "How do I make chicken and galangal in coconut milk soup? What are the key ingredients and techniques?"
-        
+
     try:
         # Run async distributed PgVector RAG
         await distributed_pgvector_team.aprint_response(
-            query,
-            stream=True,
-            stream_intermediate_steps=True
+            query, stream=True, stream_intermediate_steps=True
         )
     except Exception as e:
         print(f"❌ Error: {e}")
@@ -159,16 +158,14 @@ async def async_pgvector_rag_demo():
 def sync_pgvector_rag_demo():
     """Demonstrate sync distributed PgVector RAG processing."""
     print("🐘 Distributed PgVector RAG Demo")
-    print("="*35)
-    
+    print("=" * 35)
+
     query = "How do I make chicken and galangal in coconut milk soup? What are the key ingredients and techniques?"
-        
+
     try:
         # Run distributed PgVector RAG
         distributed_pgvector_team.print_response(
-            query,
-            stream=True,
-            stream_intermediate_steps=True
+            query, stream=True, stream_intermediate_steps=True
         )
     except Exception as e:
         print(f"❌ Error: {e}")
@@ -179,20 +176,18 @@ def sync_pgvector_rag_demo():
 def complex_query_demo():
     """Demonstrate distributed RAG for complex culinary queries."""
     print("👨‍🍳 Complex Culinary Query with Distributed PgVector RAG")
-    print("="*60)
-    
+    print("=" * 60)
+
     query = """I'm planning a Thai dinner party for 8 people. Can you help me plan a complete menu?
     I need appetizers, main courses, and desserts. Please include:
     - Preparation timeline
     - Shopping list
     - Cooking techniques for each dish
     - Any dietary considerations or alternatives"""
-        
+
     try:
         distributed_pgvector_team.print_response(
-            query,
-            stream=True,
-            stream_intermediate_steps=True
+            query, stream=True, stream_intermediate_steps=True
         )
     except Exception as e:
         print(f"❌ Error: {e}")
@@ -202,7 +197,7 @@ def complex_query_demo():
 
 if __name__ == "__main__":
     # Choose which demo to run
-   
+
     # asyncio.run(async_pgvector_rag_demo())
 
     # complex_query_demo()

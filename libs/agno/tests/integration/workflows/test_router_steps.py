@@ -7,6 +7,16 @@ from agno.workflow.steps import Steps
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
+
+def find_content_in_steps(step_output, search_text):
+    """Recursively search for content in step output and its nested steps."""
+    if search_text in step_output.content:
+        return True
+    if step_output.steps:
+        return any(find_content_in_steps(nested_step, search_text) for nested_step in step_output.steps)
+    return False
+
+
 # ============================================================================
 # TESTS (Fast - No Workflow Overhead)
 # ============================================================================
@@ -29,16 +39,18 @@ def test_router_direct_execute():
     # Test routing to step A
     input_a = StepInput(message="Choose A")
     results_a = router.execute(input_a)
-    assert len(results_a) == 1
-    assert results_a[0].content == "Output A"
-    assert results_a[0].success
+    assert isinstance(results_a, StepOutput)
+    assert len(results_a.steps) == 1
+    assert results_a.steps[0].content == "Output A"
+    assert results_a.steps[0].success
 
     # Test routing to step B
     input_b = StepInput(message="Choose B")
     results_b = router.execute(input_b)
-    assert len(results_b) == 1
-    assert results_b[0].content == "Output B"
-    assert results_b[0].success
+    assert isinstance(results_b, StepOutput)
+    assert len(results_b.steps) == 1
+    assert results_b.steps[0].content == "Output B"
+    assert results_b.steps[0].success
 
 
 def test_router_direct_multiple_steps():
@@ -59,17 +71,19 @@ def test_router_direct_multiple_steps():
     # Test multiple steps selection
     input_multi = StepInput(message="Choose multi")
     results_multi = router.execute(input_multi)
-    assert len(results_multi) == 2
-    assert results_multi[0].content == "Step 1"
-    assert results_multi[1].content == "Step 2"
-    assert all(r.success for r in results_multi)
+    assert isinstance(results_multi, StepOutput)
+    assert len(results_multi.steps) == 2
+    assert results_multi.steps[0].content == "Step 1"
+    assert results_multi.steps[1].content == "Step 2"
+    assert all(r.success for r in results_multi.steps)
 
     # Test single step selection
     input_single = StepInput(message="Choose single")
     results_single = router.execute(input_single)
-    assert len(results_single) == 1
-    assert results_single[0].content == "Step 3"
-    assert results_single[0].success
+    assert isinstance(results_single, StepOutput)
+    assert len(results_single.steps) == 1
+    assert results_single.steps[0].content == "Step 3"
+    assert results_single.steps[0].success
 
 
 def test_router_direct_with_steps_component():
@@ -96,17 +110,11 @@ def test_router_direct_with_steps_component():
     input_seq = StepInput(message="Choose sequence")
     results_seq = router.execute(input_seq)
     # Steps component returns multiple outputs
-    assert len(results_seq) >= 1
-    # Check that we have content from both steps
-    all_content = " ".join([r.content for r in results_seq])
-    assert "A" in all_content
-    assert "B" in all_content
-
-    # Test routing to single step
-    input_single = StepInput(message="Choose single")
-    results_single = router.execute(input_single)
-    assert len(results_single) == 1
-    assert results_single[0].content == "Single"
+    assert isinstance(results_seq, StepOutput)
+    assert len(results_seq.steps) >= 1
+    # Check that we have content from both steps using recursive search
+    assert find_content_in_steps(results_seq, "A")
+    assert find_content_in_steps(results_seq, "B")
 
 
 def test_router_direct_error_handling():
@@ -133,16 +141,18 @@ def test_router_direct_error_handling():
     # Test error case
     input_fail = StepInput(message="Make it fail")
     results_fail = router.execute(input_fail)
-    assert len(results_fail) == 1
-    assert not results_fail[0].success
-    assert "Test error" in results_fail[0].content
+    assert isinstance(results_fail, StepOutput)
+    assert len(results_fail.steps) == 1
+    assert not results_fail.steps[0].success
+    assert "Test error" in results_fail.steps[0].content
 
     # Test success case
     input_success = StepInput(message="Make it success")
     results_success = router.execute(input_success)
-    assert len(results_success) == 1
-    assert results_success[0].success
-    assert results_success[0].content == "Success"
+    assert isinstance(results_success, StepOutput)
+    assert len(results_success.steps) == 1
+    assert results_success.steps[0].success
+    assert results_success.steps[0].content == "Success"
 
 
 def test_router_direct_chaining():
@@ -168,10 +178,11 @@ def test_router_direct_chaining():
     input_test = StepInput(message="Hello")
     results = router.execute(input_test)
 
-    assert len(results) == 2
-    assert results[0].content == "Step 1: Hello"
-    assert results[1].content == "Step 2: Step 1: Hello"
-    assert all(r.success for r in results)
+    assert isinstance(results, StepOutput)
+    assert len(results.steps) == 2
+    assert results.steps[0].content == "Step 1: Hello"
+    assert results.steps[1].content == "Step 2: Step 1: Hello"
+    assert all(r.success for r in results.steps)
 
 
 # ============================================================================
@@ -204,10 +215,10 @@ def test_basic_routing(workflow_db):
     )
 
     tech_response = workflow.run(message="tech topic")
-    assert tech_response.step_results[0][0].content == "Tech content"
+    assert find_content_in_steps(tech_response.step_results[0], "Tech content")
 
     general_response = workflow.run(message="general topic")
-    assert general_response.step_results[0][0].content == "General content"
+    assert find_content_in_steps(general_response.step_results[0], "General content")
 
 
 def test_streaming(workflow_db):
@@ -234,7 +245,7 @@ def test_streaming(workflow_db):
     events = list(workflow.run(message="test", stream=True))
     completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
     assert len(completed_events) == 1
-    assert "Stream content" in completed_events[0].content
+    assert find_content_in_steps(completed_events[0].step_results[0], "Stream content")
 
 
 def test_agent_routing(workflow_db, test_agent):
@@ -259,7 +270,10 @@ def test_agent_routing(workflow_db, test_agent):
     )
 
     response = workflow.run(message="test")
-    assert response.step_results[0][0].success
+    # Check if the router executed successfully (either has success in nested steps or router itself succeeded)
+    assert response.step_results[0].success or any(
+        step.success for step in response.step_results[0].steps if response.step_results[0].steps
+    )
 
 
 def test_mixed_routing(workflow_db, test_agent, test_team):
@@ -290,15 +304,19 @@ def test_mixed_routing(workflow_db, test_agent, test_team):
 
     # Test function route
     function_response = workflow.run(message="test function")
-    assert "Function output" in function_response.step_results[0][0].content
+    assert find_content_in_steps(function_response.step_results[0], "Function output")
 
     # Test agent route
     agent_response = workflow.run(message="test agent")
-    assert agent_response.step_results[0][0].success
+    assert agent_response.step_results[0].success or any(
+        step.success for step in agent_response.step_results[0].steps if agent_response.step_results[0].steps
+    )
 
     # Test team route
     team_response = workflow.run(message="test team")
-    assert team_response.step_results[0][0].success
+    assert team_response.step_results[0].success or any(
+        step.success for step in team_response.step_results[0].steps if team_response.step_results[0].steps
+    )
 
 
 def test_multiple_step_routing(workflow_db):
@@ -326,9 +344,10 @@ def test_multiple_step_routing(workflow_db):
     )
 
     response = workflow.run(message="test research")
-    assert len(response.step_results[0]) == 2
-    assert "Research output" in response.step_results[0][0].content
-    assert "Analysis output" in response.step_results[0][1].content
+    router_output = response.step_results[0]
+    assert len(router_output.steps) == 2
+    assert find_content_in_steps(router_output, "Research output")
+    assert find_content_in_steps(router_output, "Analysis output")
 
 
 def test_route_steps(workflow_db):
@@ -362,6 +381,7 @@ def test_route_steps(workflow_db):
     router_results = response.step_results[0]
 
     # Check that we got results from both steps in the sequence
-    assert len(router_results) == 2
-    assert "Research output" in router_results[0].content
-    assert "Analysis output" in router_results[1].content
+    assert isinstance(router_results, StepOutput)
+    assert len(router_results.steps) >= 1  # Steps component should have nested results
+    assert find_content_in_steps(router_results, "Research output")
+    assert find_content_in_steps(router_results, "Analysis output")

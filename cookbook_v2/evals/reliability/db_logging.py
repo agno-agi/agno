@@ -6,7 +6,7 @@ from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
 from agno.eval.reliability import ReliabilityEval, ReliabilityResult
 from agno.models.openai import OpenAIChat
-from agno.run.response import RunResponse
+from agno.run.response import RunOutput
 from agno.tools.calculator import CalculatorTools
 
 # Setup the database
@@ -18,7 +18,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[CalculatorTools(factorial=True)],
 )
-response: RunResponse = agent.run("What is 10!?")
+response: RunOutput = agent.run("What is 10!?")
 
 evaluation = ReliabilityEval(
     db=db,  # Pass the database to the evaluation. Results will be stored in the database.

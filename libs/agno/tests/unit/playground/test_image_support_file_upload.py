@@ -13,7 +13,7 @@ from agno.media import File as FileMedia
 from agno.media import Image
 from agno.models.openai import OpenAIChat
 from agno.playground import Playground
-from agno.run.response import RunResponse
+from agno.run.response import RunOutput
 
 # --- Fixtures ---
 
@@ -47,7 +47,7 @@ def mock_agent():
         model=OpenAIChat(id="gpt-4o-mini"),
     )
     # Create mock run method
-    mock_run = Mock(return_value=RunResponse(content="Mocked response"))
+    mock_run = Mock(return_value=RunOutput(content="Mocked response"))
     agent.run = mock_run
 
     return agent
@@ -63,7 +63,7 @@ def mock_agent_with_knowledge():
     )
 
     # Create mock run method
-    mock_run = Mock(return_value=RunResponse(content="Mocked response"))
+    mock_run = Mock(return_value=RunOutput(content="Mocked response"))
     agent.run = mock_run
 
     # Add knowledge base mock

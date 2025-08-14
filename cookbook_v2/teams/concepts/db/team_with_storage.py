@@ -28,7 +28,7 @@ french_agent = Agent(
 )
 
 english_agent = Agent(
-    name="English Agent", 
+    name="English Agent",
     role="You can only answer in English",
     model=OpenAIChat("gpt-4o"),
     instructions=[

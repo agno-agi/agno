@@ -2,7 +2,7 @@ from typing import List, Optional
 
 from git import Union
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.openai import OpenAIChat
 
 

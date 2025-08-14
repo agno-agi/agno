@@ -27,13 +27,13 @@ from typing import Dict, Iterator, Optional
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.run.response import RunResponseEvent
+from agno.run.response import RunOutputEvent
 from agno.run.workflow import WorkflowCompletedEvent
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.newspaper4k import Newspaper4kTools
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
-from agno.workflow import Workflow
+from agno.workflow import RunOutput, Workflow
 from pydantic import BaseModel, Field
 
 
@@ -181,7 +181,7 @@ class ResearchReportGenerator(Workflow):
         use_search_cache: bool = True,
         use_scrape_cache: bool = True,
         use_cached_report: bool = True,
-    ) -> Iterator[RunResponseEvent]:
+    ) -> Iterator[RunOutputEvent]:
         """
         Generate a comprehensive news report on a given topic.
 
@@ -195,7 +195,7 @@ class ResearchReportGenerator(Workflow):
             use_cached_report (bool, optional): Whether to return a previously generated report on the same topic. Defaults to False.
 
         Returns:
-            Iterator[RunResponse]: An stream of objects containing the generated report or status information.
+            Iterator[RunOutputEvent]: An stream of objects containing the generated report or status information.
 
         Steps:
         1. Check for a cached report if use_cached_report is True.
@@ -295,7 +295,7 @@ class ResearchReportGenerator(Workflow):
         # If there are no cached search_results, use the web_searcher to find the latest articles
         for attempt in range(num_attempts):
             try:
-                searcher_response: RunResponseEvent = self.web_searcher.run(topic)  # type: ignore
+                searcher_response: RunOutput = self.web_searcher.run(topic)  # type: ignore
                 if (
                     searcher_response is not None
                     and searcher_response.content is not None
@@ -342,7 +342,7 @@ class ResearchReportGenerator(Workflow):
                 logger.info(f"Found scraped article in cache: {article.url}")
                 continue
 
-            article_scraper_response: RunResponseEvent = self.article_scraper.run(  # type: ignore
+            article_scraper_response: RunOutput = self.article_scraper.run(  # type: ignore
                 article.url
             )
             if (
@@ -361,7 +361,7 @@ class ResearchReportGenerator(Workflow):
 
     def write_research_report(
         self, topic: str, scraped_articles: Dict[str, ScrapedArticle]
-    ) -> Iterator[RunResponseEvent]:
+    ) -> Iterator[RunOutputEvent]:
         logger.info("Writing research report")
         # Prepare the input for the writer
         writer_input = {
@@ -409,7 +409,7 @@ if __name__ == "__main__":
     )
 
     # Execute the workflow with caching enabled
-    report_stream: Iterator[RunResponseEvent] = generate_research_report.run(
+    report_stream: Iterator[RunOutputEvent] = generate_research_report.run(
         topic=topic,
         use_search_cache=True,
         use_scrape_cache=True,

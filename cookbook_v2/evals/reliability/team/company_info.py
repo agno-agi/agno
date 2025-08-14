@@ -3,7 +3,7 @@ from typing import Optional
 from agno.agent import Agent
 from agno.eval.reliability import ReliabilityEval, ReliabilityResult
 from agno.models.openai import OpenAIChat
-from agno.run.team import TeamRunResponse
+from agno.run.team import TeamRunOutput
 from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
 
@@ -29,7 +29,7 @@ expected_tool_calls = [
 
 
 def evaluate_team_reliability():
-    response: TeamRunResponse = team.run("What is the current stock price of NVDA?")
+    response: TeamRunOutput = team.run("What is the current stock price of NVDA?")
     evaluation = ReliabilityEval(
         name="Team Reliability Evaluation",
         team_response=response,

@@ -5,7 +5,7 @@ from typing import AsyncIterator
 
 import pytest
 
-from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunResponse
+from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutput
 from agno.workflow import Step, StepInput, StepOutput, Workflow
 
 
@@ -34,7 +34,7 @@ def test_function_sequence_non_streaming(workflow_db):
 
     response = workflow.run(message="test")
 
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert "Content: Hello World | Referencing: Research: test" in response.content
     assert len(response.step_results) == 2
 
@@ -72,7 +72,7 @@ def test_agent_sequence_non_streaming(workflow_db, test_agent):
 
     response = workflow.run(message="AI Agents")
 
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert response.content is not None
     assert len(response.step_results) == 2
 
@@ -91,7 +91,7 @@ def test_team_sequence_non_streaming(workflow_db, test_team):
 
     response = workflow.run(message="test")
 
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert response.content is not None
     assert len(response.step_results) == 2
 
@@ -115,7 +115,7 @@ async def test_async_function_sequence(workflow_db):
 
     response = await workflow.arun(message="test")
 
-    assert isinstance(response, WorkflowRunResponse)
+    assert isinstance(response, WorkflowRunOutput)
     assert "Async: test" in response.content
     assert "Content: Hello World | Referencing: Async: test" in response.content
 

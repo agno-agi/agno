@@ -402,8 +402,8 @@ class WorkflowSessionDetailSchema(BaseModel):
     workflow_data: Optional[dict]
     metadata: Optional[dict]
 
-    created_at: Optional[datetime]
-    updated_at: Optional[datetime]
+    created_at: Optional[int]
+    updated_at: Optional[int]
 
     @classmethod
     def from_session(cls, session: WorkflowSession) -> "WorkflowSessionDetailSchema":
@@ -420,8 +420,8 @@ class WorkflowSessionDetailSchema(BaseModel):
             session_state=session.session_data.get("session_state", None) if session.session_data else None,
             workflow_data=session.workflow_data,
             metadata=session.metadata,
-            created_at=datetime.fromtimestamp(session.created_at, tz=timezone.utc) if session.created_at else None,
-            updated_at=datetime.fromtimestamp(session.updated_at, tz=timezone.utc) if session.updated_at else None,
+            created_at=session.created_at,
+            updated_at=session.updated_at,
         )
 
 
@@ -505,7 +505,7 @@ class WorkflowRunSchema(BaseModel):
     step_results: Optional[list[dict]]
     step_executor_runs: Optional[list[dict]]
     metrics: Optional[dict]
-    created_at: Optional[datetime]
+    created_at: Optional[int]
 
     @classmethod
     def from_dict(cls, run_response: Dict[str, Any]) -> "WorkflowRunSchema":
@@ -520,7 +520,5 @@ class WorkflowRunSchema(BaseModel):
             metrics=run_response.get("workflow_metrics", {}),
             step_results=run_response.get("step_results", []),
             step_executor_runs=run_response.get("step_executor_runs", []),
-            created_at=datetime.fromtimestamp(run_response["created_at"], tz=timezone.utc)
-            if run_response["created_at"]
-            else None,
+            created_at=run_response["created_at"],
         )

@@ -2,12 +2,12 @@
 Create user memories with an Agent by providing a either text or a list of messages.
 """
 
-from agno.memory import MemoryManager
 from agno.db.postgres import PostgresDb
+from agno.memory import MemoryManager
 from agno.memory.manager import MemoryManager
 from agno.models.anthropic.claude import Claude
-from agno.models.openai import OpenAIChat
 from agno.models.message import Message
+from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"

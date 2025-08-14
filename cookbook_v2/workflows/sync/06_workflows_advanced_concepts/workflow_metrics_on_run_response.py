@@ -3,7 +3,7 @@ import json
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.run.v2.workflow import WorkflowRunResponse
+from agno.run.v2.workflow import WorkflowRunOutput
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
@@ -63,7 +63,7 @@ if __name__ == "__main__":
         ),
         steps=[research_step, content_planning_step],
     )
-    workflow_run_response: WorkflowRunResponse = content_creation_workflow.run(
+    workflow_run_response: WorkflowRunOutput = content_creation_workflow.run(
         message="AI trends in 2024",
     )
 

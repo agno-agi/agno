@@ -73,6 +73,7 @@ agent_team = Team(
     show_members_responses=True,
 )
 
+
 async def main():
     """Main async function demonstrating collaborative team mode."""
     await agent_team.aprint_response(
@@ -80,6 +81,7 @@ async def main():
         # stream=True,
         # stream_intermediate_steps=True,
     )
+
 
 if __name__ == "__main__":
     asyncio.run(main())

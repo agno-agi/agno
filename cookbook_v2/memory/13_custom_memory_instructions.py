@@ -4,8 +4,8 @@ Create user memories with an Agent by providing a either text or a list of messa
 
 from textwrap import dedent
 
-from agno.memory import MemoryManager, UserMemory
 from agno.db.postgres import PostgresDb
+from agno.memory import MemoryManager, UserMemory
 from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
@@ -25,10 +25,12 @@ memory_manager = MemoryManager(
 user_id = "ava@ava.com"
 
 memory_manager.add_user_memory(
-    memory=UserMemory(memory=dedent("""\
+    memory=UserMemory(
+        memory=dedent("""\
     My name is Ava and I like to ski.
     I live in San Francisco and study geometric neuron architecture.
-    """)),
+    """)
+    ),
     user_id=user_id,
 )
 

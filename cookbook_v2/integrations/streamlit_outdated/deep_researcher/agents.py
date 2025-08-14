@@ -4,7 +4,7 @@ from agno.agent import Agent
 from agno.models.nebius import Nebius
 from agno.tools.scrapegraph import ScrapeGraphTools
 from agno.utils.log import logger
-from agno.workflow import RunResponse, Workflow
+from agno.workflow import RunOutput, Workflow
 
 
 class DeepResearcherAgent(Workflow):
@@ -79,7 +79,7 @@ class DeepResearcherAgent(Workflow):
         ),
     )
 
-    def run(self, topic: str) -> Iterator[RunResponse]:
+    def run(self, topic: str) -> Iterator[RunOutputEvent]:
         """
         Orchestrates the research, analysis, and report writing process for a given topic.
         """

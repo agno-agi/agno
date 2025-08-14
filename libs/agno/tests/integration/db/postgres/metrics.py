@@ -9,8 +9,8 @@ import pytest
 from agno.db.base import SessionType
 from agno.db.postgres.postgres import PostgresDb
 from agno.run.base import RunStatus
-from agno.run.response import RunResponse
-from agno.run.team import TeamRunResponse
+from agno.run.response import RunOutput
+from agno.run.team import TeamRunOutput
 from agno.session.agent import AgentSession
 from agno.session.team import TeamSession
 
@@ -38,7 +38,7 @@ def sample_agent_sessions_for_metrics() -> List[AgentSession]:
     sessions = []
 
     for i in range(3):
-        agent_run = RunResponse(
+        agent_run = RunOutput(
             run_id=f"test_run_{i}",
             agent_id=f"test_agent_{i}",
             user_id=f"test_user_{i}",
@@ -248,7 +248,7 @@ def sample_multi_day_sessions() -> List[AgentSession]:
 
     # Day 1: 2 sessions
     for i in range(2):
-        agent_run = RunResponse(
+        agent_run = RunOutput(
             run_id=f"day1_run_{i}",
             agent_id=f"day1_agent_{i}",
             user_id=f"day1_user_{i}",
@@ -270,7 +270,7 @@ def sample_multi_day_sessions() -> List[AgentSession]:
     # Day 2: 3 sessions (next day)
     day2_base = base_time + 86400  # Add 1 day
     for i in range(3):
-        agent_run = RunResponse(
+        agent_run = RunOutput(
             run_id=f"day2_run_{i}",
             agent_id=f"day2_agent_{i}",
             user_id=f"day2_user_{i}",
@@ -291,7 +291,7 @@ def sample_multi_day_sessions() -> List[AgentSession]:
 
     # Day 3: 1 session (next day)
     day3_base = base_time + (2 * 86400)  # Add 2 days
-    agent_run = RunResponse(
+    agent_run = RunOutput(
         run_id="day3_run_0",
         agent_id="day3_agent_0",
         user_id="day3_user_0",
@@ -364,7 +364,7 @@ def test_calculate_metrics_mixed_session_types_multiple_days(postgres_db_real: P
     day1_base = base_time
 
     # Agent session
-    agent_run = RunResponse(
+    agent_run = RunOutput(
         run_id="mixed_agent_run",
         agent_id="mixed_agent",
         user_id="mixed_user",
@@ -384,7 +384,7 @@ def test_calculate_metrics_mixed_session_types_multiple_days(postgres_db_real: P
     sessions.append(agent_session)
 
     # Team session
-    team_run = TeamRunResponse(
+    team_run = TeamRunOutput(
         run_id="mixed_team_run",
         team_id="mixed_team",
         status=RunStatus.completed,
@@ -406,7 +406,7 @@ def test_calculate_metrics_mixed_session_types_multiple_days(postgres_db_real: P
     # Day 2: Only Agent sessions
     day2_base = base_time + 86400
     for i in range(2):
-        agent_run = RunResponse(
+        agent_run = RunOutput(
             run_id=f"day2_mixed_run_{i}",
             agent_id=f"day2_mixed_agent_{i}",
             user_id="mixed_user",
@@ -488,7 +488,7 @@ def test_metrics_calculation_multiple_days(postgres_db_real: PostgresDb):
     # Add sessions for Day 1
     day1_sessions = []
     for i in range(2):
-        agent_run = RunResponse(
+        agent_run = RunOutput(
             run_id=f"incremental_day1_run_{i}",
             agent_id=f"incremental_day1_agent_{i}",
             user_id="incremental_user",
@@ -525,7 +525,7 @@ def test_metrics_calculation_multiple_days(postgres_db_real: PostgresDb):
     day2_base = base_time + 86400
     day2_sessions = []
     for i in range(3):
-        agent_run = RunResponse(
+        agent_run = RunOutput(
             run_id=f"incremental_day2_run_{i}",
             agent_id=f"incremental_day2_agent_{i}",
             user_id="incremental_user",

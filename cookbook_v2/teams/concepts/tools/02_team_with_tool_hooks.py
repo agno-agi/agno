@@ -22,12 +22,12 @@ from agno.utils.log import logger
 def logger_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
     """
     Tool hook that logs function calls and measures execution time.
-    
+
     Args:
         function_name: Name of the function being called
         function_call: The actual function to call
         arguments: Arguments passed to the function
-        
+
     Returns:
         The result of the function call
     """

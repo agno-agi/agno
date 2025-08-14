@@ -1,12 +1,12 @@
 import pytest
 from pydantic import BaseModel, Field
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent, RunOutput
 from agno.db.sqlite import SqliteDb
 from agno.models.aimlapi import AIMLApi
 
 
-def _assert_metrics(response: RunResponse):
+def _assert_metrics(response: RunOutput):
     assert response.metrics is not None
     input_tokens = response.metrics.input_tokens
     output_tokens = response.metrics.output_tokens
@@ -28,7 +28,7 @@ def _assert_metrics(response: RunResponse):
 def test_basic():
     agent = Agent(model=AIMLApi(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
-    response: RunResponse = agent.run("Tell me, why is the sky blue in 2 sentences")
+    response: RunOutput = agent.run("Tell me, why is the sky blue in 2 sentences")
 
     assert response.content is not None
     assert response.messages is not None
