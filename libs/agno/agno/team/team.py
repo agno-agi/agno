@@ -1353,6 +1353,10 @@ class Team:
                         **kwargs,
                     )
 
+                self.run_messages = run_messages
+                if len(run_messages.messages) == 0:
+                    log_error("No messages to be sent to the model.")
+
                 if stream:
                     response_iterator = self._arun_stream(
                         run_response=self.run_response,
