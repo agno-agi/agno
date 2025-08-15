@@ -65,6 +65,16 @@ class BrowserbaseTools(Toolkit):
         tools.append(self.screenshot)
         tools.append(self.get_page_content)
         tools.append(self.close_session)
+        tools.append(self.get_current_url)
+        tools.append(self.go_back)
+        tools.append(self.go_forward)
+        tools.append(self.reload_page)
+        tools.append(self.click_element)
+        tools.append(self.fill_input)
+        tools.append(self.wait_for_element)
+        tools.append(self.get_page_title)
+        tools.append(self.scroll_page)
+        tools.append(self.extract_text)
 
         super().__init__(name="browserbase_tools", tools=tools, **kwargs)
 
@@ -119,12 +129,13 @@ class BrowserbaseTools(Toolkit):
             "connect_url": self._session.connect_url if self._session else "",
         }
 
-    def navigate_to(self, url: str, connect_url: Optional[str] = None) -> str:
+    def navigate_to(self, url: str, connect_url: Optional[str] = None, timeout: int = 600000) -> str:
         """Navigates to a URL.
 
         Args:
             url (str): The URL to navigate to
             connect_url (str, optional): The connection URL from an existing session
+            timeout (int): Timeout in milliseconds (default: 600000)
 
         Returns:
             JSON string with navigation status
@@ -132,7 +143,7 @@ class BrowserbaseTools(Toolkit):
         try:
             self._initialize_browser(connect_url)
             if self._page:
-                self._page.goto(url, wait_until="networkidle")
+                self._page.goto(url, wait_until="networkidle", timeout=timeout)
             result = {"status": "complete", "title": self._page.title() if self._page else "", "url": url}
             return json.dumps(result)
         except Exception as e:
@@ -171,6 +182,212 @@ class BrowserbaseTools(Toolkit):
         try:
             self._initialize_browser(connect_url)
             return self._page.content() if self._page else ""
+        except Exception as e:
+            self._cleanup()
+            raise e
+
+    def get_current_url(self, connect_url: Optional[str] = None) -> str:
+        """Gets the current URL of the page.
+
+        Args:
+            connect_url (str, optional): The connection URL from an existing session
+
+        Returns:
+            JSON string with the current URL
+        """
+        try:
+            self._initialize_browser(connect_url)
+            current_url = self._page.url() if self._page else ""
+            return json.dumps({"status": "success", "url": current_url})
+        except Exception as e:
+            self._cleanup()
+            raise e
+
+    def go_back(self, connect_url: Optional[str] = None) -> str:
+        """Navigates back in browser history.
+
+        Args:
+            connect_url (str, optional): The connection URL from an existing session
+
+        Returns:
+            JSON string with navigation status
+        """
+        try:
+            self._initialize_browser(connect_url)
+            if self._page:
+                self._page.go_back(wait_until="networkidle")
+            new_url = self._page.url() if self._page else ""
+            return json.dumps({"status": "success", "action": "go_back", "url": new_url})
+        except Exception as e:
+            self._cleanup()
+            raise e
+
+    def go_forward(self, connect_url: Optional[str] = None) -> str:
+        """Navigates forward in browser history.
+
+        Args:
+            connect_url (str, optional): The connection URL from an existing session
+
+        Returns:
+            JSON string with navigation status
+        """
+        try:
+            self._initialize_browser(connect_url)
+            if self._page:
+                self._page.go_forward(wait_until="networkidle")
+            new_url = self._page.url() if self._page else ""
+            return json.dumps({"status": "success", "action": "go_forward", "url": new_url})
+        except Exception as e:
+            self._cleanup()
+            raise e
+
+    def reload_page(self, connect_url: Optional[str] = None) -> str:
+        """Reloads/refreshes the current page.
+
+        Args:
+            connect_url (str, optional): The connection URL from an existing session
+
+        Returns:
+            JSON string with reload status
+        """
+        try:
+            self._initialize_browser(connect_url)
+            if self._page:
+                self._page.reload(wait_until="networkidle")
+            current_url = self._page.url() if self._page else ""
+            return json.dumps({"status": "success", "action": "reload", "url": current_url})
+        except Exception as e:
+            self._cleanup()
+            raise e
+
+    def click_element(self, selector: str, connect_url: Optional[str] = None, timeout: int = 600000) -> str:
+        """Clicks on an element specified by CSS selector.
+
+        Args:
+            selector (str): CSS selector for the element to click
+            connect_url (str, optional): The connection URL from an existing session
+            timeout (int): Timeout in milliseconds (default: 600000)
+
+        Returns:
+            JSON string with click status
+        """
+        try:
+            self._initialize_browser(connect_url)
+            if self._page:
+                self._page.click(selector, timeout=timeout)
+            return json.dumps({"status": "success", "action": "click", "selector": selector})
+        except Exception as e:
+            self._cleanup()
+            raise e
+
+    def fill_input(self, selector: str, text: str, connect_url: Optional[str] = None, timeout: int = 600000) -> str:
+        """Fills an input field with the specified text.
+
+        Args:
+            selector (str): CSS selector for the input element
+            text (str): Text to fill in the input
+            connect_url (str, optional): The connection URL from an existing session
+            timeout (int): Timeout in milliseconds (default: 600000)
+
+        Returns:
+            JSON string with fill status
+        """
+        try:
+            self._initialize_browser(connect_url)
+            if self._page:
+                self._page.fill(selector, text, timeout=timeout)
+            return json.dumps({"status": "success", "action": "fill", "selector": selector, "text": text})
+        except Exception as e:
+            self._cleanup()
+            raise e
+
+    def wait_for_element(self, selector: str, timeout: int = 600000, connect_url: Optional[str] = None) -> str:
+        """Waits for an element to appear on the page.
+
+        Args:
+            selector (str): CSS selector for the element to wait for
+            timeout (int): Timeout in milliseconds (default: 600000)
+            connect_url (str, optional): The connection URL from an existing session
+
+        Returns:
+            JSON string with wait status
+        """
+        try:
+            self._initialize_browser(connect_url)
+            if self._page:
+                self._page.wait_for_selector(selector, timeout=timeout)
+            return json.dumps({"status": "success", "action": "wait_for_element", "selector": selector})
+        except Exception as e:
+            self._cleanup()
+            raise e
+
+    def get_page_title(self, connect_url: Optional[str] = None) -> str:
+        """Gets the title of the current page.
+
+        Args:
+            connect_url (str, optional): The connection URL from an existing session
+
+        Returns:
+            JSON string with the page title
+        """
+        try:
+            self._initialize_browser(connect_url)
+            title = self._page.title() if self._page else ""
+            return json.dumps({"status": "success", "title": title})
+        except Exception as e:
+            self._cleanup()
+            raise e
+
+    def scroll_page(self, direction: str = "down", pixels: int = 500, connect_url: Optional[str] = None) -> str:
+        """Scrolls the page in the specified direction.
+
+        Args:
+            direction (str): Direction to scroll ("up", "down", "left", "right")
+            pixels (int): Number of pixels to scroll (default: 500)
+            connect_url (str, optional): The connection URL from an existing session
+
+        Returns:
+            JSON string with scroll status
+        """
+        try:
+            self._initialize_browser(connect_url)
+            if self._page:
+                if direction == "down":
+                    self._page.evaluate(f"window.scrollBy(0, {pixels})")
+                elif direction == "up":
+                    self._page.evaluate(f"window.scrollBy(0, -{pixels})")
+                elif direction == "right":
+                    self._page.evaluate(f"window.scrollBy({pixels}, 0)")
+                elif direction == "left":
+                    self._page.evaluate(f"window.scrollBy(-{pixels}, 0)")
+                else:
+                    raise ValueError(f"Invalid direction: {direction}. Use 'up', 'down', 'left', or 'right'")
+            return json.dumps({"status": "success", "action": "scroll", "direction": direction, "pixels": pixels})
+        except Exception as e:
+            self._cleanup()
+            raise e
+
+    def extract_text(self, selector: Optional[str] = None, connect_url: Optional[str] = None) -> str:
+        """Extracts text content from the page or a specific element.
+
+        Args:
+            selector (str, optional): CSS selector for specific element. If None, extracts all page text
+            connect_url (str, optional): The connection URL from an existing session
+
+        Returns:
+            JSON string with extracted text
+        """
+        try:
+            self._initialize_browser(connect_url)
+            if self._page:
+                if selector:
+                    element = self._page.query_selector(selector)
+                    text = element.text_content() if element else ""
+                else:
+                    text = self._page.evaluate("document.body.innerText")
+            else:
+                text = ""
+            return json.dumps({"status": "success", "text": text, "selector": selector})
         except Exception as e:
             self._cleanup()
             raise e
