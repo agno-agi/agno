@@ -34,24 +34,19 @@ class GeminiEmbedder(Embedder):
             return self.gemini_client
 
         _client_params: Dict[str, Any] = {}
-        
-        # Check if Vertex AI should be used
         vertexai = self.vertexai or getenv("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
         
         if not vertexai:
-            # Use API key authentication
             self.api_key = self.api_key or getenv("GOOGLE_API_KEY")
             if not self.api_key:
                 log_error("GOOGLE_API_KEY not set. Please set the GOOGLE_API_KEY environment variable.")
             _client_params["api_key"] = self.api_key
         else:
-            # Use Vertex AI authentication
             log_info("Using Vertex AI API for embeddings")
             _client_params["vertexai"] = True
             _client_params["project"] = self.project_id or getenv("GOOGLE_CLOUD_PROJECT")
             _client_params["location"] = self.location or getenv("GOOGLE_CLOUD_LOCATION")
         
-        # Remove None values from client params
         _client_params = {k: v for k, v in _client_params.items() if v is not None}
         
         if self.client_params:
