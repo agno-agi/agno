@@ -164,9 +164,13 @@ You must analyze the given input and respond using a specific format with two se
 OR_GPT_OSS_120B = OpenRouter(
     id="openai/gpt-oss-120b",
     api_key=os.environ["OPENROUTER_API_KEY"],
+    reasoning_effort="high",
     request_params={
         "extra_body": {
-            "provider": {"order": ["cerebras", "groq"], "allow_fallbacks": True}
+            "provider": {
+                "order": ["cerebras", "groq"],
+                "allow_fallbacks": True,
+            }  # use the fastest providers but allow fallbacks
         }
     },
     max_tokens=10000,
