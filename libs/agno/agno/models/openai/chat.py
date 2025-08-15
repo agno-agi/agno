@@ -663,8 +663,9 @@ class OpenAIChat(Model):
             except Exception as e:
                 log_warning(f"Error processing audio: {e}")
 
-        if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:
-            model_response.reasoning_content = response_message.reasoning_content
+        if hasattr(response_message, "reasoning") and response_message.reasoning is not None:
+            model_response.reasoning = f"<think>\n{response_message.reasoning}\n</think>"
+            model_response.content = f"{model_response.reasoning}\n {model_response.content}"
 
         if response.usage is not None:
             model_response.response_usage = response.usage
@@ -686,10 +687,16 @@ class OpenAIChat(Model):
             choice_delta: ChoiceDelta = response_delta.choices[0].delta
 
             if choice_delta:
-                # Add content
-                if choice_delta.content is not None:
-                    model_response.content = choice_delta.content
+                
+                # Add thinking as content
+                is_reasoning = hasattr(choice_delta, 'reasoning')
+                if is_reasoning and choice_delta.reasoning is not None:
+                    model_response.content = choice_delta.reasoning
 
+                # Add content if there is no thinking
+                if not (is_reasoning and choice_delta.reasoning is not None) and choice_delta.content is not None:
+                    model_response.content = choice_delta.content
+                                    
                 # Add tool calls
                 if choice_delta.tool_calls is not None:
                     model_response.tool_calls = choice_delta.tool_calls  # type: ignore
