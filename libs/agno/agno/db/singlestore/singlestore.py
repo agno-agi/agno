@@ -121,7 +121,7 @@ class SingleStoreDb(BaseDb):
                     continue
 
                 column_args = [col_name, col_config["type"]()]
-                column_kwargs = {}
+                column_kwargs: Dict[str, Any] = {}
                 if col_config.get("primary_key", False):
                     column_kwargs["primary_key"] = True
                 if "nullable" in col_config:
@@ -165,7 +165,7 @@ class SingleStoreDb(BaseDb):
             # Get the columns, indexes, and unique constraints from the table schema
             for col_name, col_config in table_schema.items():
                 column_args = [col_name, col_config["type"]()]
-                column_kwargs = {}
+                column_kwargs: Dict[str, Any] = {}
                 if col_config.get("primary_key", False):
                     column_kwargs["primary_key"] = True
                 if "nullable" in col_config:

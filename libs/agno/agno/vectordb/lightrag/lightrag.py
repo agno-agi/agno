@@ -84,12 +84,12 @@ class LightRag(VectorDb):
         pass
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
-        print("Hitting search")
-        return asyncio.run(self.async_search(query, limit=limit, filters=filters))
+        result = asyncio.run(self.async_search(query, limit=limit, filters=filters))
+        return result if result is not None else []
 
     async def async_search(
         self, query: str, limit: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
-    ) -> List[Document]:
+    ) -> Optional[List[Document]]:
         mode: str = "hybrid"  # Default mode, can be "local", "global", or "hybrid"
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -219,8 +219,7 @@ class LightRag(VectorDb):
             # Send with filename and content type (full UploadFile format)
             files = {"file": (filename, file_content, content_type)}
         else:
-            # Send just binary data
-            files = {"file": file_content}
+            files = {"file": file_content}  # type: ignore
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
@@ -233,7 +232,7 @@ class LightRag(VectorDb):
             log_info(f"File insertion result: {result}")
             track_id = result["track_id"]
             log_info(f"Track ID: {track_id}")
-            result = await self._get_document_id(track_id)
+            result = await self._get_document_id(track_id)  # type: ignore
             log_info(f"Document ID: {result}")
             return result
 
@@ -253,11 +252,11 @@ class LightRag(VectorDb):
             log_info(f"Text insertion result: {result}")
             track_id = result["track_id"]
             log_info(f"Track ID: {track_id}")
-            result = await self._get_document_id(track_id)
+            result = await self._get_document_id(track_id)  # type: ignore
             log_info(f"Document ID: {result}")
             return result
 
-    async def _get_document_id(self, track_id: str) -> str:
+    async def _get_document_id(self, track_id: str) -> Optional[str]:
         """Get the document ID from the upload ID."""
         async with httpx.AsyncClient() as client:
             response = await client.get(
@@ -285,7 +284,7 @@ class LightRag(VectorDb):
     async def lightrag_knowledge_retriever(
         self,
         query: str,
-    ) -> Optional[List[Dict[str, Any]]]:
+    ) -> Optional[List[Document]]:
         """
         Custom knowledge retriever function to search the LightRAG server for relevant documents.
 
@@ -299,7 +298,7 @@ class LightRag(VectorDb):
             List of retrieved documents or None if search fails
         """
 
-        mode: str = ("hybrid",)  # Default mode, can be "local", "global", or "hybrid"
+        mode: str = "hybrid"  # Default mode, can be "local", "global", or "hybrid"
 
         try:
             import httpx

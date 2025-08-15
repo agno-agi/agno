@@ -980,7 +980,7 @@ class Qdrant(VectorDb):
 
             # Search for points with the given content_id
             search_result = self.client.scroll(
-                collection_name=self.collection_name,
+                collection_name=self.collection,
                 scroll_filter=filter_condition,
                 limit=10000,  # Get all matching points
                 with_payload=True,
@@ -1016,7 +1016,7 @@ class Qdrant(VectorDb):
             # Execute all updates
             for operation in update_operations:
                 self.client.set_payload(
-                    collection_name=self.collection_name, payload=operation.payload, points=operation.points
+                    collection_name=self.collection, payload=operation.payload, points=operation.points
                 )
 
             log_debug(f"Updated metadata for {len(update_operations)} documents with content_id: {content_id}")

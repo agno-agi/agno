@@ -49,7 +49,7 @@ class VectorDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         raise NotImplementedError
 
     @abstractmethod
@@ -99,4 +99,8 @@ class VectorDb(ABC):
 
     @abstractmethod
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_by_content_id(self, content_id: str) -> bool:
         raise NotImplementedError
