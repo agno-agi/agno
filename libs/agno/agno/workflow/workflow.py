@@ -27,6 +27,7 @@ from agno.agent.agent import Agent
 from agno.db.base import BaseDb, SessionType
 from agno.media import Audio, AudioArtifact, Image, ImageArtifact, Video, VideoArtifact
 from agno.models.message import Message
+from agno.models.metrics import Metrics
 from agno.run.base import RunStatus
 from agno.run.workflow import (
     ConditionExecutionCompletedEvent,
@@ -371,7 +372,7 @@ class Workflow:
         self.save_session(session=session)  # type: ignore
 
         return session  # type: ignore
-
+    
     def get_session_name(self, session_id: Optional[str] = None) -> str:
         """Get the session name for the given session ID and user ID."""
         session_id = session_id or self.session_id
@@ -924,6 +925,7 @@ class Workflow:
                 workflow_run_response.content = f"Workflow execution failed: {e}"
 
             finally:
+                self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
                 session.upsert_run(run=workflow_run_response)
                 self.save_session(session=session)
 
@@ -1118,6 +1120,7 @@ class Workflow:
         yield self._handle_event(workflow_completed_event, workflow_run_response)
 
         # Store the completed workflow response
+        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
         session.upsert_run(run=workflow_run_response)
         self.save_session(session=session)
 
@@ -1288,7 +1291,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Workflow execution failed: {e}"
 
-        # Store error response
+        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
         session.upsert_run(run=workflow_run_response)
         self.save_session(session=session)
 
@@ -1490,6 +1493,7 @@ class Workflow:
         yield self._handle_event(workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler)
 
         # Store the completed workflow response
+        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
         session.upsert_run(run=workflow_run_response)
         self.save_session(session=session)
 
@@ -1565,6 +1569,7 @@ class Workflow:
                     **kwargs,
                 )
 
+                self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
                 workflow_session.upsert_run(run=workflow_run_response)
                 self.save_session(session=workflow_session)
 
@@ -1664,6 +1669,7 @@ class Workflow:
                     # We just consume them here to drive the execution
                     pass
 
+                self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
                 workflow_session.upsert_run(run=workflow_run_response)
                 self.save_session(session=workflow_session)
 
@@ -3069,7 +3075,6 @@ class Workflow:
         console: Optional[Any] = None,
         **kwargs: Any,
     ) -> None:
-        """Print workflow execution with clean streaming - orange step blocks displayed once"""
         from rich.console import Group
         from rich.live import Live
         from rich.markdown import Markdown
@@ -3128,7 +3133,7 @@ class Workflow:
         response_timer = Timer()
         response_timer.start()
 
-        # Streaming execution variables
+        # Streaming execution variables with smart step tracking
         current_step_content = ""
         current_step_name = ""
         current_step_index = 0
@@ -3185,9 +3190,9 @@ class Workflow:
             try:
                 async for response in await self.arun(
                     input=input,
-                    additional_data=additional_data,
                     user_id=user_id,
                     session_id=session_id,
+                    additional_data=additional_data,
                     audio=audio,
                     images=images,
                     videos=videos,
@@ -3515,10 +3520,10 @@ class Workflow:
                             console.print(summary_panel)  # type: ignore
 
                     else:
+                        # Handle streaming content
                         if isinstance(response, str):
                             response_str = response
                         elif isinstance(response, StepOutputEvent):
-                            # Handle StepOutputEvent objects yielded from workflow
                             response_str = response.content or ""  # type: ignore
                         else:
                             from agno.run.response import RunContentEvent
@@ -3534,25 +3539,21 @@ class Workflow:
                                 while isinstance(actual_step_index, tuple) and len(actual_step_index) > 0:
                                     actual_step_index = actual_step_index[0]
 
-                            # Check if this is a streaming content event from agent or team
-                            if isinstance(
-                                response,
-                                (RunContentEvent, TeamRunContentEvent, WorkflowRunOutputEvent),  # type: ignore
-                            ):  # type: ignore
-                                # Handle WorkflowErrorEvent specifically
-                                if isinstance(response, WorkflowErrorEvent):  # type: ignore
-                                    response_str = response.error or "Workflow execution error"  # type: ignore
-                                else:
-                                    # Extract the content from the streaming event
-                                    response_str = response.content  # type: ignore
+                            if not is_callable_function and self.steps and actual_step_index < len(self.steps):  # type: ignore
+                                step = self.steps[actual_step_index]  # type: ignore
+                                if hasattr(step, "executor_type"):
+                                    current_step_executor_type = step.executor_type
 
-                                    # Check if this is a team's final structured output
-                                    is_structured_output = (
-                                        isinstance(response, TeamRunContentEvent)
-                                        and hasattr(response, "content_type")
-                                        and response.content_type != "str"
-                                        and response.content_type != ""
-                                    )
+                            # Check if this is a streaming content event from agent or team
+                            if isinstance(response, (TeamRunContentEvent, WorkflowRunOutputEvent)):  # type: ignore
+                                # Check if this is a team's final structured output
+                                is_structured_output = (
+                                    isinstance(response, TeamRunContentEvent)
+                                    and hasattr(response, "content_type")
+                                    and response.content_type != "str"
+                                    and response.content_type != ""
+                                )
+                                response_str = response.content  # type: ignore
                             elif isinstance(response, RunContentEvent) and current_step_executor_type != "team":
                                 response_str = response.content  # type: ignore
                             else:
@@ -3635,6 +3636,68 @@ class Workflow:
             ],
             "session_id": self.session_id,
         }
+
+    def _calculate_session_metrics_from_workflow_metrics(self, workflow_metrics: WorkflowMetrics) -> Metrics:
+        """Calculate session metrics by aggregating all step metrics from workflow metrics"""
+        session_metrics = Metrics()
+        
+        # Aggregate metrics from all steps
+        for step_name, step_metrics in workflow_metrics.steps.items():
+            if step_metrics.metrics:
+                session_metrics += step_metrics.metrics
+        
+        session_metrics.time_to_first_token = None
+        
+        return session_metrics
+
+    def _get_session_metrics(self, session: WorkflowSession) -> Metrics:
+        """Get existing session metrics from the database"""
+        if session.session_data and "session_metrics" in session.session_data:
+            session_metrics_from_db = session.session_data.get("session_metrics")
+            if session_metrics_from_db is not None:
+                if isinstance(session_metrics_from_db, dict):
+                    return Metrics(**session_metrics_from_db)
+                elif isinstance(session_metrics_from_db, Metrics):
+                    return session_metrics_from_db
+        return Metrics()
+
+    def _update_session_metrics(self, session: WorkflowSession, workflow_run_response: WorkflowRunOutput):
+        """Calculate and update session metrics"""
+        # Get existing session metrics
+        session_metrics = self._get_session_metrics(session=session)
+        
+        # If workflow has metrics, convert and add them to session metrics
+        if workflow_run_response.workflow_metrics:
+            run_session_metrics = self._calculate_session_metrics_from_workflow_metrics(
+                workflow_run_response.workflow_metrics
+            )
+
+            session_metrics += run_session_metrics
+            
+        session_metrics.time_to_first_token = None
+        
+        # Store updated session metrics - CONVERT TO DICT FOR JSON SERIALIZATION
+        if not session.session_data:
+            session.session_data = {}
+        session.session_data["session_metrics"] = session_metrics.to_dict()
+
+    def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+        """Get the session metrics for the given session ID and user ID."""
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is required")
+        
+        session = self.get_session(session_id=session_id)
+        if session is None:
+            raise Exception("Session not found")
+        
+        if session.session_data and "session_metrics" in session.session_data:
+            session_metrics_data = session.session_data.get("session_metrics")
+            if isinstance(session_metrics_data, dict):
+                return Metrics(**session_metrics_data)
+            elif isinstance(session_metrics_data, Metrics):
+                return session_metrics_data
+        return None
 
     def update_agents_and_teams_session_info(self):
         """Update agents and teams with workflow session information"""
