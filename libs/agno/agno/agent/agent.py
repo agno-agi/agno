@@ -749,6 +749,7 @@ class Agent:
         # Use the default user_id when necessary
         if user_id is not None and user_id != "":
             user_id = user_id
+            self.user_id = user_id
         else:
             user_id = self.user_id
 
