@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.reader.url_reader import URLReader
@@ -30,6 +31,15 @@ class WebSearchReader(Reader):
     """Reader that uses web search to find content for a given query"""
 
     search_timeout: int = 10
+
+    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+        """Get the list of supported chunking strategies for Web Search readers."""
+        return [
+            ChunkingStrategyType.AGENTIC_CHUNKING,
+            ChunkingStrategyType.DOCUMENT_CHUNKING,
+            ChunkingStrategyType.RECURSIVE_CHUNKING,
+        ]
+
     request_timeout: int = 30
     delay_between_requests: float = 2.0  # Increased default delay
     max_retries: int = 3
@@ -50,7 +60,13 @@ class WebSearchReader(Reader):
     _last_search_time: float = field(default=0.0, init=False)
 
     def __post_init__(self):
-        """Initialize the URL reader after dataclass initialization"""
+        """Initialize the URL reader and chunking strategy after dataclass initialization"""
+        # Set SemanticChunking as default strategy if none provided
+        if self.chunking_strategy is None:
+            from agno.knowledge.chunking.semantic import SemanticChunking
+
+            self.chunking_strategy = SemanticChunking()
+
         self._url_reader = URLReader()
 
     def _respect_rate_limits(self):

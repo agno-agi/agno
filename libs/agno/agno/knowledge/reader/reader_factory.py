@@ -173,7 +173,7 @@ class ReaderFactory:
 
         if extension in [".pdf", "application/pdf"]:
             return cls.create_reader("pdf")
-        elif extension == ".csv":
+        elif extension in [".csv", "text/csv"]:
             return cls.create_reader("csv")
         elif extension in [".docx", ".doc"]:
             return cls.create_reader("docx")
@@ -231,9 +231,7 @@ class ReaderFactory:
             reader = reader_method()
 
             # Get supported chunking strategies for this reader
-            supported_strategies = []
-            if hasattr(reader, "get_supported_chunking_strategies"):
-                supported_strategies = reader.get_supported_chunking_strategies()
+            supported_strategies = reader.get_supported_chunking_strategies()
 
             return {
                 "id": reader_key,
