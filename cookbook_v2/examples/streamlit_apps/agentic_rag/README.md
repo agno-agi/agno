@@ -1,10 +1,8 @@
 # Agentic RAG Agent
-
 **Agentic RAG Agent** is a chat application that combines models with retrieval-augmented generation.
 It allows users to ask questions based on custom knowledge bases, documents, and web data, retrieve context-aware answers, and maintain chat history across sessions.
 
 > Note: Fork and clone this repository if needed
-
 ### 1. Create a virtual environment
 
 ```shell
@@ -13,35 +11,27 @@ source .venv/bin/activate
 ```
 
 ### 2. Install dependencies
-
 ```shell
 pip install -r cookbook/examples/streamlit_apps/agentic_rag/requirements.txt
 ```
-
 ### 3. Configure API Keys
-
 Required:
 ```bash
 export OPENAI_API_KEY=your_openai_key_here
 ```
-
 Optional (for additional models):
 ```bash
 export ANTHROPIC_API_KEY=your_anthropic_key_here
 export GOOGLE_API_KEY=your_google_key_here
 export GROQ_API_KEY=your_groq_key_here
 ```
-
 ### 4. Run PgVector
-
 > Install [docker desktop](https://docs.docker.com/desktop/install/mac-install/) first.
 
 - Run using a helper script
-
 ```shell
 ./cookbook/scripts/run_pgvector.sh
 ```
-
 - OR run using the docker run command
 
 ```shell
@@ -57,7 +47,6 @@ docker run -d \
 ```
 
 ### 5. Run Agentic RAG App
-
 ```shell
 streamlit run cookbook/examples/streamlit_apps/agentic_rag/app.py 
 ```
@@ -89,8 +78,4 @@ For more detailed information:
 - [Streamlit Documentation](https://docs.streamlit.io)
 
 ## 🤝 Support
-
 Need help? Join our [Discord community](https://agno.link/discord)
-
-
-

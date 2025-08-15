@@ -4278,14 +4278,14 @@ class Agent:
         # Get references from the knowledge base to use in the user message
         references = None
         self.run_response = cast(RunOutput, self.run_response)
-        if self.add_knowledge_to_context and message:
+        if self.add_knowledge_to_context and input:
             message_str: str
-            if isinstance(message, str):
-                message_str = message
-            elif callable(message):
-                message_str = message(agent=self)
+            if isinstance(input, str):
+                message_str = input
+            elif callable(input):
+                message_str = input(agent=self)
             else:
-                raise Exception("message must be a string or a callable when add_knowledge_to_context is True")
+                raise Exception("input must be a string or a callable when add_knowledge_to_context is True")
 
             try:
                 retrieval_timer = Timer()
