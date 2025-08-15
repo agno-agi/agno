@@ -11,7 +11,6 @@ from uuid import uuid4
 from agno.agent import RunEvent
 from agno.agent.agent import Agent
 from agno.models.anthropic.claude import Claude
-from agno.models.mistral import MistralChat
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team, TeamRunEvent
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -19,10 +18,9 @@ from agno.tools.hackernews import HackerNewsTools
 
 # Hacker News search agent
 hacker_news_agent = Agent(
-    agent_id="hacker-news-agent",
+    id="hacker-news-agent",
     name="Hacker News Agent",
     role="Search Hacker News for information",
-    model=MistralChat(id="mistral-large-latest"),
     tools=[HackerNewsTools()],
     instructions=[
         "Find articles about the company in the Hacker News",
@@ -31,7 +29,7 @@ hacker_news_agent = Agent(
 
 # Web search agent
 website_agent = Agent(
-    agent_id="website-agent",
+    id="website-agent",
     name="Website Agent",
     role="Search the website for information",
     model=OpenAIChat(id="gpt-4o"),
@@ -49,7 +47,7 @@ team_id = str(uuid4())
 company_info_team = Team(
     name="Company Info Team",
     mode="coordinate",
-    team_id=team_id,
+    id=team_id,
     model=Claude(id="claude-3-7-sonnet-latest"),
     members=[
         hacker_news_agent,
@@ -111,7 +109,7 @@ async def run_team_with_events(prompt: str):
             )  # Truncate for readability
 
         # Handle content generation
-        if run_response_event.event in [TeamRunEvent.run_response_content]:
+        if run_response_event.event in [TeamRunEvent.run_content]:
             if not content_started:
                 print("\n📝 CONTENT:")
                 content_started = True
