@@ -484,7 +484,7 @@ class Workflow:
 
         # Process all step results
         for step_result in step_results:
-            process_step_output(step_result)
+            process_step_output(cast(StepOutput, step_result))
 
         return WorkflowMetrics(
             steps=steps_dict,
@@ -1724,7 +1724,7 @@ class Workflow:
                     # This is a workflow step object - use the mapping
                     step_type = STEP_TYPE_MAPPING[type(step)]
                     step_dict = {
-                        "name": step.name if hasattr(step, "name") else step.__name__,
+                        "name": step.name if hasattr(step, "name") else f"unnamed_{type(step).__name__.lower()}",
                         "description": step.description
                         if hasattr(step, "description")
                         else "User-defined callable step",
