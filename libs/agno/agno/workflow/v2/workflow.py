@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from agno.agent.agent import Agent
 from agno.media import Audio, AudioArtifact, Image, ImageArtifact, Video, VideoArtifact
 from agno.run.base import RunStatus
+from agno.run.response import Message
 from agno.run.v2.workflow import (
     ConditionExecutionCompletedEvent,
     ConditionExecutionStartedEvent,
@@ -49,7 +50,9 @@ from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV
 from agno.team.team import Team
 from agno.utils.log import (
     log_debug,
-    logger,
+    log_error,
+    log_info,
+    log_warning,
     set_log_level_to_debug,
     set_log_level_to_info,
     use_workflow_logger,
@@ -58,7 +61,7 @@ from agno.workflow.v2.condition import Condition
 from agno.workflow.v2.loop import Loop
 from agno.workflow.v2.parallel import Parallel
 from agno.workflow.v2.router import Router
-from agno.workflow.v2.step import Step
+from agno.workflow.v2.step import ChatStep, Step
 from agno.workflow.v2.steps import Steps
 from agno.workflow.v2.types import (
     StepInput,
@@ -101,6 +104,7 @@ class Workflow:
 
     # Workflow configuration
     steps: Optional[WorkflowSteps] = None
+    chat_step: Optional[ChatStep] = None
 
     storage: Optional[Storage] = None
 
@@ -135,6 +139,7 @@ class Workflow:
         description: Optional[str] = None,
         storage: Optional[Storage] = None,
         steps: Optional[WorkflowSteps] = None,
+        chat_step: Optional[ChatStep] = None,
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
         workflow_session_state: Optional[Dict[str, Any]] = None,
@@ -150,6 +155,7 @@ class Workflow:
         self.description = description
         self.storage = storage
         self.steps = steps
+        self.chat_step = chat_step
         self.session_id = session_id
         self.session_name = session_name
         self.workflow_session_state = workflow_session_state
@@ -432,10 +438,74 @@ class Workflow:
             return func(**call_kwargs)
         except TypeError as e:
             # If signature inspection fails, fall back to original method
-            logger.warning(
+            log_warning(
                 f"Async function signature inspection failed: {e}. Falling back to original calling convention."
             )
             return func(workflow, execution_input, **kwargs)
+
+    def _execute_chat(
+        self, execution_input: WorkflowExecutionInput, workflow_run_response: WorkflowRunResponse
+    ) -> bool:
+        """Execute a chat step"""
+
+        # TODO: Instead of just the current execution_input.message, potentially get all user messages for more context
+
+        final_step_outputs: List[StepOutput] = []
+
+        # Step output name is currently broken, so we are appending all responses instead of just the final step
+        if self.workflow_session is not None and len(self.workflow_session.runs) > 0:
+            for run in self.workflow_session.runs:
+                for response in run.step_responses:
+                    final_step_outputs.append(response)
+
+        if len(final_step_outputs) == 0:
+            log_debug(f"No final step outputs found")
+            return False
+
+        formatted_final_step_outputs = "\n".join(
+            [f"=== {output.step_name} ===\n{output.content}" for output in final_step_outputs]
+        )
+
+        from agno.workflow.v2.utils import ChatStepValidation, get_chat_prompt, get_chat_validation_prompt
+
+        if self.chat_step.validation_agent is None:
+            validation_agent = Agent(
+                name="Chat Step Validation Agent",
+                instructions=get_chat_validation_prompt(
+                    execution_input.get_message_as_string(), formatted_final_step_outputs
+                ),
+                response_model=ChatStepValidation,
+            )
+        else:
+            validation_agent = self.chat_step.validation_agent
+
+        if self.chat_step.chat_agent is None:
+            chat_agent = Agent(
+                name="Chat Step Agent",
+                instructions=get_chat_prompt(execution_input.get_message_as_string(), formatted_final_step_outputs),
+            )
+        else:
+            chat_agent = self.chat_step.chat_agent
+
+        validation_response = validation_agent.run(message=execution_input.get_message_as_string())
+
+        if not isinstance(validation_response.content, ChatStepValidation):
+            log_error(f"Validation response is not a ChatStepValidation: {validation_response.content}")
+            return False
+
+        if validation_response.content.relevant:
+            chat_response = chat_agent.run(message=execution_input.get_message_as_string())
+            workflow_run_response.step_responses.append(
+                StepOutput(content=chat_response.content, step_name="Chat Step")
+            )
+
+            workflow_run_response.content = chat_response.content
+            workflow_run_response.status = RunStatus.completed
+
+            self._save_run_to_storage(workflow_run_response)
+            return True
+        else:
+            return False
 
     def _execute(
         self, execution_input: WorkflowExecutionInput, workflow_run_response: WorkflowRunResponse, **kwargs: Any
@@ -444,6 +514,11 @@ class Workflow:
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
+
+        if self.chat_step is not None:
+            if self._execute_chat(execution_input, workflow_run_response):
+                workflow_run_response.status = RunStatus.completed
+                return workflow_run_response
 
         if callable(self.steps):
             if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
@@ -496,13 +571,13 @@ class Workflow:
                         if step_output:
                             previous_step_outputs[step_name] = step_output[-1]
                             if any(output.stop for output in step_output):
-                                logger.info(f"Early termination requested by step {step_name}")
+                                log_info(f"Early termination requested by step {step_name}")
                                 break
                     else:
                         # Single output
                         previous_step_outputs[step_name] = step_output
                         if step_output.stop:
-                            logger.info(f"Early termination requested by step {step_name}")
+                            log_info(f"Early termination requested by step {step_name}")
                             break
 
                     # Update shared media for next step
@@ -549,7 +624,7 @@ class Workflow:
                 import traceback
 
                 traceback.print_exc()
-                logger.error(f"Workflow execution failed: {e}")
+                log_error(f"Workflow execution failed: {e}")
                 # Store error response
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Workflow execution failed: {e}"
@@ -578,6 +653,9 @@ class Workflow:
             session_id=workflow_run_response.session_id,
         )
         yield self._handle_event(workflow_started_event, workflow_run_response)
+
+        # if self.chat_step is not None:
+        # TODO: Implement chat step streaming and async executions
 
         if callable(self.steps):
             if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
@@ -647,7 +725,7 @@ class Workflow:
                             )
 
                             if step_output.stop:
-                                logger.info(f"Early termination requested by step {step_name}")
+                                log_info(f"Early termination requested by step {step_name}")
                                 # Update shared media for next step
                                 shared_images.extend(step_output.images or [])
                                 shared_videos.extend(step_output.videos or [])
@@ -708,7 +786,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.completed
 
             except Exception as e:
-                logger.error(f"Workflow execution failed: {e}")
+                log_error(f"Workflow execution failed: {e}")
 
                 from agno.run.v2.workflow import WorkflowErrorEvent
 
@@ -779,7 +857,7 @@ class Workflow:
                 return await func(**call_kwargs)  # type: ignore
         except TypeError as e:
             # If signature inspection fails, fall back to original method
-            logger.warning(
+            log_warning(
                 f"Async function signature inspection failed: {e}. Falling back to original calling convention."
             )
             if isasyncgenfunction(func):
@@ -858,13 +936,13 @@ class Workflow:
                         if step_output:
                             previous_step_outputs[step_name] = step_output[-1]
                             if any(output.stop for output in step_output):
-                                logger.info(f"Early termination requested by step {step_name}")
+                                log_info(f"Early termination requested by step {step_name}")
                                 break
                     else:
                         # Single output
                         previous_step_outputs[step_name] = step_output
                         if step_output.stop:
-                            logger.info(f"Early termination requested by step {step_name}")
+                            log_info(f"Early termination requested by step {step_name}")
                             break
 
                     # Update shared media for next step
@@ -908,7 +986,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.completed
 
             except Exception as e:
-                logger.error(f"Workflow execution failed: {e}")
+                log_error(f"Workflow execution failed: {e}")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Workflow execution failed: {e}"
 
@@ -1014,7 +1092,7 @@ class Workflow:
                             )
 
                             if step_output.stop:
-                                logger.info(f"Early termination requested by step {step_name}")
+                                log_info(f"Early termination requested by step {step_name}")
                                 # Update shared media for next step
                                 shared_images.extend(step_output.images or [])
                                 shared_videos.extend(step_output.videos or [])
@@ -1075,7 +1153,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.completed
 
             except Exception as e:
-                logger.error(f"Workflow execution failed: {e}")
+                log_error(f"Workflow execution failed: {e}")
 
                 from agno.run.v2.workflow import WorkflowErrorEvent
 
@@ -1191,7 +1269,7 @@ class Workflow:
                 log_debug(f"Background execution completed with status: {workflow_run_response.status}")
 
             except Exception as e:
-                logger.error(f"Background workflow execution failed: {e}")
+                log_error(f"Background workflow execution failed: {e}")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background execution failed: {str(e)}"
                 self._save_run_to_storage(workflow_run_response)
@@ -1514,7 +1592,7 @@ class Workflow:
             workflow_name=self.name,
             runs=self.workflow_session.runs if self.workflow_session else [],
             workflow_data=workflow_data,
-            session_data={},
+            session_data=self.workflow_session_state,
         )
 
     def load_workflow_session(self, session: WorkflowSessionV2):
@@ -1591,6 +1669,39 @@ class Workflow:
 
         log_debug(f"New session ID: {self.session_id}")
         self.load_session(force=True)
+
+    def add_run_to_session_state(self, run_response: WorkflowRunResponse) -> None:
+        """Add a run to the session state"""
+        if self.workflow_session_state is None:
+            self.workflow_session_state = {}
+
+        # TODO: Account for Teams
+        log_debug(f"Adding run to session state: {run_response.agent_id}")
+        if self.workflow_session_state.get(run_response.agent_id) is None:
+            self.workflow_session_state[run_response.agent_id] = [run_response.to_dict()]
+        else:
+            self.workflow_session_state[run_response.agent_id].append(run_response.to_dict())
+
+    def get_runs_from_session_state(self, agent_id: str, num_runs: int = 1):
+        """Get a run from the session state"""
+        if self.workflow_session_state is None:
+            return None
+        runs = self.workflow_session_state.get(agent_id)
+        if runs is None:
+            return None
+        return runs[-num_runs:] if len(runs) > num_runs else runs
+
+    def get_messages_from_runs(self, runs) -> List[Message]:
+        """Get messages from runs"""
+        messages = []
+        if runs is None:
+            return messages
+        for run in runs:
+            if run.get("messages"):
+                for message in run.get("messages"):
+                    if not message.get("from_history") and message.get("role") != "system":
+                        messages.append(Message(role=message.get("role"), content=message.get("content")))
+        return messages
 
     def _format_step_content_for_display(self, step_output: StepOutput) -> str:
         """Format content for display, handling structured outputs. Works for both raw content and StepOutput objects."""
@@ -3195,26 +3306,49 @@ class Workflow:
 
     def _collect_workflow_session_state_from_agents_and_teams(self):
         """Collect updated workflow_session_state from agents after step execution"""
+        # Collect state from all agents in all steps (including nested primitives)
+        if self.steps and not callable(self.steps):
+            steps_list = self.steps.steps if isinstance(self.steps, Steps) else self.steps
+            self._collect_session_state_from_steps_recursive(steps_list)
+
+    def _collect_session_state_from_steps_recursive(self, steps_list):
+        """Recursively collect session state from all steps, including nested primitives"""
+        from agno.utils.merge_dict import merge_dictionaries
+        from agno.workflow.v2.condition import Condition
+        from agno.workflow.v2.loop import Loop
+        from agno.workflow.v2.parallel import Parallel
+        from agno.workflow.v2.router import Router
+        from agno.workflow.v2.steps import Steps
+
         if self.workflow_session_state is None:
             self.workflow_session_state = {}
 
-        # Collect state from all agents in all steps
-        if self.steps and not callable(self.steps):
-            steps_list = self.steps.steps if isinstance(self.steps, Steps) else self.steps
-            for step in steps_list:
-                if isinstance(step, Step):
-                    executor = step.active_executor
-                    if hasattr(executor, "workflow_session_state") and executor.workflow_session_state:
-                        # Merge the agent's session state back into workflow session state
-                        from agno.utils.merge_dict import merge_dictionaries
+        for step in steps_list:
+            if isinstance(step, Step):
+                executor = step.active_executor
+                if hasattr(executor, "workflow_session_state") and executor.workflow_session_state:
+                    # Merge the agent's session state back into workflow session state
+                    merge_dictionaries(self.workflow_session_state, executor.workflow_session_state)
 
-                        merge_dictionaries(self.workflow_session_state, executor.workflow_session_state)
+                # If it's a team, collect from all members
+                if hasattr(executor, "members"):
+                    for member in executor.members:
+                        if hasattr(member, "workflow_session_state") and member.workflow_session_state:
+                            merge_dictionaries(self.workflow_session_state, member.workflow_session_state)
 
-                    # If it's a team, collect from all members
-                    if hasattr(executor, "members"):
-                        for member in executor.members:
-                            if hasattr(member, "workflow_session_state") and member.workflow_session_state:
-                                merge_dictionaries(self.workflow_session_state, member.workflow_session_state)
+            elif isinstance(step, Steps):
+                # Recursively handle nested Steps
+                self._collect_session_state_from_steps_recursive(step.steps)
+
+            elif isinstance(step, Router):
+                # Recursively handle Router choices
+                if hasattr(step, "choices") and step.choices:
+                    self._collect_session_state_from_steps_recursive(step.choices)
+
+            elif isinstance(step, (Loop, Parallel, Condition)):
+                # Recursively handle Loop, Parallel, and Condition steps
+                if hasattr(step, "steps") and step.steps:
+                    self._collect_session_state_from_steps_recursive(step.steps)
 
     def _update_executor_workflow_session_state(self, executor) -> None:
         """Update executor with workflow_session_state"""
@@ -3234,26 +3368,106 @@ class Workflow:
         # Initialize steps - only if steps is iterable (not callable)
         if self.steps and not callable(self.steps):
             steps_list = self.steps.steps if isinstance(self.steps, Steps) else self.steps
-            for step in steps_list:
-                # TODO: Handle properly steps inside other primitives
-                if isinstance(step, Step):
-                    active_executor = step.active_executor
+            self._update_session_info_recursive(steps_list)
 
-                    if hasattr(active_executor, "workflow_session_id"):
-                        active_executor.workflow_session_id = self.session_id
-                    if hasattr(active_executor, "workflow_id"):
-                        active_executor.workflow_id = self.workflow_id
+    def _update_session_info_recursive(self, steps_list):
+        """Recursively update session info for all steps, including nested primitives"""
+        from agno.workflow.v2.condition import Condition
+        from agno.workflow.v2.loop import Loop
+        from agno.workflow.v2.parallel import Parallel
+        from agno.workflow.v2.router import Router
+        from agno.workflow.v2.steps import Steps
 
-                    # Set workflow_session_state on agents and teams
-                    self._update_executor_workflow_session_state(active_executor)
+        for step in steps_list:
+            if isinstance(step, Step):
+                active_executor = step.active_executor
 
-                    # If it's a team, update all members
-                    if hasattr(active_executor, "members"):
-                        for member in active_executor.members:
-                            if hasattr(member, "workflow_session_id"):
-                                member.workflow_session_id = self.session_id
-                            if hasattr(member, "workflow_id"):
-                                member.workflow_id = self.workflow_id
+                if hasattr(active_executor, "workflow_session_id"):
+                    active_executor.workflow_session_id = self.session_id
+                if hasattr(active_executor, "workflow_id"):
+                    active_executor.workflow_id = self.workflow_id
 
-                            # Set workflow_session_state on team members
-                            self._update_executor_workflow_session_state(member)
+                # Set workflow_session_state on agents and teams
+                self._update_executor_workflow_session_state(active_executor)
+
+                # If it's a team, update all members
+                if hasattr(active_executor, "members"):
+                    for member in active_executor.members:
+                        if hasattr(member, "workflow_session_id"):
+                            member.workflow_session_id = self.session_id
+                        if hasattr(member, "workflow_id"):
+                            member.workflow_id = self.workflow_id
+
+                        # Set workflow_session_state on team members
+                        self._update_executor_workflow_session_state(member)
+
+            elif isinstance(step, Steps):
+                # Recursively handle nested Steps
+                self._update_session_info_recursive(step.steps)
+
+            elif isinstance(step, Router):
+                # Recursively handle Router choices
+                if hasattr(step, "choices") and step.choices:
+                    self._update_session_info_recursive(step.choices)
+
+            elif isinstance(step, (Loop, Parallel, Condition)):
+                # Recursively handle Loop, Parallel, and Condition steps
+                if hasattr(step, "steps") and step.steps:
+                    self._update_session_info_recursive(step.steps)
+
+    def cli_app(
+        self,
+        message: Optional[str] = None,
+        user: str = "User",
+        emoji: str = "🤖",
+        stream: bool = False,
+        markdown: bool = True,
+        exit_on: Optional[List[str]] = None,
+        session_id: Optional[str] = None,
+        **kwargs,
+    ) -> None:
+        """Run an interactive command-line interface for the workflow."""
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.prompt import Prompt
+
+        console = Console()
+
+        # Welcome message
+        console.print(
+            Panel.fit(
+                f"[bold blue]Welcome to {self.name or 'Workflow Chat'}![/bold blue]\n"
+                f"[dim]{self.description or 'Interactive workflow assistant'}[/dim]\n\n"
+                f"[yellow]Type your questions and I'll help you through the workflow.[/yellow]\n"
+                f"[dim]Type 'exit', 'quit', or 'bye' to end the conversation.[/dim]",
+                title="🚀 Workflow Chat",
+                border_style="blue",
+            )
+        )
+
+        if message:
+            console.print(f"\n[bold]{emoji} {user}:[/bold] {message}")
+            self.print_response(message=message, stream=stream, markdown=markdown, console=console, **kwargs)
+
+        _exit_on = exit_on or ["exit", "quit", "bye"]
+        session_id = session_id
+
+        while True:
+            try:
+                message = Prompt.ask(f"\n[bold]{emoji} {user}[/bold]")
+                if message.lower().strip() in _exit_on:
+                    console.print("\n[yellow]👋 Thanks for using the workflow chat! Goodbye![/yellow]")
+                    break
+
+                if not message.strip():
+                    continue
+
+                self.print_response(
+                    message=message, stream=stream, markdown=markdown, session_id=session_id, console=console, **kwargs
+                )
+
+            except KeyboardInterrupt:
+                console.print("\n[yellow]👋 Chat interrupted. Goodbye![/yellow]")
+                break
+            except Exception as e:
+                console.print(f"\n[red]❌ Error: {e}[/red]")
