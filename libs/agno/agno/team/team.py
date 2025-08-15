@@ -6410,9 +6410,9 @@ class Team:
 
                         return f"Agent {member_name}: No Response"
 
-                    tasks.append(run_member_agent)
+                    tasks.append(run_member_agent)  # type: ignore
 
-                results = await asyncio.gather(*[task() for task in tasks])
+                results = await asyncio.gather(*[task() for task in tasks])  # type: ignore
                 for result in results:
                     yield result
 
