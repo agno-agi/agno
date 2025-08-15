@@ -4423,7 +4423,7 @@ class Agent:
             Message(role="system", content=system_content),
             Message(role="user", content=run_response.content),
         ]
-
+        
     def get_session_summary(self, session_id: Optional[str] = None):
         """Get the session summary for the given session ID and user ID."""
         session_id = session_id if session_id is not None else self.session_id
@@ -4845,6 +4845,42 @@ class Agent:
             log_error("Generated name is too long. It should be less than 5 words. Trying again.")
             return self._generate_session_name(session=session)
         return content.replace('"', "").strip()
+
+    def get_session_name(self, session_id: Optional[str] = None) -> str:
+        """Get the session name for the given session ID and user ID."""
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+        session = self.get_session(session_id=session_id)  # type: ignore
+        if session is None:
+            raise Exception("Session not found")
+        return session.session_data.get("session_name", "")
+
+    def get_session_state(self, session_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get the session state for the given session ID and user ID."""
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+        session = self.get_session(session_id=session_id)  # type: ignore
+        if session is None:
+            raise Exception("Session not found")
+        return session.session_data.get("session_state", {})
+
+    def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+        """Get the session metrics for the given session ID and user ID."""
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+        
+        session = self.get_session(session_id=session_id)  # type: ignore
+        if session is None:
+            raise Exception("Session not found")
+
+        if isinstance(session.session_data.get("session_metrics"), dict):
+            return Metrics(**session.session_data.get("session_metrics"))
+        elif isinstance(session.session_data.get("session_metrics"), Metrics):
+            return session.session_data.get("session_metrics")
+        return None
 
     def delete_session(self, session_id: str):
         """Delete the current session and save to storage"""

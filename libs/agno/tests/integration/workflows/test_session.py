@@ -66,6 +66,21 @@ def test_workflow_set_session_name(shared_db):
     assert session_from_storage.session_data["session_name"] == "my_test_session"
 
 
+def test_workflow_get_session_name(shared_db):
+    session_id = "session_1"
+    workflow = workflow_factory(shared_db, session_id)
+    workflow.run("Test")
+    workflow.set_session_name(session_id=session_id, session_name="my_test_session")
+    assert workflow.get_session_name() == "my_test_session"
+
+
+def test_workflow_get_session_state(shared_db):
+    session_id = "session_1"
+    workflow = workflow_factory(shared_db, session_id, session_state={"test_key": "test_value"})
+    workflow.run("Test")
+    assert workflow.get_session_state() == {"test_key": "test_value"}
+
+
 def test_workflow_session_state_switch_session_id(shared_db):
     session_id_1 = "session_1"
     session_id_2 = "session_2"

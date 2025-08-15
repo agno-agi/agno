@@ -371,6 +371,26 @@ class Workflow:
         self.save_session(session=session)  # type: ignore
 
         return session  # type: ignore
+    
+    def get_session_name(self, session_id: Optional[str] = None) -> str:
+        """Get the session name for the given session ID and user ID."""
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+        session = self.get_session(session_id=session_id)  # type: ignore
+        if session is None:
+            raise Exception("Session not found")
+        return session.session_data.get("session_name", "")
+
+    def get_session_state(self, session_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get the session state for the given session ID and user ID."""
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is not set")
+        session = self.get_session(session_id=session_id)  # type: ignore
+        if session is None:
+            raise Exception("Session not found")
+        return session.session_data.get("session_state", {})
 
     def delete_session(self, session_id: str):
         """Delete the current session and save to storage"""
