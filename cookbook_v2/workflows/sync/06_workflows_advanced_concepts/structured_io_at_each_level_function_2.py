@@ -278,7 +278,8 @@ enhanced_workflow = Workflow(
 
 if __name__ == "__main__":
     # Test with simple string input
-    enhanced_workflow.print_response(input="Latest developments in artificial intelligence and machine learning",
+    enhanced_workflow.print_response(
+        input="Latest developments in artificial intelligence and machine learning",
         stream=True,
         stream_intermediate_steps=True,
     )

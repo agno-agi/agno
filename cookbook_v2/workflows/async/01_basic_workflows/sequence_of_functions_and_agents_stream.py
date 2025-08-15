@@ -101,7 +101,8 @@ if __name__ == "__main__":
     )
 
     asyncio.run(
-        content_creation_workflow.aprint_response(input="AI trends in 2024",
+        content_creation_workflow.aprint_response(
+            input="AI trends in 2024",
             markdown=True,
             stream=True,
             stream_intermediate_steps=True,

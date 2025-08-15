@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Union, List
+from typing import TYPE_CHECKING, List, Union
 
 from agno.models.message import Message
 from agno.models.metrics import Metrics
@@ -60,8 +60,11 @@ def add_reasoning_metrics_to_metadata(
 
         log_error(f"Failed to add reasoning metrics to metadata: {str(e)}")
 
+
 def update_run_output_with_reasoning(
-    run_response: Union["RunOutput", "TeamRunOutput"], reasoning_steps: List[ReasoningStep], reasoning_agent_messages: List[Message]
+    run_response: Union["RunOutput", "TeamRunOutput"],
+    reasoning_steps: List[ReasoningStep],
+    reasoning_agent_messages: List[Message],
 ) -> None:
     if run_response.metadata is None:
         run_response.metadata = RunOutputMetaData()

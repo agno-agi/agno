@@ -35,4 +35,7 @@ team_with_knowledge = Team(
 )
 
 if __name__ == "__main__":
-    team_with_knowledge.print_response("Store the fact that the Agno framework is a framework for building AI agents", stream=True)
+    team_with_knowledge.print_response(
+        "Store the fact that the Agno framework is a framework for building AI agents",
+        stream=True,
+    )

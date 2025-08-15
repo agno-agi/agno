@@ -15,8 +15,8 @@ from agno.os.utils import (
     get_session_name,
     get_workflow_input_schema_dict,
 )
-from agno.run.response import RunResponse
-from agno.run.team import TeamRunResponse
+from agno.run.response import RunOutput
+from agno.run.team import TeamRunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
 from agno.workflow.workflow import Workflow
@@ -112,7 +112,7 @@ class AgentResponse(BaseModel):
     def from_agent(cls, agent: Agent, memory_app: Optional[MemoryApp] = None) -> "AgentResponse":
         agent_tools = agent.get_tools(
             session=AgentSession(session_id=str(uuid4()), session_data={}),
-            run_response=RunResponse(run_id=str(uuid4())),
+            run_response=RunOutput(run_id=str(uuid4())),
             async_mode=True,
         )
         formatted_tools = format_tools(agent_tools) if agent_tools else None
@@ -192,7 +192,7 @@ class TeamResponse(BaseModel):
         team.determine_tools_for_model(
             model=team.model,
             session=TeamSession(session_id=str(uuid4()), session_data={}),
-            run_response=TeamRunResponse(run_id=str(uuid4())),
+            run_response=TeamRunOutput(run_id=str(uuid4())),
             async_mode=True,
             session_state={},
             team_run_context={},

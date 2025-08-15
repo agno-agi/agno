@@ -93,7 +93,7 @@ class TeamSession:
         return None
 
     def upsert_run(self, run_response: Union[TeamRunOutput, RunOutput]):
-        """Adds a RunResponse, together with some calculated data, to the runs list."""
+        """Adds a RunOutput, together with some calculated data, to the runs list."""
 
         messages = run_response.messages
         if messages is None:

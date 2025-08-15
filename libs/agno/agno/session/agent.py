@@ -89,11 +89,11 @@ class AgentSession:
         }
 
     def upsert_run(self, run: RunOutput):
-        """Adds a RunResponse, together with some calculated data, to the runs list."""
+        """Adds a RunOutput, together with some calculated data, to the runs list."""
         messages = run.messages
         for m in messages:
             if m.metrics is not None:
-                m.metrics.durationr = None
+                m.metrics.duration = None
 
         if not self.runs:
             self.runs = []

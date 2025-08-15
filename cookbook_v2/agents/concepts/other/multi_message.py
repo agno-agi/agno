@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.models.message import Message
 
-Agent().print_response(input="Also, please summarize the key findings in bullet points for my slides.",
+Agent().print_response(
     input=[
         Message(
             role="user",
@@ -14,6 +14,10 @@ Agent().print_response(input="Also, please summarize the key findings in bullet 
         Message(
             role="user",
             content="Could you research the latest solar panel efficiency improvements in 2024?",
+        ),
+        Message(
+            role="user",
+            content="Also, please summarize the key findings in bullet points for my slides.",
         ),
     ],
     markdown=True,

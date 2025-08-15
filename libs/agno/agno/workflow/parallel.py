@@ -224,7 +224,10 @@ class Parallel:
                 return (
                     idx,
                     StepOutput(
-                        step_name=parallel_step_name, content=f"Step {parallel_step_name} failed: {str(exc)}", success=False, error=str(exc)
+                        step_name=parallel_step_name,
+                        content=f"Step {parallel_step_name} failed: {str(exc)}",
+                        success=False,
+                        error=str(exc),
                     ),
                 )
 

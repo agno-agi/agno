@@ -139,7 +139,8 @@ if __name__ == "__main__":
 
     try:
         asyncio.run(
-            workflow.aprint_response(input="Comprehensive analysis of climate change research",
+            workflow.aprint_response(
+                input="Comprehensive analysis of climate change research",
             )
         )
     except Exception as e:

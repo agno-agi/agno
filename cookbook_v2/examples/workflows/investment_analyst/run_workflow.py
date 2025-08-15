@@ -420,7 +420,8 @@ if __name__ == "__main__":
         benchmark_indices=["S&P 500", "NASDAQ"],
         comparable_companies=["Microsoft", "Google"],
     )
-    response = investment_analysis_workflow.print_response(input=request,
+    response = investment_analysis_workflow.print_response(
+        input=request,
         stream=True,
         stream_intermediate_steps=True,
     )

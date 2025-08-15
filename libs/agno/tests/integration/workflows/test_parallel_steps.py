@@ -179,6 +179,7 @@ def test_parallel_streaming(shared_db):
     assert parallel_output.step_type == "Parallel"
     assert len(parallel_output.steps) == 2
 
+
 def test_parallel_with_agent(shared_db, test_agent):
     """Test parallel execution with agent step."""
     agent_step = Step(name="agent_step", agent=test_agent)

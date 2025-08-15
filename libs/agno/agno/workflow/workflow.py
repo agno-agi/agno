@@ -754,9 +754,7 @@ class Workflow:
             steps=steps_dict,
         )
 
-    def _call_custom_function(
-        self, func: Callable, execution_input: WorkflowExecutionInput, **kwargs: Any
-    ) -> Any:
+    def _call_custom_function(self, func: Callable, execution_input: WorkflowExecutionInput, **kwargs: Any) -> Any:
         """Call custom function with only the parameters it expects"""
         from inspect import signature
 
@@ -1169,9 +1167,7 @@ class Workflow:
             content = ""
 
             if iscoroutinefunction(self.steps):  # type: ignore
-                workflow_run_response.content = await self._acall_custom_function(
-                    self.steps, execution_input, **kwargs
-                )
+                workflow_run_response.content = await self._acall_custom_function(self.steps, execution_input, **kwargs)
             elif isgeneratorfunction(self.steps):
                 for chunk in self.steps(self, execution_input, **kwargs):  # type: ignore[arg-type]
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
@@ -1302,9 +1298,7 @@ class Workflow:
 
         if callable(self.steps):
             if iscoroutinefunction(self.steps):  # type: ignore
-                workflow_run_response.content = await self._acall_custom_function(
-                    self.steps, execution_input, **kwargs
-                )
+                workflow_run_response.content = await self._acall_custom_function(self.steps, execution_input, **kwargs)
             elif isgeneratorfunction(self.steps):
                 content = ""
                 for chunk in self.steps(self, execution_input, **kwargs):  # type: ignore[arg-type]

@@ -59,9 +59,9 @@ from agno.utils.events import (
     create_reasoning_step_event,
     create_run_cancelled_event,
     create_run_completed_event,
-    create_run_output_content_event,
     create_run_continued_event,
     create_run_error_event,
+    create_run_output_content_event,
     create_run_paused_event,
     create_run_started_event,
     create_tool_call_completed_event,
@@ -1208,7 +1208,7 @@ class Agent:
         run_response.status = RunStatus.completed
 
         completed_event = self._handle_event(
-                create_run_completed_event(from_run_response=run_response), run_response, workflow_context
+            create_run_completed_event(from_run_response=run_response), run_response, workflow_context
         )
 
         # Set the run duration
@@ -4916,9 +4916,7 @@ class Agent:
             # Consume the generator without yielding
             deque(reasoning_generator, maxlen=0)
 
-    def _handle_reasoning_stream(
-        self, run_response: RunOutput, run_messages: RunMessages
-    ) -> Iterator[RunOutputEvent]:
+    def _handle_reasoning_stream(self, run_response: RunOutput, run_messages: RunMessages) -> Iterator[RunOutputEvent]:
         if self.reasoning or self.reasoning_model is not None:
             reasoning_generator = self.reason(run_response=run_response, run_messages=run_messages)
             yield from reasoning_generator

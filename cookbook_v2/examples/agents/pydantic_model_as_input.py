@@ -23,7 +23,8 @@ hackernews_agent = Agent(
     role="Extract key insights and content from Hackernews posts",
 )
 
-hackernews_agent.print_response(input=ResearchTopic(
+hackernews_agent.print_response(
+    input=ResearchTopic(
         topic="AI",
         focus_areas=["AI", "Machine Learning"],
         target_audience="Developers",

@@ -504,7 +504,7 @@ class Loop:
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
-        step_index: Optional[Union[int, tuple]] = None, 
+        step_index: Optional[Union[int, tuple]] = None,
         store_executor_responses: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,

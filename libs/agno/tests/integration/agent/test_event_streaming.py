@@ -74,19 +74,11 @@ def test_basic_intermediate_steps_events():
     assert len(events[RunEvent.run_completed]) == 1
 
 
-<<<<<<< HEAD
 def test_basic_intermediate_steps_events_persisted(shared_db):
     """Test that the agent streams events."""
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         db=shared_db,
-=======
-def test_basic_intermediate_steps_events_persisted(agent_db):
-    """Test that the agent streams events."""
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        db=agent_db,
->>>>>>> e981ab8713c8b776fa29bd11a6c2c13a7c4c78d8
         store_events=True,
         telemetry=False,
     )
@@ -101,11 +93,7 @@ def test_basic_intermediate_steps_events_persisted(agent_db):
 
     assert events.keys() == {RunEvent.run_started, RunEvent.run_content, RunEvent.run_completed}
 
-<<<<<<< HEAD
     run_response_from_storage = shared_db.get_sessions(session_type=SessionType.AGENT)[0].runs[0]
-=======
-    run_response_from_storage = agent_db.get_sessions(session_type=SessionType.AGENT)[0].runs[0]  # type: ignore
->>>>>>> e981ab8713c8b776fa29bd11a6c2c13a7c4c78d8
 
     assert run_response_from_storage.events is not None
     assert len(run_response_from_storage.events) == 2, "We should only have the run started and run completed events"
@@ -147,20 +135,12 @@ def test_intermediate_steps_with_tools():
     assert events[RunEvent.tool_call_completed][0].tool.result is not None  # type: ignore
 
 
-<<<<<<< HEAD
 def test_intermediate_steps_with_tools_events_persisted(shared_db):
-=======
-def test_intermediate_steps_with_tools_events_persisted(agent_db):
->>>>>>> e981ab8713c8b776fa29bd11a6c2c13a7c4c78d8
     """Test that the agent streams events."""
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[YFinanceTools(cache_results=True)],
-<<<<<<< HEAD
         db=shared_db,
-=======
-        db=agent_db,
->>>>>>> e981ab8713c8b776fa29bd11a6c2c13a7c4c78d8
         store_events=True,
         telemetry=False,
     )
@@ -181,11 +161,7 @@ def test_intermediate_steps_with_tools_events_persisted(agent_db):
         RunEvent.run_completed,
     }
 
-<<<<<<< HEAD
     run_response_from_storage = shared_db.get_sessions(session_type=SessionType.AGENT)[0].runs[0]
-=======
-    run_response_from_storage = agent_db.get_sessions(session_type=SessionType.AGENT)[0].runs[0]  # type: ignore
->>>>>>> e981ab8713c8b776fa29bd11a6c2c13a7c4c78d8
 
     assert run_response_from_storage.events is not None
     assert len(run_response_from_storage.events) == 4
@@ -244,11 +220,7 @@ def test_intermediate_steps_with_reasoning():
     assert events[RunEvent.reasoning_step][0].reasoning_content is not None  # type: ignore
 
 
-<<<<<<< HEAD
 def test_intermediate_steps_with_user_confirmation(shared_db):
-=======
-def test_intermediate_steps_with_user_confirmation(agent_db):
->>>>>>> e981ab8713c8b776fa29bd11a6c2c13a7c4c78d8
     """Test that the agent streams events."""
 
     @tool(requires_confirmation=True)
@@ -258,11 +230,7 @@ def test_intermediate_steps_with_user_confirmation(agent_db):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather],
-<<<<<<< HEAD
         db=shared_db,
-=======
-        db=agent_db,
->>>>>>> e981ab8713c8b776fa29bd11a6c2c13a7c4c78d8
         store_events=True,
         add_history_to_context=True,
         num_history_runs=2,

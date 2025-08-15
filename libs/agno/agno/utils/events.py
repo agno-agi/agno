@@ -139,7 +139,7 @@ def create_run_error_event(from_run_response: RunOutput, error: str) -> RunError
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
         run_id=from_run_response.run_id,
-        content=error
+        content=error,
     )
 
 

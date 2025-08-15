@@ -56,8 +56,8 @@ from agno.utils.events import (
     create_team_reasoning_step_event,
     create_team_run_cancelled_event,
     create_team_run_completed_event,
-    create_team_run_output_content_event,
     create_team_run_error_event,
+    create_team_run_output_content_event,
     create_team_run_started_event,
     create_team_tool_call_completed_event,
     create_team_tool_call_started_event,
@@ -80,6 +80,7 @@ from agno.utils.reasoning import (
     add_reasoning_metrics_to_metadata,
     add_reasoning_step_to_metadata,
     append_to_reasoning_content,
+    update_run_output_with_reasoning,
 )
 from agno.utils.response import (
     async_generator_wrapper,
@@ -89,7 +90,6 @@ from agno.utils.response import (
     format_tool_calls,
     generator_wrapper,
 )
-from agno.utils.reasoning import update_run_output_with_reasoning
 from agno.utils.safe_formatter import SafeFormatter
 from agno.utils.string import parse_response_model_str
 from agno.utils.team import format_member_agent_task, get_member_id
@@ -1469,16 +1469,12 @@ class Team:
                 f"Failed after {num_attempts} attempts. Last error using {last_exception.model_name}({last_exception.model_id})"
             )
             if stream:
-                return async_generator_wrapper(
-                    create_team_run_error_event(run_response, error=str(last_exception))
-                )
+                return async_generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
 
             raise last_exception
         else:
             if stream:
-                return async_generator_wrapper(
-                    create_team_run_error_event(run_response, error=str(last_exception))
-                )
+                return async_generator_wrapper(create_team_run_error_event(run_response, error=str(last_exception)))
 
             raise Exception(f"Failed after {num_attempts} attempts.")
 

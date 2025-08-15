@@ -336,11 +336,7 @@ def test_nested_steps(shared_db):
 
     workflow = Workflow(
         name="Nested Test",
-<<<<<<< HEAD
         db=shared_db,
-=======
-        db=workflow_db,
->>>>>>> e981ab8713c8b776fa29bd11a6c2c13a7c4c78d8
         steps=[outer_steps],
     )
 
