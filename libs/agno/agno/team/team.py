@@ -7285,16 +7285,16 @@ class Team:
         if self.knowledge is None:
             log_warning("Knowledge is not set, cannot add to knowledge")
             return "Knowledge is not set, cannot add to knowledge"
-        
+
         if self.knowledge.vector_db is None:
             log_warning("Knowledge vector database is not set, cannot add to knowledge")
             return "Knowledge vector database is not set, cannot add to knowledge"
-        
+
         document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
         document_content = json.dumps({"query": query, "result": result})
         log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
         from agno.knowledge.reader.text_reader import TextReader
-        
+
         asyncio.run(self.knowledge.add_content(name=document_name, text_content=document_content, reader=TextReader()))
         return "Successfully added to knowledge base"
 

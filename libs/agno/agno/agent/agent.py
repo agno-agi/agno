@@ -27,6 +27,7 @@ from uuid import NAMESPACE_DNS, uuid4, uuid5
 
 from pydantic import BaseModel
 
+from agno.agent.print import build_panels, build_panels_stream
 from agno.db.base import BaseDb, SessionType, UserMemory
 from agno.exceptions import ModelProviderError, StopAgentRun
 from agno.knowledge.knowledge import Knowledge
@@ -3717,7 +3718,7 @@ class Agent:
 
         session_id_to_load = session_id or self.session_id
         session = self.get_session(session_id=session_id_to_load)
-        
+
         if session is None:
             raise Exception(f"Session {session_id_to_load} not found")
 
@@ -4440,7 +4441,7 @@ class Agent:
             raise ValueError("Session ID is required")
 
         session = self.get_session(session_id=session_id)
-        
+
         if session is None:
             raise Exception(f"Session {session_id} not found")
 
@@ -5976,7 +5977,7 @@ class Agent:
                 if render:
                     live_log.update(Group(*panels))
 
-                for resp in self.run(
+                for response_event in self.run(
                     input=input,
                     session_id=session_id,
                     session_state=session_state,
@@ -5991,121 +5992,47 @@ class Agent:
                     debug_mode=debug_mode,
                     **kwargs,
                 ):
-                    if isinstance(resp, tuple(get_args(RunOutputEvent))):
-                        if resp.is_paused:
-                            resp = cast(RunPausedEvent, resp)
-                            response_panel = create_paused_run_output_panel(resp)
+                    if isinstance(response_event, tuple(get_args(RunOutputEvent))):
+                        if response_event.is_paused:
+                            response_event = cast(RunPausedEvent, response_event)
+                            response_panel = create_paused_run_output_panel(response_event)
                             panels.append(response_panel)
                             live_log.update(Group(*panels))
-                            break
-                        if resp.event == RunEvent.run_content:
-                            if hasattr(resp, "content"):
-                                if isinstance(resp.content, str):
-                                    _response_content += resp.content
-                                elif self.response_model is not None and isinstance(resp.content, BaseModel):
+                            return
+                        if response_event.event == RunEvent.run_content:
+                            if hasattr(response_event, "content"):
+                                if isinstance(response_event.content, str):
+                                    _response_content += response_event.content
+                                elif self.response_model is not None and isinstance(response_event.content, BaseModel):
                                     try:
                                         response_content_batch = JSON(  # type: ignore
-                                            resp.content.model_dump_json(exclude_none=True), indent=2
+                                            response_event.content.model_dump_json(exclude_none=True), indent=2
                                         )
                                     except Exception as e:
                                         log_warning(f"Failed to convert response to JSON: {e}")
                                 else:
                                     try:
-                                        response_content_batch = JSON(json.dumps(resp.content), indent=4)
+                                        response_content_batch = JSON(json.dumps(response_event.content), indent=4)
                                     except Exception as e:
                                         log_warning(f"Failed to convert response to JSON: {e}")
-                            if hasattr(resp, "thinking") and resp.thinking is not None:
-                                _response_thinking += resp.thinking
+                            if hasattr(response_event, "thinking") and response_event.thinking is not None:
+                                _response_thinking += response_event.thinking
                         if (
-                            hasattr(resp, "metadata")
-                            and resp.metadata is not None
-                            and resp.metadata.reasoning_steps is not None
+                            hasattr(response_event, "metadata")
+                            and response_event.metadata is not None
+                            and response_event.metadata.reasoning_steps is not None
                         ):
-                            reasoning_steps = resp.metadata.reasoning_steps
+                            reasoning_steps = response_event.metadata.reasoning_steps
 
-                    response_content_stream: str = _response_content
                     # Escape special tags before markdown conversion
-                    if self.markdown:
+                    if markdown:
                         escaped_content = escape_markdown_tags(_response_content, tags_to_include_in_markdown)
                         response_content_batch = Markdown(escaped_content)
-                    panels = [status]
 
-                    if input and show_message:
-                        render = True
-                        # Convert message to a panel
-                        message_content = get_text_from_message(input)
-                        message_panel = create_panel(
-                            content=Text(message_content, style="green"),
-                            title="Message",
-                            border_style="cyan",
-                        )
-                        panels.append(message_panel)
-                    if render:
-                        live_log.update(Group(*panels))
+                    response_content_stream: str = _response_content
 
-                    if len(reasoning_steps) > 0 and show_reasoning:
-                        render = True
-                        # Create panels for reasoning steps
-                        for i, step in enumerate(reasoning_steps, 1):
-                            # Build step content
-                            step_content = Text.assemble()
-                            if step.title is not None:
-                                step_content.append(f"{step.title}\n", "bold")
-                            if step.action is not None:
-                                step_content.append(
-                                    Text.from_markup(f"[bold]Action:[/bold] {step.action}\n", style="dim")
-                                )
-                            if step.result is not None:
-                                step_content.append(Text.from_markup(step.result, style="dim"))
-
-                            if show_full_reasoning:
-                                # Add detailed reasoning information if available
-                                if step.reasoning is not None:
-                                    step_content.append(
-                                        Text.from_markup(f"\n[bold]Reasoning:[/bold] {step.reasoning}", style="dim")
-                                    )
-                                if step.confidence is not None:
-                                    step_content.append(
-                                        Text.from_markup(f"\n[bold]Confidence:[/bold] {step.confidence}", style="dim")
-                                    )
-                            reasoning_panel = create_panel(
-                                content=step_content, title=f"Reasoning step {i}", border_style="green"
-                            )
-                            panels.append(reasoning_panel)
-                    if render:
-                        live_log.update(Group(*panels))
-
-                    if len(_response_thinking) > 0:
-                        render = True
-                        # Create panel for thinking
-                        thinking_panel = create_panel(
-                            content=Text(_response_thinking),
-                            title=f"Thinking ({response_timer.elapsed:.1f}s)",
-                            border_style="green",
-                        )
-                        panels.append(thinking_panel)
-                    if render:
-                        live_log.update(Group(*panels))
-
-                    # Add tool calls panel if available
-                    if hasattr(resp, "tool") and resp.tool is not None and resp.event == RunEvent.tool_call_started:
-                        render = True
-                        # Create bullet points for each tool call
-                        tool_calls_content = Text()
-                        formatted_tool_call = format_tool_calls([resp.tool])
-                        tool_calls_content.append(f"• {formatted_tool_call}\n")
-
-                        tool_calls_panel = create_panel(
-                            content=tool_calls_content.plain.rstrip(),
-                            title="Tool Calls",
-                            border_style="yellow",
-                        )
-                        panels.append(tool_calls_panel)
-                        live_log.update(Group(*panels))
-
-                    response_panel = None
                     # Check if we have any response content to display
-                    if response_content_stream and not self.markdown:
+                    if response_content_stream and not markdown:
                         response_content = response_content_stream
                     else:
                         response_content = response_content_batch  # type: ignore
@@ -6115,36 +6042,29 @@ class Agent:
                         if not (response_content.markup and response_content.markup.strip()):
                             response_content = None  # type: ignore
 
-                    if response_content:
-                        render = True
-                        response_panel = create_panel(
-                            content=response_content,
-                            title=f"Response ({response_timer.elapsed:.1f}s)",
-                            border_style="blue",
+                    panels = [status]
+                    if show_message:
+                        # Convert message to a panel
+                        message_content = get_text_from_message(input)
+                        message_panel = create_panel(
+                            content=Text(message_content, style="green"),
+                            title="Message",
+                            border_style="cyan",
                         )
-                        panels.append(response_panel)
-                        if render:
-                            live_log.update(Group(*panels))
+                        panels.append(message_panel)
 
-                    if (
-                        isinstance(resp, tuple(get_args(RunOutputEvent)))
-                        and hasattr(resp, "citations")
-                        and resp.citations is not None
-                        and resp.citations.urls is not None
-                    ):
-                        md_content = "\n".join(
-                            f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
-                            for i, citation in enumerate(resp.citations.urls)
-                            if citation.url  # Only include citations with valid URLs
-                        )
-                        if md_content:  # Only create panel if there are citations
-                            citations_panel = create_panel(
-                                content=Markdown(md_content),
-                                title="Citations",
-                                border_style="green",
-                            )
-                            panels.append(citations_panel)
-                            live_log.update(Group(*panels))
+                    additional_panels = build_panels_stream(
+                        response_content=response_content,
+                        response_event=response_event,
+                        response_timer=response_timer,
+                        response_thinking_buffer=_response_thinking,
+                        reasoning_steps=reasoning_steps,
+                        show_reasoning=show_reasoning,
+                        show_full_reasoning=show_full_reasoning,
+                    )
+                    panels.extend(additional_panels)
+                    if panels:
+                        live_log.update(Group(*panels))
 
                 if self.memory_manager is not None and self.memory_manager.memories_updated:
                     memory_panel = create_panel(
@@ -6209,121 +6129,16 @@ class Agent:
                 )
                 response_timer.stop()
 
-                reasoning_steps = []
-
-                if isinstance(run_response, RunOutput) and run_response.is_paused:
-                    response_panel = create_paused_run_output_panel(run_response)
-                    panels.append(response_panel)
-                    live_log.update(Group(*panels))
-                    return
-
-                if (
-                    isinstance(run_response, RunOutput)
-                    and run_response.metadata is not None
-                    and run_response.metadata.reasoning_steps is not None
-                ):
-                    reasoning_steps = run_response.metadata.reasoning_steps
-
-                if len(reasoning_steps) > 0 and show_reasoning:
-                    # Create panels for reasoning steps
-                    for i, step in enumerate(reasoning_steps, 1):
-                        # Build step content
-                        step_content = Text.assemble()
-                        if step.title is not None:
-                            step_content.append(f"{step.title}\n", "bold")
-                        if step.action is not None:
-                            step_content.append(Text.from_markup(f"[bold]Action:[/bold] {step.action}\n", style="dim"))
-                        if step.result is not None:
-                            step_content.append(Text.from_markup(step.result, style="dim"))
-
-                        if show_full_reasoning:
-                            # Add detailed reasoning information if available
-                            if step.reasoning is not None:
-                                step_content.append(
-                                    Text.from_markup(f"\n[bold]Reasoning:[/bold] {step.reasoning}", style="dim")
-                                )
-                            if step.confidence is not None:
-                                step_content.append(
-                                    Text.from_markup(f"\n[bold]Confidence:[/bold] {step.confidence}", style="dim")
-                                )
-                        reasoning_panel = create_panel(
-                            content=step_content, title=f"Reasoning step {i}", border_style="green"
-                        )
-                        panels.append(reasoning_panel)
-                    live_log.update(Group(*panels))
-
-                if isinstance(run_response, RunOutput) and run_response.thinking is not None:
-                    # Create panel for thinking
-                    thinking_panel = create_panel(
-                        content=Text(run_response.thinking),
-                        title=f"Thinking ({response_timer.elapsed:.1f}s)",
-                        border_style="green",
-                    )
-                    panels.append(thinking_panel)
-                    live_log.update(Group(*panels))
-
-                # Add tool calls panel if available
-                if isinstance(run_response, RunOutput) and run_response.formatted_tool_calls:
-                    # Create bullet points for each tool call
-                    tool_calls_content = Text()
-                    for formatted_tool_call in run_response.formatted_tool_calls:
-                        tool_calls_content.append(f"• {formatted_tool_call}\n")
-
-                    tool_calls_panel = create_panel(
-                        content=tool_calls_content.plain.rstrip(),
-                        title="Tool Calls",
-                        border_style="yellow",
-                    )
-                    panels.append(tool_calls_panel)
-                    live_log.update(Group(*panels))
-
-                response_content_batch: Union[str, JSON, Markdown] = ""  # type: ignore
-                if isinstance(run_response, RunOutput):
-                    if isinstance(run_response.content, str):
-                        if self.markdown:
-                            escaped_content = escape_markdown_tags(run_response.content, tags_to_include_in_markdown)
-                            response_content_batch = Markdown(escaped_content)
-                        else:
-                            response_content_batch = run_response.get_content_as_string(indent=4)
-                    elif self.response_model is not None and isinstance(run_response.content, BaseModel):
-                        try:
-                            response_content_batch = JSON(
-                                run_response.content.model_dump_json(exclude_none=True), indent=2
-                            )
-                        except Exception as e:
-                            log_warning(f"Failed to convert response to JSON: {e}")
-                    else:
-                        try:
-                            response_content_batch = JSON(json.dumps(run_response.content), indent=4)
-                        except Exception as e:
-                            log_warning(f"Failed to convert response to JSON: {e}")
-
-                # Create panel for response
-                response_panel = create_panel(
-                    content=response_content_batch,
-                    title=f"Response ({response_timer.elapsed:.1f}s)",
-                    border_style="blue",
+                additional_panels = build_panels(
+                    run_response=run_response,
+                    response_model=self.response_model,
+                    response_timer=response_timer,
+                    show_reasoning=show_reasoning,
+                    show_full_reasoning=show_full_reasoning,
+                    tags_to_include_in_markdown=tags_to_include_in_markdown,
+                    markdown=markdown,
                 )
-                panels.append(response_panel)
-
-                if (
-                    isinstance(run_response, RunOutput)
-                    and run_response.citations is not None
-                    and run_response.citations.urls is not None
-                ):
-                    md_content = "\n".join(
-                        f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
-                        for i, citation in enumerate(run_response.citations.urls)
-                        if citation.url  # Only include citations with valid URLs
-                    )
-                    if md_content:  # Only create panel if there are citations
-                        citations_panel = create_panel(
-                            content=Markdown(md_content),
-                            title="Citations",
-                            border_style="green",
-                        )
-                        panels.append(citations_panel)
-                        live_log.update(Group(*panels))
+                panels.extend(additional_panels)
 
                 if self.memory_manager is not None and self.memory_manager.memories_updated:
                     memory_panel = create_panel(
@@ -6435,7 +6250,7 @@ class Agent:
                     **kwargs,
                 )
 
-                async for resp in result:
+                async for resp in result:  # type: ignore
                     if isinstance(resp, tuple(get_args(RunOutputEvent))):
                         if resp.is_paused:
                             response_panel = create_paused_run_output_panel(resp)
@@ -6486,111 +6301,20 @@ class Agent:
                             border_style="cyan",
                         )
                         panels.append(message_panel)
-                    if render:
+                        
+                    additional_panels = build_panels_stream(
+                        response_content=response_content_stream,
+                        response_event=resp,
+                        response_timer=response_timer,
+                        response_thinking_buffer=_response_thinking,
+                        reasoning_steps=reasoning_steps,
+                        show_reasoning=show_reasoning,
+                        show_full_reasoning=show_full_reasoning,
+                    )
+                    panels.extend(additional_panels)
+                    if panels:
                         live_log.update(Group(*panels))
 
-                    if len(reasoning_steps) > 0 and (show_reasoning or show_full_reasoning):
-                        render = True
-                        # Create panels for reasoning steps
-                        for i, step in enumerate(reasoning_steps, 1):
-                            # Build step content
-                            step_content = Text.assemble()
-                            if step.title is not None:
-                                step_content.append(f"{step.title}\n", "bold")
-                            if step.action is not None:
-                                step_content.append(
-                                    Text.from_markup(f"[bold]Action:[/bold] {step.action}\n", style="dim")
-                                )
-                            if step.result is not None:
-                                step_content.append(Text.from_markup(step.result, style="dim"))
-
-                            if show_full_reasoning:
-                                # Add detailed reasoning information if available
-                                if step.reasoning is not None:
-                                    step_content.append(
-                                        Text.from_markup(f"\n[bold]Reasoning:[/bold] {step.reasoning}", style="dim")
-                                    )
-                                if step.confidence is not None:
-                                    step_content.append(
-                                        Text.from_markup(f"\n[bold]Confidence:[/bold] {step.confidence}", style="dim")
-                                    )
-                            reasoning_panel = create_panel(
-                                content=step_content, title=f"Reasoning step {i}", border_style="green"
-                            )
-                            panels.append(reasoning_panel)
-                    if render:
-                        live_log.update(Group(*panels))
-
-                    if len(_response_thinking) > 0:
-                        render = True
-                        # Create panel for thinking
-                        thinking_panel = create_panel(
-                            content=Text(_response_thinking),
-                            title=f"Thinking ({response_timer.elapsed:.1f}s)",
-                            border_style="green",
-                        )
-                        panels.append(thinking_panel)
-                    if render:
-                        live_log.update(Group(*panels))
-
-                    # Add tool calls panel if available
-                    if hasattr(resp, "tool") and resp.tool is not None and resp.event == RunEvent.tool_call_started:
-                        render = True
-                        # Create bullet points for each tool call
-                        tool_calls_content = Text()
-                        formatted_tool_call = format_tool_calls([resp.tool])
-                        tool_calls_content.append(f"• {formatted_tool_call}\n")
-
-                        tool_calls_panel = create_panel(
-                            content=tool_calls_content.plain.rstrip(),
-                            title="Tool Calls",
-                            border_style="yellow",
-                        )
-                        panels.append(tool_calls_panel)
-                        live_log.update(Group(*panels))
-
-                    response_panel = None
-                    # Check if we have any response content to display
-                    if response_content_stream and not self.markdown:
-                        response_content = response_content_stream
-                    else:
-                        response_content = response_content_batch  # type: ignore
-
-                    # Sanitize empty Markdown content
-                    if isinstance(response_content, Markdown):
-                        if not (response_content.markup and response_content.markup.strip()):
-                            response_content = None  # type: ignore
-
-                    if response_content:
-                        render = True
-                        response_panel = create_panel(
-                            content=response_content,
-                            title=f"Response ({response_timer.elapsed:.1f}s)",
-                            border_style="blue",
-                        )
-                        panels.append(response_panel)
-                    if render:
-                        live_log.update(Group(*panels))
-
-                    if (
-                        isinstance(resp, tuple(get_args(RunOutputEvent)))
-                        and hasattr(resp, "citations")
-                        and resp.citations is not None
-                        and resp.citations.urls is not None
-                    ):
-                        md_content = "\n".join(
-                            f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
-                            for i, citation in enumerate(resp.citations.urls)
-                            if citation.url  # Only include citations with valid URLs
-                        )
-                        if md_content:  # Only create panel if there are citations
-                            citations_panel = create_panel(
-                                content=Markdown(md_content),
-                                title="Citations",
-                                border_style="green",
-                            )
-                            panels.append(citations_panel)
-                            live_log.update(Group(*panels))
 
                 if self.memory_manager is not None and self.memory_manager.memories_updated:
                     memory_panel = create_panel(
@@ -6655,118 +6379,17 @@ class Agent:
                 )
                 response_timer.stop()
 
-                if isinstance(run_response, RunOutput) and run_response.is_paused:
-                    response_panel = create_paused_run_output_panel(run_response)
-                    panels.append(response_panel)
-                    live_log.update(Group(*panels))
-                    return
-
-                reasoning_steps = []
-                if (
-                    isinstance(run_response, RunOutput)
-                    and run_response.metadata is not None
-                    and run_response.metadata.reasoning_steps is not None
-                ):
-                    reasoning_steps = run_response.metadata.reasoning_steps
-
-                if len(reasoning_steps) > 0 and show_reasoning:
-                    # Create panels for reasoning steps
-                    for i, step in enumerate(reasoning_steps, 1):
-                        # Build step content
-                        step_content = Text.assemble()
-                        if step.title is not None:
-                            step_content.append(f"{step.title}\n", "bold")
-                        if step.action is not None:
-                            step_content.append(Text.from_markup(f"[bold]Action:[/bold] {step.action}\n", style="dim"))
-                        if step.result is not None:
-                            step_content.append(Text.from_markup(step.result, style="dim"))
-
-                        if show_full_reasoning:
-                            # Add detailed reasoning information if available
-                            if step.reasoning is not None:
-                                step_content.append(
-                                    Text.from_markup(f"\n[bold]Reasoning:[/bold] {step.reasoning}", style="dim")
-                                )
-                            if step.confidence is not None:
-                                step_content.append(
-                                    Text.from_markup(f"\n[bold]Confidence:[/bold] {step.confidence}", style="dim")
-                                )
-                        reasoning_panel = create_panel(
-                            content=step_content, title=f"Reasoning step {i}", border_style="green"
-                        )
-                        panels.append(reasoning_panel)
-                    live_log.update(Group(*panels))
-
-                if isinstance(run_response, RunOutput) and run_response.thinking is not None:
-                    # Create panel for thinking
-                    thinking_panel = create_panel(
-                        content=Text(run_response.thinking),
-                        title=f"Thinking ({response_timer.elapsed:.1f}s)",
-                        border_style="green",
-                    )
-                    panels.append(thinking_panel)
-                    live_log.update(Group(*panels))
-
-                if isinstance(run_response, RunOutput) and run_response.formatted_tool_calls:
-                    tool_calls_content = Text()
-                    for formatted_tool_call in run_response.formatted_tool_calls:
-                        tool_calls_content.append(f"• {formatted_tool_call}\n")
-
-                    tool_calls_panel = create_panel(
-                        content=tool_calls_content.plain.rstrip(),
-                        title="Tool Calls",
-                        border_style="yellow",
-                    )
-                    panels.append(tool_calls_panel)
-                    live_log.update(Group(*panels))
-
-                response_content_batch: Union[str, JSON, Markdown] = ""  # type: ignore
-                if isinstance(run_response, RunOutput):
-                    if isinstance(run_response.content, str):
-                        if self.markdown:
-                            escaped_content = escape_markdown_tags(run_response.content, tags_to_include_in_markdown)
-                            response_content_batch = Markdown(escaped_content)
-                        else:
-                            response_content_batch = run_response.get_content_as_string(indent=4)
-                    elif self.response_model is not None and isinstance(run_response.content, BaseModel):
-                        try:
-                            response_content_batch = JSON(
-                                run_response.content.model_dump_json(exclude_none=True), indent=2
-                            )
-                        except Exception as e:
-                            log_warning(f"Failed to convert response to JSON: {e}")
-                    else:
-                        try:
-                            response_content_batch = JSON(json.dumps(run_response.content), indent=4)
-                        except Exception as e:
-                            log_warning(f"Failed to convert response to JSON: {e}")
-
-                # Create panel for response
-                response_panel = create_panel(
-                    content=response_content_batch,
-                    title=f"Response ({response_timer.elapsed:.1f}s)",
-                    border_style="blue",
+                additional_panels = build_panels(
+                    run_response=run_response,
+                    response_model=self.response_model,
+                    response_timer=response_timer,
+                    show_reasoning=show_reasoning,
+                    show_full_reasoning=show_full_reasoning,
+                    tags_to_include_in_markdown=tags_to_include_in_markdown,
+                    markdown=markdown,
                 )
-                panels.append(response_panel)
+                panels.extend(additional_panels)
 
-                if (
-                    isinstance(run_response, RunOutput)
-                    and run_response.citations is not None
-                    and run_response.citations.urls is not None
-                ):
-                    md_content = "\n".join(
-                        f"{i + 1}. [{citation.title or citation.url}]({citation.url})"
-                        for i, citation in enumerate(run_response.citations.urls)
-                        if citation.url  # Only include citations with valid URLs
-                    )
-                    if md_content:  # Only create panel if there are citations
-                        citations_panel = create_panel(
-                            content=Markdown(md_content),
-                            title="Citations",
-                            border_style="green",
-                        )
-                        panels.append(citations_panel)
-                        live_log.update(Group(*panels))
 
                 if self.memory_manager is not None and self.memory_manager.memories_updated:
                     memory_panel = create_panel(
