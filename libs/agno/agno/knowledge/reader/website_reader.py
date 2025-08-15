@@ -7,6 +7,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.utils.log import log_debug, logger
@@ -28,9 +29,21 @@ class WebsiteReader(Reader):
     _urls_to_crawl: List[Tuple[str, int]] = field(default_factory=list)
 
     def __init__(
-        self, max_depth: int = 3, max_links: int = 10, timeout: int = 10, proxy: Optional[str] = None, **kwargs
+        self,
+        chunking_strategy: Optional[ChunkingStrategy] = None,
+        max_depth: int = 3,
+        max_links: int = 10,
+        timeout: int = 10,
+        proxy: Optional[str] = None,
+        **kwargs,
     ):
-        super().__init__(**kwargs)
+        # Set SemanticChunking as default strategy if none provided
+        if chunking_strategy is None:
+            from agno.knowledge.chunking.semantic import SemanticChunking
+
+            chunking_strategy = SemanticChunking()
+
+        super().__init__(chunking_strategy=chunking_strategy, **kwargs)
         self.max_depth = max_depth
         self.max_links = max_links
         self.proxy = proxy
@@ -38,6 +51,14 @@ class WebsiteReader(Reader):
 
         self._visited = set()
         self._urls_to_crawl = []
+
+    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+        """Get the list of supported chunking strategies for Website readers."""
+        return [
+            ChunkingStrategyType.AGENTIC_CHUNKING,
+            ChunkingStrategyType.DOCUMENT_CHUNKING,
+            ChunkingStrategyType.RECURSIVE_CHUNKING,
+        ]
 
     def delay(self, min_seconds=1, max_seconds=3):
         """

@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import IO, Any, List, Optional, Union
 from uuid import uuid4
 
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.utils.log import log_info, logger
@@ -15,6 +16,23 @@ except ImportError:
 
 class DocxReader(Reader):
     """Reader for Doc/Docx files"""
+
+    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = None, **kwargs):
+        # Set DocumentChunking as default strategy if none provided
+        if chunking_strategy is None:
+            from agno.knowledge.chunking.document import DocumentChunking
+
+            chunking_strategy = DocumentChunking()
+
+        super().__init__(chunking_strategy=chunking_strategy, **kwargs)
+
+    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+        """Get the list of supported chunking strategies for DOCX readers."""
+        return [
+            ChunkingStrategyType.AGENTIC_CHUNKING,
+            ChunkingStrategyType.DOCUMENT_CHUNKING,
+            ChunkingStrategyType.RECURSIVE_CHUNKING,
+        ]
 
     def read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         """Read a docx file and return a list of documents"""

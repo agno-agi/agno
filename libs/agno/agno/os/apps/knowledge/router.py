@@ -143,21 +143,10 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         )
 
         if update_data.reader_id:
-            resolved_reader = None
-            if knowledge.readers and update_data.reader_id in knowledge.readers:
-                resolved_reader = knowledge.readers[update_data.reader_id]
+            if update_data.reader_id in knowledge.readers:
+                content.reader = knowledge.readers[update_data.reader_id]
             else:
-                key = update_data.reader_id.lower().strip().replace("-", "_").replace(" ", "_")
-                candidates = [key] + ([key[:-6]] if key.endswith("reader") else [])
-                for cand in candidates:
-                    try:
-                        resolved_reader = ReaderFactory.create_reader(cand)
-                        break
-                    except Exception:
-                        continue
-            if resolved_reader is None:
                 raise HTTPException(status_code=400, detail=f"Invalid reader_id: {update_data.reader_id}")
-            content.reader = resolved_reader
 
         updated_content_dict = knowledge.patch_content(content)
         if not updated_content_dict:
@@ -272,8 +261,11 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
 
     @router.get("/config", status_code=200)
     def get_config() -> ConfigResponseSchema:
+        # Get factory readers info
         readers_info = ReaderFactory.get_all_readers_info()
         reader_schemas = []
+
+        # Add factory readers
         for reader_info in readers_info:
             reader_schemas.append(
                 ReaderSchema(
@@ -283,6 +275,30 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
                     chunking_strategies=reader_info.get("chunking_strategies", []),
                 )
             )
+
+        # Add custom readers from knowledge.readers
+        if knowledge.readers:
+            for reader_id, reader in knowledge.readers.items():
+                # Get chunking strategies from the reader
+                chunking_strategies = []
+                if hasattr(reader, "get_supported_chunking_strategies"):
+                    try:
+                        strategies = reader.get_supported_chunking_strategies()
+                        chunking_strategies = [strategy.value for strategy in strategies]
+                    except Exception:
+                        chunking_strategies = []
+
+                # Check if this reader ID already exists in factory readers
+                existing_ids = [schema.id for schema in reader_schemas]
+                if reader_id not in existing_ids:
+                    reader_schemas.append(
+                        ReaderSchema(
+                            id=reader_id,
+                            name=getattr(reader, "name", reader.__class__.__name__),
+                            description=getattr(reader, "description", f"Custom {reader.__class__.__name__}"),
+                            chunking_strategies=chunking_strategies,
+                        )
+                    )
 
         return ConfigResponseSchema(
             readers=reader_schemas,

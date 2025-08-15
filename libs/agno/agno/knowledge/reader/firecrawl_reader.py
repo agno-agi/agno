@@ -2,7 +2,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Dict, List, Literal, Optional
 
-from agno.knowledge.chunking.strategy import ChunkingStrategy
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.utils.log import log_debug, logger
@@ -19,6 +19,16 @@ class FirecrawlReader(Reader):
     params: Optional[Dict] = None
     mode: Literal["scrape", "crawl"] = "scrape"
 
+    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+        """Get the list of supported chunking strategies for Firecrawl readers."""
+        return [
+            ChunkingStrategyType.AGENTIC_CHUNKING,
+            ChunkingStrategyType.DOCUMENT_CHUNKING,
+            ChunkingStrategyType.RECURSIVE_CHUNKING,
+            ChunkingStrategyType.ROW_CHUNKING,
+            ChunkingStrategyType.SEMANTIC_CHUNKING,
+        ]
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -30,6 +40,12 @@ class FirecrawlReader(Reader):
         name: Optional[str] = None,
         description: Optional[str] = None,
     ) -> None:
+        # Set RowChunking as default strategy if none provided
+        if chunking_strategy is None:
+            from agno.knowledge.chunking.row import RowChunking
+
+            chunking_strategy = RowChunking()
+
         # Initialise base Reader (handles chunk_size / strategy)
         super().__init__(
             chunk=chunk, chunk_size=chunk_size, chunking_strategy=chunking_strategy, name=name, description=description

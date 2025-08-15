@@ -3,6 +3,7 @@ import uuid
 from pathlib import Path
 from typing import IO, Any, List, Optional, Union
 
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.utils.log import log_info, logger
@@ -10,6 +11,23 @@ from agno.utils.log import log_info, logger
 
 class TextReader(Reader):
     """Reader for Text files"""
+
+    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = None, **kwargs):
+        # Set FixedSizeChunking as default strategy if none provided
+        if chunking_strategy is None:
+            from agno.knowledge.chunking.fixed import FixedSizeChunking
+
+            chunking_strategy = FixedSizeChunking()
+
+        super().__init__(chunking_strategy=chunking_strategy, **kwargs)
+
+    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+        """Get the list of supported chunking strategies for Text readers."""
+        return [
+            ChunkingStrategyType.AGENTIC_CHUNKING,
+            ChunkingStrategyType.DOCUMENT_CHUNKING,
+            ChunkingStrategyType.RECURSIVE_CHUNKING,
+        ]
 
     def read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         try:

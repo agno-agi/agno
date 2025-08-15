@@ -42,21 +42,9 @@ knowledge = Knowledge(
     name="Agno Docs",
     contents_db=db,
     vector_db=vector_db,
-    # readers={
-    #     PDFReader(
-    #         chunking_strategy=AgenticChunking(max_chunk_size=1000),
-    #     ),
-    #      CSVReader(
-    #         chunking_strategy=RecursiveChunking(chunk_size=500),
-    #     ),
-    #     DocxReader(),
-    #     JSONReader(),
-    #     TextReader(
-    #         chunking_strategy=SemanticChunking(chunk_size=800),
-    #     ),
-    #     URLReader(),
-    #     WebsiteReader(),
-    # },
+    readers={
+        "pdf2": PDFReader(chunking_strategy=AgenticChunking()),
+    },
 )
 
 # Create an Agent

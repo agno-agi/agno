@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import IO, Any, List, Optional, Union
 
 from agno.knowledge.chunking.markdown import MarkdownChunking
-from agno.knowledge.chunking.strategy import ChunkingStrategy
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.utils.log import log_info, logger
@@ -12,6 +12,12 @@ from agno.utils.log import log_info, logger
 
 class MarkdownReader(Reader):
     """Reader for Markdown files"""
+
+    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+        """Get the list of supported chunking strategies for Markdown readers."""
+        return [
+            ChunkingStrategyType.MARKDOWN_CHUNKING,
+        ]
 
     def __init__(
         self,

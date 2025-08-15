@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import IO, Any, List, Optional, Union
 from uuid import uuid4
 
-from agno.knowledge.chunking.strategy import ChunkingStrategy
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.utils.http import async_fetch_with_retry, fetch_with_retry
@@ -85,22 +85,23 @@ async def async_process_image_page(doc_name: str, page_number: int, page: Any) -
 
 
 class BasePDFReader(Reader):
-    chunking_strategies: Optional[List[ChunkingStrategy]] = None
-    chunk_size: int = 5000
-
-    def __init__(self, chunking_strategies: Optional[List[ChunkingStrategy]] = None, chunk_size: int = 5000, **kwargs):
-        super().__init__(**kwargs)
-        # Only set default chunking strategy if not already set (e.g., from router)
-        if self.chunking_strategy is None:
+    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = None, **kwargs):
+        # Set DocumentChunking as default strategy if none provided
+        if chunking_strategy is None:
             from agno.knowledge.chunking.document import DocumentChunking
 
-            self.chunking_strategy = DocumentChunking(chunk_size=chunk_size)
+            chunking_strategy = DocumentChunking()
 
-        self.chunk_size = chunk_size
+        super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
-    def get_supported_chunking_strategies(self) -> List[str]:
+    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for PDF readers."""
-        return ["AgenticChunking", "DocumentChunking", "RecursiveChunking"]
+        return [
+            ChunkingStrategyType.FIXED_SIZE_CHUNKING,
+            ChunkingStrategyType.AGENTIC_CHUNKING,
+            ChunkingStrategyType.DOCUMENT_CHUNKING,
+            ChunkingStrategyType.RECURSIVE_CHUNKING,
+        ]
 
     def _build_chunked_documents(self, documents: List[Document]) -> List[Document]:
         chunked_documents: List[Document] = []
@@ -215,9 +216,15 @@ class PDFUrlReader(BasePDFReader):
         super().__init__(**kwargs)
         self.proxy = proxy
 
-    def get_supported_chunking_strategies(self) -> List[str]:
+    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for PDF URL readers."""
-        return ["AgenticChunking", "DocumentChunking", "RecursiveChunking", "RowChunking", "SemanticChunking"]
+        return [
+            ChunkingStrategyType.AGENTIC_CHUNKING,
+            ChunkingStrategyType.DOCUMENT_CHUNKING,
+            ChunkingStrategyType.RECURSIVE_CHUNKING,
+            ChunkingStrategyType.ROW_CHUNKING,
+            ChunkingStrategyType.SEMANTIC_CHUNKING,
+        ]
 
     def read(self, url: str, name: Optional[str] = None) -> List[Document]:
         if not url:

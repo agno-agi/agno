@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
 from agno.knowledge.chunking.fixed import FixedSizeChunking
-from agno.knowledge.chunking.strategy import ChunkingStrategy
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 
 
@@ -42,44 +42,34 @@ class Reader:
 
     def set_chunking_strategy_from_string(self, strategy_name: str, **kwargs) -> None:
         """Set the chunking strategy from a string name."""
-        strategy_name_lower = strategy_name.lower().strip()
+        try:
+            strategy_type = ChunkingStrategyType.from_string(strategy_name)
+            self.chunking_strategy = strategy_type.create_strategy(**kwargs)
+        except ValueError as e:
+            raise ValueError(f"Failed to set chunking strategy: {e}")
 
-        if strategy_name_lower in ["agentic", "agenticchunking"]:
-            from agno.knowledge.chunking.agentic import AgenticChunking
-
-            self.chunking_strategy = AgenticChunking(**kwargs)
-        elif strategy_name_lower in ["document", "documentchunking"]:
-            from agno.knowledge.chunking.document import DocumentChunking
-
-            self.chunking_strategy = DocumentChunking(**kwargs)
-        elif strategy_name_lower in ["recursive", "recursivechunking"]:
-            from agno.knowledge.chunking.recursive import RecursiveChunking
-
-            self.chunking_strategy = RecursiveChunking(**kwargs)
-        elif strategy_name_lower in ["semantic", "semanticchunking"]:
-            from agno.knowledge.chunking.semantic import SemanticChunking
-
-            self.chunking_strategy = SemanticChunking(**kwargs)
-        elif strategy_name_lower in ["fixed", "fixedsize", "fixedsizechunking"]:
-            from agno.knowledge.chunking.fixed import FixedSizeChunking
-
-            self.chunking_strategy = FixedSizeChunking(**kwargs)
-        elif strategy_name_lower in ["row", "rowchunking"]:
-            from agno.knowledge.chunking.row import RowChunking
-
-            self.chunking_strategy = RowChunking(**kwargs)
-        elif strategy_name_lower in ["markdown", "markdownchunking"]:
-            from agno.knowledge.chunking.markdown import MarkdownChunking
-
-            self.chunking_strategy = MarkdownChunking(**kwargs)
-        else:
-            raise ValueError(f"Unsupported chunking strategy: {strategy_name}")
+    def set_chunking_strategy(self, strategy_type: ChunkingStrategyType, **kwargs) -> None:
+        """Set the chunking strategy from a ChunkingStrategyType enum."""
+        self.chunking_strategy = strategy_type.create_strategy(**kwargs)
 
     def read(self, obj: Any, name: Optional[str] = None) -> List[Document]:
         raise NotImplementedError
 
     async def async_read(self, obj: Any, name: Optional[str] = None) -> List[Document]:
         raise NotImplementedError
+
+    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+        """Get the list of supported chunking strategies for this reader.
+
+        Returns:
+            List of ChunkingStrategyType enums that this reader supports.
+        """
+        # Default implementation returns common strategies
+        return [
+            ChunkingStrategyType.FIXED_SIZE_CHUNKING,
+            ChunkingStrategyType.DOCUMENT_CHUNKING,
+            ChunkingStrategyType.RECURSIVE_CHUNKING,
+        ]
 
     def chunk_document(self, document: Document) -> List[Document]:
         print(f"chunk_document: {self.chunking_strategy}")
