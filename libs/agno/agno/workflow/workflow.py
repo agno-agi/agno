@@ -1558,6 +1558,7 @@ class Workflow:
             try:
                 # Update status to RUNNING and save
                 workflow_run_response.status = RunStatus.running
+                self.save_session(session=workflow_session)
 
                 await self._aexecute(
                     session=workflow_session,
@@ -1573,6 +1574,7 @@ class Workflow:
                 logger.error(f"Background workflow execution failed: {e}")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background execution failed: {str(e)}"
+                self.save_session(session=workflow_session)
 
         # Create and start asyncio task
         loop = asyncio.get_running_loop()
@@ -1644,6 +1646,7 @@ class Workflow:
             try:
                 # Update status to RUNNING and save
                 workflow_run_response.status = RunStatus.running
+                self.save_session(session=workflow_session)
 
                 # Execute with streaming - consume all events (they're auto-broadcast via _handle_event)
                 async for event in self._aexecute_stream(
@@ -1665,6 +1668,7 @@ class Workflow:
                 logger.error(f"Background streaming workflow execution failed: {e}")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background streaming execution failed: {str(e)}"
+                self.save_session(session=workflow_session)
 
         # Create and start asyncio task for background streaming execution
         loop = asyncio.get_running_loop()
