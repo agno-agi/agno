@@ -1,5 +1,6 @@
 """🤖 Agentic RAG Agent - Your AI Knowledge Assistant!
-This advanced example shows how to build a sophisticated RAG (Retrieval Augmented Generation) system that leverages vector search and LLMs to provide deep insights from any knowledge base.
+This advanced example shows how to build a sophisticated RAG (Retrieval Augmented Generation) system that
+leverages vector search and LLMs to provide deep insights from any knowledge base.
 
 The agent can:
 - Process and understand documents from multiple sources (PDFs, websites, text files)
@@ -26,7 +27,6 @@ The agent uses:
 
 View the README for instructions on how to run the application.
 """
-
 from typing import Optional
 
 from agno.agent import Agent
@@ -46,9 +46,7 @@ def get_agentic_rag_agent(
     session_id: Optional[str] = None,
     debug_mode: bool = True,
 ) -> Agent:
-    """Get an Agentic RAG Agent with knowledge"""
-
-    # Create the Knowledge system with vector store and contents db
+    """Get an Agentic RAG Agent with Memory"""
     contents_db = PostgresDb(
         db_url=db_url,
         knowledge_table="agentic_rag_knowledge_contents",
@@ -81,9 +79,8 @@ def get_agentic_rag_agent(
         db=db,
         enable_user_memories=True,
         knowledge=knowledge_base,
-        add_knowledge_to_context=True,
         add_history_to_context=True,
-        num_history_runs=10,
+        num_history_runs=5,
         session_id=session_id,
         tools=[DuckDuckGoTools()],
         instructions=[

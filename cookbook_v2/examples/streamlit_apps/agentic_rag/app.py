@@ -4,7 +4,6 @@ import tempfile
 import nest_asyncio
 import streamlit as st
 from agentic_rag import get_agentic_rag_agent
-from agno.utils.log import logger
 from streamlit_utils import (
     COMMON_CSS,
     add_message,
@@ -13,10 +12,10 @@ from streamlit_utils import (
     handle_agent_response,
     initialize_agent,
     knowledge_base_info_widget,
-    manage_session_state,
-    restart_agent_session,
+    update_session_state,
     session_selector_widget,
 )
+from utils import about_section
 
 nest_asyncio.apply()
 st.set_page_config(
@@ -31,25 +30,15 @@ st.markdown(COMMON_CSS, unsafe_allow_html=True)
 
 
 def restart_agent():
-    """Reset the agent and clear chat history with immediate new session"""
-    # Get current model to create new agent with same model
+    """Reset the agent"""
     current_model = st.session_state.get("current_model", "openai:gpt-4o")
-    
-    # Create new agent and generate fresh session
-    logger.info(f"Creating new chat session with model: {current_model}")
     new_agent = get_agentic_rag_agent(model_id=current_model, debug_mode=True)
-    
-    # Generate new session ID
     new_agent.new_session()
     
-    # Update session state with new agent and session
     st.session_state["agent"] = new_agent
     st.session_state["session_id"] = new_agent.session_id
     st.session_state["messages"] = []
     
-    logger.info(f"New chat created with session ID: {new_agent.session_id}")
-    
-    # Rerun to display new session
     st.rerun()
 
 
@@ -67,6 +56,7 @@ def main():
     # Model selector
     ####################################################################
     model_options = {
+        "gpt-5": "openai:gpt-5",
         "o3-mini": "openai:o3-mini",
         "kimi-k2-instruct": "groq:moonshotai/kimi-k2-instruct",
         "gpt-4o": "openai:gpt-4o",
@@ -85,7 +75,7 @@ def main():
     # Initialize Agent and Session
     ####################################################################
     agentic_rag_agent = initialize_agent(model_id, get_agentic_rag_agent)
-    manage_session_state(agentic_rag_agent)
+    update_session_state(agentic_rag_agent)
 
     if prompt := st.chat_input("👋 Ask me anything!"):
         add_message("user", prompt)
@@ -121,21 +111,18 @@ def main():
     if uploaded_file and not prompt:
         alert = st.sidebar.info("Processing document...", icon="ℹ️")
         try:
-            # Save uploaded file temporarily
             with tempfile.NamedTemporaryFile(
                 suffix=f".{uploaded_file.name.split('.')[-1]}", delete=False
             ) as tmp_file:
                 tmp_file.write(uploaded_file.read())
                 tmp_path = tmp_file.name
 
-            # Use the Knowledge system's add_content_sync method
             agentic_rag_agent.knowledge.add_content_sync(
                 name=uploaded_file.name,
                 path=tmp_path,
                 description=f"Uploaded file: {uploaded_file.name}",
             )
 
-            # Clean up temporary file
             os.unlink(tmp_path)
             st.sidebar.success(f"{uploaded_file.name} added to knowledge base")
         except Exception as e:
@@ -143,7 +130,6 @@ def main():
         finally:
             alert.empty()
 
-    # Clear knowledge base
     if st.sidebar.button("Clear Knowledge Base"):
         if agentic_rag_agent.knowledge.vector_db:
             agentic_rag_agent.knowledge.vector_db.delete()
@@ -160,7 +146,7 @@ def main():
         )
 
     ###############################################################
-    # Utility buttons (using streamlit utilities)
+    # Utility buttons
     ###############################################################
     st.sidebar.markdown("#### 🛠️ Utilities")
     col1, col2 = st.sidebar.columns([1, 1])
@@ -168,13 +154,11 @@ def main():
         if st.sidebar.button("🔄 New Chat", use_container_width=True):
             restart_agent()
     with col2:
-        # Export chat
         has_messages = (
             st.session_state.get("messages") and len(st.session_state["messages"]) > 0
         )
 
         if has_messages:
-            # Generate filename
             session_id = st.session_state.get("session_id")
             if (
                 session_id
@@ -220,28 +204,16 @@ def main():
         handle_agent_response(agentic_rag_agent, question)
 
     ####################################################################
-    # Session management widgets (using streamlit utilities)
+    # Session management widgets 
     ####################################################################
-
-    # Session selector with built-in rename functionality
-    # Note: Rename option appears below when you have an active session
     session_selector_widget(agentic_rag_agent, model_id, get_agentic_rag_agent)
 
-    # Knowledge base information
+    # Knowledge base info
     knowledge_base_info_widget(agentic_rag_agent)
 
+   ####################################################################
+    # About section
     ####################################################################
-    # About section (inline instead of separate file)
-    ####################################################################
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### ℹ️ About")
-    st.sidebar.markdown("""
-    This Agentic RAG Assistant helps you analyze documents and web content using natural language queries.
-
-    Built with:
-    - 🚀 Agno
-    - 💫 Streamlit
-    """)
-
+    about_section()
 
 main()

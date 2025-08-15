@@ -2,11 +2,10 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-import streamlit as st
 from agno.agent import Agent
 from agno.utils.log import logger
 from agno.db.base import SessionType
-
+import streamlit as st
 
 def get_session_name_from_db(agent, session_id: str) -> str:
     """Get session name from database session_data."""
@@ -21,78 +20,6 @@ def get_session_name_from_db(agent, session_id: str) -> str:
     except Exception as e:
         logger.debug(f"Error getting session name from DB: {e}")
         return None
-
-
-def clean_html_content(content: str, max_length: int = 1000) -> str:
-    """Clean HTML content and make it readable."""
-    if not content or not isinstance(content, str):
-        return str(content) if content else ""
-    
-    # Remove HTML tags
-    clean_content = re.sub(r'<[^>]+>', '', content)
-    
-    # Replace HTML entities
-    html_entities = {
-        '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'",
-        '&nbsp;': ' ', '&mdash;': '—', '&ndash;': '–', '&hellip;': '...',
-        '&copy;': '©', '&reg;': '®', '&trade;': '™'
-    }
-    
-    for entity, char in html_entities.items():
-        clean_content = clean_content.replace(entity, char)
-    
-    # Clean up whitespace
-    clean_content = re.sub(r'\s+', ' ', clean_content)
-    clean_content = clean_content.strip()
-    
-    # Truncate if too long
-    if len(clean_content) > max_length:
-        clean_content = clean_content[:max_length] + "..."
-    
-    return clean_content
-
-
-def _extract_user_query(content: str) -> str:
-    """Extract the actual user query from content that may contain HTML references."""
-    if not content:
-        return ""
-    
-    # If content is short and doesn't contain HTML, return as is
-    if len(content) < 500 and '<' not in content and 'references' not in content.lower():
-        return content.strip()
-    
-    # Look for the pattern "Can you..." or question at the start
-    lines = content.split('\n')
-    
-    # First, look for obvious user queries
-    for line in lines[:5]:  # Check first 5 lines
-        line = line.strip()
-        if line and not line.startswith('<') and not line.startswith('Use the following') and not line.startswith('<references>'):
-            # Check if this looks like a user question
-            if any(starter in line.lower() for starter in ['can you', 'what is', 'how do', 'tell me', 'explain', '?']):
-                if len(line) < 500:
-                    return line
-            # Or if it's a short, clean line at the beginning
-            elif len(line) < 200:
-                return line
-    
-    # If no clean line found, look for first few non-HTML lines
-    clean_parts = []
-    for line in lines[:10]:  # Only check first 10 lines
-        line = line.strip()
-        if line and not any(skip in line for skip in ['<', 'Use the following', '<references>', 'meta_data', 'chunk']):
-            clean_parts.append(line)
-            if len(' '.join(clean_parts)) > 200:  # Stop once we have enough content
-                break
-                
-    result = ' '.join(clean_parts)
-    
-    # Final cleanup
-    if len(result) > 500:
-        result = result[:500] + "..."
-        
-    return result if result else ""
-
 
 def add_message(
     role: str, content: str, tool_calls: Optional[List[Dict[str, Any]]] = None
@@ -160,7 +87,7 @@ def export_chat_history(app_name: str = "Chat") -> str:
     return chat_text
 
 
-def restart_agent_session(**session_keys) -> None:
+def restart_agent_state(**session_keys) -> None:
     for key in session_keys.values():
         if key in st.session_state:
             st.session_state[key] = None
@@ -376,15 +303,13 @@ def _load_session(session_id: str, model_id: str, agent_creation_callback: calla
                                 logger.debug(f"Message {msg_idx}: role={role}, content_length={len(content)}")
                                 
                                 if role == "system":
-                                    # Skip system messages - these are instructions
                                     logger.debug("Skipping system message")
                                     continue
                                 elif role == "user":
-                                    # Extract the actual user query, clean HTML if present
-                                    extracted = _extract_user_query(content)
-                                    logger.debug(f"Extracted user query: {extracted[:100]}...")
-                                    if extracted:
-                                        user_msg = extracted
+                                    # User messages from database should already be clean text
+                                    logger.debug(f"User message: {content[:100]}...")
+                                    if content and content.strip():
+                                        user_msg = content.strip()
                                 elif role == "assistant":
                                     # Keep assistant messages with actual content
                                     if content and content.strip() and content.strip().lower() != "none":
@@ -425,9 +350,9 @@ def _load_session(session_id: str, model_id: str, agent_creation_callback: calla
                                 content = str(message.content)
                                 
                                 if role == "user":
-                                    clean_content = _extract_user_query(content)
-                                    if clean_content:
-                                        add_message("user", clean_content)
+                                    # User messages should already be clean from database
+                                    if content and content.strip():
+                                        add_message("user", content.strip())
                                 elif role == "assistant" and content and content.strip() and content.strip().lower() != "none":
                                     add_message("assistant", content)
                     except Exception as e:
@@ -517,19 +442,12 @@ def handle_agent_response(agent: Agent, question: str) -> None:
                         ):
                             response += content
                             
-                            # Clean HTML if the response is getting long and contains HTML
-                            display_response = response
-                            if len(response) > 500 and '<' in response and '>' in response:
-                                display_response = clean_html_content(response, max_length=2000)
-                            
-                            resp_container.markdown(display_response)
+                            resp_container.markdown(response)
 
                 # Clean final response for storage if it contains HTML
                 final_response = response
                 if len(response) > 500 and '<' in response and '>' in response:
-                    cleaned = clean_html_content(response, max_length=2000)
-                    if cleaned != response:
-                        final_response = cleaned
+                    final_response = response
                 
                 # Add final response with tools
                 try:
@@ -569,7 +487,7 @@ def display_chat_messages() -> None:
                         content_str = str(content)
                         if '<' in content_str and '>' in content_str and len(content_str) > 500:
                             # This looks like HTML content, clean it
-                            cleaned_content = clean_html_content(content_str, max_length=2000)
+                            cleaned_content = content_str
                             if cleaned_content != content_str:
                                 st.markdown(f"**Summary:** {cleaned_content}")
                                 with st.expander("View Raw Content", expanded=False):
@@ -610,8 +528,8 @@ def initialize_agent(model_id: str, agent_creation_callback: callable) -> Agent:
         return st.session_state["agent"]
 
 
-def manage_session_state(agent: Agent) -> None:
-    """Manage session state initialization."""
+def update_session_state(agent: Agent) -> None:
+    """Update session state."""
     if agent.session_id:
         st.session_state["session_id"] = agent.session_id
 

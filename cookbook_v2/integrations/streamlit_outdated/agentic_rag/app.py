@@ -11,7 +11,7 @@ from streamlit_utils import (
     display_tool_calls,
     export_chat_history,
     knowledge_base_info_widget,
-    restart_agent_session,
+    restart_agent_state,
     session_selector_widget,
 )
 
@@ -29,7 +29,7 @@ st.markdown(COMMON_CSS, unsafe_allow_html=True)
 
 def restart_agent():
     """Reset the agent and clear chat history"""
-    restart_agent_session(
+    restart_agent_state(
         agent="agent",
         session_id="session_id",
         current_model="current_model",
