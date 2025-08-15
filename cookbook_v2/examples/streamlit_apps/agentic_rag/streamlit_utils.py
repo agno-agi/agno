@@ -5,6 +5,22 @@ from typing import Any, Dict, List, Optional
 import streamlit as st
 from agno.agent import Agent
 from agno.utils.log import logger
+from agno.db.base import SessionType
+
+
+def get_session_name_from_db(agent, session_id: str) -> str:
+    """Get session name from database session_data."""
+    try:
+        db_session = agent.db.get_session(
+            session_id=session_id,
+            session_type=SessionType.AGENT
+        )
+        if db_session and db_session.session_data:
+            return db_session.session_data.get('session_name')
+        return None
+    except Exception as e:
+        logger.debug(f"Error getting session name from DB: {e}")
+        return None
 
 
 def clean_html_content(content: str, max_length: int = 1000) -> str:
@@ -78,24 +94,6 @@ def _extract_user_query(content: str) -> str:
     return result if result else ""
 
 
-def format_tool_result(result: Any) -> str:
-    """Format tool result for display."""
-    if not result:
-        return "No result"
-    
-    result_str = str(result)
-    
-    # Check if it's likely HTML content
-    if '<' in result_str and '>' in result_str:
-        return clean_html_content(result_str, max_length=800)
-    
-    # If it's very long, truncate
-    if len(result_str) > 800:
-        return result_str[:800] + "..."
-    
-    return result_str
-
-
 def add_message(
     role: str, content: str, tool_calls: Optional[List[Dict[str, Any]]] = None
 ) -> None:
@@ -131,14 +129,7 @@ def display_tool_calls(container, tools: List[Any]):
                     st.json(args)
                 if result:
                     st.markdown("**Result:**")
-                    # Format the result for better readability
-                    formatted_result = format_tool_result(result)
-                    if formatted_result != str(result) and len(str(result)) > 200:
-                        # If we cleaned/formatted it significantly, show as text
-                        st.text_area("Tool Result", formatted_result, height=150, disabled=True)
-                    else:
-                        # For shorter or non-HTML content, use JSON
-                        st.json(result)
+                    st.json(result)
 
 
 def export_chat_history(app_name: str = "Chat") -> str:
@@ -211,6 +202,7 @@ def session_selector_widget(
         session_id = session.session_id
         session_name = None
 
+        # Extract session name from session_data  
         if hasattr(session, "session_data") and session.session_data:
             session_name = session.session_data.get("session_name")
 
@@ -279,13 +271,18 @@ def session_selector_widget(
         if "session_edit_mode" not in st.session_state:
             st.session_state.session_edit_mode = False
 
-        # Use a better display name for new sessions
+        # Use a better display name for current session
+        current_name = "New Session"
         if agent.session_name:
             current_name = agent.session_name
         elif agent.session_id:
-            current_name = f"Session {agent.session_id[:8]}..."  # Show first 8 chars of UUID
-        else:
-            current_name = "New Session"
+            # Check database for session name
+            db_name = get_session_name_from_db(agent, agent.session_id)
+            if db_name:
+                current_name = db_name
+                agent.session_name = db_name  # Update agent property
+            else:
+                current_name = f"{agent.session_id[:8]}..."  # Show first 8 chars of UUID
 
         if not st.session_state.session_edit_mode:
             col1, col2 = st.sidebar.columns([3, 1])
@@ -310,7 +307,11 @@ def session_selector_widget(
                 ):
                     if new_name and new_name.strip():
                         try:
-                            agent.rename_session(new_name.strip())
+                            # Use the agent's built-in set_session_name method
+                            result = agent.set_session_name(session_name=new_name.strip())
+                            
+                            if result:
+                                logger.info(f"Session renamed to: {new_name.strip()}")
                             st.session_state.session_edit_mode = False
                             st.sidebar.success("Session renamed!")
                             st.rerun()
@@ -588,17 +589,20 @@ def initialize_agent(model_id: str, agent_creation_callback: callable) -> Agent:
         or st.session_state["agent"] is None
         or st.session_state.get("current_model") != model_id
     ):
-        # If model changed, force a new session and clear everything
         if st.session_state.get("current_model") is not None and st.session_state.get("current_model") != model_id:
-            # Model has changed - clear all session state
-            st.session_state["session_id"] = None
+            logger.info(f"Model changed from {st.session_state.get('current_model')} to {model_id} - starting new chat")
+            agent = agent_creation_callback(model_id=model_id, session_id=None)
+            
+            # Generate new session ID
+            agent.new_session()
+            
+            # Clear all session state for fresh start
+            st.session_state["session_id"] = agent.session_id
             st.session_state["messages"] = []
-            session_id = None
         else:
             # Initial load or same model - use existing session if available
             session_id = st.session_state.get("session_id")
-        
-        agent = agent_creation_callback(model_id=model_id, session_id=session_id)
+            agent = agent_creation_callback(model_id=model_id, session_id=session_id)
         st.session_state["agent"] = agent
         st.session_state["current_model"] = model_id
         return agent

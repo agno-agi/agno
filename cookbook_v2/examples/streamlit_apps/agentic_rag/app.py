@@ -31,12 +31,26 @@ st.markdown(COMMON_CSS, unsafe_allow_html=True)
 
 
 def restart_agent():
-    """Reset the agent and clear chat history"""
-    restart_agent_session(
-        agent="agent",
-        session_id="session_id",
-        current_model="current_model",
-    )
+    """Reset the agent and clear chat history with immediate new session"""
+    # Get current model to create new agent with same model
+    current_model = st.session_state.get("current_model", "openai:gpt-4o")
+    
+    # Create new agent and generate fresh session
+    logger.info(f"Creating new chat session with model: {current_model}")
+    new_agent = get_agentic_rag_agent(model_id=current_model, debug_mode=True)
+    
+    # Generate new session ID
+    new_agent.new_session()
+    
+    # Update session state with new agent and session
+    st.session_state["agent"] = new_agent
+    st.session_state["session_id"] = new_agent.session_id
+    st.session_state["messages"] = []
+    
+    logger.info(f"New chat created with session ID: {new_agent.session_id}")
+    
+    # Rerun to display new session
+    st.rerun()
 
 
 def main():
