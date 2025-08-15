@@ -1,0 +1,21 @@
+[project]
+name = "agent-os"
+version = "0.1.0"
+description = "A lightweight framework building Agentic Systems"
+requires-python = ">=3.7,<4"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+  {name = "Agno Team", email = "support@agno.com"}
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["agno*"]
+
+[tool.setuptools.package-data]
+agno = ["py.typed"]
+include = ["LICENSE"]
