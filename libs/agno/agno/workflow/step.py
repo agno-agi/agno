@@ -788,8 +788,8 @@ class Step:
         """Store agent/team responses in step_executor_runs if enabled"""
         if self._executor_type in ["agent", "team"]:
             # propogate the workflow run id as parent run id to the executor response
-            self.active_executor.run_response.parent_run_id = workflow_run_response.run_id # type: ignore
-            self.active_executor.run_response.workflow_step_id = self.step_id # type: ignore
+            self.active_executor.run_response.parent_run_id = workflow_run_response.run_id  # type: ignore
+            self.active_executor.run_response.workflow_step_id = self.step_id  # type: ignore
 
             # Get the raw response from the step's active executor
             raw_response = self.active_executor.run_response
@@ -822,7 +822,7 @@ class Step:
             return self._get_deepest_content_from_step_output(step_output.steps[-1])
 
         # For regular steps, return their content
-        return step_output.content # type: ignore
+        return step_output.content  # type: ignore
 
     def _prepare_message(
         self,

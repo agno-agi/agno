@@ -283,11 +283,11 @@ class Workflow:
 
         self._update_workflow_session_state()
 
-    def _generate_workflow_session_name(self, session_id: str) -> str:
+    def _generate_workflow_session_name(self, session_id: Optional[str] = None) -> str:
         """Generate a name for the workflow session"""
 
-        if self.session_id is None:
-            return f"Workflow Session - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        if session_id is None:
+            raise ValueError("Session ID is not set")
 
         datetime_str = datetime.now().strftime("%Y-%m-%d %H:%M")
         new_session_name = f"Workflow Session-{datetime_str}"
