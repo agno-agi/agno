@@ -9,10 +9,10 @@ from streamlit_utils import (
     add_message,
     display_chat_messages,
     export_chat_history,
-    handle_agent_response,
+    display_response,
     initialize_agent,
     knowledge_base_info_widget,
-    update_session_state,
+    reset_session_state,
     session_selector_widget,
 )
 from utils import about_section
@@ -75,7 +75,7 @@ def main():
     # Initialize Agent and Session
     ####################################################################
     agentic_rag_agent = initialize_agent(model_id, get_agentic_rag_agent)
-    update_session_state(agentic_rag_agent)
+    reset_session_state(agentic_rag_agent)
 
     if prompt := st.chat_input("👋 Ask me anything!"):
         add_message("user", prompt)
@@ -201,7 +201,7 @@ def main():
     )
     if last_message and last_message.get("role") == "user":
         question = last_message["content"]
-        handle_agent_response(agentic_rag_agent, question)
+        display_response(agentic_rag_agent, question)
 
     ####################################################################
     # Session management widgets 

@@ -63,6 +63,7 @@ def get_agentic_rag_agent(
             embedder=OpenAIEmbedder(id="text-embedding-3-small"),
         ),
         contents_db=contents_db,
+        max_results=3,  # Only return top 3 most relevant documents
     )
 
     db = PostgresDb(

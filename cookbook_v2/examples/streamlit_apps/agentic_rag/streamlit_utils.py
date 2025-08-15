@@ -99,6 +99,8 @@ def restart_agent_state(**session_keys) -> None:
 def session_selector_widget(
     agent: Agent, model_id: str, agent_creation_callback: callable
 ) -> None:
+    """Session selector widget"""
+    # Fetch existing sessions from database
     if not agent.db:
         st.sidebar.info("💡 Database not configured. Sessions will not be saved.")
         return
@@ -119,6 +121,7 @@ def session_selector_widget(
         st.sidebar.info("🆕 New Chat - Start your conversation!")
         return
 
+    # Filter session data
     session_options = []
     session_dict = {}
 
@@ -134,28 +137,15 @@ def session_selector_widget(
             session_name = session.session_data.get("session_name")
 
         name = session_name or session_id
-
-        if hasattr(session, "created_at") and session.created_at:
-            try:
-                if hasattr(session.created_at, "strftime"):
-                    time_str = session.created_at.strftime("%m/%d %H:%M")
-                    display_name = f"{name} ({time_str})"
-                else:
-                    display_name = name
-            except (ValueError, TypeError, OSError):
-                display_name = name
-        else:
-            display_name = name
-
-        session_options.append(display_name)
-        session_dict[display_name] = session_id
+        session_options.append(name)
+        session_dict[name] = session_id
 
     current_session_id = st.session_state.get("session_id")
     current_selection = None
 
-    # If we have a current session but it's not in the saved sessions yet (new session)
+    # New session
     if current_session_id and current_session_id not in [s_id for s_id in session_dict.values()]:
-        # Add current session to the options with just the session ID
+        logger.info(f"New session: {current_session_id}")
         if agent.session_name:
             current_display_name = agent.session_name
         else:
@@ -164,13 +154,12 @@ def session_selector_widget(
         session_dict[current_display_name] = current_session_id
         current_selection = current_display_name
 
-    # Find current selection from existing sessions
     for display_name, session_id in session_dict.items():
         if session_id == current_session_id:
             current_selection = display_name
             break
 
-    # Always use session_options, no "New Chat" option
+    # Options
     display_options = session_options
     selected_index = (
         session_options.index(current_selection)
@@ -189,27 +178,18 @@ def session_selector_widget(
         help="Select a session to continue",
     )
 
+    # Load session
     if selected and selected in session_dict:
         selected_session_id = session_dict[selected]
         if selected_session_id != current_session_id:
             _load_session(selected_session_id, model_id, agent_creation_callback)
 
+    # Rename session
     if agent.session_id:
         if "session_edit_mode" not in st.session_state:
             st.session_state.session_edit_mode = False
 
-        # Use a better display name for current session
-        current_name = "New Session"
-        if agent.session_name:
-            current_name = agent.session_name
-        elif agent.session_id:
-            # Check database for session name
-            db_name = get_session_name_from_db(agent, agent.session_id)
-            if db_name:
-                current_name = db_name
-                agent.session_name = db_name  # Update agent property
-            else:
-                current_name = f"{agent.session_id[:8]}..."  # Show first 8 chars of UUID
+        current_name = agent.session_name or agent.session_id
 
         if not st.session_state.session_edit_mode:
             col1, col2 = st.sidebar.columns([3, 1])
@@ -234,7 +214,6 @@ def session_selector_widget(
                 ):
                     if new_name and new_name.strip():
                         try:
-                            # Use the agent's built-in set_session_name method
                             result = agent.set_session_name(session_name=new_name.strip())
                             
                             if result:
@@ -257,160 +236,69 @@ def session_selector_widget(
 
 def _load_session(session_id: str, model_id: str, agent_creation_callback: callable):
     try:
-        # Try creating agent directly with session_id
         logger.info(f"Creating agent with session_id: {session_id}")
         new_agent = agent_creation_callback(model_id=model_id, session_id=session_id)
         
-        # Update session state
         st.session_state["agent"] = new_agent
         st.session_state["session_id"] = session_id
         st.session_state["messages"] = []
 
         try:
-            # Load session data directly from database (more reliable than agent.agent_session)
-            logger.info(f"Loading session {session_id} - getting session from database...")
-            
-            # Get the specific session directly by session_id
-            target_session = new_agent.db.get_session(
+            selected_session = new_agent.db.get_session(
                 session_id=session_id,
                 session_type="agent",
                 deserialize=True
             )
             
-            if target_session:
-                logger.info(f"Found session in database with {len(getattr(target_session, 'runs', []))} runs")
-                
-                # Process runs from the database session
-                if hasattr(target_session, 'runs') and target_session.runs:
-                    for run_idx, run in enumerate(target_session.runs):
+            # Recreate the chat history
+            if selected_session:
+                if hasattr(selected_session, 'runs') and selected_session.runs:
+                    for run_idx, run in enumerate(selected_session.runs):
                         messages = getattr(run, 'messages', None)
                         msg_count = len(messages) if messages else 0
-                        logger.info(f"Processing run {run_idx} with {msg_count} messages")
                         
                         if messages:
-                            # Process messages in order, but filter appropriately
                             user_msg = None
                             assistant_msg = None
                             tool_calls = []
                             
                             for msg_idx, message in enumerate(messages):
                                 if not hasattr(message, 'role') or not hasattr(message, 'content'):
-                                    logger.debug(f"Skipping message {msg_idx} - missing role or content")
                                     continue
                                     
                                 role = message.role
                                 content = str(message.content) if message.content else ""
-                                logger.debug(f"Message {msg_idx}: role={role}, content_length={len(content)}")
                                 
-                                if role == "system":
-                                    logger.debug("Skipping system message")
-                                    continue
-                                elif role == "user":
-                                    # User messages from database should already be clean text
-                                    logger.debug(f"User message: {content[:100]}...")
+                                if role == "user":
                                     if content and content.strip():
                                         user_msg = content.strip()
                                 elif role == "assistant":
-                                    # Keep assistant messages with actual content
                                     if content and content.strip() and content.strip().lower() != "none":
-                                        logger.debug(f"Keeping assistant message: {content[:100]}...")
                                         assistant_msg = content
-                                    else:
-                                        logger.debug("Skipping empty/none assistant message")
-                                elif role == "tool":
-                                    # Skip tool messages - they'll be handled as tool_calls
-                                    logger.debug("Skipping tool message")
-                                    continue
                             
-                            # Get tool calls for this run
+                            # Display tool calls for this run
                             if hasattr(run, 'tools') and run.tools:
                                 tool_calls = run.tools
-                                logger.debug(f"Found {len(tool_calls)} tool calls")
                             
                             # Add messages to chat history
                             if user_msg:
-                                logger.info(f"Adding user message: {user_msg[:50]}...")
                                 add_message("user", user_msg)
                             if assistant_msg:
-                                logger.info(f"Adding assistant message: {assistant_msg[:50]}...")
                                 add_message("assistant", assistant_msg, tool_calls)
                 
-                # If no runs, try the session's get_messages_for_session method
-                elif hasattr(target_session, 'get_messages_for_session'):
-                    logger.info("No runs found, trying session.get_messages_for_session...")
-                    try:
-                        messages = target_session.get_messages_for_session()
-                        if messages:
-                            logger.info(f"Found {len(messages)} messages from session method")
-                            for message in messages:
-                                if not hasattr(message, 'role') or not hasattr(message, 'content'):
-                                    continue
-                                    
-                                role = message.role
-                                content = str(message.content)
-                                
-                                if role == "user":
-                                    # User messages should already be clean from database
-                                    if content and content.strip():
-                                        add_message("user", content.strip())
-                                elif role == "assistant" and content and content.strip() and content.strip().lower() != "none":
-                                    add_message("assistant", content)
-                    except Exception as e:
-                        logger.debug(f"Session get_messages_for_session failed: {e}")
             else:
                 logger.warning(f"No session found in database for session_id: {session_id}")
                     
         except Exception as e:
             logger.warning(f"Could not load chat history: {e}")
-            import traceback
-            logger.debug(traceback.format_exc())
 
-        # Log success
-        logger.info(f"Successfully loaded session {session_id} with {len(st.session_state['messages'])} messages")
         st.rerun()
         
     except Exception as e:
         logger.error(f"Error loading session: {e}")
         st.sidebar.error(f"Error loading session: {str(e)}")
 
-
-def get_tool_executions_for_message(agent: Agent, message) -> Optional[List[Any]]:
-    """Get tool executions for a message from the agent's session data."""
-    try:
-        if not hasattr(message, "tool_calls") or not message.tool_calls:
-            return None
-
-        # For stored sessions, find matching tool executions from runs
-        if (
-            hasattr(agent, "agent_session")
-            and agent.agent_session
-            and agent.agent_session.runs
-        ):
-            # Find tools from runs that match this message's tool calls
-            for run in agent.agent_session.runs:
-                if hasattr(run, "tools") and run.tools:
-                    # Check if any tool in this run matches the message's tool calls
-                    for tool_exec in run.tools:
-                        if hasattr(tool_exec, "tool_name") and tool_exec.tool_name:
-                            # Check if this tool matches any tool call in the message
-                            for tool_call in message.tool_calls:
-                                if (
-                                    isinstance(tool_call, dict)
-                                    and "function" in tool_call
-                                    and tool_call["function"].get("name")
-                                    == tool_exec.tool_name
-                                ):
-                                    # Found matching tools for this message
-                                    return run.tools
-
-        return None
-    except Exception as e:
-        logger.warning(f"Error getting tool executions for message: {e}")
-        return None
-
-
-
-def handle_agent_response(agent: Agent, question: str) -> None:
+def display_response(agent: Agent, question: str) -> None:
     """Handle agent response with streaming and tool call display."""
     with st.chat_message("assistant"):
         tool_calls_container = st.empty()
@@ -428,43 +316,27 @@ def handle_agent_response(agent: Agent, question: str) -> None:
                     except Exception as tool_error:
                         logger.warning(f"Error displaying tool calls: {tool_error}")
 
-                    # Display response content (filter out tool call text)
                     if resp_chunk.content is not None:
-                        # Filter out tool execution messages
                         content = str(resp_chunk.content)
                         
-                        # Skip content that looks like tool execution logs
                         if not (
                             content.strip().endswith("completed in") or
-                            content.strip().startswith("search_knowledge_base(") or
-                            content.strip().startswith("duckduckgo_search(") or
                             "completed in" in content and "s." in content
                         ):
                             response += content
-                            
                             resp_container.markdown(response)
 
-                # Clean final response for storage if it contains HTML
-                final_response = response
-                if len(response) > 500 and '<' in response and '>' in response:
-                    final_response = response
-                
-                # Add final response with tools
                 try:
                     if hasattr(agent, 'run_response') and agent.run_response and hasattr(agent.run_response, 'tools'):
-                        add_message("assistant", final_response, agent.run_response.tools)
+                        add_message("assistant", response, agent.run_response.tools)
                     else:
-                        add_message("assistant", final_response)
+                        add_message("assistant", response)
                 except Exception as add_msg_error:
                     logger.warning(f"Error adding message with tools: {add_msg_error}")
-                    add_message("assistant", final_response)
+                    add_message("assistant", response)
                     
             except Exception as e:
-                error_message = f"Sorry, I encountered an error: {str(e)}"
-                add_message("assistant", error_message)
-                st.error(error_message)
-                logger.error(f"Full error details: {e}", exc_info=True)
-
+                st.error(f"Sorry, I encountered an error: {str(e)}")
 
 def display_chat_messages() -> None:
     """Display all chat messages from session state."""
@@ -472,32 +344,16 @@ def display_chat_messages() -> None:
         if message["role"] in ["user", "assistant"]:
             content = message["content"]
             with st.chat_message(message["role"]):
-                # Display tool calls first if they exist
+                # Display tool calls
                 if "tool_calls" in message and message["tool_calls"]:
                     display_tool_calls(st.container(), message["tool_calls"])
 
-                # Display content if it exists and is not "None"
                 if (
                     content is not None
                     and str(content).strip()
                     and str(content).strip().lower() != "none"
                 ):
-                    # Clean HTML content for assistant messages if needed
-                    if message["role"] == "assistant":
-                        content_str = str(content)
-                        if '<' in content_str and '>' in content_str and len(content_str) > 500:
-                            # This looks like HTML content, clean it
-                            cleaned_content = content_str
-                            if cleaned_content != content_str:
-                                st.markdown(f"**Summary:** {cleaned_content}")
-                                with st.expander("View Raw Content", expanded=False):
-                                    st.text(content_str)
-                            else:
-                                st.markdown(content)
-                        else:
-                            st.markdown(content)
-                    else:
-                        st.markdown(content)
+                    st.markdown(content)
 
 
 def initialize_agent(model_id: str, agent_creation_callback: callable) -> Agent:
@@ -508,17 +364,13 @@ def initialize_agent(model_id: str, agent_creation_callback: callable) -> Agent:
         or st.session_state.get("current_model") != model_id
     ):
         if st.session_state.get("current_model") is not None and st.session_state.get("current_model") != model_id:
-            logger.info(f"Model changed from {st.session_state.get('current_model')} to {model_id} - starting new chat")
             agent = agent_creation_callback(model_id=model_id, session_id=None)
             
-            # Generate new session ID
             agent.new_session()
             
-            # Clear all session state for fresh start
             st.session_state["session_id"] = agent.session_id
             st.session_state["messages"] = []
         else:
-            # Initial load or same model - use existing session if available
             session_id = st.session_state.get("session_id")
             agent = agent_creation_callback(model_id=model_id, session_id=session_id)
         st.session_state["agent"] = agent
@@ -528,7 +380,7 @@ def initialize_agent(model_id: str, agent_creation_callback: callable) -> Agent:
         return st.session_state["agent"]
 
 
-def update_session_state(agent: Agent) -> None:
+def reset_session_state(agent: Agent) -> None:
     """Update session state."""
     if agent.session_id:
         st.session_state["session_id"] = agent.session_id
