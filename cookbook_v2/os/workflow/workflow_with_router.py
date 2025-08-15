@@ -57,7 +57,7 @@ def research_router(step_input: StepInput) -> List[Step]:
     Returns a list containing the step(s) to execute.
     """
     # Use the original workflow message if this is the first step
-    topic = step_input.previous_step_content or step_input.message or ""
+    topic = step_input.previous_step_content or step_input.input or ""
     topic = topic.lower()
 
     # Check if the topic is tech/startup related - use HackerNews
@@ -106,7 +106,7 @@ workflow = Workflow(
 
 # Initialize the Playground with the workflows
 agent_os = AgentOS(
-    description="Example app for basic agent with playground capabilities",
+    description="Example OS setup",
     os_id="basic-app",
     workflows=[workflow],
 )

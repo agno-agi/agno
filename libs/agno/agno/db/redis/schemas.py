@@ -78,6 +78,7 @@ KNOWLEDGE_SCHEMA = {
     "updated_at": {"type": "integer"},
     "status": {"type": "string"},
     "status_message": {"type": "string"},
+    "external_id": {"type": "string"},
 }
 
 

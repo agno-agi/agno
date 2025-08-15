@@ -5,6 +5,13 @@ on:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
+      - "v2.0"
+  workflow_dispatch: # Allows manual triggering
+    inputs:
+      branch:
+        description: 'Branch to run checks on'
+        required: true
+        type: string
 
 jobs:
   style-check:
@@ -677,7 +684,7 @@ jobs:
         working-directory: .
         run: |
           source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/workflows  
+          python -m pytest ./libs/agno/tests/integration/workflows
 
   test-embedder:
     runs-on: ubuntu-latest
@@ -743,7 +750,7 @@ jobs:
           ./libs/agno/tests/integration/knowledge/test_pdf_knowledge_base.py \
           ./libs/agno/tests/integration/knowledge/test_pdf_url_knowledge_base.py \
           ./libs/agno/tests/integration/knowledge/test_pdf_bytes_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_text_knowledge_base.py 
+          ./libs/agno/tests/integration/knowledge/test_text_knowledge_base.py
 
   test-knowledge-2:
     runs-on: ubuntu-latest

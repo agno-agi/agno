@@ -1,6 +1,6 @@
 import pytest
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.openai import OpenAIChat
 from agno.tools.decorator import tool
 
@@ -20,7 +20,7 @@ def test_tool_call_requires_external_execution(shared_db):
 
     response = agent.run("Send an email to john@doe.com with the subject 'Test' and the body 'Hello, how are you?'")
 
-    assert response.is_paused
+    assert response.is_paused and response.tools is not None
     assert response.tools[0].external_execution_required
     assert response.tools[0].tool_name == "send_email"
     assert response.tools[0].tool_args == {"to": "john@doe.com", "subject": "Test", "body": "Hello, how are you?"}
@@ -50,16 +50,16 @@ def test_tool_call_requires_external_execution_stream(shared_db):
         "Send an email to john@doe.com with the subject 'Test' and the body 'Hello, how are you?'", stream=True
     ):
         if response.is_paused:
-            assert response.tools[0].external_execution_required
-            assert response.tools[0].tool_name == "send_email"
-            assert response.tools[0].tool_args == {
+            assert response.tools[0].external_execution_required  # type: ignore
+            assert response.tools[0].tool_name == "send_email"  # type: ignore
+            assert response.tools[0].tool_args == {  # type: ignore
                 "to": "john@doe.com",
                 "subject": "Test",
                 "body": "Hello, how are you?",
             }
 
             # Mark the tool as confirmed
-            response.tools[0].result = "Email sent to john@doe.com with subject Test and body Hello, how are you?"
+            response.tools[0].result = "Email sent to john@doe.com with subject Test and body Hello, how are you?"  # type: ignore
             found_external_execution = True
     assert found_external_execution, "No tools were found to require external execution"
 
@@ -88,13 +88,17 @@ async def test_tool_call_requires_external_execution_async(shared_db):
         "Send an email to john@doe.com with the subject 'Test' and the body 'Hello, how are you?'"
     )
 
-    assert response.is_paused
-    assert response.tools[0].external_execution_required
-    assert response.tools[0].tool_name == "send_email"
-    assert response.tools[0].tool_args == {"to": "john@doe.com", "subject": "Test", "body": "Hello, how are you?"}
+    assert response.is_paused and response.tools is not None
+    assert response.tools[0].external_execution_required  # type: ignore
+    assert response.tools[0].tool_name == "send_email"  # type: ignore
+    assert response.tools[0].tool_args == {  # type: ignore
+        "to": "john@doe.com",
+        "subject": "Test",
+        "body": "Hello, how are you?",
+    }
 
     # Mark the tool as confirmed
-    response.tools[0].result = "Email sent to john@doe.com with subject Test and body Hello, how are you?"
+    response.tools[0].result = "Email sent to john@doe.com with subject Test and body Hello, how are you?"  # type: ignore
 
     response = await agent.acontinue_run(run_id=response.run_id, updated_tools=response.tools)
     assert response.is_paused is False
@@ -139,16 +143,16 @@ async def test_tool_call_requires_external_execution_stream_async(shared_db):
         "Send an email to john@doe.com with the subject 'Test' and the body 'Hello, how are you?'", stream=True
     ):
         if response.is_paused:
-            assert response.tools[0].external_execution_required
-            assert response.tools[0].tool_name == "send_email"
-            assert response.tools[0].tool_args == {
+            assert response.tools[0].external_execution_required  # type: ignore
+            assert response.tools[0].tool_name == "send_email"  # type: ignore
+            assert response.tools[0].tool_args == {  # type: ignore
                 "to": "john@doe.com",
                 "subject": "Test",
                 "body": "Hello, how are you?",
             }
 
             # Mark the tool as confirmed
-            response.tools[0].result = "Email sent to john@doe.com with subject Test and body Hello, how are you?"
+            response.tools[0].result = "Email sent to john@doe.com with subject Test and body Hello, how are you?"  # type: ignore
             found_external_execution = True
     assert found_external_execution, "No tools were found to require external execution"
 
@@ -177,7 +181,7 @@ def test_tool_call_multiple_requires_external_execution(shared_db):
 
     response = agent.run("What is the weather in Tokyo and what are the activities?")
 
-    assert response.is_paused
+    assert response.is_paused and response.tools is not None
     tool_found = False
     for _t in response.tools:
         if _t.external_execution_required:

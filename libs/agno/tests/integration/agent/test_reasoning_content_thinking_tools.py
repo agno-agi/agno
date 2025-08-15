@@ -1,6 +1,6 @@
 """Test for reasoning_content generation with ThinkingTools.
 
-This test verifies that reasoning_content is properly populated in the RunResponse
+This test verifies that reasoning_content is properly populated in the RunOutput
 when using ThinkingTools, in both streaming and non-streaming modes.
 """
 

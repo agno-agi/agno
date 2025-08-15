@@ -60,7 +60,7 @@ def test_transfer_to_wrong_member(team):
 
 
 def test_forward_to_wrong_member(team):
-    function = team.get_forward_task_function(message="Hello, world!", session_id="test-session")
+    function = team.get_forward_task_function(input="Hello, world!", session_id="test-session")
     response = list(function.entrypoint(member_id="wrong-agent", expected_output=""))
     assert "Member with ID wrong-agent not found in the team or any subteams" in response[0]
 

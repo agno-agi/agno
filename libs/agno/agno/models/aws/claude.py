@@ -8,7 +8,7 @@ from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.models.anthropic import Claude as AnthropicClaude
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.run.response import RunResponse
+from agno.run.response import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.aws_claude import format_messages
 
@@ -172,7 +172,7 @@ class Claude(AnthropicClaude):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunResponse] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> ModelResponse:
         """
         Send a request to the Anthropic API to generate a response.
@@ -219,7 +219,7 @@ class Claude(AnthropicClaude):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunResponse] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> Iterator[ModelResponse]:
         """
         Stream a response from the Anthropic API.
@@ -277,7 +277,7 @@ class Claude(AnthropicClaude):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunResponse] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> ModelResponse:
         """
         Send an asynchronous request to the Anthropic API to generate a response.
@@ -326,7 +326,7 @@ class Claude(AnthropicClaude):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunResponse] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> AsyncIterator[ModelResponse]:
         """
         Stream an asynchronous response from the Anthropic API.

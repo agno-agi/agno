@@ -2,8 +2,8 @@ from typing import Iterator, List
 
 from agno.agent import (
     Agent,
-    RunResponseContentEvent,
-    RunResponseEvent,
+    RunContentEvent,
+    RunOutputEvent,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
@@ -15,13 +15,13 @@ agent = Agent(
     tools=[DuckDuckGoTools()],
     markdown=True,
 )
-run_response: Iterator[RunResponseEvent] = agent.run(
+run_response: Iterator[RunOutputEvent] = agent.run(
     "Whats happening in USA and Canada?", stream=True
 )
 
 response: List[str] = []
 for chunk in run_response:
-    if isinstance(chunk, RunResponseContentEvent):
+    if isinstance(chunk, RunContentEvent):
         response.append(chunk.content)  # type: ignore
     elif isinstance(chunk, ToolCallStartedEvent):
         response.append(

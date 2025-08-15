@@ -1,4 +1,5 @@
 from agno.agent.agent import Agent
+from agno.db.base import SessionType
 from agno.media import Image
 from agno.models.openai.chat import OpenAIChat
 
@@ -16,17 +17,17 @@ def test_agent_image_input(shared_db):
     )
     assert response.content is not None
 
-    session_in_db = shared_db.read(response.session_id)
+    session_in_db = shared_db.get_session(response.session_id, session_type=SessionType.AGENT)
     assert session_in_db is not None
-    assert session_in_db.memory["runs"] is not None
-    assert len(session_in_db.memory["runs"]) == 1
-    assert session_in_db.memory["runs"][0]["messages"] is not None
-    assert len(session_in_db.memory["runs"][0]["messages"]) == 3
-    assert session_in_db.memory["runs"][0]["messages"][1]["role"] == "user"
-    assert session_in_db.memory["runs"][0]["messages"][2]["role"] == "assistant"
-    assert session_in_db.memory["runs"][0]["messages"][1]["images"] is not None
+    assert session_in_db.runs is not None
+    assert len(session_in_db.runs) == 1
+    assert session_in_db.runs[0].messages is not None
+    assert len(session_in_db.runs[0].messages) == 3
+    assert session_in_db.runs[0].messages[1].role == "user"
+    assert session_in_db.runs[0].messages[2].role == "assistant"
+    assert session_in_db.runs[0].messages[1].images is not None
     assert (
-        session_in_db.memory["runs"][0]["messages"][1]["images"][0]["url"]
+        session_in_db.runs[0].messages[1].images[0].url
         == "https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
     )
 
@@ -43,16 +44,16 @@ def test_agent_image_input_no_prompt(shared_db):
     )
     assert response.content is not None
 
-    session_in_db = shared_db.read(response.session_id)
+    session_in_db = shared_db.get_session(response.session_id, session_type=SessionType.AGENT)
     assert session_in_db is not None
-    assert session_in_db.memory["runs"] is not None
-    assert len(session_in_db.memory["runs"]) == 1
-    assert session_in_db.memory["runs"][0]["messages"] is not None
-    assert len(session_in_db.memory["runs"][0]["messages"]) == 3
-    assert session_in_db.memory["runs"][0]["messages"][1]["role"] == "user"
-    assert session_in_db.memory["runs"][0]["messages"][2]["role"] == "assistant"
-    assert session_in_db.memory["runs"][0]["messages"][1]["images"] is not None
+    assert session_in_db.runs is not None
+    assert len(session_in_db.runs) == 1
+    assert session_in_db.runs[0].messages is not None
+    assert len(session_in_db.runs[0].messages) == 3
+    assert session_in_db.runs[0].messages[1].role == "user"
+    assert session_in_db.runs[0].messages[2].role == "assistant"
+    assert session_in_db.runs[0].messages[1].images is not None
     assert (
-        session_in_db.memory["runs"][0]["messages"][1]["images"][0]["url"]
+        session_in_db.runs[0].messages[1].images[0].url
         == "https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
     )

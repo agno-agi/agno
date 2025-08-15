@@ -2,7 +2,7 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
-from agno.run.response import RunResponse
+from agno.run.response import RunOutput
 from agno.tools.yfinance import YFinanceTools
 
 
@@ -18,7 +18,7 @@ def test_thinking():
     )
 
     # Print the response in the terminal
-    response: RunResponse = agent.run("Share a 2 sentence horror story")
+    response: RunOutput = agent.run("Share a 2 sentence horror story")
 
     assert response.content is not None
     assert response.thinking is not None
@@ -64,7 +64,7 @@ async def test_async_thinking():
     )
 
     # Print the response in the terminal
-    response: RunResponse = await agent.arun("Share a 2 sentence horror story")
+    response: RunOutput = await agent.arun("Share a 2 sentence horror story")
 
     assert response.content is not None
     assert response.thinking is not None

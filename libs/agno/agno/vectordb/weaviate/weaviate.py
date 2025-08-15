@@ -1,3 +1,4 @@
+import asyncio
 import json
 import uuid
 from hashlib import md5
@@ -273,6 +274,10 @@ class Weaviate(VectorDb):
         if not documents:
             return
 
+        # Embed document
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
+
         client = await self.get_async_client()
         try:
             collection = client.collections.get(self.collection)
@@ -280,8 +285,6 @@ class Weaviate(VectorDb):
             # Process documents first
             for document in documents:
                 try:
-                    # Embed document
-                    document.embed(embedder=self.embedder)
                     if document.embedding is None:
                         logger.error(f"Document embedding is None: {document.name}")
                         continue
@@ -342,13 +345,14 @@ class Weaviate(VectorDb):
             return
 
         log_debug(f"Upserting {len(documents)} documents into Weaviate asynchronously.")
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
 
         client = await self.get_async_client()
         try:
             collection = client.collections.get(self.collection)
 
             for document in documents:
-                document.embed(embedder=self.embedder)
                 if document.embedding is None:
                     logger.error(f"Document embedding is None: {document.name}")
                     continue
@@ -765,6 +769,16 @@ class Weaviate(VectorDb):
             logger.error(f"Error deleting documents by content_id '{content_id}': {e}")
             return False
 
+    def delete_by_content_hash(self, content_hash: str) -> bool:
+        """Delete content by content hash using direct filter deletion."""
+        try:
+            collection = self.get_client().collections.get(self.collection)
+            collection.data.delete_many(where=Filter.by_property("content_hash").equal(content_hash))
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting documents by content_hash '{content_hash}': {e}")
+            return False
+
     def get_vector_index_config(self, index_type: VectorIndex, distance_metric: Distance):
         """
         Returns the appropriate vector index configuration with the specified distance metric.
@@ -884,3 +898,55 @@ class Weaviate(VectorDb):
         except Exception as e:
             logger.error(f"Error checking if ID '{id}' exists: {e}")
             return False
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for documents with the given content_id.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        try:
+            collection = self.get_client().collections.get(self.collection)
+
+            # Query for objects with the given content_id
+            query_result = collection.query.fetch_objects(
+                where={"path": ["content_id"], "operator": "Equal", "valueText": content_id},
+                limit=1000,  # Get all matching objects
+            )
+
+            if not query_result.objects:
+                logger.debug(f"No documents found with content_id: {content_id}")
+                return
+
+            # Update each matching object
+            updated_count = 0
+            for obj in query_result.objects:
+                # Get current properties
+                current_properties = obj.properties or {}
+
+                # Merge existing metadata with new metadata
+                updated_properties = current_properties.copy()
+
+                # Handle nested metadata updates
+                if "meta_data" in updated_properties and isinstance(updated_properties["meta_data"], dict):
+                    updated_properties["meta_data"].update(metadata)
+                else:
+                    # If no existing meta_data or it's not a dict, set it directly
+                    updated_properties["meta_data"] = metadata
+
+                if "filters" in updated_properties and isinstance(updated_properties["filters"], dict):
+                    updated_properties["filters"].update(metadata)
+                else:
+                    updated_properties["filters"] = metadata
+
+                # Update the object
+                collection.data.update(uuid=obj.uuid, properties=updated_properties)
+                updated_count += 1
+
+            logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
+
+        except Exception as e:
+            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+            raise

@@ -14,13 +14,13 @@ from agno.run.base import RunStatus
 async def test_basic_background_execution(simple_workflow):
     """Test basic background execution and polling"""
     # Start background execution
-    response = await simple_workflow.arun(message="Test background execution", background=True)
+    response = await simple_workflow.arun(input="Test background execution", background=True)
 
     # Verify initial response
     assert response.status == RunStatus.pending
     assert response.run_id is not None
     assert response.session_id is not None
-    assert response.id is not None
+    assert response.workflow_id is not None
 
     # Poll for completion
     max_polls = 30  # 30 seconds timeout
@@ -52,7 +52,7 @@ async def test_basic_background_execution(simple_workflow):
 async def test_multi_step_background_execution(multi_step_workflow):
     """Test background execution with multiple steps"""
     # Start background execution
-    response = await multi_step_workflow.arun(message="Test multi-step background execution", background=True)
+    response = await multi_step_workflow.arun(input="Test multi-step background execution", background=True)
 
     # Verify initial response
     assert response.status == RunStatus.pending
@@ -80,7 +80,7 @@ async def test_multi_step_background_execution(multi_step_workflow):
             assert result.status == RunStatus.completed
             assert len(result.step_results) == 2  # Two steps
             assert result.workflow_metrics is not None
-            assert result.workflow_metrics.total_steps == 2
+            assert len(result.workflow_metrics.steps) == 2
             break
 
         await asyncio.sleep(1)
@@ -93,7 +93,7 @@ async def test_multi_step_background_execution(multi_step_workflow):
 async def test_team_background_execution(team_workflow):
     """Test background execution with team"""
     # Start background execution
-    response = await team_workflow.arun(message="Analyze AI trends for team collaboration", background=True)
+    response = await team_workflow.arun(input="Analyze AI trends for team collaboration", background=True)
 
     # Verify initial response
     assert response.status == RunStatus.pending
@@ -127,7 +127,7 @@ async def test_team_background_execution(team_workflow):
 async def test_custom_function_background_execution(custom_function_workflow):
     """Test background execution with custom async function"""
     # Start background execution
-    response = await custom_function_workflow.arun(message="Test custom function background", background=True)
+    response = await custom_function_workflow.arun(input="Test custom function background", background=True)
 
     # Verify initial response
     assert response.status == RunStatus.pending
@@ -159,7 +159,7 @@ async def test_custom_function_background_execution(custom_function_workflow):
 def test_sync_background_execution_raises_error(simple_workflow):
     """Test that sync run with background=True raises an error"""
     with pytest.raises(RuntimeError, match="Background execution is not supported for sync run"):
-        simple_workflow.run(message="This should fail", background=True)
+        simple_workflow.run(input="This should fail", background=True)
 
 
 @pytest.mark.asyncio
@@ -167,7 +167,7 @@ async def test_condition_background_execution(condition_workflow):
     """Test background execution with conditional steps"""
     # Test with content that should trigger fact-checking
     response = await condition_workflow.arun(
-        message="Recent study shows that AI research has increased by 300% according to data", background=True
+        input="Recent study shows that AI research has increased by 300% according to data", background=True
     )
 
     # Verify initial response
@@ -203,7 +203,7 @@ async def test_condition_background_execution(condition_workflow):
 async def test_parallel_background_execution(parallel_workflow):
     """Test background execution with parallel steps"""
     response = await parallel_workflow.arun(
-        message="Analyze the latest developments in artificial intelligence", background=True
+        input="Analyze the latest developments in artificial intelligence", background=True
     )
 
     # Verify initial response
@@ -239,7 +239,7 @@ async def test_parallel_background_execution(parallel_workflow):
 async def test_router_background_execution(router_workflow):
     """Test background execution with router"""
     response = await router_workflow.arun(
-        message="Latest developments in machine learning and AI programming", background=True
+        input="Latest developments in machine learning and AI programming", background=True
     )
 
     # Verify initial response
@@ -274,7 +274,7 @@ async def test_router_background_execution(router_workflow):
 @pytest.mark.asyncio
 async def test_loop_background_execution(loop_workflow):
     """Test background execution with loop"""
-    response = await loop_workflow.arun(message="Research sustainable energy solutions", background=True)
+    response = await loop_workflow.arun(input="Research sustainable energy solutions", background=True)
 
     # Verify initial response
     assert response.status == RunStatus.pending

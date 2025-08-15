@@ -99,8 +99,7 @@ if __name__ == "__main__":
     # Collect all chunks to build the final response
     all_chunks = []
 
-    for chunk in workflow.run(
-        message="Research the latest trends in AI and machine learning, then create a summary",
+    for chunk in workflow.run(input="Research the latest trends in AI and machine learning, then create a summary",
         stream=True,
         stream_intermediate_steps=True,
     ):

@@ -86,7 +86,6 @@ if __name__ == "__main__":
         target_audience="Tech professionals and business leaders",
         sources_required=8,
     )
-    content_creation_workflow.print_response(
-        message=research_topic,
+    content_creation_workflow.print_response(input=research_topic,
         markdown=True,
     )

@@ -10,16 +10,16 @@ agent = Agent(
 
 
 async def basic():
-    response = await agent.arun(message="Tell me a joke.")
+    response = await agent.arun(input="Tell me a joke.")
     print(response.content)
 
 
 async def basic_print():
-    await agent.aprint_response(message="Tell me a joke.")
+    await agent.aprint_response(input="Tell me a joke.")
 
 
 async def basic_pprint():
-    response = await agent.arun(message="Tell me a joke.")
+    response = await agent.arun(input="Tell me a joke.")
     await apprint_run_response(response)
 
 

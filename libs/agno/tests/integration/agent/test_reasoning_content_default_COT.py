@@ -1,6 +1,6 @@
 """Test for reasoning_content generation in different Agent configurations.
 
-This test verifies that reasoning_content is properly populated in the RunResponse
+This test verifies that reasoning_content is properly populated in the RunOutput
 for various Agent configurations, including:
 - reasoning=True (with default model)
 - reasoning_model=specified model

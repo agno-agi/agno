@@ -7,6 +7,7 @@ from agno.utils.log import log_error, logger
 try:
     import importlib.metadata as metadata
 
+    from ollama import AsyncClient as AsyncOllamaClient
     from ollama import Client as OllamaClient
     from packaging import version
 
@@ -42,6 +43,7 @@ class OllamaEmbedder(Embedder):
     options: Optional[Any] = None
     client_kwargs: Optional[Dict[str, Any]] = None
     ollama_client: Optional[OllamaClient] = None
+    async_client: Optional[AsyncOllamaClient] = None
 
     @property
     def client(self) -> OllamaClient:
@@ -57,6 +59,21 @@ class OllamaEmbedder(Embedder):
             _ollama_params.update(self.client_kwargs)
         self.ollama_client = OllamaClient(**_ollama_params)
         return self.ollama_client
+
+    @property
+    def aclient(self) -> AsyncOllamaClient:
+        if self.async_client:
+            return self.async_client
+
+        _ollama_params: Dict[str, Any] = {
+            "host": self.host,
+            "timeout": self.timeout,
+        }
+        _ollama_params = {k: v for k, v in _ollama_params.items() if v is not None}
+        if self.client_kwargs:
+            _ollama_params.update(self.client_kwargs)
+        self.async_client = AsyncOllamaClient(**_ollama_params)
+        return self.async_client
 
     def _response(self, text: str) -> Dict[str, Any]:
         kwargs: Dict[str, Any] = {}
@@ -86,5 +103,39 @@ class OllamaEmbedder(Embedder):
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         embedding = self.get_embedding(text=text)
+        usage = None
+        return embedding, usage
+
+    async def _async_response(self, text: str) -> Dict[str, Any]:
+        """Async version of _response using AsyncOllamaClient."""
+        kwargs: Dict[str, Any] = {}
+        if self.options is not None:
+            kwargs["options"] = self.options
+
+        response = await self.aclient.embed(input=text, model=self.id, **kwargs)
+        if response and "embeddings" in response:
+            embeddings = response["embeddings"]
+            if isinstance(embeddings, list) and len(embeddings) > 0 and isinstance(embeddings[0], list):
+                return {"embeddings": embeddings[0]}  # Use the first element
+            elif isinstance(embeddings, list) and all(isinstance(x, (int, float)) for x in embeddings):
+                return {"embeddings": embeddings}  # Return as-is if already flat
+        return {"embeddings": []}  # Return an empty list if no valid embedding is found
+
+    async def async_get_embedding(self, text: str) -> List[float]:
+        """Async version of get_embedding."""
+        try:
+            response = await self._async_response(text=text)
+            embedding = response.get("embeddings", [])
+            if len(embedding) != self.dimensions:
+                logger.warning(f"Expected embedding dimension {self.dimensions}, but got {len(embedding)}")
+                return []
+            return embedding
+        except Exception as e:
+            logger.warning(f"Error getting embedding: {e}")
+            return []
+
+    async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
+        """Async version of get_embedding_and_usage."""
+        embedding = await self.async_get_embedding(text=text)
         usage = None
         return embedding, usage

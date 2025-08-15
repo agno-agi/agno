@@ -520,6 +520,9 @@ class MongoDb(VectorDb):
         prepared_docs = []
         for document in documents:
             try:
+                document.embed(embedder=self.embedder)
+                if document.embedding is None:
+                    raise ValueError(f"Failed to generate embedding for document: {document.id}")
                 doc_data = self.prepare_doc(content_hash, document, filters)
                 prepared_docs.append(doc_data)
             except ValueError as e:
@@ -543,7 +546,10 @@ class MongoDb(VectorDb):
 
         for document in documents:
             try:
-                doc_data = self.prepare_doc(content_hash, document)
+                document.embed(embedder=self.embedder)
+                if document.embedding is None:
+                    raise ValueError(f"Failed to generate embedding for document: {document.id}")
+                doc_data = self.prepare_doc(content_hash, document, filters)
                 collection.update_one(
                     {"_id": doc_data["_id"]},
                     {"$set": doc_data},
@@ -955,9 +961,6 @@ class MongoDb(VectorDb):
         self, content_hash: str, document: Document, filters: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Prepare a document for insertion or upsertion into MongoDB."""
-        document.embed(embedder=self.embedder)
-        if document.embedding is None:
-            raise ValueError(f"Failed to generate embedding for document: {document.id}")
 
         # Add filters to document metadata if provided
         if filters:
@@ -1010,6 +1013,9 @@ class MongoDb(VectorDb):
         log_debug(f"Inserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
 
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
+
         prepared_docs = []
         for document in documents:
             try:
@@ -1035,6 +1041,9 @@ class MongoDb(VectorDb):
         """Upsert documents asynchronously."""
         log_info(f"Upserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
+
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
 
         for document in documents:
             try:
@@ -1265,3 +1274,34 @@ class MongoDb(VectorDb):
         except Exception as e:
             logger.error(f"Error deleting documents with content_id '{content_id}': {e}")
             return False
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for documents with the given content_id.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        try:
+            collection = self.client[self.database_name][self.collection_name]
+
+            # Create query filter for content_id
+            filter_query = {"content_id": content_id}
+
+            update_operations = {}
+            for key, value in metadata.items():
+                update_operations[f"meta_data.{key}"] = value
+                update_operations[f"filters.{key}"] = value
+
+            # Update documents
+            result = collection.update_many(filter_query, {"$set": update_operations})
+
+            if result.matched_count == 0:
+                logger.debug(f"No documents found with content_id: {content_id}")
+            else:
+                logger.debug(f"Updated metadata for {result.matched_count} documents with content_id: {content_id}")
+
+        except Exception as e:
+            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+            raise

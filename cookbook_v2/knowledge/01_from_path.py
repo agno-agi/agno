@@ -2,6 +2,8 @@
 1. Run: `python cookbook/agent_concepts/knowledge/01_from_path.py` to run the cookbook
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
@@ -11,30 +13,39 @@ contents_db = PostgresDb(
     db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
     knowledge_table="knowledge_contents",
 )
+
+vector_db = PgVector(
+    table_name="vectors", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
+)
 # Create Knowledge Instance
 knowledge = Knowledge(
     name="Basic SDK Knowledge Base",
     description="Agno 2.0 Knowledge Implementation",
-    vector_db=PgVector(
-        table_name="vectors", db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
-    ),
+    vector_db=vector_db,
+    contents_db=contents_db,
 )
 
-knowledge.add_content(
-    name="CV",
-    path="cookbook_v2/knowledge/data/filters/cv_1.pdf",
-    metadata={"user_tag": "Engineering Candidates"},
+asyncio.run(
+    knowledge.add_content(
+        name="CV",
+        path="cookbook_v2/knowledge/data/filters/cv_1.pdf",
+        metadata={"user_tag": "Engineering Candidates"},
+    )
+)
+vector_db.update_metadata(
+    content_id="ec742cfd-0a7c-4f42-b1cb-740d979cbf21",
+    metadata={"my_special_tag": "DUDDDE"},
 )
 
-agent = Agent(
-    name="My Agent",
-    description="Agno 2.0 Agent Implementation",
-    knowledge=knowledge,
-    search_knowledge=True,
-    debug_mode=True,
-)
+# agent = Agent(
+#     name="My Agent",
+#     description="Agno 2.0 Agent Implementation",
+#     knowledge=knowledge,
+#     search_knowledge=True,
+#     debug_mode=True,
+# )
 
-agent.print_response(
-    "What skills does Jordan Mitchell have?",
-    markdown=True,
-)
+# agent.print_response(
+#     "What skills does Jordan Mitchell have?",
+#     markdown=True,
+# )

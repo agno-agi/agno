@@ -1,12 +1,12 @@
 import pytest
 from pydantic import BaseModel, Field
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.db.sqlite import SqliteDb
 from agno.models.ibm import WatsonX
 
 
-def _assert_metrics(response: RunResponse):
+def _assert_metrics(response: RunOutput):
     assert response.metrics is not None
     input_tokens = response.metrics.input_tokens
     output_tokens = response.metrics.output_tokens
@@ -22,7 +22,7 @@ def test_basic():
     agent = Agent(model=WatsonX(id="meta-llama/llama-3-3-70b-instruct"), markdown=True, telemetry=False)
 
     # Print the response in the terminal
-    response: RunResponse = agent.run("Share a 2 sentence horror story")
+    response: RunOutput = agent.run("Share a 2 sentence horror story")
 
     assert response.content is not None
     assert response.messages is not None
@@ -148,7 +148,7 @@ def test_json_response_mode():
 def test_history():
     agent = Agent(
         model=WatsonX(id="meta-llama/llama-3-3-70b-instruct"),
-        db=SqliteDb(db_file="tmp/ibm_watsonx_agent_storage.db"),
+        db=SqliteDb(db_file="tmp/ibm_watsonx_agent_db.db"),
         add_history_to_context=True,
         telemetry=False,
     )

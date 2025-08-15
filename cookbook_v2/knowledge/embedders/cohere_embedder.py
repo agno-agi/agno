@@ -1,3 +1,5 @@
+import asyncio
+
 from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
@@ -14,7 +16,15 @@ knowledge = Knowledge(
     vector_db=PgVector(
         db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
         table_name="cohere_embeddings",
-        embedder=CohereEmbedder(),
+        embedder=CohereEmbedder(
+            dimensions=1024,
+        ),
     ),
     max_results=2,
+)
+
+asyncio.run(
+    knowledge.add_content(
+        path="cookbook_v2/knowledge/data/filters/cv_1.pdf",
+    )
 )

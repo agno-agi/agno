@@ -7,11 +7,11 @@ agent = Agent(
     debug_mode=True,
 )
 
-agent.print_response(message="Tell me a joke.")
+agent.print_response(input="Tell me a joke.")
 
 
 # You can also set the debug mode on a single run
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
 )
-agent.print_response(message="Tell me a joke.", debug_mode=True)
+agent.print_response(input="Tell me a joke.", debug_mode=True)

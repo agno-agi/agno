@@ -27,9 +27,9 @@ def test_basic_events():
     for run_response in response_generator:
         event_counts[run_response.event] = event_counts.get(run_response.event, 0) + 1
 
-    assert event_counts.keys() == {TeamRunEvent.run_response_content}
+    assert event_counts.keys() == {TeamRunEvent.run_content}
 
-    assert event_counts[TeamRunEvent.run_response_content] > 1
+    assert event_counts[TeamRunEvent.run_content] > 1
 
 
 @pytest.mark.asyncio
@@ -43,9 +43,9 @@ async def test_async_basic_events():
     async for run_response in team.arun("Hello, how are you?", stream=True, stream_intermediate_steps=False):
         event_counts[run_response.event] = event_counts.get(run_response.event, 0) + 1
 
-    assert event_counts.keys() == {TeamRunEvent.run_response_content}
+    assert event_counts.keys() == {TeamRunEvent.run_content}
 
-    assert event_counts[TeamRunEvent.run_response_content] > 1
+    assert event_counts[TeamRunEvent.run_content] > 1
 
 
 def test_basic_intermediate_steps_events():
@@ -63,7 +63,7 @@ def test_basic_intermediate_steps_events():
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
 
-    assert events.keys() == {TeamRunEvent.run_started, TeamRunEvent.run_response_content, TeamRunEvent.run_completed}
+    assert events.keys() == {TeamRunEvent.run_started, TeamRunEvent.run_content, TeamRunEvent.run_completed}
 
     assert len(events[TeamRunEvent.run_started]) == 1
     assert events[TeamRunEvent.run_started][0].model == "gpt-4o-mini"
@@ -72,7 +72,7 @@ def test_basic_intermediate_steps_events():
     assert events[TeamRunEvent.run_started][0].team_id is not None
     assert events[TeamRunEvent.run_started][0].run_id is not None
     assert events[TeamRunEvent.run_started][0].created_at is not None
-    assert len(events[TeamRunEvent.run_response_content]) > 1
+    assert len(events[TeamRunEvent.run_content]) > 1
     assert len(events[TeamRunEvent.run_completed]) == 1
 
 
@@ -94,7 +94,7 @@ def test_basic_intermediate_steps_events_persisted(shared_db):
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
 
-    assert events.keys() == {TeamRunEvent.run_started, TeamRunEvent.run_response_content, TeamRunEvent.run_completed}
+    assert events.keys() == {TeamRunEvent.run_started, TeamRunEvent.run_content, TeamRunEvent.run_completed}
 
     run_response_from_storage = team.get_last_run_response()
 
@@ -124,12 +124,12 @@ def test_intermediate_steps_with_tools():
         TeamRunEvent.run_started,
         TeamRunEvent.tool_call_started,
         TeamRunEvent.tool_call_completed,
-        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_content,
         TeamRunEvent.run_completed,
     }
 
     assert len(events[TeamRunEvent.run_started]) == 1
-    assert len(events[TeamRunEvent.run_response_content]) > 1
+    assert len(events[TeamRunEvent.run_content]) > 1
     assert len(events[TeamRunEvent.run_completed]) == 1
     assert len(events[TeamRunEvent.tool_call_started]) == 1
     assert events[TeamRunEvent.tool_call_started][0].tool.tool_name == "get_current_stock_price"
@@ -160,7 +160,7 @@ def test_intermediate_steps_with_tools_events_persisted(shared_db):
         TeamRunEvent.run_started,
         TeamRunEvent.tool_call_started,
         TeamRunEvent.tool_call_completed,
-        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_content,
         TeamRunEvent.run_completed,
     }
 
@@ -206,12 +206,12 @@ def test_intermediate_steps_with_reasoning():
         TeamRunEvent.reasoning_started,
         TeamRunEvent.reasoning_completed,
         TeamRunEvent.reasoning_step,
-        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_content,
         TeamRunEvent.run_completed,
     }
 
     assert len(events[TeamRunEvent.run_started]) == 1
-    assert len(events[TeamRunEvent.run_response_content]) > 1
+    assert len(events[TeamRunEvent.run_content]) > 1
     assert len(events[TeamRunEvent.run_completed]) == 1
     assert len(events[TeamRunEvent.tool_call_started]) > 1
     assert len(events[TeamRunEvent.tool_call_completed]) > 1
@@ -279,7 +279,7 @@ def test_intermediate_steps_with_user_confirmation():
         TeamRunEvent.run_continued,
         TeamRunEvent.tool_call_started,
         TeamRunEvent.tool_call_completed,
-        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_content,
         TeamRunEvent.run_completed,
     }
 
@@ -289,7 +289,7 @@ def test_intermediate_steps_with_user_confirmation():
     assert len(events[TeamRunEvent.tool_call_completed]) == 1
     assert events[TeamRunEvent.tool_call_completed][0].content is not None
     assert events[TeamRunEvent.tool_call_completed][0].tool.result is not None
-    assert len(events[TeamRunEvent.run_response_content]) > 1
+    assert len(events[TeamRunEvent.run_content]) > 1
     assert len(events[TeamRunEvent.run_completed]) == 1
 
     assert team.run_response.is_paused is False
@@ -314,14 +314,14 @@ def test_intermediate_steps_with_memory(shared_db):
 
     assert events.keys() == {
         TeamRunEvent.run_started,
-        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_content,
         TeamRunEvent.run_completed,
         TeamRunEvent.memory_update_started,
         TeamRunEvent.memory_update_completed,
     }
 
     assert len(events[TeamRunEvent.run_started]) == 1
-    assert len(events[TeamRunEvent.run_response_content]) > 1
+    assert len(events[TeamRunEvent.run_content]) > 1
     assert len(events[TeamRunEvent.run_completed]) == 1
     assert len(events[TeamRunEvent.memory_update_started]) == 1
     assert len(events[TeamRunEvent.memory_update_completed]) == 1
@@ -354,18 +354,18 @@ def test_intermediate_steps_with_structured_output(shared_db):
 
     assert events.keys() == {
         TeamRunEvent.run_started,
-        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_content,
         TeamRunEvent.run_completed,
     }
 
     assert len(events[TeamRunEvent.run_started]) == 1
-    assert len(events[TeamRunEvent.run_response_content]) == 1
+    assert len(events[TeamRunEvent.run_content]) == 1
     assert len(events[TeamRunEvent.run_completed]) == 1
 
-    assert events[TeamRunEvent.run_response_content][0].content is not None
-    assert events[TeamRunEvent.run_response_content][0].content_type == "Person"
-    assert events[TeamRunEvent.run_response_content][0].content.name == "Elon Musk"
-    assert len(events[TeamRunEvent.run_response_content][0].content.description) > 1
+    assert events[TeamRunEvent.run_content][0].content is not None
+    assert events[TeamRunEvent.run_content][0].content_type == "Person"
+    assert events[TeamRunEvent.run_content][0].content.name == "Elon Musk"
+    assert len(events[TeamRunEvent.run_content][0].content.description) > 1
 
     assert events[TeamRunEvent.run_completed][0].content is not None
     assert events[TeamRunEvent.run_completed][0].content_type == "Person"
@@ -405,7 +405,7 @@ def test_intermediate_steps_with_parser_model(shared_db):
         TeamRunEvent.run_started,
         TeamRunEvent.parser_model_response_started,
         TeamRunEvent.parser_model_response_completed,
-        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_content,
         TeamRunEvent.run_completed,
     }
 
@@ -413,14 +413,14 @@ def test_intermediate_steps_with_parser_model(shared_db):
     assert len(events[TeamRunEvent.parser_model_response_started]) == 1
     assert len(events[TeamRunEvent.parser_model_response_completed]) == 1
     assert (
-        len(events[TeamRunEvent.run_response_content]) >= 2
+        len(events[TeamRunEvent.run_content]) >= 2
     )  # The first model streams, then the parser model has a single content event
     assert len(events[TeamRunEvent.run_completed]) == 1
 
-    assert events[TeamRunEvent.run_response_content][-1].content is not None
-    assert events[TeamRunEvent.run_response_content][-1].content_type == "Person"
-    assert events[TeamRunEvent.run_response_content][-1].content.name == "Elon Musk"
-    assert len(events[TeamRunEvent.run_response_content][-1].content.description) > 1
+    assert events[TeamRunEvent.run_content][-1].content is not None
+    assert events[TeamRunEvent.run_content][-1].content_type == "Person"
+    assert events[TeamRunEvent.run_content][-1].content.name == "Elon Musk"
+    assert len(events[TeamRunEvent.run_content][-1].content.description) > 1
 
     assert events[TeamRunEvent.run_completed][0].content is not None
     assert events[TeamRunEvent.run_completed][0].content_type == "Person"
@@ -470,10 +470,10 @@ def test_intermediate_steps_with_member_agents():
         RunEvent.reasoning_started,
         RunEvent.reasoning_step,
         RunEvent.reasoning_completed,
-        RunEvent.run_response_content,
+        RunEvent.run_content,
         RunEvent.run_completed,
         TeamRunEvent.tool_call_completed,
-        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_content,
         TeamRunEvent.run_completed,
     }
 
@@ -489,7 +489,7 @@ def test_intermediate_steps_with_member_agents():
     assert events[TeamRunEvent.tool_call_completed][0].tool.result is not None
     assert events[TeamRunEvent.tool_call_completed][1].tool.tool_name == "transfer_task_to_member"
     assert events[TeamRunEvent.tool_call_completed][1].tool.result is not None
-    assert len(events[TeamRunEvent.run_response_content]) > 1
+    assert len(events[TeamRunEvent.run_content]) > 1
     assert len(events[TeamRunEvent.run_completed]) == 1
     # Two member agents
     assert len(events[RunEvent.run_started]) == 2
@@ -500,7 +500,7 @@ def test_intermediate_steps_with_member_agents():
     assert len(events[RunEvent.reasoning_started]) == 1
     assert len(events[RunEvent.reasoning_completed]) == 1
     assert len(events[RunEvent.reasoning_step]) > 1
-    assert len(events[RunEvent.run_response_content]) > 1
+    assert len(events[RunEvent.run_content]) > 1
 
 
 def test_intermediate_steps_with_member_agents_complex():
@@ -546,9 +546,9 @@ def test_intermediate_steps_with_member_agents_complex():
         RunEvent.run_started,
         RunEvent.tool_call_started,
         RunEvent.tool_call_completed,
-        RunEvent.run_response_content,
+        RunEvent.run_content,
         RunEvent.run_completed,
-        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_content,
         TeamRunEvent.run_completed,
         TeamRunEvent.reasoning_completed,
     }
@@ -588,7 +588,7 @@ def test_intermediate_steps_with_member_agents_streaming_off():
         TeamRunEvent.run_started,
         TeamRunEvent.tool_call_started,
         TeamRunEvent.tool_call_completed,
-        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_content,
         TeamRunEvent.run_completed,
     }
 
@@ -604,5 +604,5 @@ def test_intermediate_steps_with_member_agents_streaming_off():
     assert events[TeamRunEvent.tool_call_completed][0].tool.result is not None
     assert events[TeamRunEvent.tool_call_completed][1].tool.tool_name == "transfer_task_to_member"
     assert events[TeamRunEvent.tool_call_completed][1].tool.result is not None
-    assert len(events[TeamRunEvent.run_response_content]) > 1
+    assert len(events[TeamRunEvent.run_content]) > 1
     assert len(events[TeamRunEvent.run_completed]) == 1

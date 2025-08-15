@@ -49,7 +49,7 @@ def initialize_session_state():
     if "education_level" not in st.session_state:
         st.session_state.education_level = "High School"
     if "messages" not in st.session_state:
-        st.session_state.messages = []
+        st.session_state.input=[]
     if "processing" not in st.session_state:
         st.session_state.processing = False
     if "agent_needs_reset" not in st.session_state:
@@ -96,7 +96,7 @@ def render_sidebar():
 
         if st.button("New chat", key="apply_reset"):
             st.session_state.agent_needs_reset = True
-            st.session_state.messages = []  # Clear history on reset
+            st.session_state.input=[]  # Clear history on reset
             st.toast("Settings applied. Agent updated and chat reset.")
 
 

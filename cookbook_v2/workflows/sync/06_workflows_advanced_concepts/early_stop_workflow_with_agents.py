@@ -66,11 +66,9 @@ workflow = Workflow(
 
 if __name__ == "__main__":
     print("\n=== Testing with INVALID data ===")
-    workflow.print_response(
-        message="Process this data: {'user_count': -50, 'revenue': 'invalid_amount', 'date': 'bad_date'}"
+    workflow.print_response(input="Process this data: {'user_count': -50, 'revenue': 'invalid_amount', 'date': 'bad_date'}"
     )
 
     print("=== Testing with VALID data ===")
-    workflow.print_response(
-        message="Process this data: {'user_count': 1000, 'revenue': 50000, 'date': '2024-01-15'}"
+    workflow.print_response(input="Process this data: {'user_count': 1000, 'revenue': 50000, 'date': '2024-01-15'}"
     )

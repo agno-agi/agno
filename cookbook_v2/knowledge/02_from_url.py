@@ -2,6 +2,8 @@
 1. Run: `python cookbook/agent_concepts/knowledge/02_from_url.py` to run the cookbook
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.db.postgres.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
@@ -22,10 +24,12 @@ knowledge = Knowledge(
     ),
 )
 # Add from URL to the knowledge base
-knowledge.add_content(
-    name="Recipes",
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-    metadata={"user_tag": "Recipes from website"},
+asyncio.run(
+    knowledge.add_content(
+        name="Recipes",
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+        metadata={"user_tag": "Recipes from website"},
+    )
 )
 
 agent = Agent(

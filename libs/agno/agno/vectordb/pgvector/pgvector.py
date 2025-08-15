@@ -4,6 +4,7 @@ from math import sqrt
 from typing import Any, Dict, List, Optional, Union, cast
 
 try:
+    from sqlalchemy import update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.inspection import inspect
@@ -11,6 +12,7 @@ try:
     from sqlalchemy.schema import Column, Index, MetaData, Table
     from sqlalchemy.sql.expression import bindparam, desc, func, select, text
     from sqlalchemy.types import DateTime, String
+
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install using `pip install sqlalchemy psycopg`")
 
@@ -53,6 +55,7 @@ class PgVector(VectorDb):
         schema_version: int = 1,
         auto_upgrade_schema: bool = False,
         reranker: Optional[Reranker] = None,
+        use_batch: bool = False,
     ):
         """
         Initialize the PgVector instance.
@@ -93,6 +96,7 @@ class PgVector(VectorDb):
         self.db_url: Optional[str] = db_url
         self.db_engine: Engine = db_engine
         self.metadata: MetaData = MetaData(schema=self.schema)
+        self.use_batch: bool = use_batch
 
         # Embedder for embedding the document contents
         if embedder is None:
@@ -339,10 +343,61 @@ class PgVector(VectorDb):
             raise
 
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        batch_size: int = 100,
     ) -> None:
-        """Insert documents asynchronously by running in a thread."""
-        await asyncio.to_thread(self.insert, content_hash, documents, filters)
+        """Insert documents asynchronously with parallel embedding."""
+        try:
+            with self.Session() as sess:
+                for i in range(0, len(documents), batch_size):
+                    batch_docs = documents[i : i + batch_size]
+                    log_debug(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
+                    try:
+                        embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
+                        await asyncio.gather(*embed_tasks, return_exceptions=True)
+
+                        # Prepare documents for insertion
+                        batch_records = []
+                        for doc in batch_docs:
+                            try:
+                                cleaned_content = self._clean_content(doc.content)
+                                record_id = doc.id or content_hash
+
+                                meta_data = doc.meta_data or {}
+                                if filters:
+                                    meta_data.update(filters)
+
+                                record = {
+                                    "id": record_id,
+                                    "name": doc.name,
+                                    "meta_data": doc.meta_data,
+                                    "filters": filters,
+                                    "content": cleaned_content,
+                                    "embedding": doc.embedding,
+                                    "usage": doc.usage,
+                                    "content_hash": content_hash,
+                                    "content_id": doc.content_id,
+                                }
+                                batch_records.append(record)
+                            except Exception as e:
+                                logger.error(f"Error processing document '{doc.name}': {e}")
+
+                        # Insert the batch of records
+                        if batch_records:
+                            insert_stmt = postgresql.insert(self.table)
+                            sess.execute(insert_stmt, batch_records)
+                            sess.commit()  # Commit batch independently
+                            log_info(f"Inserted batch of {len(batch_records)} documents.")
+                    except Exception as e:
+                        logger.error(f"Error with batch starting at index {i}: {e}")
+                        sess.rollback()  # Rollback the current batch if there's an error
+                        raise
+        except Exception as e:
+            logger.error(f"Error inserting documents: {e}")
+            raise
 
     def upsert_available(self) -> bool:
         """
@@ -395,7 +450,7 @@ class PgVector(VectorDb):
                     log_info(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
                     try:
                         # Prepare documents for upserting
-                        batch_records = []
+                        batch_records_dict = {}  # Use dict to deduplicate by ID
                         for doc in batch_docs:
                             try:
                                 doc.embed(embedder=self.embedder)
@@ -417,9 +472,15 @@ class PgVector(VectorDb):
                                     "content_hash": content_hash,
                                     "content_id": doc.content_id,
                                 }
-                                batch_records.append(record)
+                                batch_records_dict[record_id] = record  # This deduplicates by ID
                             except Exception as e:
                                 logger.error(f"Error processing document '{doc.name}': {e}")
+
+                        # Convert dict to list for upsert
+                        batch_records = list(batch_records_dict.values())
+                        if not batch_records:
+                            log_info("No valid records to upsert in this batch.")
+                            continue
 
                         # Upsert the batch of records
                         insert_stmt = postgresql.insert(self.table).values(batch_records)
@@ -448,10 +509,131 @@ class PgVector(VectorDb):
             raise
 
     async def async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        batch_size: int = 100,
     ) -> None:
         """Upsert documents asynchronously by running in a thread."""
-        await asyncio.to_thread(self.upsert, content_hash, documents, filters)
+        try:
+            if self.content_hash_exists(content_hash):
+                self._delete_by_content_hash(content_hash)
+            await self._async_upsert(content_hash, documents, filters, batch_size)
+        except Exception as e:
+            logger.error(f"Error upserting documents by content hash: {e}")
+            raise
+
+    async def _async_upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        batch_size: int = 100,
+    ) -> None:
+        """
+        Upsert (insert or update) documents in the database.
+
+        Args:
+            documents (List[Document]): List of documents to upsert.
+            filters (Optional[Dict[str, Any]]): Filters to apply to the documents.
+            batch_size (int): Number of documents to upsert in each batch.
+        """
+        try:
+            with self.Session() as sess:
+                for i in range(0, len(documents), batch_size):
+                    batch_docs = documents[i : i + batch_size]
+                    log_info(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
+                    try:
+                        embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
+                        await asyncio.gather(*embed_tasks, return_exceptions=True)
+
+                        # Prepare documents for upserting
+                        batch_records_dict = {}  # Use dict to deduplicate by ID
+                        for doc in batch_docs:
+                            try:
+                                cleaned_content = self._clean_content(doc.content)
+                                record_id = md5(cleaned_content.encode()).hexdigest()
+
+                                meta_data = doc.meta_data or {}
+                                if filters:
+                                    meta_data.update(filters)
+
+                                record = {
+                                    "id": record_id,  # use record_id as a reproducible id to avoid duplicates while upsert
+                                    "name": doc.name,
+                                    "meta_data": doc.meta_data,
+                                    "filters": filters,
+                                    "content": cleaned_content,
+                                    "embedding": doc.embedding,
+                                    "usage": doc.usage,
+                                    "content_hash": content_hash,
+                                    "content_id": doc.content_id,
+                                }
+                                batch_records_dict[record_id] = record  # This deduplicates by ID
+                            except Exception as e:
+                                logger.error(f"Error processing document '{doc.name}': {e}")
+
+                        # Convert dict to list for upsert
+                        batch_records = list(batch_records_dict.values())
+                        if not batch_records:
+                            log_info("No valid records to upsert in this batch.")
+                            continue
+
+                        # Upsert the batch of records
+                        insert_stmt = postgresql.insert(self.table).values(batch_records)
+                        upsert_stmt = insert_stmt.on_conflict_do_update(
+                            index_elements=["id"],
+                            set_={
+                                "name": insert_stmt.excluded.name,
+                                "meta_data": insert_stmt.excluded.meta_data,
+                                "filters": insert_stmt.excluded.filters,
+                                "content": insert_stmt.excluded.content,
+                                "embedding": insert_stmt.excluded.embedding,
+                                "usage": insert_stmt.excluded.usage,
+                                "content_hash": insert_stmt.excluded.content_hash,
+                                "content_id": insert_stmt.excluded.content_id,
+                            },
+                        )
+                        sess.execute(upsert_stmt)
+                        sess.commit()  # Commit batch independently
+                        log_info(f"Upserted batch of {len(batch_records)} documents.")
+                    except Exception as e:
+                        logger.error(f"Error with batch starting at index {i}: {e}")
+                        sess.rollback()  # Rollback the current batch if there's an error
+                        raise
+        except Exception as e:
+            logger.error(f"Error upserting documents: {e}")
+            raise
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for a document.
+
+        Args:
+            id (str): The ID of the document.
+            metadata (Dict[str, Any]): The metadata to update.
+        """
+        try:
+            with self.Session() as sess:
+                # Merge JSONB instead of overwriting: coalesce(existing, '{}') || :new
+                stmt = (
+                    update(self.table)
+                    .where(self.table.c.content_id == content_id)
+                    .values(
+                        meta_data=func.coalesce(self.table.c.meta_data, text("'{}'::jsonb")).op("||")(
+                            bindparam("md", metadata, type_=postgresql.JSONB)
+                        ),
+                        filters=func.coalesce(self.table.c.filters, text("'{}'::jsonb")).op("||")(
+                            bindparam("ft", metadata, type_=postgresql.JSONB)
+                        ),
+                    )
+                )
+                sess.execute(stmt)
+                sess.commit()
+        except Exception as e:
+            logger.error(f"Error updating metadata for document {content_id}: {e}")
+            raise
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """

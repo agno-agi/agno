@@ -4,7 +4,7 @@ from typing import AsyncIterator, Union
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.run.workflow import WorkflowRunResponseEvent
+from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
@@ -46,12 +46,12 @@ content_planner = Agent(
 
 async def custom_content_planning_function(
     step_input: StepInput,
-) -> AsyncIterator[Union[WorkflowRunResponseEvent, StepOutput]]:
+) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
     """
     Custom function that does intelligent content planning with context awareness
     Now also uses additional_data for extra context
     """
-    message = step_input.message
+    message = step_input.input
     previous_step_content = step_input.previous_step_content
 
     # Access additional_data that was passed with the workflow
@@ -150,8 +150,7 @@ if __name__ == "__main__":
 
     # Run workflow with additional_data
     asyncio.run(
-        content_creation_workflow.aprint_response(
-            message="AI trends in 2024",
+        content_creation_workflow.aprint_response(input="AI trends in 2024",
             additional_data={
                 "user_email": "kaustubh@agno.com",
                 "priority": "high",

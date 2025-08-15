@@ -317,7 +317,7 @@ class PineconeDb(VectorDb):
 
         # Process each batch in parallel
         async def process_batch(batch_docs):
-            return await asyncio.to_thread(self._prepare_vectors, batch_docs)
+            return await self._prepare_vectors(batch_docs)
 
         # Run all batches in parallel
         batch_vectors = await asyncio.gather(*[process_batch(batch) for batch in batches])
@@ -332,11 +332,13 @@ class PineconeDb(VectorDb):
 
         log_debug(f"Finished async upsert of {len(documents)} documents")
 
-    def _prepare_vectors(self, documents: List[Document]) -> List[Dict[str, Any]]:
+    async def _prepare_vectors(self, documents: List[Document]) -> List[Dict[str, Any]]:
         """Prepare vectors for upsert."""
         vectors = []
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
+
         for doc in documents:
-            doc.embed(embedder=self.embedder)
             doc.meta_data["text"] = doc.content
             # Include name and content_id in metadata
             metadata = doc.meta_data.copy()
@@ -614,3 +616,55 @@ class PineconeDb(VectorDb):
         except Exception as e:
             log_warning(f"Error deleting documents with content_hash {content_hash}: {e}")
             return False
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for documents with the given content_id.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        try:
+            # Query for vectors with the given content_id
+            query_response = self.index.query(
+                filter={"content_id": {"$eq": content_id}},
+                top_k=10000,  # Get all matching vectors
+                include_metadata=True,
+                namespace=self.namespace,
+            )
+
+            if not query_response.matches:
+                logger.debug(f"No documents found with content_id: {content_id}")
+                return
+
+            # Prepare updates for each matching vector
+            update_data = []
+            for match in query_response.matches:
+                vector_id = match.id
+                current_metadata = match.metadata or {}
+
+                # Merge existing metadata with new metadata
+                updated_metadata = current_metadata.copy()
+                updated_metadata.update(metadata)
+
+                if "filters" not in updated_metadata:
+                    updated_metadata["filters"] = {}
+                if isinstance(updated_metadata["filters"], dict):
+                    updated_metadata["filters"].update(metadata)
+                else:
+                    updated_metadata["filters"] = metadata
+
+                update_data.append({"id": vector_id, "metadata": updated_metadata})
+
+            # Update vectors in batches
+            batch_size = 100
+            for i in range(0, len(update_data), batch_size):
+                batch = update_data[i : i + batch_size]
+                self.index.update(vectors=batch, namespace=self.namespace)
+
+            logger.debug(f"Updated metadata for {len(update_data)} documents with content_id: {content_id}")
+
+        except Exception as e:
+            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+            raise

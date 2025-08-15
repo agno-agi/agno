@@ -4,8 +4,8 @@ from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Mapping, Optional, Union
 
 from agno.models.message import Message
-from agno.run.response import RunResponse, RunStatus
-from agno.run.team import TeamRunResponse
+from agno.run.response import RunOutput, RunStatus
+from agno.run.team import TeamRunOutput
 from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug, log_warning
 
@@ -31,7 +31,7 @@ class TeamSession:
     # Metadata stored with this team
     metadata: Optional[Dict[str, Any]] = None
     # List of all runs in the session
-    runs: Optional[list[Union[TeamRunResponse, RunResponse]]] = None
+    runs: Optional[list[Union[TeamRunOutput, RunOutput]]] = None
     # Summary of the session
     summary: Optional[SessionSummary] = None
 
@@ -68,9 +68,9 @@ class TeamSession:
         serialized_runs = []
         for run in runs:
             if "agent_id" in run:
-                serialized_runs.append(RunResponse.from_dict(run))
+                serialized_runs.append(RunOutput.from_dict(run))
             elif "team_id" in run:
-                serialized_runs.append(TeamRunResponse.from_dict(run))
+                serialized_runs.append(TeamRunOutput.from_dict(run))
 
         return cls(
             session_id=data.get("session_id"),  # type: ignore
@@ -86,13 +86,13 @@ class TeamSession:
             summary=data.get("summary"),
         )
 
-    def get_run(self, run_id: str) -> Optional[TeamRunResponse]:
+    def get_run(self, run_id: str) -> Optional[TeamRunOutput]:
         for run in self.runs:
             if run.run_id == run_id:
                 return run
         return None
 
-    def upsert_run(self, run_response: Union[TeamRunResponse, RunResponse]):
+    def upsert_run(self, run_response: Union[TeamRunOutput, RunOutput]):
         """Adds a RunResponse, together with some calculated data, to the runs list."""
 
         messages = run_response.messages
@@ -113,7 +113,7 @@ class TeamSession:
         else:
             self.runs.append(run_response)
 
-        log_debug("Added RunResponse to Team Session")
+        log_debug("Added RunOutput to Team Session")
 
     def get_messages_from_last_n_runs(
         self,

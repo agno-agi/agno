@@ -59,8 +59,7 @@ async def run_agent(task: str) -> None:
             )
 
             log_info(f"Running Supabase project agent for: {task}")
-            await agent.aprint_response(
-                message=task,
+            await agent.aprint_response(input=task,
                 stream=True,
                 stream_intermediate_steps=True,
                 show_full_reasoning=True,

@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Mapping, Optional
 
 from agno.models.message import Message
 from agno.run.base import RunStatus
-from agno.run.response import RunResponse
+from agno.run.response import RunOutput
 from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug, log_warning
 
@@ -33,7 +33,7 @@ class AgentSession:
     # Agent Data: agent_id, name and model
     agent_data: Optional[Dict[str, Any]] = None
     # List of all runs in the session
-    runs: Optional[List[RunResponse]] = None
+    runs: Optional[List[RunOutput]] = None
     # Summary of the session
     summary: Optional["SessionSummary"] = None
 
@@ -58,7 +58,7 @@ class AgentSession:
 
         runs = data.get("runs")
         if runs is not None and isinstance(runs[0], dict):
-            runs = [RunResponse.from_dict(run) for run in runs]
+            runs = [RunOutput.from_dict(run) for run in runs]
 
         summary = data.get("summary")
         if summary is not None and isinstance(summary, dict):
@@ -88,7 +88,7 @@ class AgentSession:
             "updated_at": self.updated_at,
         }
 
-    def upsert_run(self, run: RunResponse):
+    def upsert_run(self, run: RunOutput):
         """Adds a RunResponse, together with some calculated data, to the runs list."""
         messages = run.messages
         for m in messages:
@@ -105,9 +105,9 @@ class AgentSession:
         else:
             self.runs.append(run)
 
-        log_debug("Added RunResponse to Agent Session")
+        log_debug("Added RunOutput to Agent Session")
 
-    def get_run(self, run_id: str) -> Optional[RunResponse]:
+    def get_run(self, run_id: str) -> Optional[RunOutput]:
         for run in self.runs:
             if run.run_id == run_id:
                 return run
@@ -124,7 +124,6 @@ class AgentSession:
     ) -> List[Message]:
         """Returns the messages from the last_n runs, excluding previously tagged history messages.
         Args:
-            session_id: The session id to get the messages from.
             agent_id: The id of the agent to get the messages from.
             team_id: The id of the team to get the messages from.
             last_n: The number of runs to return from the end of the conversation. Defaults to all runs.

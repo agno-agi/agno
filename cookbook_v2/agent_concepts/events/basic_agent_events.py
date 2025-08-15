@@ -15,30 +15,30 @@ finance_agent = Agent(
 
 async def run_agent_with_events(prompt: str):
     content_started = False
-    async for run_response_event in finance_agent.arun(
+    async for run_output_event in finance_agent.arun(
         prompt,
         stream=True,
         stream_intermediate_steps=True,
     ):
-        if run_response_event.event in [RunEvent.run_started, RunEvent.run_completed]:
-            print(f"\nEVENT: {run_response_event.event}")
+        if run_output_event.event in [RunEvent.run_started, RunEvent.run_completed]:
+            print(f"\nEVENT: {run_output_event.event}")
 
-        if run_response_event.event in [RunEvent.tool_call_started]:
-            print(f"\nEVENT: {run_response_event.event}")
-            print(f"TOOL CALL: {run_response_event.tool.tool_name}")  # type: ignore
-            print(f"TOOL CALL ARGS: {run_response_event.tool.tool_args}")  # type: ignore
+        if run_output_event.event in [RunEvent.tool_call_started]:
+            print(f"\nEVENT: {run_output_event.event}")
+            print(f"TOOL CALL: {run_output_event.tool.tool_name}")  # type: ignore
+            print(f"TOOL CALL ARGS: {run_output_event.tool.tool_args}")  # type: ignore
 
-        if run_response_event.event in [RunEvent.tool_call_completed]:
-            print(f"\nEVENT: {run_response_event.event}")
-            print(f"TOOL CALL: {run_response_event.tool.tool_name}")  # type: ignore
-            print(f"TOOL CALL RESULT: {run_response_event.tool.result}")  # type: ignore
+        if run_output_event.event in [RunEvent.tool_call_completed]:
+            print(f"\nEVENT: {run_output_event.event}")
+            print(f"TOOL CALL: {run_output_event.tool.tool_name}")  # type: ignore
+            print(f"TOOL CALL RESULT: {run_output_event.tool.result}")  # type: ignore
 
-        if run_response_event.event in [RunEvent.run_response_content]:
+        if run_output_event.event in [RunEvent.run_content]:
             if not content_started:
                 print("\nCONTENT:")
                 content_started = True
             else:
-                print(run_response_event.content, end="")
+                print(run_output_event.content, end="")
 
 
 if __name__ == "__main__":

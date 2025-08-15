@@ -12,7 +12,7 @@ except ImportError:
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.reranker.base import Reranker
-from agno.utils.log import log_debug, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
@@ -959,3 +959,68 @@ class Qdrant(VectorDb):
         except Exception as e:
             log_warning(f"Error deleting points with content_hash {content_hash}: {e}")
             return False
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for documents with the given content_id.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        try:
+            if not self.client:
+                log_error("Client not initialized")
+                return
+
+            # Create filter for content_id
+            filter_condition = models.Filter(
+                must=[models.FieldCondition(key="content_id", match=models.MatchValue(value=content_id))]
+            )
+
+            # Search for points with the given content_id
+            search_result = self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=filter_condition,
+                limit=10000,  # Get all matching points
+                with_payload=True,
+                with_vectors=False,
+            )
+
+            if not search_result[0]:  # search_result is a tuple (points, next_page_offset)
+                log_error(f"No documents found with content_id: {content_id}")
+                return
+
+            points = search_result[0]
+            update_operations = []
+
+            # Prepare update operations for each point
+            for point in points:
+                point_id = point.id
+                current_payload = point.payload or {}
+
+                # Merge existing metadata with new metadata
+                updated_payload = current_payload.copy()
+                updated_payload.update(metadata)
+
+                if "filters" not in updated_payload:
+                    updated_payload["filters"] = {}
+                if isinstance(updated_payload["filters"], dict):
+                    updated_payload["filters"].update(metadata)
+                else:
+                    updated_payload["filters"] = metadata
+
+                # Create set payload operation
+                update_operations.append(models.SetPayload(payload=updated_payload, points=[point_id]))
+
+            # Execute all updates
+            for operation in update_operations:
+                self.client.set_payload(
+                    collection_name=self.collection_name, payload=operation.payload, points=operation.points
+                )
+
+            log_debug(f"Updated metadata for {len(update_operations)} documents with content_id: {content_id}")
+
+        except Exception as e:
+            log_error(f"Error updating metadata for content_id '{content_id}': {e}")
+            raise

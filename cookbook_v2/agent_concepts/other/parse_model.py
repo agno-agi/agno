@@ -1,7 +1,7 @@
 import random
 from typing import List
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from pydantic import BaseModel, Field
@@ -77,5 +77,5 @@ national_parks = [
     "Rocky National Park",
 ]
 # Get the response in a variable
-run: RunResponse = agent.run(national_parks[random.randint(0, len(national_parks) - 1)])
+run: RunOutput = agent.run(national_parks[random.randint(0, len(national_parks) - 1)])
 pprint(run.content)

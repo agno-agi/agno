@@ -32,7 +32,7 @@ writer_agent = Agent(
 
 
 async def prepare_input_for_web_search(step_input: StepInput) -> StepOutput:
-    topic = step_input.message
+    topic = step_input.input
     return StepOutput(
         content=dedent(f"""\
 	I'm writing a blog post on the topic
@@ -46,7 +46,7 @@ async def prepare_input_for_web_search(step_input: StepInput) -> StepOutput:
 
 
 async def prepare_input_for_writer(step_input: StepInput) -> StepOutput:
-    topic = step_input.message
+    topic = step_input.input
     research_team_output = step_input.previous_step_content
 
     return StepOutput(
@@ -90,8 +90,7 @@ if __name__ == "__main__":
         ],
     )
     asyncio.run(
-        content_creation_workflow.aprint_response(
-            message="AI trends in 2024",
+        content_creation_workflow.aprint_response(input="AI trends in 2024",
             markdown=True,
         )
     )

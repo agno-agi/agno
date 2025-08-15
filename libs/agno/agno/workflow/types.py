@@ -14,7 +14,7 @@ from agno.utils.log import log_warning
 class WorkflowExecutionInput:
     """Input data for a step execution"""
 
-    message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None
+    input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None
 
     additional_data: Optional[Dict[str, Any]] = None
 
@@ -23,35 +23,35 @@ class WorkflowExecutionInput:
     videos: Optional[List[VideoArtifact]] = None
     audio: Optional[List[AudioArtifact]] = None
 
-    def get_message_as_string(self) -> Optional[str]:
-        """Convert message to string representation"""
-        if self.message is None:
+    def get_input_as_string(self) -> Optional[str]:
+        """Convert input to string representation"""
+        if self.input is None:
             return None
 
-        if isinstance(self.message, str):
-            return self.message
-        elif isinstance(self.message, BaseModel):
-            return self.message.model_dump_json(indent=2, exclude_none=True)
-        elif isinstance(self.message, (dict, list)):
+        if isinstance(self.input, str):
+            return self.input
+        elif isinstance(self.input, BaseModel):
+            return self.input.model_dump_json(indent=2, exclude_none=True)
+        elif isinstance(self.input, (dict, list)):
             import json
 
-            return json.dumps(self.message, indent=2, default=str)
+            return json.dumps(self.input, indent=2, default=str)
         else:
-            return str(self.message)
+            return str(self.input)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
-        message_dict: Optional[Union[str, Dict[str, Any], List[Any]]] = None
-        if self.message is not None:
-            if isinstance(self.message, BaseModel):
-                message_dict = self.message.model_dump(exclude_none=True)
-            elif isinstance(self.message, (dict, list)):
-                message_dict = self.message
+        input_dict: Optional[Union[str, Dict[str, Any], List[Any]]] = None
+        if self.input is not None:
+            if isinstance(self.input, BaseModel):
+                input_dict = self.input.model_dump(exclude_none=True)
+            elif isinstance(self.input, (dict, list)):
+                input_dict = self.input
             else:
-                message_dict = str(self.message)
+                input_dict = str(self.input)
 
         return {
-            "message": message_dict,
+            "input": input_dict,
             "additional_data": self.additional_data,
             "images": [img.to_dict() for img in self.images] if self.images else None,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,
@@ -63,7 +63,7 @@ class WorkflowExecutionInput:
 class StepInput:
     """Input data for a step execution"""
 
-    message: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None
+    input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel]] = None
 
     previous_step_content: Optional[Any] = None
     previous_step_outputs: Optional[Dict[str, "StepOutput"]] = None
@@ -75,21 +75,21 @@ class StepInput:
     videos: Optional[List[VideoArtifact]] = None
     audio: Optional[List[AudioArtifact]] = None
 
-    def get_message_as_string(self) -> Optional[str]:
-        """Convert message to string representation"""
-        if self.message is None:
+    def get_input_as_string(self) -> Optional[str]:
+        """Convert input to string representation"""
+        if self.input is None:
             return None
 
-        if isinstance(self.message, str):
-            return self.message
-        elif isinstance(self.message, BaseModel):
-            return self.message.model_dump_json(indent=2, exclude_none=True)
-        elif isinstance(self.message, (dict, list)):
+        if isinstance(self.input, str):
+            return self.input
+        elif isinstance(self.input, BaseModel):
+            return self.input.model_dump_json(indent=2, exclude_none=True)
+        elif isinstance(self.input, (dict, list)):
             import json
 
-            return json.dumps(self.message, indent=2, default=str)
+            return json.dumps(self.input, indent=2, default=str)
         else:
-            return str(self.message)
+            return str(self.input)
 
     def get_step_output(self, step_name: str) -> Optional["StepOutput"]:
         """Get output from a specific previous step by name"""
@@ -102,21 +102,45 @@ class StepInput:
 
         For parallel steps, if you ask for the parallel step name, returns a dict
         with {step_name: content} for each sub-step.
+        For other nested steps (Condition, Router, Loop, Steps), returns the deepest content.
         """
         step_output = self.get_step_output(step_name)
         if not step_output:
             return None
 
-        # If this is a parallel step with sub-outputs, return structured dict
-        if step_output.parallel_step_outputs:
-            return {
-                sub_step_name: sub_output.content  # type: ignore[misc]
-                for sub_step_name, sub_output in step_output.parallel_step_outputs.items()
-                if sub_output.content
-            }
+        # Check if this is a parallel step with nested steps
+        if step_output.step_type == "Parallel" and step_output.steps:
+            # Return dict with {step_name: content} for each sub-step
+            parallel_content = {}
+            for sub_step in step_output.steps:
+                if sub_step.step_name and sub_step.content:
+                    # Check if this sub-step has its own nested steps (like Condition -> Research Step)
+                    if sub_step.steps and len(sub_step.steps) > 0:
+                        # This is a composite step (like Condition) - get content from its nested steps
+                        for nested_step in sub_step.steps:
+                            if nested_step.step_name and nested_step.content:
+                                parallel_content[nested_step.step_name] = str(nested_step.content)
+                    else:
+                        # This is a direct step - use its content
+                        parallel_content[sub_step.step_name] = str(sub_step.content)
+            return parallel_content if parallel_content else str(step_output.content)
+
+        # For other nested step types (Condition, Router, Loop, Steps), get the deepest content
+        elif step_output.steps and len(step_output.steps) > 0:
+            # This is a nested step structure - recursively get the deepest content
+            return self._get_deepest_step_content(step_output.steps[-1])
 
         # Regular step, return content directly
         return step_output.content  # type: ignore[return-value]
+
+    def _get_deepest_step_content(self, step_output: "StepOutput") -> Optional[str]:
+        """Helper method to recursively extract deepest content from nested steps"""
+        # If this step has nested steps, go deeper
+        if step_output.steps and len(step_output.steps) > 0:
+            return self._get_deepest_step_content(step_output.steps[-1])
+
+        # Return the content of this step
+        return step_output.content
 
     def get_all_previous_content(self) -> str:
         """Get concatenated content from all previous steps"""
@@ -136,19 +160,23 @@ class StepInput:
             return None
 
         last_output = list(self.previous_step_outputs.values())[-1] if self.previous_step_outputs else None
-        return last_output.content if last_output else None  # type: ignore[return-value]
+        if not last_output:
+            return None
+
+        # Use the helper method to get the deepest content
+        return self._get_deepest_step_content(last_output)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         # Handle the unified message field
-        message_dict: Optional[Union[str, Dict[str, Any], List[Any]]] = None
-        if self.message is not None:
-            if isinstance(self.message, BaseModel):
-                message_dict = self.message.model_dump(exclude_none=True)
-            elif isinstance(self.message, (dict, list)):
-                message_dict = self.message
+        input_dict: Optional[Union[str, Dict[str, Any], List[Any]]] = None
+        if self.input is not None:
+            if isinstance(self.input, BaseModel):
+                input_dict = self.input.model_dump(exclude_none=True)
+            elif isinstance(self.input, (dict, list)):
+                input_dict = self.input
             else:
-                message_dict = str(self.message)
+                input_dict = str(self.input)
 
         previous_step_content_str: Optional[str] = None
         # Handle previous_step_content (keep existing logic)
@@ -168,7 +196,7 @@ class StepInput:
                 previous_steps_dict[step_name] = output.to_dict()
 
         return {
-            "message": message_dict,
+            "input": input_dict,
             "previous_step_outputs": previous_steps_dict,
             "previous_step_content": previous_step_content_str,
             "additional_data": self.additional_data,
@@ -184,13 +212,11 @@ class StepOutput:
 
     step_name: Optional[str] = None
     step_id: Optional[str] = None
+    step_type: Optional[str] = None
     executor_type: Optional[str] = None
     executor_name: Optional[str] = None
     # Primary output
     content: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, Any]] = None
-
-    # For parallel steps: store individual step outputs
-    parallel_step_outputs: Optional[Dict[str, "StepOutput"]] = None
 
     # Link to the run ID of the step execution
     step_run_id: Optional[str] = None
@@ -208,6 +234,8 @@ class StepOutput:
 
     stop: bool = False
 
+    steps: Optional[List["StepOutput"]] = None
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         # Handle the unified content field
@@ -220,21 +248,28 @@ class StepOutput:
             else:
                 content_dict = str(self.content)
 
-        return {
+        result = {
             "content": content_dict,
             "step_name": self.step_name,
             "step_id": self.step_id,
+            "step_type": self.step_type,
             "executor_type": self.executor_type,
             "executor_name": self.executor_name,
             "step_run_id": self.step_run_id,
             "images": [img.to_dict() for img in self.images] if self.images else None,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,
             "audio": [aud.to_dict() for aud in self.audio] if self.audio else None,
-            "metrics": self.metrics.to_dict() if self.metrics else None,
+            "metrics": self.metrics.to_dict() if hasattr(self.metrics, "to_dict") else self.metrics,
             "success": self.success,
             "error": self.error,
             "stop": self.stop,
         }
+
+        # Add nested steps if they exist
+        if self.steps:
+            result["steps"] = [step.to_dict() for step in self.steps]
+
+        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "StepOutput":
@@ -252,9 +287,16 @@ class StepOutput:
         if audio:
             audio = [AudioArtifact.model_validate(aud) for aud in audio]
 
+        # Handle nested steps
+        steps_data = data.get("steps")
+        steps = None
+        if steps_data:
+            steps = [cls.from_dict(step_data) for step_data in steps_data]
+
         return cls(
             step_name=data.get("step_name"),
             step_id=data.get("step_id"),
+            step_type=data.get("step_type"),
             executor_type=data.get("executor_type"),
             executor_name=data.get("executor_name"),
             content=data.get("content"),
@@ -266,6 +308,7 @@ class StepOutput:
             success=data.get("success", True),
             error=data.get("error"),
             stop=data.get("stop", False),
+            steps=steps,
         )
 
 
@@ -276,45 +319,25 @@ class StepMetrics:
     step_name: str
     executor_type: str  # "agent", "team", etc.
     executor_name: str
-
-    # For regular steps: our generic metrics data
     metrics: Optional[Metrics] = None
 
-    # For parallel steps: nested step metrics
-    parallel_steps: Optional[Dict[str, "StepMetrics"]] = None
-
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary - only include relevant fields"""
-        result = {
+        """Convert to dictionary"""
+        return {
             "step_name": self.step_name,
             "executor_type": self.executor_type,
             "executor_name": self.executor_name,
+            "metrics": self.metrics.to_dict() if hasattr(self.metrics, "to_dict") else self.metrics,
         }
-
-        # Only include the relevant field based on executor type
-        if self.executor_type == "parallel" and self.parallel_steps:
-            result["parallel_steps"] = {name: step.to_dict() for name, step in self.parallel_steps.items()}  # type: ignore[assignment]
-        elif self.executor_type != "parallel":
-            # For non-parallel steps, include metrics (even if None)
-            result["metrics"] = self.metrics.to_dict() if self.metrics else None  # type: ignore[assignment]
-
-        return result
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "StepMetrics":
         """Create StepMetrics from dictionary"""
-
-        # Parse nested parallel steps if they exist
-        parallel_steps = None
-        if "parallel_steps" in data and data["parallel_steps"] is not None:
-            parallel_steps = {name: cls.from_dict(step_data) for name, step_data in data["parallel_steps"].items()}
-
         return cls(
             step_name=data["step_name"],
             executor_type=data["executor_type"],
             executor_name=data["executor_name"],
-            metrics=data.get("metrics") if data.get("executor_type") != "parallel" else None,
-            parallel_steps=parallel_steps,
+            metrics=data.get("metrics"),
         )
 
 
@@ -322,13 +345,11 @@ class StepMetrics:
 class WorkflowMetrics:
     """Complete metrics for a workflow execution"""
 
-    total_steps: int
     steps: Dict[str, StepMetrics]
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
         return {
-            "total_steps": self.total_steps,
             "steps": {name: step.to_dict() for name, step in self.steps.items()},
         }
 
@@ -338,7 +359,6 @@ class WorkflowMetrics:
         steps = {name: StepMetrics.from_dict(step_data) for name, step_data in data["steps"].items()}
 
         return cls(
-            total_steps=data["total_steps"],
             steps=steps,
         )
 

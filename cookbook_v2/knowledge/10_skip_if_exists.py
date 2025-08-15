@@ -4,6 +4,8 @@ Existing content is skipped by default.
 1. Run: `python cookbook/agent_concepts/knowledge/10_skip_if_exists.py` to run the cookbook
 """
 
+import asyncio
+
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
 
@@ -16,17 +18,21 @@ knowledge = Knowledge(
 )
 
 # Add from local file to the knowledge base
-knowledge.add_content(
-    name="CV",
-    path="cookbook_v2/knowledge/data/filters/cv_1.docx",
-    metadata={"user_tag": "Engineering Candidates"},
-    skip_if_exists=True,  # True by default
+asyncio.run(
+    knowledge.add_content(
+        name="CV",
+        path="cookbook_v2/knowledge/data/filters/cv_1.docx",
+        metadata={"user_tag": "Engineering Candidates"},
+        skip_if_exists=True,  # True by default
+    )
 )
 
 # Add from local file to the knowledge base, but don't skip if it already exists
-knowledge.add_content(
-    name="CV",
-    path="cookbook_v2/knowledge/data/filters/cv_1.docx",
-    metadata={"user_tag": "Engineering Candidates"},
-    skip_if_exists=False,
+asyncio.run(
+    knowledge.add_content(
+        name="CV",
+        path="cookbook_v2/knowledge/data/filters/cv_1.docx",
+        metadata={"user_tag": "Engineering Candidates"},
+        skip_if_exists=False,
+    )
 )

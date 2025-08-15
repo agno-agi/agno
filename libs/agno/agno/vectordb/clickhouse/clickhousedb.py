@@ -1,3 +1,4 @@
+import asyncio
 from hashlib import md5
 from typing import Any, Dict, List, Optional
 
@@ -307,8 +308,10 @@ class Clickhouse(VectorDb):
         rows: List[List[Any]] = []
         async_client = await self._ensure_async_client()
 
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
+
         for document in documents:
-            document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             _id = md5(cleaned_content.encode()).hexdigest()
 
@@ -706,3 +709,70 @@ class Clickhouse(VectorDb):
             "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE content_hash = {content_hash:String}",
             parameters=parameters,
         )
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for documents with the given content_id.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        import json
+
+        try:
+            parameters = self._get_base_parameters()
+            parameters["content_id"] = content_id
+
+            # First, get existing documents with their current metadata and filters
+            result = self.client.query(
+                "SELECT id, meta_data, filters FROM {database_name:Identifier}.{table_name:Identifier} WHERE content_id = {content_id:String}",
+                parameters=parameters,
+            )
+
+            if not result.result_rows:
+                logger.debug(f"No documents found with content_id: {content_id}")
+                return
+
+            # Update each document
+            updated_count = 0
+            for row in result.result_rows:
+                doc_id, current_meta_json, current_filters_json = row
+
+                # Parse existing metadata
+                try:
+                    current_metadata = json.loads(current_meta_json) if current_meta_json else {}
+                except (json.JSONDecodeError, TypeError):
+                    current_metadata = {}
+
+                # Parse existing filters
+                try:
+                    current_filters = json.loads(current_filters_json) if current_filters_json else {}
+                except (json.JSONDecodeError, TypeError):
+                    current_filters = {}
+
+                # Merge existing metadata with new metadata
+                updated_metadata = current_metadata.copy()
+                updated_metadata.update(metadata)
+
+                # Merge existing filters with new metadata
+                updated_filters = current_filters.copy()
+                updated_filters.update(metadata)
+
+                # Update the document
+                update_params = parameters.copy()
+                update_params["doc_id"] = doc_id
+                update_params["metadata_json"] = json.dumps(updated_metadata)
+                update_params["filters_json"] = json.dumps(updated_filters)
+
+                self.client.command(
+                    "ALTER TABLE {database_name:Identifier}.{table_name:Identifier} UPDATE meta_data = {metadata_json:String}, filters = {filters_json:String} WHERE id = {doc_id:String}",
+                    parameters=update_params,
+                )
+                updated_count += 1
+
+            logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
+
+        except Exception as e:
+            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+            raise

@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent, RunOutput
 from agno.models.google import Gemini
 from agno.models.message import Message
 from agno.tools.file import FileTools
@@ -142,4 +142,4 @@ class TutorAppAgent:
 
         # Create message
         user_message = Message(role="user", content=prompt)
-        return self.agent.run(prompt=prompt, messages=[user_message], stream=True)
+        return self.agent.run(prompt=prompt, input=[user_message], stream=True)

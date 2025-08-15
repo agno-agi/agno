@@ -3,8 +3,8 @@ from io import BytesIO
 from typing import List
 from uuid import uuid4
 
-from agno.document.base import Document
-from agno.document.reader.base import Reader
+from agno.knowledge.document.base import Document
+from agno.knowledge.reader.base import Reader
 from agno.utils.log import log_info
 
 try:

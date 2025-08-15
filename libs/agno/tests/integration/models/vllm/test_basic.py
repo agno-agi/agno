@@ -1,7 +1,7 @@
 import pytest
 from pydantic import BaseModel, Field
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent, RunOutput
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.exceptions import ModelProviderError
 from agno.models.vllm import vLLM
@@ -10,7 +10,7 @@ from agno.models.vllm import vLLM
 VLLM_MODEL_ID = "Qwen/Qwen2.5-7B-Instruct"
 
 
-def _assert_metrics(response: RunResponse):
+def _assert_metrics(response: RunOutput):
     assert response.metrics is not None
     input_tokens = response.metrics.input_tokens
     output_tokens = response.metrics.output_tokens
@@ -26,7 +26,7 @@ def test_basic():
     agent = Agent(model=vLLM(id=VLLM_MODEL_ID), markdown=True, telemetry=False)
 
     # Print the response in the terminal
-    response: RunResponse = agent.run("Share a 2 sentence comedy story")
+    response: RunOutput = agent.run("Share a 2 sentence comedy story")
 
     assert response.content is not None
     assert response.messages is not None
