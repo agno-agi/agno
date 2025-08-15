@@ -8,9 +8,12 @@ from agno.utils.log import logger
 from streamlit_utils import (
     COMMON_CSS,
     add_message,
-    display_tool_calls,
+    display_chat_messages,
     export_chat_history,
+    handle_agent_response,
+    initialize_agent,
     knowledge_base_info_widget,
+    manage_session_state,
     restart_agent_session,
     session_selector_widget,
 )
@@ -65,37 +68,10 @@ def main():
     model_id = model_options[selected_model]
 
     ####################################################################
-    # Initialize Agent
+    # Initialize Agent and Session
     ####################################################################
-    agentic_rag_agent: Agent
-    if (
-        "agent" not in st.session_state
-        or st.session_state["agent"] is None
-        or st.session_state.get("current_model") != model_id
-    ):
-        # If model changed, clear session to create a new one
-        session_id = None if st.session_state.get("current_model") != model_id else st.session_state.get("session_id")
-        
-        agentic_rag_agent = get_agentic_rag_agent(
-            model_id=model_id, session_id=session_id
-        )
-
-        st.session_state["agent"] = agentic_rag_agent
-        st.session_state["current_model"] = model_id
-        # Clear messages when changing models to start fresh
-        if session_id is None:
-            st.session_state["messages"] = []
-    else:
-        agentic_rag_agent = st.session_state["agent"]
-
-    ####################################################################
-    # Session management
-    ####################################################################
-    if agentic_rag_agent.session_id:
-        st.session_state["session_id"] = agentic_rag_agent.session_id
-
-    if "messages" not in st.session_state:
-        st.session_state["messages"] = []
+    agentic_rag_agent = initialize_agent(model_id, get_agentic_rag_agent)
+    manage_session_state(agentic_rag_agent)
 
     if prompt := st.chat_input("👋 Ask me anything!"):
         add_message("user", prompt)
@@ -105,7 +81,7 @@ def main():
     ####################################################################
     st.sidebar.markdown("#### 📚 Document Management")
     st.sidebar.metric(
-        "Documents Loaded", agentic_rag_agent.knowledge.vector_store.get_count()
+        "Documents Loaded", agentic_rag_agent.knowledge.vector_db.get_count()
     )
 
     # URL input
@@ -113,7 +89,7 @@ def main():
     if input_url and not prompt:
         alert = st.sidebar.info("Processing URL...", icon="ℹ️")
         try:
-            agentic_rag_agent.knowledge.add_content(
+            agentic_rag_agent.knowledge.add_content_sync(
                 name=f"URL: {input_url}",
                 url=input_url,
                 description=f"Content from {input_url}",
@@ -138,8 +114,8 @@ def main():
                 tmp_file.write(uploaded_file.read())
                 tmp_path = tmp_file.name
 
-            # Use the Knowledge system's add_content method
-            agentic_rag_agent.knowledge.add_content(
+            # Use the Knowledge system's add_content_sync method
+            agentic_rag_agent.knowledge.add_content_sync(
                 name=uploaded_file.name,
                 path=tmp_path,
                 description=f"Uploaded file: {uploaded_file.name}",
@@ -155,8 +131,8 @@ def main():
 
     # Clear knowledge base
     if st.sidebar.button("Clear Knowledge Base"):
-        if agentic_rag_agent.knowledge.vector_store:
-            agentic_rag_agent.knowledge.vector_store.delete()
+        if agentic_rag_agent.knowledge.vector_db:
+            agentic_rag_agent.knowledge.vector_db.delete()
         st.sidebar.success("Knowledge base cleared")
 
     ###############################################################
@@ -217,21 +193,7 @@ def main():
     ####################################################################
     # Display Chat Messages
     ####################################################################
-    for message in st.session_state["messages"]:
-        if message["role"] in ["user", "assistant"]:
-            content = message["content"]
-            with st.chat_message(message["role"]):
-                # Display tool calls first if they exist
-                if "tool_calls" in message and message["tool_calls"]:
-                    display_tool_calls(st.container(), message["tool_calls"])
-
-                # Display content if it exists and is not "None"
-                if (
-                    content is not None
-                    and str(content).strip()
-                    and str(content).strip().lower() != "none"
-                ):
-                    st.markdown(content)
+    display_chat_messages()
 
     ####################################################################
     # Generate response for user message
@@ -241,32 +203,7 @@ def main():
     )
     if last_message and last_message.get("role") == "user":
         question = last_message["content"]
-        with st.chat_message("assistant"):
-            # Create container for tool calls
-            tool_calls_container = st.empty()
-            resp_container = st.empty()
-            with st.spinner("🤔 Thinking..."):
-                response = ""
-                try:
-                    # Run the agent and stream the response
-                    run_response = agentic_rag_agent.run(question, stream=True)
-                    for resp_chunk in run_response:
-                        # Display tool calls if available
-                        if hasattr(resp_chunk, "tool") and resp_chunk.tool:
-                            display_tool_calls(tool_calls_container, [resp_chunk.tool])
-
-                        # Display response content
-                        if resp_chunk.content is not None:
-                            response += resp_chunk.content
-                            resp_container.markdown(response)
-
-                    add_message(
-                        "assistant", response, agentic_rag_agent.run_response.tools
-                    )
-                except Exception as e:
-                    error_message = f"Sorry, I encountered an error: {str(e)}"
-                    add_message("assistant", error_message)
-                    st.error(error_message)
+        handle_agent_response(agentic_rag_agent, question)
 
     ####################################################################
     # Session management widgets (using streamlit utilities)

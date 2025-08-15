@@ -33,6 +33,7 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
+from agno.tools.duckduckgo import DuckDuckGoTools
 from utils import get_model_from_id
 from agno.vectordb.pgvector import PgVector
 
@@ -47,17 +48,23 @@ def get_agentic_rag_agent(
 ) -> Agent:
     """Get an Agentic RAG Agent with knowledge"""
 
-    # Create the Knowledge system with vector store
+    # Create the Knowledge system with vector store and contents db
+    contents_db = PostgresDb(
+        db_url=db_url,
+        knowledge_table="agentic_rag_knowledge_contents",
+        db_schema="ai",
+    )
+    
     knowledge_base = Knowledge(
         name="Agentic RAG Knowledge Base",
         description="Knowledge base for agentic RAG application",
-        vector_store=PgVector(
+        vector_db=PgVector(
             db_url=db_url,
             table_name="agentic_rag_documents",
             schema="ai",
             embedder=OpenAIEmbedder(id="text-embedding-3-small"),
         ),
-        max_results=10,
+        contents_db=contents_db,
     )
 
     db = PostgresDb(
@@ -69,17 +76,16 @@ def get_agentic_rag_agent(
     agent = Agent(
         name="Agentic RAG Agent",
         model=get_model_from_id(model_id),
-        agent_id="agentic-rag-agent",
+        id="agentic-rag-agent",
         user_id=user_id,
         db=db,
         enable_user_memories=True,
         knowledge=knowledge_base,
-        search_knowledge=True,
-        read_tool_call_history=True,
-        add_history_to_messages=True,
+        add_knowledge_to_context=True,
+        add_history_to_context=True,
         num_history_runs=10,
         session_id=session_id,
-        description="You are a helpful Agent called 'Agentic RAG' and your goal is to assist the user in the best way possible.",
+        tools=[DuckDuckGoTools()],
         instructions=[
             "1. Knowledge Base Search:",
             "   - ALWAYS start by searching the knowledge base using search_knowledge_base tool",
@@ -107,9 +113,7 @@ def get_agentic_rag_agent(
             "   - Suggest alternative approaches or questions",
             "   - Be transparent about limitations in available information",
         ],
-        show_tool_calls=True,
         markdown=True,
-        add_datetime_to_instructions=True,
         debug_mode=debug_mode,
     )
 
