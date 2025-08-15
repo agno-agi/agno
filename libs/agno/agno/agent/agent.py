@@ -3717,7 +3717,7 @@ class Agent:
 
         session_id_to_load = session_id or self.session_id
         session = self.get_session(session_id=session_id_to_load)
-        
+
         if session is None:
             raise Exception(f"Session {session_id_to_load} not found")
 
@@ -4440,7 +4440,7 @@ class Agent:
             raise ValueError("Session ID is required")
 
         session = self.get_session(session_id=session_id)
-        
+
         if session is None:
             raise Exception(f"Session {session_id} not found")
 

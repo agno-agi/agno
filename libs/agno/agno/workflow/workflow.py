@@ -372,7 +372,7 @@ class Workflow:
         self.save_session(session=session)  # type: ignore
 
         return session  # type: ignore
-    
+
     def get_session_name(self, session_id: Optional[str] = None) -> str:
         """Get the session name for the given session ID and user ID."""
         session_id = session_id or self.session_id
@@ -3640,14 +3640,14 @@ class Workflow:
     def _calculate_session_metrics_from_workflow_metrics(self, workflow_metrics: WorkflowMetrics) -> Metrics:
         """Calculate session metrics by aggregating all step metrics from workflow metrics"""
         session_metrics = Metrics()
-        
+
         # Aggregate metrics from all steps
         for step_name, step_metrics in workflow_metrics.steps.items():
             if step_metrics.metrics:
                 session_metrics += step_metrics.metrics
-        
+
         session_metrics.time_to_first_token = None
-        
+
         return session_metrics
 
     def _get_session_metrics(self, session: WorkflowSession) -> Metrics:
@@ -3665,7 +3665,7 @@ class Workflow:
         """Calculate and update session metrics"""
         # Get existing session metrics
         session_metrics = self._get_session_metrics(session=session)
-        
+
         # If workflow has metrics, convert and add them to session metrics
         if workflow_run_response.workflow_metrics:
             run_session_metrics = self._calculate_session_metrics_from_workflow_metrics(
@@ -3673,9 +3673,9 @@ class Workflow:
             )
 
             session_metrics += run_session_metrics
-            
+
         session_metrics.time_to_first_token = None
-        
+
         # Store updated session metrics - CONVERT TO DICT FOR JSON SERIALIZATION
         if not session.session_data:
             session.session_data = {}
@@ -3686,18 +3686,12 @@ class Workflow:
         session_id = session_id or self.session_id
         if session_id is None:
             raise Exception("Session ID is required")
-        
+
         session = self.get_session(session_id=session_id)
         if session is None:
             raise Exception("Session not found")
-        
-        if session.session_data and "session_metrics" in session.session_data:
-            session_metrics_data = session.session_data.get("session_metrics")
-            if isinstance(session_metrics_data, dict):
-                return Metrics(**session_metrics_data)
-            elif isinstance(session_metrics_data, Metrics):
-                return session_metrics_data
-        return None
+
+        return self._get_session_metrics(session=session)
 
     def update_agents_and_teams_session_info(self):
         """Update agents and teams with workflow session information"""
