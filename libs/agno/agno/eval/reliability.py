@@ -137,15 +137,19 @@ class ReliabilityEval:
         # Log results to the Agno platform if requested
         if self.db:
             if self.agent_response is not None:
-                agent_id = self.agent_response.id
+                agent_id = self.agent_response.agent_id
                 team_id = None
                 model_id = self.agent_response.model
                 model_provider = self.agent_response.model_provider
             elif self.team_response is not None:
                 agent_id = None
-                team_id = self.team_response.id
+                team_id = self.team_response.team_id
                 model_id = self.team_response.model
                 model_provider = self.team_response.model_provider
+
+            eval_input = {
+                "expected_tool_calls": self.expected_tool_calls,
+            }
 
             log_eval_run(
                 db=self.db,
@@ -157,6 +161,7 @@ class ReliabilityEval:
                 team_id=team_id,
                 model_id=model_id,
                 model_provider=model_provider,
+                eval_input=eval_input,
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
@@ -231,15 +236,19 @@ class ReliabilityEval:
         # Log results to the Agno platform if requested
         if self.db:
             if self.agent_response is not None:
-                agent_id = self.agent_response.id
+                agent_id = self.agent_response.agent_id
                 team_id = None
                 model_id = self.agent_response.model
                 model_provider = self.agent_response.model_provider
             elif self.team_response is not None:
                 agent_id = None
-                team_id = self.team_response.id
+                team_id = self.team_response.team_id
                 model_id = self.team_response.model
                 model_provider = self.team_response.model_provider
+
+            eval_input = {
+                "expected_tool_calls": self.expected_tool_calls,
+            }
 
             await async_log_eval_run(
                 db=self.db,
@@ -251,6 +260,7 @@ class ReliabilityEval:
                 team_id=team_id,
                 model_id=model_id,
                 model_provider=model_provider,
+                eval_input=eval_input,
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")

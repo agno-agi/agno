@@ -55,6 +55,7 @@ EVAL_SCHEMA = {
     "run_id": {"type": "string", "primary_key": True},
     "eval_type": {"type": "string"},
     "eval_data": {"type": "json"},
+    "eval_input": {"type": "json"},
     "name": {"type": "string"},
     "agent_id": {"type": "string"},
     "team_id": {"type": "string"},

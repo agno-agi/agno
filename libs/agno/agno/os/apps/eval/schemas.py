@@ -46,6 +46,7 @@ class EvalSchema(BaseModel):
     evaluated_component_name: Optional[str] = None
     eval_type: EvalType
     eval_data: Dict[str, Any]
+    eval_input: Optional[Dict[str, Any]] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -62,6 +63,7 @@ class EvalSchema(BaseModel):
             evaluated_component_name=eval_run.get("evaluated_component_name"),
             eval_type=eval_run["eval_type"],
             eval_data=eval_run["eval_data"],
+            eval_input=eval_run.get("eval_input"),
             created_at=datetime.fromtimestamp(eval_run["created_at"], tz=timezone.utc),
             updated_at=datetime.fromtimestamp(eval_run["updated_at"], tz=timezone.utc),
         )
@@ -78,8 +80,8 @@ class EvalSchema(BaseModel):
         return cls(
             id=accuracy_eval.eval_id,
             name=accuracy_eval.name,
-            agent_id=accuracy_eval.agent.agent_id if accuracy_eval.agent else None,
-            team_id=accuracy_eval.team.team_id if accuracy_eval.team else None,
+            agent_id=accuracy_eval.agent.id if accuracy_eval.agent else None,
+            team_id=accuracy_eval.team.id if accuracy_eval.team else None,
             workflow_id=None,
             model_id=accuracy_eval.agent.model.id if accuracy_eval.agent else accuracy_eval.team.model.id,  # type: ignore
             model_provider=model_provider,
