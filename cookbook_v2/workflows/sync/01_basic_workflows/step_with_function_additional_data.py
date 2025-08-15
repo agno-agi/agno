@@ -138,7 +138,8 @@ if __name__ == "__main__":
     )
 
     # Run workflow with additional_data
-    content_creation_workflow.print_response(input="AI trends in 2024",
+    content_creation_workflow.print_response(
+        input="AI trends in 2024",
         additional_data={
             "user_email": "kaustubh@agno.com",
             "priority": "high",

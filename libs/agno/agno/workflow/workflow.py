@@ -14,6 +14,7 @@ from typing import (
     Optional,
     Type,
     Union,
+    cast,
     overload,
 )
 from uuid import uuid4
@@ -282,11 +283,11 @@ class Workflow:
 
         self._update_workflow_session_state()
 
-    def _generate_workflow_session_name(self, session_id: str) -> str:
+    def _generate_workflow_session_name(self, session_id: Optional[str] = None) -> str:
         """Generate a name for the workflow session"""
 
-        if self.session_id is None:
-            return f"Workflow Session - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        if session_id is None:
+            raise ValueError("Session ID is not set")
 
         datetime_str = datetime.now().strftime("%Y-%m-%d %H:%M")
         new_session_name = f"Workflow Session-{datetime_str}"
@@ -483,7 +484,7 @@ class Workflow:
 
         # Process all step results
         for step_result in step_results:
-            process_step_output(step_result)
+            process_step_output(cast(StepOutput, step_result))
 
         return WorkflowMetrics(
             steps=steps_dict,
@@ -605,7 +606,7 @@ class Workflow:
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
                     workflow_run_response.workflow_metrics = self._aggregate_workflow_metrics(collected_step_outputs)
-                    last_output = collected_step_outputs[-1]
+                    last_output = cast(StepOutput, collected_step_outputs[-1])
 
                     # Use deepest nested content if this is a container (Steps/Router/Loop/etc.)
                     if getattr(last_output, "steps", None):
@@ -775,7 +776,7 @@ class Workflow:
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
                     workflow_run_response.workflow_metrics = self._aggregate_workflow_metrics(collected_step_outputs)
-                    last_output = collected_step_outputs[-1]
+                    last_output = cast(StepOutput, collected_step_outputs[-1])
 
                     # Use deepest nested content if this is a container (Steps/Router/Loop/etc.)
                     if getattr(last_output, "steps", None):
@@ -969,7 +970,7 @@ class Workflow:
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
                     workflow_run_response.workflow_metrics = self._aggregate_workflow_metrics(collected_step_outputs)
-                    last_output = collected_step_outputs[-1]
+                    last_output = cast(StepOutput, collected_step_outputs[-1])
 
                     # Use deepest nested content if this is a container (Steps/Router/Loop/etc.)
                     if getattr(last_output, "steps", None):
@@ -1144,7 +1145,7 @@ class Workflow:
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
                     workflow_run_response.workflow_metrics = self._aggregate_workflow_metrics(collected_step_outputs)
-                    last_output = collected_step_outputs[-1]
+                    last_output = cast(StepOutput, collected_step_outputs[-1])
 
                     # Use deepest nested content if this is a container (Steps/Router/Loop/etc.)
                     if getattr(last_output, "steps", None):
@@ -1723,7 +1724,7 @@ class Workflow:
                     # This is a workflow step object - use the mapping
                     step_type = STEP_TYPE_MAPPING[type(step)]
                     step_dict = {
-                        "name": step.name if hasattr(step, "name") else step.__name__,
+                        "name": step.name if hasattr(step, "name") else f"unnamed_{type(step).__name__.lower()}",
                         "description": step.description
                         if hasattr(step, "description")
                         else "User-defined callable step",
@@ -3361,12 +3362,12 @@ class Workflow:
 
                                     # Check if this is a team's final structured output
                                     is_structured_output = (
-                                        isinstance(response, TeamRunOutputContentEvent)
+                                        isinstance(response, TeamRunContentEvent)
                                         and hasattr(response, "content_type")
                                         and response.content_type != "str"
                                         and response.content_type != ""
                                     )
-                            elif isinstance(response, RunOutputContentEvent) and current_step_executor_type != "team":
+                            elif isinstance(response, RunContentEvent) and current_step_executor_type != "team":
                                 response_str = response.content  # type: ignore
                             else:
                                 continue

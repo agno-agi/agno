@@ -111,7 +111,8 @@ if __name__ == "__main__":
     print("Expected: Safety check should detect 'AI' and stop the entire workflow")
     print()
 
-    workflow.print_response(input="Research the latest trends in AI and machine learning, then create a summary",
+    workflow.print_response(
+        input="Research the latest trends in AI and machine learning, then create a summary",
         stream=True,
         stream_intermediate_steps=True,
     )

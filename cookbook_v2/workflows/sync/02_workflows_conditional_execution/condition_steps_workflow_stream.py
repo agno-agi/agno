@@ -103,7 +103,8 @@ if __name__ == "__main__":
     print("=" * 50)
 
     try:
-        basic_workflow.print_response(input="Recent breakthroughs in quantum computing",
+        basic_workflow.print_response(
+            input="Recent breakthroughs in quantum computing",
             stream=True,
             stream_intermediate_steps=True,
         )

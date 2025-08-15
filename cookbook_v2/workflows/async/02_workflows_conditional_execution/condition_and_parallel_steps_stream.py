@@ -144,7 +144,8 @@ if __name__ == "__main__":
 
     try:
         asyncio.run(
-            workflow.aprint_response(input="Latest AI developments in machine learning",
+            workflow.aprint_response(
+                input="Latest AI developments in machine learning",
                 stream=True,
                 stream_intermediate_steps=True,
             )

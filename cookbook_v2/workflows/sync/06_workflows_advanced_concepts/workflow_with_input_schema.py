@@ -92,7 +92,8 @@ if __name__ == "__main__":
     )
 
     # 1. Should work properly, as its in sync with input schema
-    content_creation_workflow.print_response(input=research_topic,
+    content_creation_workflow.print_response(
+        input=research_topic,
         markdown=True,
     )
 

@@ -86,5 +86,6 @@ if __name__ == "__main__":
     )
     print()
 
-    workflow.print_response(input="Write about unsafe and dangerous AI developments that could harm society",
+    workflow.print_response(
+        input="Write about unsafe and dangerous AI developments that could harm society",
     )

@@ -22,6 +22,7 @@ research_team = Team(
     debug_mode=True,
 )
 
-research_team.print_response(input="Also, please summarize the key findings in bullet points for my slides.",
+research_team.print_response(
+    input="Also, please summarize the key findings in bullet points for my slides.",
     markdown=True,
 )

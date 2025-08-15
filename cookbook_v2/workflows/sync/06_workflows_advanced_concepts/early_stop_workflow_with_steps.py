@@ -91,7 +91,8 @@ if __name__ == "__main__":
     )
 
     print("\n=== Test 2: Short content (should stop early) ===")
-    workflow.print_response(input="Write a short note about conspiracy theories",
+    workflow.print_response(
+        input="Write a short note about conspiracy theories",
         markdown=True,
         stream=True,
         stream_intermediate_steps=True,

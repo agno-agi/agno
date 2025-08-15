@@ -119,7 +119,8 @@ if __name__ == "__main__":
         # You can mix and match agents, teams, and even regular python functions directly as steps
         steps=[research_step, content_planning_step],
     )
-    content_creation_workflow.print_response(input="AI trends in 2024",
+    content_creation_workflow.print_response(
+        input="AI trends in 2024",
         markdown=True,
     )
 

@@ -136,7 +136,8 @@ if __name__ == "__main__":
     )
 
     try:
-        workflow.print_response(input="Comprehensive analysis of climate change research",
+        workflow.print_response(
+            input="Comprehensive analysis of climate change research",
             stream=True,
             stream_intermediate_steps=True,
         )

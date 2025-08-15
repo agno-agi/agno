@@ -213,18 +213,21 @@ autonomous_startup_team = Team(
     enable_team_history=True,
 )
 
-autonomous_startup_team.print_response(input="I want to start a startup that sells AI agents to businesses. What is the best way to do this?",
+autonomous_startup_team.print_response(
+    input="I want to start a startup that sells AI agents to businesses. What is the best way to do this?",
     stream=True,
     stream_intermediate_steps=True,
 )
 
 
-autonomous_startup_team.print_response(input="Give me good marketing campaign for buzzai?",
+autonomous_startup_team.print_response(
+    input="Give me good marketing campaign for buzzai?",
     stream=True,
     stream_intermediate_steps=True,
 )
 
-autonomous_startup_team.print_response(input="What is my company and what are the monetization strategies?",
+autonomous_startup_team.print_response(
+    input="What is my company and what are the monetization strategies?",
     stream=True,
     stream_intermediate_steps=True,
 )

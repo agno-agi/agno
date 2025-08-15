@@ -48,7 +48,8 @@ if __name__ == "__main__":
         debug_mode=True,
     )
 
-    article_workflow.print_response(input="Write an article about the benefits of renewable energy",
+    article_workflow.print_response(
+        input="Write an article about the benefits of renewable energy",
         markdown=True,
     )
 

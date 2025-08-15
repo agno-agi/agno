@@ -44,7 +44,8 @@ media_workflow = Workflow(
 
 # Run workflow with image input
 if __name__ == "__main__":
-    media_workflow.print_response(input="Please analyze this image and find related news",
+    media_workflow.print_response(
+        input="Please analyze this image and find related news",
         images=[
             Image(
                 url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
