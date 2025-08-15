@@ -15,7 +15,7 @@ from models import ProcurementAnalysisRequest
 
 def should_run_analysis(analysis_type: str) -> callable:
     def evaluator(step_input: StepInput) -> bool:
-        request_data = step_input.message
+        request_data = step_input.input
         if isinstance(request_data, ProcurementAnalysisRequest):
             return analysis_type in request_data.analyses_requested
         return False
@@ -129,8 +129,7 @@ if __name__ == "__main__":
         annual_spend=50_000_000,
         incumbent_suppliers=["CATL", "Panasonic", "LG Energy Solution"],
     )
-    procurement_workflow.print_response(
-        message=analysis_details,
+    procurement_workflow.print_response(input=analysis_details,
         stream=True,
         stream_intermediate_steps=True,
     )

@@ -189,7 +189,7 @@ async def investment_analysis_execution(
     """Execute the complete investment analysis workflow"""
 
     # Get inputs
-    message: str = execution_input.message
+    message: str = execution_input.input
     company_symbols: str = companies
 
     if not company_symbols:
@@ -361,7 +361,7 @@ if __name__ == "__main__":
         print("=" * 70)
 
         result = await investment_workflow.arun(
-            message="Generate comprehensive investment analysis and portfolio allocation recommendations",
+            input="Generate comprehensive investment analysis and portfolio allocation recommendations",
             companies=companies,
         )
 

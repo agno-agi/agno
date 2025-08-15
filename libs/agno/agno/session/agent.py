@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Mapping, Optional
 
 from agno.models.message import Message
 from agno.run.base import RunStatus
-from agno.run.response import RunResponse
+from agno.run.response import RunOutput
 from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug, log_warning
 
@@ -35,7 +35,7 @@ class AgentSession:
     # Agent Data: agent_id, name and model
     agent_data: Optional[Dict[str, Any]] = None
     # List of all runs in the session
-    runs: Optional[List[RunResponse]] = None
+    runs: Optional[List[RunOutput]] = None
     # Summary of the session
     summary: Optional["SessionSummary"] = None
 
@@ -60,7 +60,7 @@ class AgentSession:
 
         runs = data.get("runs")
         if runs is not None and isinstance(runs[0], dict):
-            runs = [RunResponse.from_dict(run) for run in runs]
+            runs = [RunOutput.from_dict(run) for run in runs]
 
         summary = data.get("summary")
         if summary is not None and isinstance(summary, dict):
@@ -91,8 +91,8 @@ class AgentSession:
             "updated_at": self.updated_at,
         }
 
-    def add_run(self, run: RunResponse):
-        """Adds a RunResponse, together with some calculated data, to the runs list."""
+    def add_run(self, run: RunOutput):
+        """Adds a RunOutput, together with some calculated data, to the runs list."""
         messages = run.messages
         for m in messages:
             if m.metrics is not None:
@@ -103,7 +103,7 @@ class AgentSession:
 
         self.runs.append(run)
 
-        log_debug("Added RunResponse to Agent Session")
+        log_debug("Added RunOutput to Agent Session")
 
     def get_messages_from_last_n_runs(
         self,

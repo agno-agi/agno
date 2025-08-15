@@ -3,14 +3,14 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, Field
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent, RunOutput
 from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
 from agno.utils.log import log_warning
 from agno.utils.media import download_file
 
 
-def _assert_metrics(response: RunResponse):
+def _assert_metrics(response: RunOutput):
     assert response.metrics is not None
     input_tokens = response.metrics.input_tokens
     output_tokens = response.metrics.output_tokens
@@ -36,7 +36,7 @@ def test_basic():
     agent = Agent(model=Claude(id="claude-3-5-haiku-20241022"), markdown=True, telemetry=False)
 
     # Print the response in the terminal
-    response: RunResponse = agent.run("Share a 2 sentence horror story")
+    response: RunOutput = agent.run("Share a 2 sentence horror story")
 
     assert response.content is not None and response.messages is not None
     assert len(response.messages) == 3

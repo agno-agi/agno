@@ -149,7 +149,6 @@ agno_support = Agent(
     markdown=True,
 )
 
-
 # Setup our AgentOS app
 agent_os = AgentOS(
     description="Example OS setup",

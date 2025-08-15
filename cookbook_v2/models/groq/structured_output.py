@@ -1,6 +1,6 @@
 from typing import List
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.groq import Groq
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
@@ -33,7 +33,7 @@ json_mode_agent = Agent(
 )
 
 # Get the response in a variable
-run: RunResponse = json_mode_agent.run("New York")
+run: RunOutput = json_mode_agent.run("New York")
 pprint(run.content)
 
 # json_mode_agent.print_response("New York")

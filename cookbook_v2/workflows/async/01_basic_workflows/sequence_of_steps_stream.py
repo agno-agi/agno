@@ -69,8 +69,7 @@ async def main():
         ),
         steps=[research_step, content_planning_step],
     )
-    await content_creation_workflow.aprint_response(
-        message="AI agent frameworks 2025",
+    await content_creation_workflow.aprint_response(input="AI agent frameworks 2025",
         markdown=True,
         stream=True,
         stream_intermediate_steps=True,

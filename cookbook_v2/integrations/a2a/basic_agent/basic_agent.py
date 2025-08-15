@@ -2,7 +2,7 @@ from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.types import Part, TextPart
 from a2a.utils import new_agent_text_message
-from agno.agent import Agent, Message, RunResponse
+from agno.agent import Agent, Message, RunOutput
 from agno.models.openai import OpenAIChat
 from typing_extensions import override
 
@@ -30,7 +30,7 @@ class BasicAgentExecutor(AgentExecutor):
                     message.content = part.root.text
                     break
 
-        result: RunResponse = await self.agent.arun(message)
+        result: RunOutput = await self.agent.arun(message)
         event_queue.enqueue_event(new_agent_text_message(result.content))
 
     @override

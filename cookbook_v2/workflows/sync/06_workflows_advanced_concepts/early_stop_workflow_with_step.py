@@ -61,7 +61,7 @@ workflow = Workflow(
 
 if __name__ == "__main__":
     print("\n=== Testing VULNERABLE code deployment ===")
-    workflow.print_response(message="Scan this code: exec(input('Enter command: '))")
+    workflow.print_response(input="Scan this code: exec(input('Enter command: '))")
 
     print("=== Testing SECURE code deployment ===")
-    workflow.print_response(message="Scan this code: def hello(): return 'Hello World'")
+    workflow.print_response(input="Scan this code: def hello(): return 'Hello World'")

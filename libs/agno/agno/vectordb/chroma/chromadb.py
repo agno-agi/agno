@@ -680,3 +680,71 @@ class ChromaDb(VectorDb):
         except Exception as e:
             logger.error(f"Error checking if content_hash '{content_hash}' exists: {e}")
             return False
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for documents with the given content_id.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        try:
+            if not self.client:
+                logger.error("Client not initialized")
+                return
+
+            collection: Collection = self.client.get_collection(name=self.collection_name)
+
+            # Find documents with the given content_id
+            try:
+                result = collection.get(where={"content_id": {"$eq": content_id}})
+
+                # Extract IDs and current metadata
+                if hasattr(result, "get") and callable(result.get):
+                    ids = result.get("ids", [])
+                    current_metadatas = result.get("metadatas", [])
+                elif hasattr(result, "__getitem__"):
+                    ids = result.get("ids", []) if "ids" in result else []
+                    current_metadatas = result.get("metadatas", []) if "metadatas" in result else []
+                else:
+                    ids = []
+                    current_metadatas = []
+
+                if not ids:
+                    logger.debug(f"No documents found with content_id: {content_id}")
+                    return
+
+                # Merge metadata for each document
+                updated_metadatas = []
+                for i, current_meta in enumerate(current_metadatas):
+                    if current_meta is None:
+                        current_meta = {}
+                    updated_meta = current_meta.copy()
+                    updated_meta.update(metadata)
+
+                    if "filters" not in updated_meta:
+                        updated_meta["filters"] = {}
+                    if isinstance(updated_meta["filters"], dict):
+                        updated_meta["filters"].update(metadata)
+                    else:
+                        updated_meta["filters"] = metadata
+                    updated_metadatas.append(updated_meta)
+
+                # Update the documents
+                collection.update(ids=ids, metadatas=updated_metadatas)
+
+                logger.debug(f"Updated metadata for {len(ids)} documents with content_id: {content_id}")
+
+            except TypeError as te:
+                if "object of type 'int' has no len()" in str(te):
+                    logger.warning(
+                        f"ChromaDB internal error (version 0.5.0 bug): {te}. Cannot update metadata for content_id '{content_id}'."
+                    )
+                    return
+                else:
+                    raise te
+
+        except Exception as e:
+            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+            raise

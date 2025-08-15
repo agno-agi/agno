@@ -6,8 +6,8 @@ How to search for user memories using different retrieval methods
 - semantic: Retrieves memories using semantic search
 """
 
-from agno.memory import MemoryManager, UserMemory
 from agno.db.postgres import PostgresDb
+from agno.memory import MemoryManager, UserMemory
 from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 

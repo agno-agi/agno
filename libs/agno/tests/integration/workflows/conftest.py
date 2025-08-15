@@ -120,7 +120,7 @@ def custom_function_workflow(tmp_path):
     async def custom_async_function(workflow, execution_input):
         """Custom async function that simulates work"""
         await asyncio.sleep(0.1)  # Simulate some work
-        return f"Custom function processed: {execution_input.message}"
+        return f"Custom function processed: {execution_input.input}"
 
     return Workflow(
         name="Custom Function Background Workflow",
@@ -225,7 +225,7 @@ def router_workflow(tmp_path):
 
     def research_router(step_input: StepInput) -> List[Step]:
         """Route based on topic content"""
-        topic = step_input.message or ""
+        topic = step_input.input or ""
         tech_keywords = ["ai", "machine learning", "programming", "software", "tech", "computer"]
 
         if any(keyword in topic.lower() for keyword in tech_keywords):

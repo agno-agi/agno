@@ -151,9 +151,9 @@ def main() -> None:
                         if hasattr(_resp_chunk, "tool") and _resp_chunk.tool:
                             display_tool_calls(tool_calls_container, [_resp_chunk.tool])
 
-                        # Display response if available and event is RunResponse
+                        # Display response if available and event is RunOutput
                         if (
-                            _resp_chunk.event == "RunResponse"
+                            _resp_chunk.event == "RunOutput"
                             and _resp_chunk.content is not None
                         ):
                             response += _resp_chunk.content

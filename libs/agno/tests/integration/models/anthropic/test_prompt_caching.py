@@ -12,7 +12,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent, RunOutput
 from agno.models.anthropic import Claude
 from agno.utils.media import download_file
 
@@ -27,7 +27,7 @@ def _get_large_system_prompt() -> str:
     return txt_path.read_text()
 
 
-def _assert_cache_metrics(response: RunResponse, expect_cache_write: bool = False, expect_cache_read: bool = False):
+def _assert_cache_metrics(response: RunOutput, expect_cache_write: bool = False, expect_cache_read: bool = False):
     """Assert cache-related metrics in response."""
     if response.metrics is None:
         pytest.fail("Response metrics is None")

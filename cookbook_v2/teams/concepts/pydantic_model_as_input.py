@@ -59,7 +59,7 @@ research_request = ResearchTopic(
 )
 
 # Execute research with structured input
-team.print_response(message=research_request)
+team.print_response(input=research_request)
 
 # Alternative example with different topic
 alternative_research = ResearchTopic(
@@ -69,4 +69,4 @@ alternative_research = ResearchTopic(
     sources_required=5,
 )
 
-# team.print_response(message=alternative_research)
+# team.print_response(input=alternative_research)

@@ -4,9 +4,9 @@ from typing import Optional, Union
 
 import requests
 
-from agno.agent.agent import Agent, RunResponse
+from agno.agent.agent import Agent, RunOutput
 from agno.media import Audio, File, Image, Video
-from agno.team.team import Team, TeamRunResponse
+from agno.team.team import Team, TeamRunOutput
 from agno.utils.log import log_info, log_warning
 
 try:
@@ -115,7 +115,7 @@ class DiscordClient:
                     """)
                 if self.agent:
                     self.agent.additional_context = additional_context
-                    agent_response: RunResponse = await self.agent.arun(
+                    agent_response: RunOutput = await self.agent.arun(
                         message_text,
                         user_id=message_user_id,
                         session_id=str(thread.id),
@@ -127,7 +127,7 @@ class DiscordClient:
                     await self._handle_response_in_thread(agent_response, thread)
                 elif self.team:
                     self.team.additional_context = additional_context
-                    team_response: TeamRunResponse = await self.team.arun(
+                    team_response: TeamRunOutput = await self.team.arun(
                         message_text,
                         user_id=message_user_id,
                         session_id=str(thread.id),
@@ -139,8 +139,8 @@ class DiscordClient:
                     await self._handle_response_in_thread(team_response, thread)
 
     async def handle_hitl(
-        self, run_response: RunResponse, thread: Union[discord.Thread, discord.TextChannel]
-    ) -> RunResponse:
+        self, run_response: RunOutput, thread: Union[discord.Thread, discord.TextChannel]
+    ) -> RunOutput:
         """Handles optional Human-In-The-Loop interaction."""
         if run_response.is_paused:
             for tool in run_response.tools_requiring_confirmation:
@@ -157,9 +157,9 @@ class DiscordClient:
         return run_response
 
     async def _handle_response_in_thread(
-        self, response: Union[RunResponse, TeamRunResponse], thread: Union[discord.TextChannel, discord.Thread]
+        self, response: Union[RunOutput, TeamRunOutput], thread: Union[discord.TextChannel, discord.Thread]
     ):
-        if isinstance(response, RunResponse):
+        if isinstance(response, RunOutput):
             response = await self.handle_hitl(response, thread)
 
         if response.reasoning_content:

@@ -66,7 +66,7 @@ def select_directory(base_directory):
         questions = [
             inquirer.List(
                 "selected_item",
-                message=f"Current directory: {base_directory}",
+                input=f"Current directory: {base_directory}",
                 choices=items,
             )
         ]
@@ -164,7 +164,7 @@ def drill_and_run_scripts(base_directory):
         questions = [
             inquirer.List(
                 "action",
-                message="Some cookbooks failed. What would you like to do?",
+                input="Some cookbooks failed. What would you like to do?",
                 choices=[
                     "Retry failed scripts",
                     "Pause for manual intervention and retry",

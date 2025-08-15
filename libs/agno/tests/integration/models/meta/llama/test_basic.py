@@ -1,12 +1,12 @@
 import pytest
 from pydantic import BaseModel, Field
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent, RunOutput
 from agno.db.sqlite import SqliteDb
 from agno.models.meta.llama import Llama
 
 
-def _assert_metrics(response: RunResponse):
+def _assert_metrics(response: RunOutput):
     assert response.metrics is not None
     input_tokens = response.metrics.input_tokens
     output_tokens = response.metrics.output_tokens
@@ -21,7 +21,7 @@ def _assert_metrics(response: RunResponse):
 def test_basic():
     agent = Agent(model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"), markdown=True, telemetry=False)
 
-    response: RunResponse = agent.run("Share a 2 sentence horror story")
+    response: RunOutput = agent.run("Share a 2 sentence horror story")
 
     assert response.content is not None
     assert response.messages is not None

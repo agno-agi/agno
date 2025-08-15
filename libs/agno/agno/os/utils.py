@@ -197,9 +197,9 @@ def get_workflow_input_schema_dict(workflow: Workflow) -> Optional[Dict[str, Any
     return None
 
 
-def _generate_schema_from_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+def _generate_schema_from_params(params: Dict[str, Any]) -> Dict[str, Any]:
     """Convert function parameters to JSON schema"""
-    properties = {}
+    properties: Dict[str, Any] = {}
     required = []
 
     for param_name, param_info in params.items():

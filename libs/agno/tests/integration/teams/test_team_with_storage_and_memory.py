@@ -7,7 +7,6 @@ import pytest
 from agno.agent.agent import Agent
 from agno.db.sqlite import SqliteStorage
 from agno.memory.db import SqliteMemoryDb
-from agno.memory.memory import Memory
 from agno.models.anthropic.claude import Claude
 from agno.models.google.gemini import Gemini
 from agno.models.openai.chat import OpenAIChat

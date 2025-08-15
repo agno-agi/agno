@@ -78,7 +78,7 @@ def data_preprocessor(step_input):
 
     # Or you can also run any agent/team over here itself
     # response = some_agent.run(...)
-    return StepOutput(content=f"Processed: {step_input.message}") # <-- Now pass the agent/team response in content here
+    return StepOutput(content=f"Processed: {step_input.input}") # <-- Now pass the agent/team response in content here
 
 workflow = Workflow(
     name="Mixed Execution Pipeline",
@@ -201,7 +201,7 @@ workflow.print_response("Write about the latest AI developments", markdown=True)
 from agno.workflow import Condition, Step, Workflow
 
 def is_tech_topic(step_input) -> bool:
-    topic = step_input.message.lower()
+    topic = step_input.input.lower()
     return any(keyword in topic for keyword in ["ai", "tech", "software"])
 
 workflow = Workflow(
@@ -270,7 +270,7 @@ workflow.print_response("Research the impact of renewable energy on global marke
 from agno.workflow import Router, Step, Workflow
 
 def route_by_topic(step_input) -> List[Step]:
-    topic = step_input.message.lower()
+    topic = step_input.input.lower()
     
     if "tech" in topic:
         return [Step(name="Tech Research", agent=tech_expert)]
@@ -354,10 +354,10 @@ video_sequence = Steps(
 
 def media_sequence_selector(step_input) -> List[Step]:
     """Route to appropriate media generation pipeline"""
-    if not step_input.message:
+    if not step_input.input:
         return [image_sequence]
         
-    message_lower = step_input.message.lower()
+    message_lower = step_input.input.lower()
     
     if "video" in message_lower:
         return [video_sequence]
@@ -542,7 +542,7 @@ def create_comprehensive_report(step_input: StepInput) -> StepOutput:
     """
 
     # Access original workflow input
-    original_topic = step_input.message or ""
+    original_topic = step_input.input or ""
 
     # Access specific step outputs by name
     hackernews_data = step_input.get_step_content("research_hackernews") or ""
@@ -586,12 +586,12 @@ workflow = Workflow(
 > **Key Methods:**
 > - `step_input.get_step_content("step_name")` - Get content from specific step by name
 > - `step_input.get_all_previous_content()` - Get all previous step content combined
-> - `step_input.message` - Access the original workflow input message
+> - `step_input.input` - Access the original workflow input message
 > - `step_input.previous_step_content` - Get content from immediate previous step
 
 ### Event Storage and Filtering
 
-Workflows can automatically store all events for later analysis, debugging, or audit purposes. You can also filter out specific event types to reduce noise and storage overhead. You can access these events on the `WorkflowRunResponse` and in the `runs` column in your `Workflow's Session DB`
+Workflows can automatically store all events for later analysis, debugging, or audit purposes. You can also filter out specific event types to reduce noise and storage overhead. You can access these events on the `WorkflowRunOutput` and in the `runs` column in your `Workflow's Session DB`
 
 **Key Features:**
 
@@ -678,7 +678,7 @@ def custom_content_planning_function(step_input: StepInput) -> StepOutput:
     """Custom function that uses additional_data for enhanced context"""
     
     # Access the main workflow message
-    message = step_input.message
+    message = step_input.input
     previous_content = step_input.previous_step_content
     
     # Access additional_data that was passed with the workflow
@@ -729,7 +729,7 @@ workflow = Workflow(
 
 # Run workflow with additional_data
 workflow.print_response(
-    message="AI trends in 2024",
+    input="AI trends in 2024",
     additional_data={
         "user_email": "kaustubh@agno.com",
         "priority": "high",
@@ -764,7 +764,7 @@ workflow = Workflow(
 )
 
 # Stream with proper event handling
-for event in workflow.run(message="AI trends", stream=True, stream_intermediate_steps=True):
+for event in workflow.run(input="AI trends", stream=True, stream_intermediate_steps=True):
     if isinstance(event, WorkflowStartedEvent):
         print(f"🚀 Workflow Started: {event.workflow_name}")
         print(f"   Run ID: {event.run_id}")
@@ -842,7 +842,7 @@ class ResearchRequest(BaseModel):
     sources: List[str] = Field(description="Preferred sources")
 
 workflow.print_response(
-    message=ResearchRequest(
+    input=ResearchRequest(
         topic="AI trends 2024",
         depth=8,
         sources=["academic", "industry"]

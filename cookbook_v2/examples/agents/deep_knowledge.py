@@ -163,7 +163,7 @@ def run_interactive_loop(agent: Agent):
         questions = [
             inquirer.List(
                 "topic",
-                message="Select a topic or ask a different question:",
+                input="Select a topic or ask a different question:",
                 choices=choices,
             )
         ]
@@ -173,7 +173,7 @@ def run_interactive_loop(agent: Agent):
             break
 
         if answer["topic"] == "Enter custom question...":
-            questions = [inquirer.Text("custom", message="Enter your question:")]
+            questions = [inquirer.Text("custom", input="Enter your question:")]
             custom_answer = inquirer.prompt(questions)
             topic = custom_answer["custom"]
         else:

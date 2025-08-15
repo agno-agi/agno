@@ -96,3 +96,7 @@ class VectorDb(ABC):
     @abstractmethod
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
         raise NotImplementedError
+
+    @abstractmethod
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        raise NotImplementedError

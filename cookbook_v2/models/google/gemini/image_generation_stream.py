@@ -1,6 +1,6 @@
 from io import BytesIO
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.google import Gemini
 from PIL import Image
 

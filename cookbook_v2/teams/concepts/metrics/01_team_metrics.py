@@ -7,7 +7,7 @@ message-level metrics, session metrics, and member-specific metrics.
 
 from typing import Iterator
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent, RunOutput
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
@@ -34,7 +34,7 @@ team = Team(
 )
 
 # Run the team and capture metrics
-run_stream: Iterator[RunResponse] = team.run(
+run_stream: Iterator[RunOutput] = team.run(
     "What is the stock price of NVDA", stream=True
 )
 pprint_run_response(run_stream, markdown=True)
@@ -51,7 +51,7 @@ if team.run_response.messages:
                 print(f"📝 Message: {message.content[:100]}...")
             elif message.tool_calls:
                 print(f"🔧 Tool calls: {message.tool_calls}")
-            
+
             print("-" * 30, "Metrics", "-" * 30)
             pprint(message.metrics)
             print("-" * 70)
@@ -82,7 +82,7 @@ if team.run_response.member_responses:
                         print(f"📝 Member Message: {message.content[:100]}...")
                     elif message.tool_calls:
                         print(f"🔧 Member Tool calls: {message.tool_calls}")
-                    
+
                     print("-" * 20, "Member Metrics", "-" * 20)
                     pprint(message.metrics)
                     print("-" * 60)

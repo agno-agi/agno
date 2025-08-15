@@ -9,8 +9,8 @@ from sqlalchemy import text
 from agno.db.base import SessionType
 from agno.db.postgres.postgres import PostgresDb
 from agno.run.base import RunStatus
-from agno.run.response import RunResponse
-from agno.run.team import TeamRunResponse
+from agno.run.response import RunOutput
+from agno.run.team import TeamRunOutput
 from agno.session.agent import AgentSession
 from agno.session.summary import SessionSummary
 from agno.session.team import TeamSession
@@ -33,7 +33,7 @@ def cleanup_sessions(postgres_db_real: PostgresDb):
 @pytest.fixture
 def sample_agent_session() -> AgentSession:
     """Fixture returning a sample AgentSession"""
-    agent_run = RunResponse(
+    agent_run = RunOutput(
         run_id="test_agent_run_1",
         id="test_agent_1",
         user_id="test_user_1",
@@ -60,7 +60,7 @@ def sample_agent_session() -> AgentSession:
 @pytest.fixture
 def sample_team_session() -> TeamSession:
     """Fixture returning a sample TeamSession"""
-    team_run = TeamRunResponse(
+    team_run = TeamRunOutput(
         run_id="test_team_run_1",
         id="test_team_1",
         status=RunStatus.completed,
@@ -578,7 +578,7 @@ def test_session_type_polymorphism(
 def test_upsert_session_handles_all_agent_session_fields(postgres_db_real: PostgresDb):
     """Ensure upsert_session correctly handles all AgentSession fields"""
     # Create comprehensive AgentSession with all possible fields populated
-    agent_run = RunResponse(
+    agent_run = RunOutput(
         run_id="test_run_comprehensive",
         id="comprehensive_agent",
         user_id="comprehensive_user",
@@ -637,7 +637,7 @@ def test_upsert_session_handles_all_agent_session_fields(postgres_db_real: Postg
 def test_upsert_session_handles_all_team_session_fields(postgres_db_real: PostgresDb):
     """Ensure upsert_session correctly handles all TeamSession fields"""
     # Create comprehensive TeamSession with all possible fields populated
-    team_run = TeamRunResponse(
+    team_run = TeamRunOutput(
         run_id="test_team_run_comprehensive",
         id="comprehensive_team",
         status=RunStatus.completed,

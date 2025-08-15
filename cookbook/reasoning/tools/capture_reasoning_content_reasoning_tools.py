@@ -1,6 +1,6 @@
 """Test for reasoning_content generation
 
-This script tests whether reasoning_content is properly populated in the RunResponse
+This script tests whether reasoning_content is properly populated in the RunOutput
 when using ReasoningTools. It tests both streaming and non-streaming modes.
 """
 
@@ -10,7 +10,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.reasoning import ReasoningTools
 
-"""Test function to verify reasoning_content is populated in RunResponse."""
+"""Test function to verify reasoning_content is populated in RunOutput."""
 print("\n=== Testing reasoning_content generation ===\n")
 
 # Create an agent with ReasoningTools

@@ -4,6 +4,7 @@ from math import sqrt
 from typing import Any, Dict, List, Optional, Union, cast
 
 try:
+    from sqlalchemy import update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.inspection import inspect
@@ -11,6 +12,7 @@ try:
     from sqlalchemy.schema import Column, Index, MetaData, Table
     from sqlalchemy.sql.expression import bindparam, desc, func, select, text
     from sqlalchemy.types import DateTime, String
+
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install using `pip install sqlalchemy psycopg`")
 
@@ -602,6 +604,35 @@ class PgVector(VectorDb):
                         raise
         except Exception as e:
             logger.error(f"Error upserting documents: {e}")
+            raise
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for a document.
+
+        Args:
+            id (str): The ID of the document.
+            metadata (Dict[str, Any]): The metadata to update.
+        """
+        try:
+            with self.Session() as sess:
+                # Merge JSONB instead of overwriting: coalesce(existing, '{}') || :new
+                stmt = (
+                    update(self.table)
+                    .where(self.table.c.content_id == content_id)
+                    .values(
+                        meta_data=func.coalesce(self.table.c.meta_data, text("'{}'::jsonb")).op("||")(
+                            bindparam("md", metadata, type_=postgresql.JSONB)
+                        ),
+                        filters=func.coalesce(self.table.c.filters, text("'{}'::jsonb")).op("||")(
+                            bindparam("ft", metadata, type_=postgresql.JSONB)
+                        ),
+                    )
+                )
+                sess.execute(stmt)
+                sess.commit()
+        except Exception as e:
+            logger.error(f"Error updating metadata for document {content_id}: {e}")
             raise
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:

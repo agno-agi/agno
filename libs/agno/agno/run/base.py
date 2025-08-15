@@ -12,7 +12,7 @@ from agno.utils.log import log_error
 
 
 @dataclass
-class BaseRunResponseEvent:
+class BaseRunOutputEvent:
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
             k: v
@@ -35,7 +35,7 @@ class BaseRunResponseEvent:
 
         if hasattr(self, "metadata") and self.metadata is not None:
             _dict["metadata"] = (
-                self.metadata.to_dict() if isinstance(self.metadata, RunResponseMetaData) else self.metadata
+                self.metadata.to_dict() if isinstance(self.metadata, RunOutputMetaData) else self.metadata
             )
 
         if hasattr(self, "member_responses") and self.member_responses:
@@ -141,7 +141,7 @@ class BaseRunResponseEvent:
 
         metadata = data.pop("metadata", None)
         if metadata:
-            data["metadata"] = RunResponseMetaData.from_dict(metadata)
+            data["metadata"] = RunOutputMetaData.from_dict(metadata)
 
         # To make it backwards compatible
         if "event" in data:
@@ -159,16 +159,18 @@ class BaseRunResponseEvent:
 
 
 @dataclass
-class RunResponseMetaData:
+class RunOutputMetaData:
     references: Optional[List[MessageReferences]] = None
-    additional_messages: Optional[List[Message]] = None
+    additional_input: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_messages: Optional[List[Message]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {}
-        if self.additional_messages is not None:
-            _dict["additional_messages"] = [m.to_dict() for m in self.additional_messages]
+        if self.additional_input is not None:
+            _dict["additional_input"] = [m.to_dict() for m in self.additional_input]
+            # Backward compatibility
+            _dict["additional_messages"] = [m.to_dict() for m in self.additional_input]
         if self.reasoning_messages is not None:
             _dict["reasoning_messages"] = [m.to_dict() for m in self.reasoning_messages]
         if self.reasoning_steps is not None:
@@ -178,10 +180,13 @@ class RunResponseMetaData:
         return _dict
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "RunResponseMetaData":
-        additional_messages = data.pop("additional_messages", None)
-        if additional_messages is not None:
-            additional_messages = [Message.model_validate(message) for message in additional_messages]
+    def from_dict(cls, data: Dict[str, Any]) -> "RunOutputMetaData":
+        additional_input = data.pop("additional_input", None)
+        # Backward compatibility - check for old field name
+        if additional_input is None:
+            additional_input = data.pop("additional_messages", None)
+        if additional_input is not None:
+            additional_input = [Message.model_validate(message) for message in additional_input]
 
         reasoning_steps = data.pop("reasoning_steps", None)
         if reasoning_steps is not None:
@@ -196,7 +201,7 @@ class RunResponseMetaData:
             references = [MessageReferences.model_validate(reference) for reference in references]
 
         return cls(
-            additional_messages=additional_messages,
+            additional_input=additional_input,
             reasoning_steps=reasoning_steps,
             reasoning_messages=reasoning_messages,
             references=references,

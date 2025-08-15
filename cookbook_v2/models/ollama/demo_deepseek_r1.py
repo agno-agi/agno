@@ -1,4 +1,4 @@
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.ollama import Ollama
 
 agent = Agent(model=Ollama(id="deepseek-r1:14b"), markdown=True)

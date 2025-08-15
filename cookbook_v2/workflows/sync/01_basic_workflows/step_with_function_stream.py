@@ -3,7 +3,7 @@ from typing import Iterator, Union
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.run.v2.workflow import WorkflowRunResponseEvent
+from agno.run.v2.workflow import WorkflowRunOutputEvent
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
@@ -45,11 +45,11 @@ content_planner = Agent(
 
 def custom_content_planning_function(
     step_input: StepInput,
-) -> Iterator[Union[WorkflowRunResponseEvent, StepOutput]]:
+) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
     """
     Custom function that does intelligent content planning with context awareness
     """
-    message = step_input.message
+    message = step_input.input
     previous_step_content = step_input.previous_step_content
 
     # Create intelligent planning prompt
@@ -95,7 +95,7 @@ def custom_content_planning_function(
             - Execution Ready: Detailed action items included
         """.strip()
 
-        yield StepOutput(content=enhanced_content, response=response)
+        yield StepOutput(content=enhanced_content)
 
     except Exception as e:
         yield StepOutput(
@@ -135,8 +135,7 @@ if __name__ == "__main__":
         ],
     )
 
-    streaming_content_workflow.print_response(
-        message="AI trends in 2024",
+    streaming_content_workflow.print_response(input="AI trends in 2024",
         markdown=True,
         stream=True,
         stream_intermediate_steps=True,

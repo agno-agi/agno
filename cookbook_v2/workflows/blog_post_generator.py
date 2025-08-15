@@ -362,7 +362,7 @@ async def blog_generation_execution(
     Args:
         workflow: The workflow instance
         execution_input: Standard workflow execution input
-        topic: Blog post topic (if not provided, uses execution_input.message)
+        topic: Blog post topic (if not provided, uses execution_input.input)
         use_search_cache: Whether to use cached search results
         use_scrape_cache: Whether to use cached scraped articles
         use_blog_cache: Whether to use cached blog posts

@@ -98,7 +98,9 @@ team_with_knowledge = Team(
     knowledge=knowledge_base,
     show_members_responses=True,
     markdown=True,
-    knowledge_filters={"user_id": "jordan_mitchell"},  # Filter to specific user's documents
+    knowledge_filters={
+        "user_id": "jordan_mitchell"
+    },  # Filter to specific user's documents
 )
 
 # Test knowledge filtering

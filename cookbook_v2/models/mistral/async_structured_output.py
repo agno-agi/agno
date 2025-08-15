@@ -1,7 +1,7 @@
 import asyncio
 from typing import List
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.mistral import MistralChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from pydantic import BaseModel, Field

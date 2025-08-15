@@ -80,7 +80,7 @@ def enhanced_analysis_function(step_input: StepInput) -> StepOutput:
     Enhanced custom function that returns a BaseModel instead of just a string.
     This demonstrates the new capability of StepOutput.content supporting structured data.
     """
-    message = step_input.message
+    message = step_input.input
     previous_step_content = step_input.previous_step_content
 
     print("\n" + "=" * 60)
@@ -278,8 +278,7 @@ enhanced_workflow = Workflow(
 
 if __name__ == "__main__":
     # Test with simple string input
-    enhanced_workflow.print_response(
-        message="Latest developments in artificial intelligence and machine learning",
+    enhanced_workflow.print_response(input="Latest developments in artificial intelligence and machine learning",
         stream=True,
         stream_intermediate_steps=True,
     )

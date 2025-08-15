@@ -77,11 +77,13 @@ hn_team = Team(
     enable_agentic_context=True,
 )
 
+
 async def main():
     """Main async function demonstrating coordinated team mode."""
     await hn_team.aprint_response(
         "Write an article about the top 2 stories on hackernews", stream=True
     )
+
 
 if __name__ == "__main__":
     asyncio.run(main())

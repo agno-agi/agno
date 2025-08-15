@@ -1,6 +1,6 @@
 """Test for reasoning_content generation in the Agno framework.
 
-This test verifies that reasoning_content is properly populated in the RunResponse
+This test verifies that reasoning_content is properly populated in the RunOutput
 when using ReasoningTools, in both streaming and non-streaming modes.
 """
 
