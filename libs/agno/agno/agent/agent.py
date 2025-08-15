@@ -5885,6 +5885,9 @@ class Agent:
                 telemetry=self.telemetry,
                 debug_mode=self.debug_mode,
                 debug_level=self.debug_level,
+                session_state=self.session_state,
+                context=self.context,
+                extra_data=self.extra_data,
             )
             is_deepseek = is_deepseek_reasoning_model(reasoning_model)
             is_groq = is_groq_reasoning_model(reasoning_model)
@@ -5974,6 +5977,9 @@ class Agent:
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
                     debug_level=self.debug_level,
+                    session_state=self.session_state,
+                    context=self.context,
+                    extra_data=self.extra_data,
                 )
 
             # Validate reasoning agent
@@ -6108,6 +6114,9 @@ class Agent:
                 telemetry=self.telemetry,
                 debug_mode=self.debug_mode,
                 debug_level=self.debug_level,
+                session_state=self.session_state,
+                context=self.context,
+                extra_data=self.extra_data,
             )
             is_deepseek = is_deepseek_reasoning_model(reasoning_model)
             is_groq = is_groq_reasoning_model(reasoning_model)
@@ -6197,6 +6206,9 @@ class Agent:
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
                     debug_level=self.debug_level,
+                    session_state=self.session_state,
+                    context=self.context,
+                    extra_data=self.extra_data,
                 )
 
             # Validate reasoning agent
