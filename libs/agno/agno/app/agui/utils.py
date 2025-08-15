@@ -55,13 +55,31 @@ class EventBuffer:
             self.blocking_tool_call_id = tool_call_id
 
     def end_tool_call(self, tool_call_id: str) -> bool:
-        """End a tool call, marking it as ended and unblocking the buffer if needed."""
+        """End a tool call, marking it as ended and updating the blocking state.
+        
+        When the currently blocking tool call ends, automatically select the next
+        active tool call as the new blocking tool call. This prevents inconsistent
+        states when multiple concurrent tool calls are active, which could lead to
+        infinite loops in event processing.
+        
+        Args:
+            tool_call_id: The ID of the tool call that is ending
+            
+        Returns:
+            True if this tool call was the blocking one (and thus unblocked the buffer),
+            False otherwise
+        """
         self.active_tool_call_ids.discard(tool_call_id)
         self.ended_tool_call_ids.add(tool_call_id)
 
-        # Unblock the buffer if the current blocking tool call is the one ending
+        # Update blocking state if the current blocking tool call is ending
         if tool_call_id == self.blocking_tool_call_id:
-            self.blocking_tool_call_id = None
+            # Select next active tool call as blocking, if any
+            # This ensures proper state management with multiple concurrent tool calls
+            if self.active_tool_call_ids:
+                self.blocking_tool_call_id = next(iter(self.active_tool_call_ids))
+            else:
+                self.blocking_tool_call_id = None
             return True
 
         return False
@@ -129,13 +147,16 @@ def _create_events_from_chunk(
     Process a single chunk and return events to emit + updated message_started state.
     Returns: (events_to_emit, new_message_started_state)
     """
-    events_to_emit = []
+    events_to_emit: List[BaseEvent] = []
 
     # Extract content if the contextual event is a content event
     if chunk.event == RunEvent.run_response_content:
         content = extract_response_chunk_content(chunk)  # type: ignore
     elif chunk.event == TeamRunEvent.run_response_content:
         content = extract_team_response_chunk_content(chunk)  # type: ignore
+    elif chunk.event == RunEvent.run_error:
+        # Extract error content directly from the chunk
+        content = getattr(chunk, 'content', None) or str(chunk)
     else:
         content = None
 
@@ -205,8 +226,8 @@ def _create_events_from_chunk(
         step_event = StepStartedEvent(type=EventType.STEP_STARTED, step_name="reasoning")
         events_to_emit.append(step_event)
     elif chunk.event == RunEvent.reasoning_completed:
-        step_event = StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning")
-        events_to_emit.append(step_event)
+        step_finished_event = StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning")
+        events_to_emit.append(step_finished_event)
 
     return events_to_emit, message_started
 
@@ -220,7 +241,7 @@ def _create_completion_events(
     run_id: str,
 ) -> List[BaseEvent]:
     """Create events for run completion."""
-    events_to_emit = []
+    events_to_emit: List[BaseEvent] = []
 
     # End remaining active tool calls if needed
     for tool_call_id in list(event_buffer.active_tool_call_ids):
@@ -270,51 +291,68 @@ def _create_completion_events(
 
 
 def _emit_event_logic(event: BaseEvent, event_buffer: EventBuffer) -> List[BaseEvent]:
-    """Process an event through the buffer and return events to actually emit."""
-    events_to_emit = []
-
-    if event_buffer.is_blocked():
-        # Handle events related to the current blocking tool call
-        if event.type == EventType.TOOL_CALL_ARGS:
-            if hasattr(event, "tool_call_id") and event.tool_call_id in event_buffer.active_tool_call_ids:  # type: ignore
-                events_to_emit.append(event)
+    """Process an event through the buffer and return events to actually emit.
+    
+    This function handles event ordering constraints for AG-UI integration, particularly
+    around tool call blocking behavior. It uses an iterative queue-based approach to
+    avoid recursion issues that can occur with multiple concurrent tool calls.
+    
+    Key behaviors:
+    - Tool calls are processed sequentially to maintain UI consistency
+    - Only one tool call can be "blocking" at a time 
+    - Events for non-blocking tool calls are buffered until the blocking tool call completes
+    - When a blocking tool call ends, buffered events are processed in order
+    """
+    events_to_emit: List[BaseEvent] = []
+    events_to_process = [event]  # Use a queue instead of recursion to prevent infinite loops
+    
+    while events_to_process:
+        current_event = events_to_process.pop(0)
+        
+        if event_buffer.is_blocked():
+            # Buffer is currently blocked by an active tool call
+            if current_event.type == EventType.TOOL_CALL_ARGS:
+                # Allow TOOL_CALL_ARGS events for the active tool call to pass through
+                if hasattr(current_event, "tool_call_id") and current_event.tool_call_id in event_buffer.active_tool_call_ids:  # type: ignore
+                    events_to_emit.append(current_event)
+                else:
+                    event_buffer.buffer.append(current_event)
+            elif current_event.type == EventType.TOOL_CALL_END:
+                tool_call_id = getattr(current_event, "tool_call_id", None)
+                if tool_call_id and tool_call_id == event_buffer.blocking_tool_call_id:
+                    # The blocking tool call is ending - emit the event and process buffered events
+                    events_to_emit.append(current_event)
+                    event_buffer.end_tool_call(tool_call_id)
+                    
+                    # Process all buffered events now that the blocking tool call has ended
+                    # Add them to the processing queue rather than recursively calling this function
+                    while event_buffer.buffer:
+                        buffered_event = event_buffer.buffer.popleft()
+                        events_to_process.append(buffered_event)
+                elif tool_call_id and tool_call_id in event_buffer.active_tool_call_ids:
+                    # A non-blocking tool call is ending - buffer the event and update state
+                    event_buffer.buffer.append(current_event)
+                    event_buffer.end_tool_call(tool_call_id)
+                else:
+                    # Unrelated tool call ending - just buffer it
+                    event_buffer.buffer.append(current_event)
             else:
-                event_buffer.buffer.append(event)
-        elif event.type == EventType.TOOL_CALL_END:
-            tool_call_id = getattr(event, "tool_call_id", None)
-            if tool_call_id and tool_call_id == event_buffer.blocking_tool_call_id:
-                events_to_emit.append(event)
-                event_buffer.end_tool_call(tool_call_id)
-                # Flush buffered events after ending the blocking tool call
-                while event_buffer.buffer:
-                    buffered_event = event_buffer.buffer.popleft()
-                    # Recursively process buffered events
-                    nested_events = _emit_event_logic(buffered_event, event_buffer)
-                    events_to_emit.extend(nested_events)
-            elif tool_call_id and tool_call_id in event_buffer.active_tool_call_ids:
-                event_buffer.buffer.append(event)
-                event_buffer.end_tool_call(tool_call_id)
+                # All other events get buffered while blocking
+                event_buffer.buffer.append(current_event)
+        else:
+            # Buffer is not blocked - emit events normally
+            if current_event.type == EventType.TOOL_CALL_START:
+                tool_call_id = getattr(current_event, "tool_call_id", None)
+                if tool_call_id:
+                    event_buffer.start_tool_call(tool_call_id)
+                events_to_emit.append(current_event)
+            elif current_event.type == EventType.TOOL_CALL_END:
+                tool_call_id = getattr(current_event, "tool_call_id", None)
+                if tool_call_id:
+                    event_buffer.end_tool_call(tool_call_id)
+                events_to_emit.append(current_event)
             else:
-                event_buffer.buffer.append(event)
-        # Handle all other events
-        elif event.type == EventType.TOOL_CALL_START:
-            event_buffer.buffer.append(event)
-        else:
-            event_buffer.buffer.append(event)
-    # If the buffer is not blocked, emit the events normally
-    else:
-        if event.type == EventType.TOOL_CALL_START:
-            tool_call_id = getattr(event, "tool_call_id", None)
-            if tool_call_id:
-                event_buffer.start_tool_call(tool_call_id)
-            events_to_emit.append(event)
-        elif event.type == EventType.TOOL_CALL_END:
-            tool_call_id = getattr(event, "tool_call_id", None)
-            if tool_call_id:
-                event_buffer.end_tool_call(tool_call_id)
-            events_to_emit.append(event)
-        else:
-            events_to_emit.append(event)
+                events_to_emit.append(current_event)
 
     return events_to_emit
 
@@ -328,8 +366,27 @@ def stream_agno_response_as_agui_events(
     event_buffer = EventBuffer()
 
     for chunk in response_stream:
-        # Handle the lifecycle end event
-        if (
+        # Handle error events - process content first, then trigger completion
+        if chunk.event == RunEvent.run_error:
+            # Process error content as a text message
+            events_from_chunk, message_started = _create_events_from_chunk(
+                chunk, message_id, message_started, event_buffer
+            )
+            for event in events_from_chunk:
+                events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
+                for emit_event in events_to_emit:
+                    yield emit_event
+            
+            # Then trigger completion
+            completion_events = _create_completion_events(
+                chunk, event_buffer, message_started, message_id, thread_id, run_id
+            )
+            for event in completion_events:
+                events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
+                for emit_event in events_to_emit:
+                    yield emit_event
+        # Handle other lifecycle end events
+        elif (
             chunk.event == RunEvent.run_completed
             or chunk.event == TeamRunEvent.run_completed
             or chunk.event == RunEvent.run_paused
@@ -364,9 +421,30 @@ async def async_stream_agno_response_as_agui_events(
     message_started = False
     event_buffer = EventBuffer()
 
+    last_chunk = None
     async for chunk in response_stream:
-        # Handle the lifecycle end event
-        if (
+        last_chunk = chunk
+        # Handle error events - process content first, then trigger completion
+        if chunk.event == RunEvent.run_error:
+            # Process error content as a text message
+            events_from_chunk, message_started = _create_events_from_chunk(
+                chunk, message_id, message_started, event_buffer
+            )
+            for event in events_from_chunk:
+                events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
+                for emit_event in events_to_emit:
+                    yield emit_event
+            
+            # Then trigger completion
+            completion_events = _create_completion_events(
+                chunk, event_buffer, message_started, message_id, thread_id, run_id
+            )
+            for event in completion_events:
+                events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
+                for emit_event in events_to_emit:
+                    yield emit_event
+        # Handle other lifecycle end events
+        elif (
             chunk.event == RunEvent.run_completed
             or chunk.event == TeamRunEvent.run_completed
             or chunk.event == RunEvent.run_paused
@@ -388,3 +466,23 @@ async def async_stream_agno_response_as_agui_events(
                 events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
                 for emit_event in events_to_emit:
                     yield emit_event
+
+    # Handle natural stream end - emit completion events if no explicit completion was received
+    if last_chunk and last_chunk.event not in [
+        RunEvent.run_completed,
+        TeamRunEvent.run_completed,
+        RunEvent.run_paused,
+        RunEvent.run_error,
+    ]:
+        # Create a synthetic completion event
+        synthetic_completion = RunResponseContentEvent()
+        synthetic_completion.event = RunEvent.run_completed
+        synthetic_completion.content = ""
+        
+        completion_events = _create_completion_events(
+            synthetic_completion, event_buffer, message_started, message_id, thread_id, run_id
+        )
+        for event in completion_events:
+            events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
+            for emit_event in events_to_emit:
+                yield emit_event
