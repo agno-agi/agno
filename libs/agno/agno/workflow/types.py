@@ -251,6 +251,7 @@ class StepOutput:
         result = {
             "content": content_dict,
             "step_name": self.step_name,
+            "response": self.response.to_dict() if self.response else None,
             "step_id": self.step_id,
             "step_type": self.step_type,
             "executor_type": self.executor_type,
@@ -421,3 +422,6 @@ class StepType(str, Enum):
     PARALLEL = "Parallel"
     CONDITION = "Condition"
     ROUTER = "Router"
+    AGENT = "Agent"
+    TEAM = "Team"
+    CALLABLE = "Callable"

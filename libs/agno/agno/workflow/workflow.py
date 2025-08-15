@@ -2,6 +2,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 from os import getenv
+from types import FunctionType
 from typing import (
     Any,
     AsyncIterator,
@@ -53,6 +54,7 @@ from agno.session.workflow import WorkflowSession
 from agno.team.team import Team
 from agno.utils.log import (
     log_debug,
+    log_error,
     logger,
     set_log_level_to_debug,
     set_log_level_to_info,
@@ -81,6 +83,10 @@ STEP_TYPE_MAPPING = {
     Parallel: StepType.PARALLEL,
     Condition: StepType.CONDITION,
     Router: StepType.ROUTER,
+    Agent: StepType.AGENT,
+    Team: StepType.TEAM,
+    Callable: StepType.CALLABLE,
+    FunctionType: StepType.CALLABLE,
 }
 
 WorkflowSteps = Union[
@@ -118,6 +124,9 @@ class Workflow:
     steps: Optional[WorkflowSteps] = None
 
     db: Optional[BaseDb] = None
+
+    # Agentic Workflow
+    agent: Optional[Agent] = None
 
     # Session management
     session_id: Optional[str] = None
@@ -159,6 +168,7 @@ class Workflow:
         description: Optional[str] = None,
         db: Optional[BaseDb] = None,
         steps: Optional[WorkflowSteps] = None,
+        agent: Optional[Agent] = None,
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
         workflow_session_state: Optional[Dict[str, Any]] = None,
@@ -176,6 +186,7 @@ class Workflow:
         self.description = description
         self.db = db
         self.steps = steps
+        self.agent = agent
         self.session_id = session_id
         self.session_name = session_name
         self.workflow_session_state = workflow_session_state
@@ -621,7 +632,10 @@ class Workflow:
                 else:
                     workflow_run_response.content = "No steps executed"
 
-                workflow_run_response.step_results = collected_step_outputs
+                # TODO: Check for when self.agent is not used
+                workflow_run_response.step_responses.extend(collected_step_outputs)
+
+                # workflow_run_response.step_results = collected_step_outputs
                 workflow_run_response.images = output_images
                 workflow_run_response.videos = output_videos
                 workflow_run_response.audio = output_audio
@@ -1395,6 +1409,106 @@ class Workflow:
 
         return None
 
+    # NOTE: Models have a bias towards always running tools, even when explicitly told not to
+    def run_step(self, step_name: str, step_input: str) -> StepOutput:
+        """Run a step"""
+        step_output: Optional[StepOutput] = None
+        for step in self.steps:
+            if step.name == step_name:
+                step_output = step.execute(StepInput(message=step_input))
+
+        return step_output
+
+    def _get_step_information(self):
+        """Get the step information to provide to the workflow agent"""
+        from inspect import isfunction
+
+        step_information = {}
+
+        for step in self.steps:
+            if isinstance(step, Step):
+                if step.agent is not None and isinstance(step.agent, Agent):
+                    step_information[step.name] = step.agent.instructions
+                elif isfunction(step.executor):
+                    step_information[step.name] = step.executor.__doc__ or "No description provided"
+                # TODO: Cover all other step types
+
+        return step_information
+
+    def _initialize_agent(self):
+        """Initialize the agent"""
+        import json
+
+        from agno.workflow.utils import WorkflowResponse
+
+        self.agent.response_model = WorkflowResponse
+        step_information = self._get_step_information()
+        self.agent.session_id = f"agent_{self.session_id}"
+
+        instructions = f"""
+            You are controlling a multi-step workflow. For each user message, choose one action:
+
+            1. **respond_directly** – Answer the question using available information
+            2. **ask_for_more_information** – Request clarification when the query is unclear
+            3. **continue_workflow** – Execute the next workflow step
+            - MUST include `workflow_input` as a simple string with essential information only
+
+            Steps in the workflow:
+            {json.dumps(step_information, indent=2)}
+            """
+
+        results = self._get_messages_from_session()
+        if results:
+            instructions += f"""
+            Previous results from workflow:
+            {json.dumps(results, indent=2)}
+
+            Decision guidelines:
+            - Question answered by these results → **respond_directly**
+            - User query is unrelated to past results → **continue_workflow** 
+            - Query unclear or incomplete → **ask_for_more_information**
+            """
+        else:
+            instructions += """
+            No previous results available.
+
+            Decision guidelines:
+            - Can answer the question now → **respond_directly**
+            - User wants workflow execution → **continue_workflow**
+            - Query unclear or incomplete → **ask_for_more_information**
+            """
+
+        self.agent.instructions = instructions
+
+    def _get_messages_from_session(self):
+        """Get the messages from the session"""
+        if self.workflow_session is None:
+            return None
+
+        messages = []
+        for run in self.workflow_session.runs:
+            messages.append(run.content)
+        # TODO: Add ability to add individual results from steps to the workflow agent context
+
+        return messages
+
+    def _execute_agent(self, inputs: WorkflowExecutionInput):
+        """Execute the agent"""
+        from agno.workflow.utils import WorkflowAction, WorkflowResponse
+
+        response = self.agent.run(message=inputs.message).content
+
+        if isinstance(response, WorkflowResponse):
+            if response.action == WorkflowAction.respond_directly:
+                return response.model_dump(exclude_none=True), False
+            elif response.action == WorkflowAction.continue_workflow:
+                return response.model_dump(exclude_none=True), True
+            elif response.action == WorkflowAction.ask_for_more_information:
+                return response.model_dump(exclude_none=True), False
+        else:
+            log_error(f"Invalid response from Workflow Agent: {response}. Continuing workflow")
+            return None, False
+
     @overload
     def run(
         self,
@@ -1505,6 +1619,23 @@ class Workflow:
         )
 
         self.update_agents_and_teams_session_info()
+
+        if self.agent is not None:
+            self._initialize_agent()
+
+            content, continue_workflow = self._execute_agent(inputs=inputs)
+            step_output = StepOutput(
+                step_name="Workflow Agent",
+                content=content,
+            )
+            workflow_run_response.step_responses = [step_output]
+
+            if not continue_workflow:
+                return workflow_run_response
+            else:
+                # If the workflow_input is provided, use it as input for the workflow
+                if content.get("workflow_input") is not None:
+                    inputs.message = content.get("workflow_input")
 
         if stream:
             return self._execute_stream(
