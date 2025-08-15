@@ -113,6 +113,12 @@ workflow = Workflow(
 )
 
 if __name__ == "__main__":
+    mermaid_content = workflow.generate_mermaid_diagram()
+    print(mermaid_content)
+
+    with open('loop_with_parallel_steps.mmd', 'w', encoding='utf-8') as f:
+        f.write(mermaid_content)
+
     workflow.print_response(
         message="Research the latest trends in AI and machine learning, then create a summary",
     )
