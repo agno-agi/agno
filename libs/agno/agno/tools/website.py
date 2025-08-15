@@ -32,9 +32,7 @@ class WebsiteTools(Toolkit):
             return "Knowledge base not provided"
 
         log_debug(f"Adding to knowledge base: {url}")
-        self.knowledge_base.urls.append(url)
-        log_debug("Loading knowledge base.")
-        self.knowledge_base.load(recreate=False)
+        self.knowledge_base.add_content(url=url)
         return "Success"
 
     def add_website_to_combined_knowledge_base(self, url: str) -> str:

@@ -177,6 +177,9 @@ class PineconeDb(VectorDb):
             if self.use_hybrid_search:
                 self.metric = "dotproduct"
 
+            if self.dimension is None:
+                raise ValueError("Dimension is not set for this Pinecone index")
+
             self.client.create_index(
                 name=self.name,
                 dimension=self.dimension,
@@ -586,6 +589,8 @@ class PineconeDb(VectorDb):
         try:
             # Use a dummy vector to perform a minimal query with filter
             # We only need to check if any results exist
+            if self.dimension is None:
+                raise ValueError("Dimension is not set for this Pinecone index")
             dummy_vector = [0.0] * self.dimension
             response = self.index.query(
                 vector=dummy_vector,

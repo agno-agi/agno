@@ -820,6 +820,10 @@ class LanceDb(VectorDb):
         import json
 
         try:
+            if self.table is None:
+                logger.error("Table not initialized")
+                return
+                
             # Search for documents with the given content_id
             query_filter = f"payload->>'content_id' = '{content_id}'"
             results = self.table.search().where(query_filter).to_pandas()

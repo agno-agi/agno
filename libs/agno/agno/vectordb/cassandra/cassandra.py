@@ -95,7 +95,7 @@ class Cassandra(VectorDb):
             doc.embed(embedder=self.embedder)
             metadata = {key: str(value) for key, value in doc.meta_data.items()}
             metadata.update(filters or {})
-            metadata["content_id"] = doc.content_id
+            metadata["content_id"] = doc.content_id or ""
             metadata["content_hash"] = content_hash
             futures.append(
                 self.table.put_async(
@@ -130,7 +130,7 @@ class Cassandra(VectorDb):
         for doc in documents:
             metadata = {key: str(value) for key, value in doc.meta_data.items()}
             metadata.update(filters or {})
-            metadata["content_id"] = doc.content_id
+            metadata["content_id"] = doc.content_id or ""
             metadata["content_hash"] = content_hash
             futures.append(
                 self.table.put_async(
@@ -157,7 +157,7 @@ class Cassandra(VectorDb):
         """Upsert documents asynchronously by running in a thread."""
         if self.content_hash_exists(content_hash):
             self.delete_by_content_hash(content_hash)
-        self.async_insert(content_hash, documents, filters)
+        await self.async_insert(content_hash, documents, filters)
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Keyword-based search on document metadata."""

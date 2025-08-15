@@ -76,7 +76,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
                 FileData(
                     content=content_bytes,
                     type=file.content_type if file.content_type else None,
-                )
+                )  # type: ignore
                 if file
                 else None
             )
@@ -142,7 +142,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         )
 
         if update_data.reader_id:
-            if update_data.reader_id in knowledge.readers:
+            if knowledge.readers and update_data.reader_id in knowledge.readers:
                 content.reader = knowledge.readers[update_data.reader_id]
             else:
                 raise HTTPException(status_code=400, detail=f"Invalid reader_id: {update_data.reader_id}")
@@ -235,34 +235,42 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
     @router.get("/content/{content_id}/status", status_code=200, response_model=ContentStatusResponse)
     def get_content_status(content_id: str) -> ContentStatusResponse:
         log_info(f"Getting content status: {content_id}")
-        status, status_message = knowledge.get_content_status(content_id=content_id)
+        knowledge_status, status_message = knowledge.get_content_status(content_id=content_id)
 
         # Handle the case where content is not found
-        if status is None:
+        if knowledge_status is None:
             return ContentStatusResponse(
                 status=ContentStatus.FAILED, status_message=status_message or "Content not found"
             )
 
+        # Convert knowledge ContentStatus to schema ContentStatus (they have same values)
+        if hasattr(knowledge_status, 'value'):
+            status_value = knowledge_status.value
+        else:
+            status_value = str(knowledge_status)
+            
         # Convert string status to ContentStatus enum if needed (for backward compatibility and mocks)
-        if isinstance(status, str):
+        if isinstance(status_value, str):
             try:
-                status = ContentStatus(status.lower())
+                status = ContentStatus(status_value.lower())
             except ValueError:
                 # Handle legacy or unknown statuses gracefully
-                if "failed" in status.lower():
+                if "failed" in status_value.lower():
                     status = ContentStatus.FAILED
-                elif "completed" in status.lower():
+                elif "completed" in status_value.lower():
                     status = ContentStatus.COMPLETED
                 else:
                     status = ContentStatus.PROCESSING
+        else:
+            status = ContentStatus.PROCESSING
 
         return ContentStatusResponse(status=status, status_message=status_message or "")
 
     @router.get("/config", status_code=200)
     def get_config() -> ConfigResponseSchema:
-        readers = knowledge.get_readers()
+        readers_dict = knowledge.get_readers() or {}
         return ConfigResponseSchema(
-            readers=[ReaderSchema(id=k, name=v.name, description=v.description) for k, v in readers.items()],
+            readers=[ReaderSchema(id=k, name=v.name, description=v.description) for k, v in readers_dict.items()],
             filters=knowledge.get_filters(),
         )
 
@@ -274,7 +282,7 @@ async def process_content(knowledge: Knowledge, content_id: str, content: Conten
     log_info(f"Processing content {content_id}")
     try:
         content.id = content_id or str(uuid4())
-        if reader_id:
+        if reader_id and knowledge.readers:
             content.reader = knowledge.readers[reader_id]
         await knowledge._load_content(content, upsert=False, skip_if_exists=True)
         log_info(f"Content {content_id} processed successfully")
