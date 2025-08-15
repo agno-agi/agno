@@ -6474,31 +6474,7 @@ class Agent:
             else:
                 log_warning("A response model is required to parse the response with a parser model")
 
-    def _coerce_to_response_model(self, value: Any) -> Optional[Any]:
-        """Try to coerce arbitrary value into the configured response_model."""
-        if self.response_model is None:
-            return None
-
-        try:
-            if isinstance(value, self.response_model):  # type: ignore[arg-type]
-                return value
-
-            if isinstance(value, str):
-                try:
-                    import json
-                    value = json.loads(value)
-                except Exception:
-                    return None
-
-            if isinstance(value, dict):
-                try:
-                    return self.response_model.model_validate(value)  # type: ignore[union-attr]
-                except Exception:
-                    return None
-        except Exception:
-            return None
-
-        return None
+    
 
     async def _aparse_response_with_parser_model_stream(
         self, run_response: RunResponse, stream_intermediate_steps: bool = True
