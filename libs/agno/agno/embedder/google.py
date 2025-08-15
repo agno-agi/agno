@@ -35,7 +35,7 @@ class GeminiEmbedder(Embedder):
 
         _client_params: Dict[str, Any] = {}
         vertexai = self.vertexai or getenv("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
-        
+
         if not vertexai:
             self.api_key = self.api_key or getenv("GOOGLE_API_KEY")
             if not self.api_key:
@@ -46,9 +46,9 @@ class GeminiEmbedder(Embedder):
             _client_params["vertexai"] = True
             _client_params["project"] = self.project_id or getenv("GOOGLE_CLOUD_PROJECT")
             _client_params["location"] = self.location or getenv("GOOGLE_CLOUD_LOCATION")
-        
+
         _client_params = {k: v for k, v in _client_params.items() if v is not None}
-        
+
         if self.client_params:
             _client_params.update(self.client_params)
 
