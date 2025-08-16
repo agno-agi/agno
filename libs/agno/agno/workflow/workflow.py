@@ -27,6 +27,7 @@ from agno.agent.agent import Agent
 from agno.db.base import BaseDb, SessionType
 from agno.media import Audio, AudioArtifact, Image, ImageArtifact, Video, VideoArtifact
 from agno.models.message import Message
+from agno.models.metrics import Metrics
 from agno.run.base import RunStatus
 from agno.run.workflow import (
     StepOutputEvent,
@@ -910,6 +911,7 @@ class Workflow:
                 workflow_run_response.content = f"Workflow execution failed: {e}"
 
             finally:
+                self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
                 session.upsert_run(run=workflow_run_response)
                 self.save_session(session=session)
 
@@ -1104,6 +1106,7 @@ class Workflow:
         yield self._handle_event(workflow_completed_event, workflow_run_response)
 
         # Store the completed workflow response
+        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
         session.upsert_run(run=workflow_run_response)
         self.save_session(session=session)
 
@@ -1274,7 +1277,7 @@ class Workflow:
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Workflow execution failed: {e}"
 
-        # Store error response
+        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
         session.upsert_run(run=workflow_run_response)
         self.save_session(session=session)
 
@@ -1476,6 +1479,7 @@ class Workflow:
         yield self._handle_event(workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler)
 
         # Store the completed workflow response
+        self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
         session.upsert_run(run=workflow_run_response)
         self.save_session(session=session)
 
@@ -1540,7 +1544,6 @@ class Workflow:
             try:
                 # Update status to RUNNING and save
                 workflow_run_response.status = RunStatus.running
-                workflow_session.upsert_run(run=workflow_run_response)
                 self.save_session(session=workflow_session)
 
                 await self._aexecute(
@@ -1551,16 +1554,12 @@ class Workflow:
                     **kwargs,
                 )
 
-                workflow_session.upsert_run(run=workflow_run_response)
-                self.save_session(session=workflow_session)
-
                 log_debug(f"Background execution completed with status: {workflow_run_response.status}")
 
             except Exception as e:
                 logger.error(f"Background workflow execution failed: {e}")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background execution failed: {str(e)}"
-                workflow_session.upsert_run(run=workflow_run_response)
                 self.save_session(session=workflow_session)
 
         # Create and start asyncio task
@@ -1633,7 +1632,6 @@ class Workflow:
             try:
                 # Update status to RUNNING and save
                 workflow_run_response.status = RunStatus.running
-                workflow_session.upsert_run(run=workflow_run_response)
                 self.save_session(session=workflow_session)
 
                 # Execute with streaming - consume all events (they're auto-broadcast via _handle_event)
@@ -1650,16 +1648,12 @@ class Workflow:
                     # We just consume them here to drive the execution
                     pass
 
-                workflow_session.upsert_run(run=workflow_run_response)
-                self.save_session(session=workflow_session)
-
                 log_debug(f"Background streaming execution completed with status: {workflow_run_response.status}")
 
             except Exception as e:
                 logger.error(f"Background streaming workflow execution failed: {e}")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background streaming execution failed: {str(e)}"
-                workflow_session.upsert_run(run=workflow_run_response)
                 self.save_session(session=workflow_session)
 
         # Create and start asyncio task for background streaming execution
@@ -2187,6 +2181,62 @@ class Workflow:
             ],
             "session_id": self.session_id,
         }
+
+    def _calculate_session_metrics_from_workflow_metrics(self, workflow_metrics: WorkflowMetrics) -> Metrics:
+        """Calculate session metrics by aggregating all step metrics from workflow metrics"""
+        session_metrics = Metrics()
+
+        # Aggregate metrics from all steps
+        for step_name, step_metrics in workflow_metrics.steps.items():
+            if step_metrics.metrics:
+                session_metrics += step_metrics.metrics
+
+        session_metrics.time_to_first_token = None
+
+        return session_metrics
+
+    def _get_session_metrics(self, session: WorkflowSession) -> Metrics:
+        """Get existing session metrics from the database"""
+        if session.session_data and "session_metrics" in session.session_data:
+            session_metrics_from_db = session.session_data.get("session_metrics")
+            if session_metrics_from_db is not None:
+                if isinstance(session_metrics_from_db, dict):
+                    return Metrics(**session_metrics_from_db)
+                elif isinstance(session_metrics_from_db, Metrics):
+                    return session_metrics_from_db
+        return Metrics()
+
+    def _update_session_metrics(self, session: WorkflowSession, workflow_run_response: WorkflowRunOutput):
+        """Calculate and update session metrics"""
+        # Get existing session metrics
+        session_metrics = self._get_session_metrics(session=session)
+
+        # If workflow has metrics, convert and add them to session metrics
+        if workflow_run_response.workflow_metrics:
+            run_session_metrics = self._calculate_session_metrics_from_workflow_metrics(
+                workflow_run_response.workflow_metrics
+            )
+
+            session_metrics += run_session_metrics
+
+        session_metrics.time_to_first_token = None
+
+        # Store updated session metrics - CONVERT TO DICT FOR JSON SERIALIZATION
+        if not session.session_data:
+            session.session_data = {}
+        session.session_data["session_metrics"] = session_metrics.to_dict()
+
+    def get_session_metrics(self, session_id: Optional[str] = None) -> Optional[Metrics]:
+        """Get the session metrics for the given session ID and user ID."""
+        session_id = session_id or self.session_id
+        if session_id is None:
+            raise Exception("Session ID is required")
+
+        session = self.get_session(session_id=session_id)
+        if session is None:
+            raise Exception("Session not found")
+
+        return self._get_session_metrics(session=session)
 
     def update_agents_and_teams_session_info(self):
         """Update agents and teams with workflow session information"""

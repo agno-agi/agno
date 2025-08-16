@@ -864,7 +864,8 @@ class MongoDb(VectorDb):
             pipeline.append({"$match": mongo_filters})
 
         try:
-            results = list(collection.aggregate(pipeline))
+            from typing import cast, Sequence, Mapping
+            results = list(collection.aggregate(cast(Sequence[Mapping[str, Any]], pipeline)))
 
             docs = []
             for doc in results:
@@ -1179,7 +1180,7 @@ class MongoDb(VectorDb):
         Returns:
             The same object with ObjectIds converted to strings
         """
-        if ObjectId and isinstance(obj, ObjectId):
+        if isinstance(obj, ObjectId):
             return str(obj)
         elif isinstance(obj, dict):
             return {key: self._convert_objectids_to_strings(value) for key, value in obj.items()}
@@ -1284,7 +1285,7 @@ class MongoDb(VectorDb):
             metadata (Dict[str, Any]): The metadata to update
         """
         try:
-            collection = self.client[self.database_name][self.collection_name]
+            collection = self._client[self.database][self.collection_name]
 
             # Create query filter for content_id
             filter_query = {"content_id": content_id}

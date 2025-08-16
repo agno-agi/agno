@@ -4339,7 +4339,8 @@ class Team:
                         yield f"Agent {member_agent.name}: Error - {str(e)}"
 
                 # Add team run id to the member run
-                member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
+                if member_agent_run_response is not None:
+                    member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
 
                 # Update the memory
                 member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
@@ -4362,7 +4363,8 @@ class Team:
                 merge_dictionaries(session_state, member_session_state_copy)  # type: ignore
 
                 # Update the team media
-                self._update_team_media(member_agent_run_response)  # type: ignore
+                if member_agent_run_response is not None:
+                    self._update_team_media(member_agent_run_response)  # type: ignore
 
             # Afterward, switch back to the team logger
             use_team_logger()
@@ -4429,7 +4431,8 @@ class Team:
                     check_if_run_cancelled(member_agent_run_response)
 
                     # Add team run id to the member run
-                    member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
+                    if member_agent_run_response is not None:
+                        member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
 
                     member_name = agent.name if agent.name else f"agent_{idx}"
                     self.add_interaction_to_team_run_context(
@@ -4450,7 +4453,8 @@ class Team:
                     merge_dictionaries(session_state, member_session_state_copy)  # type: ignore
 
                     # Update the team media
-                    self._update_team_media(member_agent_run_response)
+                    if member_agent_run_response is not None:
+                        self._update_team_media(member_agent_run_response)
 
                     try:
                         if member_agent_run_response.content is None and (
@@ -4655,7 +4659,8 @@ class Team:
             use_team_logger()
 
             # Add team run id to the member run
-            member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
+            if member_agent_run_response is not None:
+                member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
 
             # Update the memory
             member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
@@ -4678,7 +4683,8 @@ class Team:
             merge_dictionaries(session_state, member_session_state_copy)  # type: ignore
 
             # Update the team media
-            self._update_team_media(member_agent_run_response)  # type: ignore
+            if member_agent_run_response is not None:
+                self._update_team_media(member_agent_run_response)  # type: ignore
 
         async def atransfer_task_to_member(
             member_id: str, task_description: str, expected_output: Optional[str] = None
@@ -4805,7 +4811,8 @@ class Team:
             use_team_logger()
 
             # Add team run id to the member run
-            member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
+            if member_agent_run_response is not None:
+                member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
 
             # Update the memory
             member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
@@ -4828,7 +4835,8 @@ class Team:
             merge_dictionaries(session_state, member_session_state_copy)  # type: ignore
 
             # Update the team media
-            self._update_team_media(member_agent_run_response)  # type: ignore
+            if member_agent_run_response is not None:
+                self._update_team_media(member_agent_run_response)  # type: ignore
 
         if async_mode:
             transfer_function = atransfer_task_to_member  # type: ignore
@@ -4997,7 +5005,8 @@ class Team:
             use_team_logger()
 
             # Add team run id to the member run
-            member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
+            if member_agent_run_response is not None:
+                member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
 
             # Update the memory
             member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
@@ -5020,7 +5029,8 @@ class Team:
             merge_dictionaries(session_state, member_session_state_copy)  # type: ignore
 
             # Update the team media
-            self._update_team_media(member_agent_run_response)  # type: ignore
+            if member_agent_run_response is not None:
+                self._update_team_media(member_agent_run_response)  # type: ignore
 
         async def aforward_task_to_member(
             member_id: str, expected_output: Optional[str] = None
@@ -5143,7 +5153,8 @@ class Team:
             use_team_logger()
 
             # Add team run id to the member run
-            member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
+            if member_agent_run_response is not None:
+                member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
 
             # Update the memory
             member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
@@ -5166,7 +5177,8 @@ class Team:
             merge_dictionaries(session_state, member_session_state_copy)  # type: ignore
 
             # Update the team media
-            self._update_team_media(member_agent_run_response)  # type: ignore
+            if member_agent_run_response is not None:
+                self._update_team_media(member_agent_run_response)  # type: ignore
 
         if async_mode:
             forward_function = aforward_task_to_member  # type: ignore

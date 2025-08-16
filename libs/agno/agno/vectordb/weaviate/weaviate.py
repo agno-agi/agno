@@ -815,7 +815,7 @@ class Weaviate(VectorDb):
         search_results: List[Document] = []
         for obj in response.objects:
             properties = obj.properties
-            meta_data = json.loads(properties["meta_data"]) if properties.get("meta_data") else None
+            meta_data = json.loads(properties["meta_data"]) if properties.get("meta_data") else {}
             embedding = obj.vector["default"] if isinstance(obj.vector, dict) else obj.vector
 
             search_results.append(
@@ -835,7 +835,7 @@ class Weaviate(VectorDb):
         """Indicate that upsert functionality is available."""
         return True
 
-    def _build_filter_expression(self, filters: Optional[Dict[str, Any]]) -> Optional[Filter]:
+    def _build_filter_expression(self, filters: Optional[Dict[str, Any]]):
         """
         Build a filter expression for Weaviate queries.
 
@@ -908,11 +908,12 @@ class Weaviate(VectorDb):
             metadata (Dict[str, Any]): The metadata to update
         """
         try:
-            collection = self.get_client().collections.get(self.collection)
+            weaviate_client = self.get_client()
+            collection = weaviate_client.collections.get(self.collection)
 
-            # Query for objects with the given content_id
+            # Query for objects with the given content_id  
             query_result = collection.query.fetch_objects(
-                where={"path": ["content_id"], "operator": "Equal", "valueText": content_id},
+                where=Filter.by_property("content_id").equal(content_id),
                 limit=1000,  # Get all matching objects
             )
 
@@ -950,3 +951,20 @@ class Weaviate(VectorDb):
         except Exception as e:
             logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def _delete_by_content_hash(self, content_hash: str) -> bool:
+        """Delete documents by content hash using direct filter deletion."""
+        try:
+            collection = self.get_client().collections.get(self.collection)
+
+            # Build filter for content_hash search  
+            filter_expr = Filter.by_property("content_hash").equal(content_hash)
+
+            collection.data.delete_many(where=filter_expr)
+
+            log_info(f"Deleted documents with content_hash '{content_hash}' from collection '{self.collection}'.")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error deleting documents by content_hash '{content_hash}': {e}")
+            return False

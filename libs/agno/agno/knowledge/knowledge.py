@@ -181,7 +181,7 @@ class Knowledge:
             upsert: Whether to update existing content if it already exists
             skip_if_exists: Whether to skip adding content if it already exists
         """
-        asyncio.run(self.add_contents, *args, **kwargs)
+        asyncio.run(self.add_contents(*args, **kwargs))
 
     # --- Add Content ---
 
@@ -189,13 +189,15 @@ class Knowledge:
     async def add_content(
         self,
         *,
-        paths: Optional[List[str]] = None,
-        urls: Optional[List[str]] = None,
+        path: Optional[str] = None,
+        url: Optional[str] = None,
+        text_content: Optional[str] = None,
         metadata: Optional[Dict[str, str]] = None,
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         upsert: bool = False,
         skip_if_exists: bool = False,
+        reader: Optional[Reader] = None,
     ) -> None: ...
 
     @overload
@@ -250,13 +252,15 @@ class Knowledge:
     def add_content_sync(
         self,
         *,
-        paths: Optional[List[str]] = None,
-        urls: Optional[List[str]] = None,
+        path: Optional[str] = None,
+        url: Optional[str] = None,
+        text_content: Optional[str] = None,
         metadata: Optional[Dict[str, str]] = None,
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
         upsert: bool = False,
         skip_if_exists: bool = False,
+        reader: Optional[Reader] = None,
     ) -> None: ...
 
     @overload
@@ -323,7 +327,7 @@ class Knowledge:
         exclude: Optional[List[str]] = None,
     ):
         log_info(f"Adding content from path, {content.id}, {content.name}, {content.path}, {content.description}")
-        path = Path(content.path)
+        path = Path(content.path)  # type: ignore
 
         if path.is_file():
             if self._should_include_file(str(path), include, exclude):
@@ -335,7 +339,7 @@ class Knowledge:
                     return
 
                 content.content_hash = self._build_content_hash(content)
-                if self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
+                if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
                     log_info(f"Content {content.content_hash} already exists, skipping")
                     return
 
@@ -353,7 +357,7 @@ class Knowledge:
                     content.file_type = path.suffix
 
                 if not content.size and content.file_data:
-                    content.size = len(content.file_data.content)
+                    content.size = len(content.file_data.content)  # type: ignore
                 if not content.size:
                     try:
                         content.size = path.stat().st_size
@@ -400,7 +404,7 @@ class Knowledge:
             return
 
         content.content_hash = self._build_content_hash(content)
-        if self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
+        if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
             log_info(f"Content {content.content_hash} already exists, skipping")
             return
         self._add_to_contents_db(content)
@@ -422,13 +426,14 @@ class Knowledge:
             log_warning(f"Invalid URL: {content.url} - {str(e)}")
 
         # Determine file type from URL
-        url_path = Path(parsed_url.path)
+        url_path = Path(parsed_url.path)  # type: ignore
         file_extension = url_path.suffix.lower()
         try:
-            if content.url.endswith("llms-full.txt") or content.url.endswith("llms.txt"):
+            if content.url.endswith("llms-full.txt") or content.url.endswith("llms.txt"):  # type: ignore
                 log_info("Detected llms, using url reader")
                 reader = content.reader or self.url_reader
-                read_documents = reader.read(url=content.url, name=content.name)
+                if reader is not None:
+                    read_documents = reader.read(content.url, name=content.name)
 
             elif file_extension and file_extension is not None:
                 log_info(f"Detected file type: {file_extension} from URL: {content.url}")
@@ -438,7 +443,7 @@ class Knowledge:
                     reader = self._select_url_file_reader(file_extension)
                     if reader is not None:
                         log_info(f"Selected reader: {reader.__class__.__name__}")
-                        read_documents = reader.read(url=content.url, name=content.name)
+                        read_documents = reader.read(content.url, name=content.name)
                     else:
                         log_info(f"No reader found for file extension: {file_extension}")
             else:
@@ -446,10 +451,10 @@ class Knowledge:
                 if content.reader:
                     reader = content.reader
                 else:
-                    reader = self._select_url_reader(content.url)
+                    reader = self._select_url_reader(content.url)  # type: ignore
                 if reader is not None:
                     log_info(f"Selected reader: {reader.__class__.__name__}")
-                    read_documents = reader.read(url=content.url, name=content.name)
+                    read_documents = reader.read(content.url, name=content.name)
                 else:
                     log_info(f"No reader found for URL: {content.url}")
 
@@ -475,14 +480,20 @@ class Knowledge:
         upsert: bool = True,
         skip_if_exists: bool = True,
     ):
-        name = (
-            content.name
-            if content.name
-            else content.file_data.content[:10]
-            if len(content.file_data.content) >= 10
-            else content.file_data.content
-        )
-        content.name = name
+        if content.name:
+            name = content.name
+        elif content.file_data and content.file_data.content:
+            if isinstance(content.file_data.content, bytes):
+                name = content.file_data.content[:10].decode('utf-8', errors='ignore')
+            elif isinstance(content.file_data.content, str):
+                name = content.file_data.content[:10] if len(content.file_data.content) >= 10 else content.file_data.content
+            else:
+                name = str(content.file_data.content)[:10]
+        else:
+            name = None
+            
+        if name is not None:
+            content.name = name
 
         log_info(f"Adding content from {content.name}")
 
@@ -491,7 +502,7 @@ class Knowledge:
             return
 
         content.content_hash = self._build_content_hash(content)
-        if self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
+        if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
             log_info(f"Content {content.content_hash} already exists, skipping")
 
             return
@@ -534,7 +545,7 @@ class Knowledge:
                         content_bytes = content.file_data.content.encode("latin-1")
                     content_io = io.BytesIO(content_bytes)
                 else:
-                    content_io = content.file_data.content
+                    content_io = content.file_data.content  # type: ignore
 
                 reader = self._select_reader(content.file_data.type)
                 name = content.name if content.name else f"content_{content.file_data.type}"
@@ -566,6 +577,10 @@ class Knowledge:
     ):
         log_info(f"Adding content from topics: {content.topics}")
 
+        if content.topics is None:
+            log_warning("No topics provided for content")
+            return
+            
         for topic in content.topics:
             id = str(uuid4())
             content = Content(
@@ -585,11 +600,14 @@ class Knowledge:
                 return
 
             content.content_hash = self._build_content_hash(content)
-            if self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
+            if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
                 log_info(f"Content {content.content_hash} already exists, skipping")
                 continue
 
             self._add_to_contents_db(content)
+            if content.reader is None:
+                log_error(f"No reader available for topic: {topic}")
+                continue
             read_documents = content.reader.read(topic)
             if len(read_documents) > 0:
                 for read_document in read_documents:
@@ -700,7 +718,7 @@ class Knowledge:
             id = str(uuid4())
             content_entry = Content(
                 id=id,
-                name=content.name + "_" + object.name,
+                name=(content.name or "content") + "_" + object.name,
                 description=content.description,
                 status=ContentStatus.PROCESSING,
                 metadata=content.metadata,
@@ -708,7 +726,7 @@ class Knowledge:
             )
 
             content_hash = self._build_content_hash(content_entry)
-            if self.vector_db.content_hash_exists(content_hash) and skip_if_exists:
+            if self.vector_db and self.vector_db.content_hash_exists(content_hash) and skip_if_exists:
                 log_info(f"Content {content_hash} already exists, skipping")
                 continue
 
@@ -722,6 +740,13 @@ class Knowledge:
             await self._handle_vector_db_insert(content_entry, read_documents, upsert)
 
     async def _handle_vector_db_insert(self, content, read_documents, upsert):
+        if not self.vector_db:
+            log_error("No vector database configured")
+            content.status = ContentStatus.FAILED
+            content.status_message = "No vector database configured"
+            self._update_content(content)
+            return
+            
         if self.vector_db.upsert_available() and upsert:
             try:
                 await self.vector_db.async_upsert(content.content_hash, read_documents, content.metadata)
@@ -862,15 +887,17 @@ class Knowledge:
             content_row.updated_at = int(time.time())
             self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
-            if self.vector_db:
+            if self.vector_db and content.metadata:
                 self.vector_db.update_metadata(content_id=content.id, metadata=content.metadata)
 
-            self.add_filters(content.metadata)
+            if content.metadata:
+                self.add_filters(content.metadata)
 
             return content_row.to_dict()
 
         else:
             log_warning(f"Contents DB not found for knowledge base: {self.name}")
+            return None
 
     def _process_lightrag_content(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
         self._add_to_contents_db(content)
@@ -878,6 +905,10 @@ class Knowledge:
             if content.file_data is None:
                 log_warning("No file data provided")
 
+            if content.path is None:
+                log_error("No path provided for content")
+                return
+                
             path = Path(content.path)
 
             log_info(f"Uploading file to LightRAG from path: {path}")
@@ -889,14 +920,20 @@ class Knowledge:
                 # Get file type from extension or content.file_type
                 file_type = content.file_type or path.suffix
 
-                result = asyncio.run(
-                    self.vector_db.insert_file_bytes(
-                        file_content=file_content,
-                        filename=path.name,  # Use the original filename with extension
-                        content_type=file_type,
-                        send_metadata=True,  # Enable metadata so server knows the file type
+                if self.vector_db and hasattr(self.vector_db, 'insert_file_bytes'):
+                    result = asyncio.run(
+                        self.vector_db.insert_file_bytes(
+                            file_content=file_content,
+                            filename=path.name,  # Use the original filename with extension
+                            content_type=file_type,
+                            send_metadata=True,  # Enable metadata so server knows the file type
+                        )
                     )
-                )
+                else:
+                    log_error("Vector database does not support file insertion")
+                    content.status = ContentStatus.FAILED
+                    self._update_content(content)
+                    return
                 content.external_id = result
                 content.status = ContentStatus.COMPLETED
                 self._update_content(content)
@@ -913,19 +950,36 @@ class Knowledge:
             log_info(f"Uploading file to LightRAG from URL: {content.url}")
             try:
                 reader = self.url_reader
+                if reader is None:
+                    log_error("No URL reader available")
+                    content.status = ContentStatus.FAILED
+                    self._update_content(content)
+                    return
+                    
                 reader.chunk = False
-                read_documents = reader.read(url=content.url, name=content.name)
+                read_documents = reader.read(content.url, name=content.name)
 
-                print("READ DOCUMENTS: ", len(read_documents))
                 for read_document in read_documents:
                     read_document.content_id = content.id
 
-                result = asyncio.run(
-                    self.vector_db.insert_text(
-                        file_source=content.url,
-                        text=read_documents[0].content,
+                if not read_documents:
+                    log_error("No documents read from URL")
+                    content.status = ContentStatus.FAILED
+                    self._update_content(content)
+                    return
+
+                if self.vector_db and hasattr(self.vector_db, 'insert_text'):
+                    result = asyncio.run(
+                        self.vector_db.insert_text(
+                            file_source=content.url,
+                            text=read_documents[0].content,
+                        )
                     )
-                )
+                else:
+                    log_error("Vector database does not support text insertion")
+                    content.status = ContentStatus.FAILED
+                    self._update_content(content)
+                    return
 
                 content.external_id = result
                 content.status = ContentStatus.COMPLETED
@@ -940,18 +994,25 @@ class Knowledge:
                 return
 
         elif content_type == KnowledgeContentOrigin.CONTENT:
-            log_info(f"Uploading file to LightRAG: {content.upload_file.filename}")
+            filename = content.upload_file.filename if content.upload_file else "uploaded_file"
+            log_info(f"Uploading file to LightRAG: {filename}")
 
             # Use the already-read content from file_data instead of the closed upload_file
             if content.file_data and content.file_data.content:
-                result = asyncio.run(
-                    self.vector_db.insert_file_bytes(
-                        file_content=content.file_data.content,
-                        filename=content.upload_file.filename,
-                        content_type=content.file_data.type,
-                        send_metadata=True,  # Enable metadata so server knows the file type
+                if self.vector_db and hasattr(self.vector_db, 'insert_file_bytes'):
+                    result = asyncio.run(
+                        self.vector_db.insert_file_bytes(
+                            file_content=content.file_data.content,
+                            filename=filename,
+                            content_type=content.file_data.type,
+                            send_metadata=True,  # Enable metadata so server knows the file type
+                        )
                     )
-                )
+                else:
+                    log_error("Vector database does not support file insertion")
+                    content.status = ContentStatus.FAILED
+                    self._update_content(content)
+                    return
                 content.external_id = result
                 content.status = ContentStatus.COMPLETED
                 self._update_content(content)
@@ -962,16 +1023,35 @@ class Knowledge:
         elif content_type == KnowledgeContentOrigin.TOPIC:
             log_info(f"Uploading file to LightRAG: {content.name}")
 
+            if content.reader is None:
+                log_error("No reader available for topic content")
+                content.status = ContentStatus.FAILED
+                self._update_content(content)
+                return
+                
+            if not content.topics:
+                log_error("No topics available for content")
+                content.status = ContentStatus.FAILED
+                self._update_content(content)
+                return
+
             read_documents = content.reader.read(content.topics)
             if len(read_documents) > 0:
                 print("READ DOCUMENTS: ", len(read_documents))
                 print("READ DOCUMENTS: ", read_documents[0])
-                result = asyncio.run(
-                    self.vector_db.insert_text(
-                        file_source=content.topics[0],
-                        text=read_documents[0].content,
+                
+                if self.vector_db and hasattr(self.vector_db, 'insert_text'):
+                    result = asyncio.run(
+                        self.vector_db.insert_text(
+                            file_source=content.topics[0],
+                            text=read_documents[0].content,
+                        )
                     )
-                )
+                else:
+                    log_error("Vector database does not support text insertion")
+                    content.status = ContentStatus.FAILED
+                    self._update_content(content)
+                    return
                 content.external_id = result
                 content.status = ContentStatus.COMPLETED
                 self._update_content(content)
@@ -1026,7 +1106,7 @@ class Knowledge:
         if not filters:
             return {}, []
 
-        valid_filters = {}
+        valid_filters: Dict[str, Any] = {}
         invalid_keys = []
 
         # If no metadata filters tracked yet, all keys are considered invalid
@@ -1100,7 +1180,7 @@ class Knowledge:
             metadata=content_row.metadata,
             file_type=content_row.type,
             size=content_row.size,
-            status=content_row.status,
+            status=ContentStatus(content_row.status) if content_row.status else None,
             status_message=content_row.status_message,
             created_at=content_row.created_at,
             updated_at=content_row.updated_at if content_row.updated_at else content_row.created_at,
@@ -1131,7 +1211,7 @@ class Knowledge:
                 metadata=content_row.metadata,
                 size=content_row.size,
                 file_type=content_row.type,
-                status=content_row.status,
+                status=ContentStatus(content_row.status) if content_row.status else None,
                 status_message=content_row.status_message,
                 created_at=content_row.created_at,
                 updated_at=content_row.updated_at if content_row.updated_at else content_row.created_at,
@@ -1168,7 +1248,7 @@ class Knowledge:
                 # For LightRAG, get the content first to find the external_id
                 content = self.get_content_by_id(content_id)
                 if content and content.external_id:
-                    self.vector_db.delete_by_external_id(content.external_id)
+                    self.vector_db.delete_by_external_id(content.external_id)  # type: ignore
                 else:
                     log_warning(f"No external_id found for content {content_id}, cannot delete from LightRAG")
             else:
@@ -1180,7 +1260,8 @@ class Knowledge:
     def remove_all_content(self):
         contents, _ = self.get_content()
         for content in contents:
-            self.remove_content_by_id(content.id)
+            if content.id is not None:
+                self.remove_content_by_id(content.id)
 
     # --- Reader Factory Integration ---
 
