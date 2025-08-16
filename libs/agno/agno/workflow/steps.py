@@ -141,14 +141,14 @@ class Steps:
                 log_debug(f"Steps {self.name}: Executing step {i + 1}/{len(self.steps)} - {step_name}")
 
                 # Execute step
-                step_output = step.execute(
+                step_output = step.execute( # type: ignore
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_responses=store_executor_responses,
                     session_state=session_state,
-                )  # type: ignore
+                )  
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
                 if isinstance(step_output, list):
@@ -359,14 +359,14 @@ class Steps:
                 log_debug(f"Steps {self.name}: Executing async step {i + 1}/{len(self.steps)} - {step_name}")
 
                 # Execute step
-                step_output = await step.aexecute(
+                step_output = await step.aexecute( # type: ignore
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_responses=store_executor_responses,
                     session_state=session_state,
-                )  # type: ignore
+                )  
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
                 if isinstance(step_output, list):
