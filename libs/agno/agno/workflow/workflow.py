@@ -372,7 +372,7 @@ class Workflow:
         session = self.get_session(session_id=session_id)  # type: ignore
         if session is None:
             raise Exception("Session not found")
-        return session.session_data.get("session_name", "")
+        return session.session_data.get("session_name", "") if session.session_data else ""
 
     def get_session_state(self, session_id: Optional[str] = None) -> Dict[str, Any]:
         """Get the session state for the given session ID and user ID."""
@@ -382,7 +382,7 @@ class Workflow:
         session = self.get_session(session_id=session_id)  # type: ignore
         if session is None:
             raise Exception("Session not found")
-        return session.session_data.get("session_state", {})
+        return session.session_data.get("session_state", {}) if session.session_data else {}
 
     def delete_session(self, session_id: str):
         """Delete the current session and save to storage"""
@@ -515,7 +515,7 @@ class Workflow:
             if not self.db:
                 raise ValueError("Db not initialized")
             session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW)
-            return session
+            return session if isinstance(session, (WorkflowSession, type(None))) else None
         except Exception as e:
             log_warning(f"Error getting session from db: {e}")
             return None
@@ -526,7 +526,8 @@ class Workflow:
         try:
             if not self.db:
                 raise ValueError("Db not initialized")
-            return self.db.upsert_session(session=session)
+            result = self.db.upsert_session(session=session)
+            return result if isinstance(result, (WorkflowSession, type(None))) else None
         except Exception as e:
             log_warning(f"Error upserting session into db: {e}")
             return None
@@ -550,7 +551,7 @@ class Workflow:
         from agno.utils.merge_dict import merge_dictionaries
 
         # Get the session_state from the database and update the current session_state
-        if "session_state" in session.session_data:
+        if session.session_data and "session_state" in session.session_data:
             session_state_from_db = session.session_data.get("session_state")
 
             if (
@@ -564,6 +565,8 @@ class Workflow:
                 session_state = session_state_from_db
 
         # Update the session_state in the session
+        if session.session_data is None:
+            session.session_data = {}
         session.session_data["session_state"] = session_state
 
         return session_state
@@ -856,14 +859,14 @@ class Workflow:
                         shared_audio=shared_audio,
                     )
 
-                    step_output = step.execute(
+                    step_output = step.execute(  # type: ignore[union-attr]
                         step_input,
                         session_id=session.session_id,
                         user_id=self.user_id,
                         workflow_run_response=workflow_run_response,
                         session_state=session_state,
                         store_executor_responses=self.store_executor_responses,
-                    )  # type: ignore[union-attr]
+                    )
 
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
@@ -1227,14 +1230,14 @@ class Workflow:
                         shared_audio=shared_audio,
                     )
 
-                    step_output = await step.aexecute(
+                    step_output = await step.aexecute(  # type: ignore[union-attr]
                         step_input,
                         session_id=session.session_id,
                         user_id=self.user_id,
                         workflow_run_response=workflow_run_response,
                         session_state=session_state,
                         store_executor_responses=self.store_executor_responses,
-                    )  # type: ignore[union-attr]
+                    )
 
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
@@ -2004,7 +2007,7 @@ class Workflow:
 
     def print_response(
         self,
-        input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
+        input: Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]],
         additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -2013,7 +2016,7 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         stream: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
-        markdown: Optional[bool] = None,
+        markdown: bool = True,
         show_time: bool = True,
         show_step_details: bool = True,
         console: Optional[Any] = None,
@@ -2079,7 +2082,7 @@ class Workflow:
 
     async def aprint_response(
         self,
-        input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
+        input: Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]],
         additional_data: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -2088,7 +2091,7 @@ class Workflow:
         videos: Optional[List[Video]] = None,
         stream: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
-        markdown: Optional[bool] = None,
+        markdown: bool = True,
         show_time: bool = True,
         show_step_details: bool = True,
         console: Optional[Any] = None,

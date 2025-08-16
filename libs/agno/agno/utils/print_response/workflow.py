@@ -131,7 +131,7 @@ def print_response(
 
             if show_step_details and workflow_response.step_results:
                 for i, step_output in enumerate(workflow_response.step_results):
-                    print_step_output_recursive(step_output, i + 1, markdown, console)
+                    print_step_output_recursive(step_output, i + 1, markdown, console)  # type: ignore
 
             # For callable functions, show the content directly since there are no step_results
             elif show_step_details and callable(workflow.steps) and workflow_response.content:
