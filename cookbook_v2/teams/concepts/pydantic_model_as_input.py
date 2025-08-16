@@ -69,4 +69,4 @@ alternative_research = ResearchTopic(
     sources_required=5,
 )
 
-# team.print_response(input=alternative_research)
+team.print_response(input=alternative_research)

@@ -2,6 +2,7 @@ from typing import AsyncIterator, Iterator, List, Set, Union
 
 from agno.exceptions import RunCancelledException
 from agno.models.response import ToolExecution
+from agno.reasoning.step import ReasoningStep
 from agno.run.response import RunOutput, RunOutputEvent, RunPausedEvent
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent
 
@@ -13,6 +14,29 @@ def create_panel(content, title, border_style="blue"):
     return Panel(
         content, title=title, title_align="left", border_style=border_style, box=HEAVY, expand=True, padding=(1, 1)
     )
+
+
+def build_reasoning_step_panel(
+    step_idx: int, step: ReasoningStep, show_full_reasoning: bool = False, color: str = "green"
+):
+    from rich.text import Text
+
+    # Build step content
+    step_content = Text.assemble()
+    if step.title is not None:
+        step_content.append(f"{step.title}\n", "bold")
+    if step.action is not None:
+        step_content.append(Text.from_markup(f"[bold]Action:[/bold] {step.action}\n", style="dim"))
+    if step.result is not None:
+        step_content.append(Text.from_markup(step.result, style="dim"))
+
+    if show_full_reasoning:
+        # Add detailed reasoning information if available
+        if step.reasoning is not None:
+            step_content.append(Text.from_markup(f"\n[bold]Reasoning:[/bold] {step.reasoning}", style="dim"))
+        if step.confidence is not None:
+            step_content.append(Text.from_markup(f"\n[bold]Confidence:[/bold] {step.confidence}", style="dim"))
+    return create_panel(content=step_content, title=f"Reasoning step {step_idx}", border_style=color)
 
 
 def escape_markdown_tags(content: str, tags: Set[str]) -> str:
