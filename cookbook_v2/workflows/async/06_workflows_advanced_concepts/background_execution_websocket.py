@@ -43,12 +43,12 @@ async def get():
 <head>
     <title>Background Workflow WebSocket Demo</title>
     <style>
-        body { 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
-            margin: 20px; 
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 20px;
             background-color: #f5f7fa;
         }
-        
+
         .container {
             max-width: 1200px;
             margin: 0 auto;
@@ -57,13 +57,13 @@ async def get():
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
             padding: 20px;
         }
-        
+
         h1 {
             color: #2d3748;
             text-align: center;
             margin-bottom: 30px;
         }
-        
+
         .controls {
             background: #f8fafc;
             padding: 20px;
@@ -71,7 +71,7 @@ async def get():
             margin-bottom: 20px;
             border: 1px solid #e2e8f0;
         }
-        
+
         input {
             padding: 12px 16px;
             width: 400px;
@@ -80,13 +80,13 @@ async def get():
             font-size: 14px;
             margin-right: 10px;
         }
-        
+
         input:focus {
             outline: none;
             border-color: #4299e1;
             box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.1);
         }
-        
+
         button {
             padding: 12px 24px;
             margin: 5px;
@@ -97,26 +97,26 @@ async def get():
             font-size: 14px;
             transition: all 0.2s;
         }
-        
+
         .btn-primary {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
         }
-        
+
         .btn-primary:hover {
             transform: translateY(-1px);
             box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
         }
-        
+
         .btn-secondary {
             background: #e2e8f0;
             color: #4a5568;
         }
-        
+
         .btn-secondary:hover {
             background: #cbd5e0;
         }
-        
+
         .status-bar {
             padding: 12px 16px;
             border-radius: 8px;
@@ -124,19 +124,19 @@ async def get():
             font-weight: 600;
             text-align: center;
         }
-        
+
         .status-connected {
             background: #c6f6d5;
             color: #22543d;
             border: 1px solid #9ae6b4;
         }
-        
+
         .status-disconnected {
             background: #fed7d7;
             color: #742a2a;
             border: 1px solid #fc8181;
         }
-        
+
         #messages {
             border: 1px solid #e2e8f0;
             height: 500px;
@@ -149,7 +149,7 @@ async def get():
             font-size: 13px;
             line-height: 1.5;
         }
-        
+
         .message {
             margin: 8px 0;
             padding: 12px 16px;
@@ -158,7 +158,7 @@ async def get():
             position: relative;
             animation: slideIn 0.3s ease-out;
         }
-        
+
         @keyframes slideIn {
             from {
                 opacity: 0;
@@ -169,24 +169,24 @@ async def get():
                 transform: translateX(0);
             }
         }
-        
+
         .message-icon {
             display: inline-block;
             width: 20px;
             margin-right: 8px;
             font-weight: bold;
         }
-        
+
         .message-time {
             color: #718096;
             font-size: 11px;
             margin-right: 8px;
         }
-        
+
         .message-content {
             font-weight: 500;
         }
-        
+
         .event-type {
             background: rgba(0, 0, 0, 0.1);
             padding: 2px 6px;
@@ -196,48 +196,48 @@ async def get():
             margin-left: 8px;
             color: rgba(0, 0, 0, 0.7);
         }
-        
+
         /* Event Type Styles */
         .workflow_started {
             background: linear-gradient(135deg, #e6fffa 0%, #b2f5ea 100%);
             border-left-color: #38b2ac;
             color: #234e52;
         }
-        
+
         .step_started {
             background: linear-gradient(135deg, #fefcbf 0%, #faf089 100%);
             border-left-color: #d69e2e;
             color: #744210;
         }
-        
+
         .step_completed {
             background: linear-gradient(135deg, #f0fff4 0%, #c6f6d5 100%);
             border-left-color: #38a169;
             color: #22543d;
         }
-        
+
         .workflow_completed {
             background: linear-gradient(135deg, #ebf8ff 0%, #bee3f8 100%);
             border-left-color: #3182ce;
             color: #2a4365;
         }
-        
+
         .workflow_error {
             background: linear-gradient(135deg, #fed7d7 0%, #feb2b2 100%);
             border-left-color: #e53e3e;
             color: #742a2a;
         }
-        
+
         .info {
             background: linear-gradient(135deg, #f7fafc 0%, #edf2f7 100%);
             border-left-color: #718096;
             color: #2d3748;
         }
-        
+
         .background-event {
             position: relative;
         }
-        
+
         .background-event::before {
             content: "🚀";
             position: absolute;
@@ -245,7 +245,7 @@ async def get():
             right: 16px;
             font-size: 16px;
         }
-        
+
         .message-detail {
             margin-top: 6px;
             font-size: 12px;
@@ -255,7 +255,7 @@ async def get():
             padding: 4px 8px;
             border-radius: 4px;
         }
-        
+
         .content-preview {
             margin-top: 6px;
             font-size: 11px;
@@ -267,22 +267,22 @@ async def get():
             max-height: 60px;
             overflow-y: auto;
         }
-        
+
         /* Scrollbar styling */
         #messages::-webkit-scrollbar, .content-preview::-webkit-scrollbar {
             width: 6px;
         }
-        
+
         #messages::-webkit-scrollbar-track, .content-preview::-webkit-scrollbar-track {
             background: #f1f1f1;
             border-radius: 4px;
         }
-        
+
         #messages::-webkit-scrollbar-thumb, .content-preview::-webkit-scrollbar-thumb {
             background: #c1c1c1;
             border-radius: 4px;
         }
-        
+
         #messages::-webkit-scrollbar-thumb:hover, .content-preview::-webkit-scrollbar-thumb:hover {
             background: #a8a8a8;
         }
@@ -291,13 +291,13 @@ async def get():
 <body>
     <div class="container">
         <h1>🚀 Background Workflow Demo</h1>
-        
+
         <div class="controls">
             <input type="text" id="messageInput" placeholder="Enter your research topic..." value="AI trends 2024">
             <button class="btn-primary" onclick="startWorkflowBackgroundStream()">🚀 Start Background Streaming</button>
             <button class="btn-secondary" onclick="clearMessages()">🗑️ Clear Messages</button>
         </div>
-        
+
         <div id="status" class="status-bar status-disconnected">Status: Disconnected</div>
         <div id="messages"></div>
     </div>
@@ -305,27 +305,27 @@ async def get():
         let ws = null;
         function connect() {
             ws = new WebSocket('ws://localhost:8000/ws');
-            
+
             ws.onopen = function(event) {
                 const statusEl = document.getElementById('status');
                 statusEl.textContent = 'Status: Connected ✅';
                 statusEl.className = 'status-bar status-connected';
                 console.log('WebSocket connected');
             };
-            
+
             ws.onmessage = function(event) {
                 const data = JSON.parse(event.data);
                 console.log('Received event:', data);
                 displayMessage(data);
             };
-            
+
             ws.onclose = function(event) {
                 const statusEl = document.getElementById('status');
                 statusEl.textContent = 'Status: Disconnected ❌';
                 statusEl.className = 'status-bar status-disconnected';
                 console.log('WebSocket disconnected');
             };
-            
+
             ws.onerror = function(error) {
                 console.log('WebSocket error:', error);
                 displayMessage({type: 'workflow_error', content: 'WebSocket error: ' + error});
@@ -348,7 +348,7 @@ async def get():
         function getEventStyle(eventType) {
             const styles = {
                 'WorkflowStartedEvent': 'workflow_started',
-                'StepStartedEvent': 'step_started', 
+                'StepStartedEvent': 'step_started',
                 'StepCompletedEvent': 'step_completed',
                 'WorkflowCompletedEvent': 'workflow_completed',
                 'WorkflowErrorEvent': 'workflow_error',
@@ -362,25 +362,25 @@ async def get():
         function displayMessage(data) {
             const messages = document.getElementById('messages');
             const messageDiv = document.createElement('div');
-            
+
             // Determine the actual event type
             const eventType = data.event || data.type || 'unknown';
             const messageStyle = getEventStyle(eventType);
             const icon = getEventIcon(eventType);
-            
+
             messageDiv.className = `message ${messageStyle}`;
-            
+
             // Add background indicator for background events
             if (data.background) {
                 messageDiv.classList.add('background-event');
             }
-            
+
             const timestamp = new Date().toLocaleTimeString();
-            
+
             let content = '';
             let details = [];
             let contentPreview = '';
-            
+
             // Handle different event types
             switch(eventType) {
                 case 'WorkflowStarted':
@@ -388,12 +388,12 @@ async def get():
                     if (data.run_id) details.push(`Run ID: ${data.run_id}`);
                     if (data.session_id) details.push(`Session: ${data.session_id}`);
                     break;
-                    
+
                 case 'StepStarted':
                     content = `Step Started: ${data.step_name || 'Unknown'}`;
                     if (data.step_index !== undefined) details.push(`Index: ${data.step_index}`);
                     break;
-                    
+
                 case 'StepCompleted':
                     content = `Step Completed: ${data.step_name || 'Unknown'}`;
                     if (data.step_index !== undefined) details.push(`Index: ${data.step_index}`);
@@ -402,7 +402,7 @@ async def get():
                         if (data.content.length > 200) contentPreview += '...';
                     }
                     break;
-                    
+
                 case 'WorkflowCompleted':
                     content = `Workflow Completed!`;
                     if (data.status) details.push(`Status: ${data.status}`);
@@ -411,30 +411,30 @@ async def get():
                         if (data.content.length > 200) contentPreview += '...';
                     }
                     break;
-                    
+
                 case 'WorkflowError':
                     content = `Workflow Error: ${data.error || 'Unknown error'}`;
                     break;
-                    
+
                 case 'connection_established':
                     content = 'Connected to workflow events';
                     if (data.connection_id) details.push(`Connection: ${data.connection_id}`);
                     break;
-                    
+
                 case 'info':
                     content = data.content || data.message || 'Info message';
                     break;
-                    
+
                 case 'echo':
                     content = 'Echo response received';
                     break;
-                    
+
                 default:
                     content = data.message || data.content || 'Unknown event';
                     // Show raw data for debugging
                     contentPreview = JSON.stringify(data, null, 2);
             }
-            
+
             // Build the message HTML
             let messageHTML = `
                 <span class="message-icon">${icon}</span>
@@ -442,15 +442,15 @@ async def get():
                 <span class="message-content">${content}</span>
                 <span class="event-type">${eventType}</span>
             `;
-            
+
             if (details.length > 0) {
                 messageHTML += `<div class="message-detail">${details.join(' • ')}</div>`;
             }
-            
+
             if (contentPreview) {
                 messageHTML += `<div class="content-preview">${contentPreview}</div>`;
             }
-            
+
             messageDiv.innerHTML = messageHTML;
             messages.appendChild(messageDiv);
             messages.scrollTop = messages.scrollHeight;
@@ -473,22 +473,22 @@ async def get():
                     })
                 });
                 const result = await response.json();
-                
+
                 if (result.status === 'started') {
                     displayMessage({
-                        type: 'info', 
+                        type: 'info',
                         content: `Background streaming workflow started: ${result.run_id}`,
                         message: 'Watch for real-time events!'
                     });
                 } else {
                     displayMessage({
-                        type: 'error', 
+                        type: 'error',
                         content: `Failed to start: ${result.message}`
                     });
                 }
             } catch (error) {
                 displayMessage({
-                    type: 'error', 
+                    type: 'error',
                     content: `Failed to start background streaming workflow: ${error.message}`
                 });
             }
@@ -573,8 +573,8 @@ async def run_workflow_background_stream(request: Dict[str, Any]):
             Step(name="web_search", agent=search_agent),
         ],
         db=SqliteDb(
-            db_file="tmp/workflow_v2_bg.db",
-            session_table="workflow_v2_bg",
+            db_file="tmp/workflow_bg.db",
+            session_table="workflow_bg",
         ),
     )
 

@@ -130,7 +130,7 @@ email_sender_agent = Agent(
 
 # --- Execution function ---
 async def recruitment_execution(
-    workflow: Workflow,
+    session_state,
     execution_input: WorkflowExecutionInput,
     job_description: str,
     **kwargs: Any,
@@ -161,13 +161,13 @@ async def recruitment_execution(
         print(f"\n🔍 Processing candidate {i}/{len(resumes)}")
 
         # Extract resume text (with caching)
-        if url not in workflow.workflow_session_state:
+        if url not in session_state:
             print(f"📄 Extracting text from: {url}")
-            workflow.workflow_session_state[url] = extract_text_from_pdf(url)
+            session_state[url] = extract_text_from_pdf(url)
         else:
             print("📋 Using cached resume content")
 
-        resume_text = workflow.workflow_session_state[url]
+        resume_text = session_state[url]
 
         if not resume_text:
             print("❌ Could not extract text from resume")

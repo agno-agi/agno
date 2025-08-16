@@ -1,6 +1,6 @@
 """
 1. Run: `pip install openai duckduckgo-search newspaper4k lxml_html_clean agno` to install the dependencies
-2. Run: `python cookbook_v2/teams/async/modes/02_async_coordinate.py` to run the agent
+2. Run: `python cookbook/teams/async/modes/02_async_coordinate.py` to run the agent
 
 This example demonstrates a coordinated team of AI agents working together to research topics across different platforms.
 

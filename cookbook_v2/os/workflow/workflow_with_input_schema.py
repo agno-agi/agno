@@ -71,7 +71,7 @@ content_creation_workflow = Workflow(
     description="Automated content creation from blog posts to social media",
     db=SqliteDb(
         session_table="workflow_session",
-        db_file="tmp/workflow_v2.db",
+        db_file="tmp/workflow.db",
     ),
     steps=[research_step, content_planning_step],
     input_schema=ResearchTopic,

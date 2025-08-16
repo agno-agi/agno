@@ -69,7 +69,7 @@ step_workflow = Workflow(
     description="Basic workflow demonstrating step event storage",
     storage=SqliteDb(
         session_table="workflow_session",
-        db_file="tmp/workflow_v2.db",
+        db_file="tmp/workflow.db",
     ),
     steps=[research_step, search_step],
     store_events=True,
@@ -118,8 +118,8 @@ parallel_workflow = Workflow(
         Step(name="Combine Results", agent=analysis_agent),
     ],
     db=SqliteDb(
-        session_table="workflow_v2_parallel",
-        db_file="tmp/workflow_v2_parallel.db",
+        session_table="workflow_parallel",
+        db_file="tmp/workflow_parallel.db",
     ),
     store_events=True,
     events_to_skip=[

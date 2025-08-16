@@ -113,7 +113,7 @@ if __name__ == "__main__":
         description="Automated content creation with custom execution options",
         db=SqliteDb(
             session_table="workflow_session",
-            db_file="tmp/workflow_v2.db",
+            db_file="tmp/workflow.db",
         ),
         # Define the sequence of steps
         # First run the research_step, then the content_planning_step

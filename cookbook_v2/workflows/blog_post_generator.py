@@ -187,26 +187,26 @@ blog_writer_agent = Agent(
 
 
 # --- Helper Functions ---
-def get_cached_blog_post(workflow: Workflow, topic: str) -> Optional[str]:
+def get_cached_blog_post(session_state, topic: str) -> Optional[str]:
     """Get cached blog post from workflow session state"""
     logger.info("Checking if cached blog post exists")
-    return workflow.workflow_session_state.get("blog_posts", {}).get(topic)
+    return session_state.get("blog_posts", {}).get(topic)
 
 
-def cache_blog_post(workflow: Workflow, topic: str, blog_post: str):
+def cache_blog_post(session_state, topic: str, blog_post: str):
     """Cache blog post in workflow session state"""
     logger.info(f"Saving blog post for topic: {topic}")
-    if "blog_posts" not in workflow.workflow_session_state:
-        workflow.workflow_session_state["blog_posts"] = {}
-    workflow.workflow_session_state["blog_posts"][topic] = blog_post
+    if "blog_posts" not in session_state:
+        session_state["blog_posts"] = {}
+    session_state["blog_posts"][topic] = blog_post
 
 
 def get_cached_search_results(
-    workflow: Workflow, topic: str
+    session_state, topic: str
 ) -> Optional[SearchResults]:
     """Get cached search results from workflow session state"""
     logger.info("Checking if cached search results exist")
-    search_results = workflow.workflow_session_state.get("search_results", {}).get(
+    search_results = session_state.get("search_results", {}).get(
         topic
     )
     if search_results and isinstance(search_results, dict):
@@ -217,22 +217,22 @@ def get_cached_search_results(
     return search_results if isinstance(search_results, SearchResults) else None
 
 
-def cache_search_results(workflow: Workflow, topic: str, search_results: SearchResults):
+def cache_search_results(session_state, topic: str, search_results: SearchResults):
     """Cache search results in workflow session state"""
     logger.info(f"Saving search results for topic: {topic}")
-    if "search_results" not in workflow.workflow_session_state:
-        workflow.workflow_session_state["search_results"] = {}
-    workflow.workflow_session_state["search_results"][topic] = (
+    if "search_results" not in session_state:
+        session_state["search_results"] = {}
+    session_state["search_results"][topic] = (
         search_results.model_dump()
     )
 
 
 def get_cached_scraped_articles(
-    workflow: Workflow, topic: str
+    session_state, topic: str
 ) -> Optional[Dict[str, ScrapedArticle]]:
     """Get cached scraped articles from workflow session state"""
     logger.info("Checking if cached scraped articles exist")
-    scraped_articles = workflow.workflow_session_state.get("scraped_articles", {}).get(
+    scraped_articles = session_state.get("scraped_articles", {}).get(
         topic
     )
     if scraped_articles and isinstance(scraped_articles, dict):
@@ -247,25 +247,25 @@ def get_cached_scraped_articles(
 
 
 def cache_scraped_articles(
-    workflow: Workflow, topic: str, scraped_articles: Dict[str, ScrapedArticle]
+    session_state, topic: str, scraped_articles: Dict[str, ScrapedArticle]
 ):
     """Cache scraped articles in workflow session state"""
     logger.info(f"Saving scraped articles for topic: {topic}")
-    if "scraped_articles" not in workflow.workflow_session_state:
-        workflow.workflow_session_state["scraped_articles"] = {}
-    workflow.workflow_session_state["scraped_articles"][topic] = {
+    if "scraped_articles" not in session_state:
+        session_state["scraped_articles"] = {}
+    session_state["scraped_articles"][topic] = {
         url: article.model_dump() for url, article in scraped_articles.items()
     }
 
 
 async def get_search_results(
-    workflow: Workflow, topic: str, use_cache: bool = True, num_attempts: int = 3
+    session_state, topic: str, use_cache: bool = True, num_attempts: int = 3
 ) -> Optional[SearchResults]:
     """Get search results with caching support"""
 
     # Check cache first
     if use_cache:
-        cached_results = get_cached_search_results(workflow, topic)
+        cached_results = get_cached_search_results(session_state, topic)
         if cached_results:
             logger.info(f"Found {len(cached_results.articles)} articles in cache.")
             return cached_results
@@ -288,7 +288,7 @@ async def get_search_results(
                 print(f"✅ Found {article_count} relevant articles")
 
                 # Cache the results
-                cache_search_results(workflow, topic, response.content)
+                cache_search_results(session_state, topic, response.content)
                 return response.content
             else:
                 logger.warning(
@@ -303,7 +303,7 @@ async def get_search_results(
 
 
 async def scrape_articles(
-    workflow: Workflow,
+    session_state,
     topic: str,
     search_results: SearchResults,
     use_cache: bool = True,
@@ -312,7 +312,7 @@ async def scrape_articles(
 
     # Check cache first
     if use_cache:
-        cached_articles = get_cached_scraped_articles(workflow, topic)
+        cached_articles = get_cached_scraped_articles(session_state, topic)
         if cached_articles:
             logger.info(f"Found {len(cached_articles)} scraped articles in cache.")
             return cached_articles
@@ -344,13 +344,13 @@ async def scrape_articles(
             print(f"❌ Error scraping: {article.title[:50]}...")
 
     # Cache the scraped articles
-    cache_scraped_articles(workflow, topic, scraped_articles)
+    cache_scraped_articles(session_state, topic, scraped_articles)
     return scraped_articles
 
 
 # --- Main Execution Function ---
 async def blog_generation_execution(
-    workflow: Workflow,
+    session_state,
     topic: str = None,
     use_search_cache: bool = True,
     use_scrape_cache: bool = True,
@@ -360,13 +360,11 @@ async def blog_generation_execution(
     Blog post generation workflow execution function.
 
     Args:
-        workflow: The workflow instance
-        execution_input: Standard workflow execution input
+        session_state: The shared session state
         topic: Blog post topic (if not provided, uses execution_input.input)
         use_search_cache: Whether to use cached search results
         use_scrape_cache: Whether to use cached scraped articles
         use_blog_cache: Whether to use cached blog posts
-        **kwargs: Additional parameters
     """
 
     blog_topic = topic
@@ -379,7 +377,7 @@ async def blog_generation_execution(
 
     # Check for cached blog post first
     if use_blog_cache:
-        cached_blog = get_cached_blog_post(workflow, blog_topic)
+        cached_blog = get_cached_blog_post(session_state, blog_topic)
         if cached_blog:
             print("📋 Found cached blog post!")
             return cached_blog
@@ -388,7 +386,7 @@ async def blog_generation_execution(
     print("\n🔍 PHASE 1: RESEARCH & SOURCE GATHERING")
     print("=" * 50)
 
-    search_results = await get_search_results(workflow, blog_topic, use_search_cache)
+    search_results = await get_search_results(session_state, blog_topic, use_search_cache)
 
     if not search_results or len(search_results.articles) == 0:
         return f"❌ Sorry, could not find any articles on the topic: {blog_topic}"
@@ -402,7 +400,7 @@ async def blog_generation_execution(
     print("=" * 50)
 
     scraped_articles = await scrape_articles(
-        workflow, blog_topic, search_results, use_scrape_cache
+        session_state, blog_topic, search_results, use_scrape_cache
     )
 
     if not scraped_articles:
@@ -429,7 +427,7 @@ async def blog_generation_execution(
     blog_post = writer_response.content
 
     # Cache the blog post
-    cache_blog_post(workflow, blog_topic, blog_post)
+    cache_blog_post(session_state, blog_topic, blog_post)
 
     print("✅ Blog post generated successfully!")
     print(f"📝 Length: {len(blog_post)} characters")
@@ -444,10 +442,10 @@ blog_generator_workflow = Workflow(
     description="Advanced blog post generator with research and content creation capabilities",
     db=SqliteDb(
         session_table="workflow_session",
-        db_file="tmp/blog_generator_v2.db",
+        db_file="tmp/blog_generator.db",
     ),
     steps=blog_generation_execution,
-    workflow_session_state={},  # Initialize empty session state for caching
+    session_state={},  # Initialize empty session state for caching
 )
 
 

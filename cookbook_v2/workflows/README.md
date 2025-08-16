@@ -287,7 +287,7 @@ from agno.workflow import Router, Step, Workflow
 
 def route_by_topic(step_input) -> List[Step]:
     topic = step_input.input.lower()
-    
+
     if "tech" in topic:
         return [Step(name="Tech Research", agent=tech_expert)]
     elif "business" in topic:
@@ -373,7 +373,7 @@ def media_sequence_selector(step_input) -> List[Step]:
     if not step_input.input:
         return [image_sequence]
     message_lower = step_input.input.lower()
-    
+
     if "video" in message_lower:
         return [video_sequence]
     elif "image" in message_lower:
@@ -813,10 +813,11 @@ Share data across workflow steps:
 ```python
 from agno.workflow import Workflow
 from agno.agent.agent import Agent
+from agno.models.openai import OpenAIChat
 
 # Access state in agent tools
-def add_to_shared_data(agent: Agent, data: str) -> str:
-    agent.workflow_session_state["collected_data"] = data
+def add_to_shared_data(session_state, data: str) -> str:
+    session_state["collected_data"] = data
     return f"Added: {data}"
 
 shopping_assistant = Agent(
@@ -833,7 +834,7 @@ shopping_assistant = Agent(
 
 workflow = Workflow(
     name="Stateful Workflow",
-    workflow_session_state={},  # Initialize shared state
+    session_state={},  # Initialize shared state
     steps=[data_collector_step, data_processor_step, data_finalizer_step]
 )
 
@@ -897,6 +898,6 @@ workflow.print_response(
 2. **Add conditions**: Convert if/else logic to Condition components
 3. **Extract functions**: Move custom logic to function-based steps
 4. **Enable streaming**: For event-based information
-5. **Add state management**: Use `workflow_session_state` for data sharing
+5. **Add state management**: Use `session_state` for data sharing
 
 For more examples and advanced patterns, explore the [`cookbook/workflows/sync/`](/cookbook/workflows_2/sync) and [`cookbook/workflows/async/`](/cookbook/workflows_2/async) directory. Each file demonstrates a specific pattern with detailed comments and real-world use cases.

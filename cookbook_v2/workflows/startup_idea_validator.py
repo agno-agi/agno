@@ -369,7 +369,7 @@ startup_validation_workflow = Workflow(
         db_file="tmp/workflows.db",
     ),
     steps=startup_validation_execution,
-    workflow_session_state={},  # Initialize empty workflow session state
+    session_state={},  # Initialize empty workflow session state
 )
 
 

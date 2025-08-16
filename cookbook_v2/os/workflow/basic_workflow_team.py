@@ -55,7 +55,7 @@ content_planning_step = Step(
 content_creation_workflow = Workflow(
     name="Content Creation Workflow",
     description="Automated content creation from blog posts to social media",
-    db=SqliteDb(db_file="tmp/workflow_v2.db"),
+    db=SqliteDb(db_file="tmp/workflow.db"),
     steps=[research_step, content_planning_step],
 )
 

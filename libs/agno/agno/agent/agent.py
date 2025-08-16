@@ -27,7 +27,7 @@ from uuid import NAMESPACE_DNS, uuid4, uuid5
 
 from pydantic import BaseModel
 
-from agno.agent.print import (
+from agno.utils.print_response.agent import (
     aprint_response,
     aprint_response_stream,
     print_response,
@@ -5920,26 +5920,33 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream: Optional[bool] = None,
-        stream_intermediate_steps: bool = False,
+        stream_intermediate_steps: Optional[bool] = None,
         markdown: Optional[bool] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
         show_full_reasoning: bool = False,
         console: Optional[Any] = None,
         # Add tags to include in markdown content
-        tags_to_include_in_markdown: Set[str] = {"think", "thinking"},
+        tags_to_include_in_markdown: Optional[Set[str]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
+        if not tags_to_include_in_markdown:
+            tags_to_include_in_markdown = {"think", "thinking"}
+            
         if markdown is None:
             markdown = self.markdown
 
         if self.response_model is not None:
             markdown = False
-
-        stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps
-        stream = stream or self.stream or False
+            
+        if stream is None:
+            stream = self.stream or False
+        
+        if stream_intermediate_steps is None:
+            stream_intermediate_steps = self.stream_intermediate_steps or False
+            
         if stream:
             print_response_stream(
                 agent=self,
@@ -5998,26 +6005,33 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         stream: Optional[bool] = None,
-        stream_intermediate_steps: bool = False,
+        stream_intermediate_steps: Optional[bool] = None,
         markdown: Optional[bool] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
         show_full_reasoning: bool = False,
         console: Optional[Any] = None,
         # Add tags to include in markdown content
-        tags_to_include_in_markdown: Set[str] = {"think", "thinking"},
+        tags_to_include_in_markdown: Optional[Set[str]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
+        if not tags_to_include_in_markdown:
+            tags_to_include_in_markdown = {"think", "thinking"}
+            
         if markdown is None:
             markdown = self.markdown
 
         if self.response_model is not None:
             markdown = False
-
-        stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps
-        stream = stream or self.stream or False
+            
+        if stream is None:
+            stream = self.stream or False
+        
+        if stream_intermediate_steps is None:
+            stream_intermediate_steps = self.stream_intermediate_steps or False
+            
         if stream:
             await aprint_response_stream(
                 agent=self,

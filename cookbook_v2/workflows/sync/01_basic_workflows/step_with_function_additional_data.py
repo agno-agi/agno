@@ -132,7 +132,7 @@ if __name__ == "__main__":
         description="Automated content creation with custom execution options",
         db=SqliteDb(
             session_table="workflow_session",
-            db_file="tmp/workflow_v2.db",
+            db_file="tmp/workflow.db",
         ),
         steps=[research_step, content_planning_step],
     )

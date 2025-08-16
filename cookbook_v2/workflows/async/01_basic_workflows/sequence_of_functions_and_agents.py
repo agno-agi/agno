@@ -39,7 +39,7 @@ async def prepare_input_for_web_search(step_input: StepInput) -> StepOutput:
 	<topic>
 	{topic}
 	</topic>
-	
+
 	Search the web for atleast 10 articles\
 	""")
     )
@@ -55,7 +55,7 @@ async def prepare_input_for_writer(step_input: StepInput) -> StepOutput:
 	<topic>
 	{topic}
 	</topic>
-    
+
 	Here is information from the web:
 	<research_results>
 	{research_team_output}
@@ -80,7 +80,7 @@ if __name__ == "__main__":
         description="Automated blog post creation from Hackernews and the web",
         db=SqliteDb(
             session_table="workflow_session",
-            db_file="tmp/workflow_v2.db",
+            db_file="tmp/workflow.db",
         ),
         steps=[
             prepare_input_for_web_search,

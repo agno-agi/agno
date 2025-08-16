@@ -5,45 +5,45 @@ from agno.workflow.workflow import Workflow
 
 
 # Define tools to manage a shopping list in workflow session state
-def add_item(agent: Agent, item: str) -> str:
+def add_item(session_state, item: str) -> str:
     """Add an item to the shopping list in workflow session state.
 
     Args:
         item (str): The item to add to the shopping list
     """
-    if agent.workflow_session_state is None:
-        agent.workflow_session_state = {}
+    if session_state is None:
+        session_state = {}
 
-    if "shopping_list" not in agent.workflow_session_state:
-        agent.workflow_session_state["shopping_list"] = []
+    if "shopping_list" not in session_state:
+        session_state["shopping_list"] = []
 
     # Check if item already exists (case-insensitive)
     existing_items = [
         existing_item.lower()
-        for existing_item in agent.workflow_session_state["shopping_list"]
+        for existing_item in session_state["shopping_list"]
     ]
     if item.lower() not in existing_items:
-        agent.workflow_session_state["shopping_list"].append(item)
+        session_state["shopping_list"].append(item)
         return f"Added '{item}' to the shopping list."
     else:
         return f"'{item}' is already in the shopping list."
 
 
-def remove_item(agent: Agent, item: str) -> str:
+def remove_item(session_state, item: str) -> str:
     """Remove an item from the shopping list in workflow session state.
 
     Args:
         item (str): The item to remove from the shopping list
     """
-    if agent.workflow_session_state is None:
-        agent.workflow_session_state = {}
+    if session_state is None:
+        session_state = {}
 
-    if "shopping_list" not in agent.workflow_session_state:
-        agent.workflow_session_state["shopping_list"] = []
+    if "shopping_list" not in session_state:
+        session_state["shopping_list"] = []
         return f"Shopping list is empty. Cannot remove '{item}'."
 
     # Find and remove item (case-insensitive)
-    shopping_list = agent.workflow_session_state["shopping_list"]
+    shopping_list = session_state["shopping_list"]
     for i, existing_item in enumerate(shopping_list):
         if existing_item.lower() == item.lower():
             removed_item = shopping_list.pop(i)
@@ -52,25 +52,25 @@ def remove_item(agent: Agent, item: str) -> str:
     return f"'{item}' not found in the shopping list."
 
 
-def remove_all_items(agent: Agent) -> str:
+def remove_all_items(session_state) -> str:
     """Remove all items from the shopping list in workflow session state."""
-    if agent.workflow_session_state is None:
-        agent.workflow_session_state = {}
+    if session_state is None:
+        session_state = {}
 
-    agent.workflow_session_state["shopping_list"] = []
+    session_state["shopping_list"] = []
     return "Removed all items from the shopping list."
 
 
-def list_items(agent: Agent) -> str:
+def list_items(session_state) -> str:
     """List all items in the shopping list from workflow session state."""
     if (
-        agent.workflow_session_state is None
-        or "shopping_list" not in agent.workflow_session_state
-        or not agent.workflow_session_state["shopping_list"]
+        session_state is None
+        or "shopping_list" not in session_state
+        or not session_state["shopping_list"]
     ):
         return "Shopping list is empty."
 
-    items = agent.workflow_session_state["shopping_list"]
+    items = session_state["shopping_list"]
     items_str = "\n".join([f"- {item}" for item in items])
     return f"Shopping list:\n{items_str}"
 
@@ -117,7 +117,7 @@ view_list_step = Step(
 shopping_workflow = Workflow(
     name="Shopping List Workflow",
     steps=[manage_items_step, view_list_step],
-    workflow_session_state={},  # Initialize empty workflow session state
+    session_state={},  # Initialize empty workflow session state
 )
 
 if __name__ == "__main__":
@@ -126,25 +126,25 @@ if __name__ == "__main__":
     shopping_workflow.print_response(
         input="Please add milk, bread, and eggs to my shopping list."
     )
-    print("Workflow session state:", shopping_workflow.workflow_session_state)
+    print("Workflow session state:", shopping_workflow.get_session_state())
 
     # Example 2: Add more items and view list
     print("\n=== Example 2: Adding More Items ===")
     shopping_workflow.print_response(
         input="Add apples and bananas to the list, then show me the complete list."
     )
-    print("Workflow session state:", shopping_workflow.workflow_session_state)
+    print("Workflow session state:", shopping_workflow.get_session_state())
 
     # Example 3: Remove items
     print("\n=== Example 3: Removing Items ===")
     shopping_workflow.print_response(
         input="Remove bread from the list and show me what's left."
     )
-    print("Workflow session state:", shopping_workflow.workflow_session_state)
+    print("Workflow session state:", shopping_workflow.get_session_state())
 
     # Example 4: Clear the entire list
     print("\n=== Example 4: Clearing List ===")
     shopping_workflow.print_response(
         input="Clear the entire shopping list and confirm it's empty."
     )
-    print("Final workflow session state:", shopping_workflow.workflow_session_state)
+    print("Final workflow session state:", shopping_workflow.get_session_state())

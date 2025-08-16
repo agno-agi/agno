@@ -37,14 +37,14 @@ from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
 from agno.models.metrics import Metrics
-from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
+from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.base import RunOutputMetaData, RunStatus
 from agno.run.messages import RunMessages
 from agno.run.response import RunEvent, RunOutput, RunOutputEvent
-from agno.run.team import TeamRunEvent, TeamRunOutput, TeamRunOutputEvent, ToolCallCompletedEvent
+from agno.run.team import TeamRunEvent, TeamRunOutput, TeamRunOutputEvent
 from agno.session import SessionSummaryManager, TeamSession
-from agno.team.print import aprint_response, aprint_response_stream, print_response, print_response_stream
+from agno.utils.print_response.team import aprint_response, aprint_response_stream, print_response, print_response_stream
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.events import (
@@ -86,7 +86,6 @@ from agno.utils.reasoning import (
 from agno.utils.response import (
     async_generator_wrapper,
     check_if_run_cancelled,
-    create_panel,
     escape_markdown_tags,
     format_tool_calls,
     generator_wrapper,
@@ -2260,8 +2259,8 @@ class Team:
         self,
         input: Optional[Union[List, Dict, str, Message, BaseModel, List[Message]]] = None,
         *,
-        stream: bool = False,
-        stream_intermediate_steps: bool = False,
+        stream: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
@@ -2283,8 +2282,15 @@ class Team:
 
         if markdown is None:
             markdown = self.markdown
-        else:
-            self.markdown = markdown
+
+        if self.response_model is not None:
+            markdown = False
+        
+        if stream is None:
+            stream = self.stream or False
+        
+        if stream_intermediate_steps is None:
+            stream_intermediate_steps = self.stream_intermediate_steps or False
 
         if stream:
             print_response_stream(
@@ -2332,8 +2338,8 @@ class Team:
         self,
         input: Optional[Union[List, Dict, str, Message, BaseModel, List[Message]]] = None,
         *,
-        stream: bool = False,
-        stream_intermediate_steps: bool = False,
+        stream: Optional[bool] = None,
+        stream_intermediate_steps: Optional[bool] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
@@ -2355,8 +2361,15 @@ class Team:
 
         if markdown is None:
             markdown = self.markdown
-        else:
-            self.markdown = markdown
+
+        if self.response_model is not None:
+            markdown = False
+            
+        if stream is None:
+            stream = self.stream or False
+        
+        if stream_intermediate_steps is None:
+            stream_intermediate_steps = self.stream_intermediate_steps or False
 
         if stream:
             await aprint_response_stream(

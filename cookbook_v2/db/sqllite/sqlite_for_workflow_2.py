@@ -7,7 +7,7 @@ from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
-db = SqliteDb(db_file="tmp/workflow_v2.db")
+db = SqliteDb(db_file="tmp/workflow.db")
 
 # Define agents
 hackernews_agent = Agent(

@@ -30,7 +30,7 @@ workflow = Workflow(
     ],
     db=SqliteDb(
         session_table="workflow_session",
-        db_file="tmp/workflow_v2.db",
+        db_file="tmp/workflow.db",
     ),
 )
 

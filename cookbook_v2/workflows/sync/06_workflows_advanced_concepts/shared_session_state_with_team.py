@@ -25,7 +25,7 @@ def add_step(
     }
     session_state["steps"].append(step)
 
-    result = f"✅ Successfully added step '{step_name}' assigned to {assignee} (priority: {priority}). Total steps: {len(team.workflow_session_state['steps'])}"
+    result = f"✅ Successfully added step '{step_name}' assigned to {assignee} (priority: {priority}). Total steps: {len(session_state['steps'])}"
     return result
 
 
@@ -47,7 +47,7 @@ def delete_step(session_state, step_name: str) -> str:
 
 # === AGENT TOOLS FOR STATUS MANAGEMENT ===
 def update_step_status(
-    agent: Agent, step_name: str, new_status: str, notes: str = ""
+    session_state, step_name: str, new_status: str, notes: str = ""
 ) -> str:
     """Update the status of a step in the workflow session state."""
     if session_state is None or "steps" not in session_state:
@@ -144,7 +144,6 @@ management_team = Team(
         "Execute only the requested add/delete actions using tools and report the result.",
     ],
     mode="coordinate",
-    storage=None,
 )
 
 # === CREATE STEPS ===
@@ -164,7 +163,7 @@ update_status_step = Step(
 project_workflow = Workflow(
     name="Project Management Workflow",
     steps=[manage_steps_step, update_status_step],
-    workflow_session_state={"steps": []},
+    session_state={"steps": []},
 )
 
 # === HELPER FUNCTION TO DISPLAY CURRENT STATE ===
@@ -218,7 +217,7 @@ if __name__ == "__main__":
         input="Add a high priority step called 'Setup Database' assigned to Alice, and a medium priority step called 'Create API' assigned to Bob"
     )
     print_current_steps(project_workflow)
-    print(f"🔍 Workflow Session State: {project_workflow.workflow_session_state}")
+    print(f"🔍 Workflow Session State: {project_workflow.get_session_state()}")
     print()
 
     # Example 2: Update step status
@@ -229,7 +228,7 @@ if __name__ == "__main__":
         input="Mark 'Setup Database' as in_progress with notes 'Started database schema design'"
     )
     print_current_steps(project_workflow)
-    print(f"🔍 Workflow Session State: {project_workflow.workflow_session_state}")
+    print(f"🔍 Workflow Session State: {project_workflow.get_session_state()}")
     print()
 
     # Example 3: Reassign and complete a step
@@ -240,7 +239,7 @@ if __name__ == "__main__":
         input="Reassign 'Create API' to Charlie, then mark it as completed with notes 'API endpoints implemented and tested'"
     )
     print_current_steps(project_workflow)
-    print(f"🔍 Workflow Session State: {project_workflow.workflow_session_state}")
+    print(f"🔍 Workflow Session State: {project_workflow.get_session_state()}")
     print()
 
     # Example 4: Add more steps and manage them
@@ -251,7 +250,7 @@ if __name__ == "__main__":
         input="Add a low priority step 'Write Tests' assigned to Dave, then mark 'Setup Database' as completed"
     )
     print_current_steps(project_workflow)
-    print(f"🔍 Workflow Session State: {project_workflow.workflow_session_state}")
+    print(f"🔍 Workflow Session State: {project_workflow.get_session_state()}")
     print()
 
     # Example 5: Delete a step
@@ -262,4 +261,4 @@ if __name__ == "__main__":
         input="Delete the 'Write Tests' step and add a high priority 'Deploy to Production' step assigned to Eve"
     )
     print_current_steps(project_workflow)
-    print(f"🔍 Workflow Session State: {project_workflow.workflow_session_state}")
+    print(f"🔍 Workflow Session State: {project_workflow.get_session_state()}")

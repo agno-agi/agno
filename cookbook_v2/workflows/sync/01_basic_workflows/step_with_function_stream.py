@@ -3,7 +3,7 @@ from typing import Iterator, Union
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.run.v2.workflow import WorkflowRunOutputEvent
+from agno.run.workflow import WorkflowRunOutputEvent
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
@@ -124,7 +124,7 @@ if __name__ == "__main__":
         description="Automated content creation with streaming custom execution functions",
         db=SqliteDb(
             session_table="workflow_session",
-            db_file="tmp/workflow_v2.db",
+            db_file="tmp/workflow.db",
         ),
         # Define the sequence of steps
         # First run the research_step, then the content_planning_step

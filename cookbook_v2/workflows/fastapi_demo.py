@@ -47,14 +47,14 @@ triage_agent = Agent(
 )
 
 
-def cache_solution(workflow: Workflow, query: str, solution: str):
-    if "solutions" not in workflow.workflow_session_state:
-        workflow.workflow_session_state["solutions"] = {}
-    workflow.workflow_session_state["solutions"][query] = solution
+def cache_solution(session_state, query: str, solution: str):
+    if "solutions" not in session_state:
+        session_state["solutions"] = {}
+    session_state["solutions"][query] = solution
 
 
-def customer_support_execution(workflow: Workflow, query: str) -> str:
-    cached_solution = workflow.workflow_session_state.get("solutions", {}).get(query)
+def customer_support_execution(session_state, query: str) -> str:
+    cached_solution = session_state.get("solutions", {}).get(query)
     if cached_solution:
         log_info(f"Cache hit! Returning cached solution for query: {query}")
         return cached_solution
@@ -76,7 +76,7 @@ def customer_support_execution(workflow: Workflow, query: str) -> str:
     solution_response = support_agent.run(solution_context)
     solution = solution_response.content
 
-    cache_solution(workflow, query, solution)
+    cache_solution(session_state, query, solution)
 
     return solution
 
@@ -87,7 +87,7 @@ customer_support_workflow = Workflow(
     name="Customer Support Resolution Pipeline",
     description="AI-powered customer support with intelligent caching",
     steps=customer_support_execution,
-    workflow_session_state={},  # Initialize empty session state
+    session_state={},  # Initialize empty session state
 )
 
 fastapi_app = FastAPIApp(
