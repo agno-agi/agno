@@ -7,12 +7,12 @@ from pydantic import BaseModel, Field
 
 from agno.models.base import Model
 from agno.run.response import Message
-from agno.session.agent import AgentSession
-from agno.session.team import TeamSession
 from agno.utils.log import log_debug, log_warning
 
 # TODO: Look into moving all managers into a separate dir
 if TYPE_CHECKING:
+    from agno.session.agent import AgentSession
+    from agno.session.team import TeamSession
     from agno.session import Session
 
 
@@ -184,7 +184,7 @@ class SessionSummaryManager:
 
     def create_session_summary(
         self,
-        session: Union[AgentSession, TeamSession],
+        session: Union["AgentSession", "TeamSession"],
     ) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
         log_debug("Creating session summary", center=True)
@@ -205,7 +205,7 @@ class SessionSummaryManager:
 
     async def acreate_session_summary(
         self,
-        session: Union[AgentSession, TeamSession],
+        session: Union["AgentSession", "TeamSession"],
     ) -> Optional[SessionSummary]:
         """Creates a summary of the session"""
         log_debug("Creating session summary", center=True)
