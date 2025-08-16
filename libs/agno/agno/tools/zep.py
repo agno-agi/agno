@@ -148,7 +148,7 @@ class ZepTools(Toolkit):
 
         try:
             zep_message = ZepMessage(
-                role_type=role,
+                role=role,
                 content=content,
             )
 
@@ -361,7 +361,7 @@ class ZepAsyncTools(Toolkit):
 
         try:
             zep_message = ZepMessage(
-                role_type=role,
+                role=role.upper(),
                 content=content,
             )
 

@@ -1,11 +1,11 @@
 from agno.api.api import api
 from agno.api.routes import ApiRoutes
-from agno.api.schemas.workflows import WorkflowCreate
+from agno.api.schemas.workflows import WorkflowRunCreate
 from agno.cli.settings import agno_cli_settings
 from agno.utils.log import log_debug
 
 
-def create_workflow(workflow: WorkflowCreate) -> None:
+def create_workflow(workflow: WorkflowRunCreate) -> None:
     if not agno_cli_settings.api_enabled:
         return
 
@@ -19,7 +19,7 @@ def create_workflow(workflow: WorkflowCreate) -> None:
             log_debug(f"Could not create Workflow: {e}")
 
 
-async def acreate_workflow(workflow: WorkflowCreate) -> None:
+async def acreate_workflow(workflow: WorkflowRunCreate) -> None:
     if not agno_cli_settings.api_enabled:
         return
 

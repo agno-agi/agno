@@ -375,7 +375,7 @@ class MistralChat(Model):
 
         return model_response
 
-    def _parse_provider_response_delta(self, response_delta: CompletionEvent) -> Optional[ModelResponse]:
+    def _parse_provider_response_delta(self, response_delta: CompletionEvent) -> ModelResponse:
         """
         Parse the response delta from the Mistral model.
         """

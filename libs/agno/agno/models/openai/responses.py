@@ -913,7 +913,7 @@ class OpenAIResponses(Model):
             run_response=run_response,
         ):
             model_response, tool_use = self._process_stream_response(
-                stream_event=stream_event,
+                stream_event=stream_event,  # type: ignore
                 assistant_message=assistant_message,
                 stream_data=stream_data,
                 tool_use=tool_use,

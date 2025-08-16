@@ -1,17 +1,12 @@
-from abc import ABC, abstractmethod
-from typing import Optional
+from dataclasses import dataclass
+from typing import Optional, Union
 
 from agno.infra.aws.s3.bucket import S3Bucket
 from agno.infra.aws.s3.object import S3Object
 
 
-class RemoteContent(ABC):
-    @abstractmethod
-    def get_config(self):
-        pass
-
-
-class S3Content(RemoteContent):
+@dataclass
+class S3Content:
     def __init__(
         self,
         bucket_name: Optional[str] = None,
@@ -48,7 +43,8 @@ class S3Content(RemoteContent):
         }
 
 
-class GCSContent(RemoteContent):
+@dataclass
+class GCSContent:
     def __init__(
         self,
         bucket=None,  # Type hint removed to avoid import issues
@@ -87,3 +83,6 @@ class GCSContent(RemoteContent):
             "blob_name": self.blob_name,
             "prefix": self.prefix,
         }
+
+
+RemoteContent = Union[S3Content, GCSContent]

@@ -264,7 +264,7 @@ class Claude(Model):
             assistant_message.metrics.stop_timer()
 
             # Parse the response into an Agno ModelResponse object
-            model_response = self._parse_provider_response(provider_response, response_format=response_format)
+            model_response = self._parse_provider_response(provider_response, response_format=response_format)  # type: ignore
 
             return model_response
 
@@ -321,7 +321,7 @@ class Claude(Model):
                     **request_kwargs,
                 ) as stream:
                     for chunk in stream:
-                        yield self._parse_provider_response_delta(chunk)
+                        yield self._parse_provider_response_delta(chunk)  # type: ignore
             else:
                 assistant_message.metrics.start_timer()
                 with self.get_client().messages.stream(
@@ -329,8 +329,8 @@ class Claude(Model):
                     messages=chat_messages,  # type: ignore
                     **request_kwargs,
                 ) as stream:
-                    for chunk in stream:
-                        yield self._parse_provider_response_delta(chunk)
+                    for chunk in stream:  # type: ignore
+                        yield self._parse_provider_response_delta(chunk)  # type: ignore
 
             assistant_message.metrics.stop_timer()
 
@@ -386,7 +386,7 @@ class Claude(Model):
             assistant_message.metrics.stop_timer()
 
             # Parse the response into an Agno ModelResponse object
-            model_response = self._parse_provider_response(provider_response, response_format=response_format)
+            model_response = self._parse_provider_response(provider_response, response_format=response_format)  # type: ignore
 
             return model_response
 
@@ -440,7 +440,7 @@ class Claude(Model):
                     **request_kwargs,
                 ) as stream:
                     async for chunk in stream:
-                        yield self._parse_provider_response_delta(chunk)
+                        yield self._parse_provider_response_delta(chunk)  # type: ignore
             else:
                 assistant_message.metrics.start_timer()
                 async with self.get_async_client().messages.stream(
@@ -449,7 +449,7 @@ class Claude(Model):
                     **request_kwargs,
                 ) as stream:
                     async for chunk in stream:  # type: ignore
-                        yield self._parse_provider_response_delta(chunk)
+                        yield self._parse_provider_response_delta(chunk)  # type: ignore
 
             assistant_message.metrics.stop_timer()
 

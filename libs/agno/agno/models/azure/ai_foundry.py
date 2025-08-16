@@ -243,7 +243,7 @@ class AzureAIFoundry(Model):
                 )
             assistant_message.metrics.stop_timer()
 
-            model_response = self._parse_provider_response(provider_response, response_format=response_format)
+            model_response = self._parse_provider_response(provider_response, response_format=response_format)  # type: ignore
 
             return model_response
 

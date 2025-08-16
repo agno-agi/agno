@@ -66,8 +66,6 @@ class AgentOS:
 
         if self.agents:
             for agent in self.agents:
-                if not agent.os_id:
-                    agent.os_id = self.os_id
                 agent.initialize_agent()
 
                 # Required for the built-in routes to work
@@ -84,9 +82,6 @@ class AgentOS:
 
                 for member in team.members:
                     if isinstance(member, Agent):
-                        if not member.os_id:
-                            member.os_id = self.os_id
-
                         member.team_id = None
                         member.initialize_agent()
                     elif isinstance(member, Team):
@@ -94,8 +89,6 @@ class AgentOS:
 
         if self.workflows:
             for workflow in self.workflows:
-                if not workflow.os_id:
-                    workflow.os_id = self.os_id
                 if not workflow.id:
                     workflow.id = generate_id(workflow.name)
 

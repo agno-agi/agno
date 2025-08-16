@@ -50,7 +50,7 @@ class MessageData:
     # Data from the provider that we might need on subsequent messages
     response_provider_data: Optional[Dict[str, Any]] = None
 
-    metadata: Optional[Dict[str, Any]] = None
+    extra: Optional[Dict[str, Any]] = None
 
 
 def _log_messages(messages: List[Message]) -> None:
@@ -246,6 +246,10 @@ class Model(ABC):
                     function_call_limit=tool_call_limit,
                 ):
                     if isinstance(function_call_response, ModelResponse):
+                        # The session state is updated by the function call
+                        if function_call_response.updated_session_state is not None:
+                            model_response.updated_session_state = function_call_response.updated_session_state
+
                         if (
                             function_call_response.event
                             in [
@@ -357,6 +361,10 @@ class Model(ABC):
                     function_call_limit=tool_call_limit,
                 ):
                     if isinstance(function_call_response, ModelResponse):
+                        # The session state is updated by the function call
+                        if function_call_response.updated_session_state is not None:
+                            model_response.updated_session_state = function_call_response.updated_session_state
+
                         if (
                             function_call_response.event
                             in [
@@ -692,9 +700,9 @@ class Model(ABC):
                 function_call_count += len(function_call_results)
 
                 # Format and add results to messages
-                if stream_data and stream_data.metadata is not None:
+                if stream_data and stream_data.extra is not None:
                     self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **stream_data.metadata
+                        messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
                 else:
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
@@ -847,9 +855,9 @@ class Model(ABC):
                 function_call_count += len(function_call_results)
 
                 # Format and add results to messages
-                if stream_data and stream_data.metadata is not None:
+                if stream_data and stream_data.extra is not None:
                     self.format_function_call_results(
-                        messages=messages, function_call_results=function_call_results, **stream_data.metadata
+                        messages=messages, function_call_results=function_call_results, **stream_data.extra
                     )
                 else:
                     self.format_function_call_results(messages=messages, function_call_results=function_call_results)
@@ -944,9 +952,9 @@ class Model(ABC):
                 stream_data.response_image = model_response_delta.image
 
         if model_response_delta.extra is not None:
-            if stream_data.metadata is None:
-                stream_data.metadata = {}
-            stream_data.metadata.update(model_response_delta.extra)
+            if stream_data.extra is None:
+                stream_data.extra = {}
+            stream_data.extra.update(model_response_delta.extra)
 
         if should_yield:
             yield model_response_delta
@@ -1075,8 +1083,8 @@ class Model(ABC):
         # Process function call output
         function_call_output: str = ""
 
-        if isinstance(function_call.result, (GeneratorType, collections.abc.Iterator)):
-            for item in function_call.result:
+        if isinstance(function_execution_result.result, (GeneratorType, collections.abc.Iterator)):
+            for item in function_execution_result.result:
                 # This function yields agent/team run events
                 if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
                     item, tuple(get_args(TeamRunOutputEvent))
@@ -1100,7 +1108,7 @@ class Model(ABC):
                     if function_call.function.show_result:
                         yield ModelResponse(content=str(item))
         else:
-            function_call_output = str(function_call.result)
+            function_call_output = str(function_execution_result.result)
             if function_call.function.show_result:
                 yield ModelResponse(content=function_call_output)
 
@@ -1122,6 +1130,7 @@ class Model(ABC):
                 )
             ],
             event=ModelResponseEvent.tool_call_completed.value,
+            updated_session_state=function_execution_result.updated_session_state,
         )
 
         # Add function call to function call results
@@ -1233,7 +1242,7 @@ class Model(ABC):
     async def arun_function_call(
         self,
         function_call: FunctionCall,
-    ) -> Tuple[Union[bool, AgentRunException], Timer, FunctionCall]:
+    ) -> Tuple[Union[bool, AgentRunException], Timer, FunctionCall, Optional[Dict[str, Any]]]:
         """Run a single function call and return its success status, timer, and the FunctionCall object."""
         from inspect import isasyncgenfunction, iscoroutine, iscoroutinefunction
 
@@ -1267,7 +1276,7 @@ class Model(ABC):
             raise e
 
         function_call_timer.stop()
-        return success, function_call_timer, function_call
+        return success, function_call_timer, function_call, result.updated_session_state
 
     async def arun_function_calls(
         self,
@@ -1413,7 +1422,7 @@ class Model(ABC):
                 raise result
 
             # Unpack result
-            function_call_success, function_call_timer, fc = result
+            function_call_success, function_call_timer, function_call, updated_session_state = result
 
             # Handle AgentRunException
             if isinstance(function_call_success, AgentRunException):
@@ -1425,8 +1434,8 @@ class Model(ABC):
 
             # Process function call output
             function_call_output: str = ""
-            if isinstance(fc.result, (GeneratorType, collections.abc.Iterator)):
-                for item in fc.result:
+            if isinstance(function_call.result, (GeneratorType, collections.abc.Iterator)):
+                for item in function_call.result:
                     # This function yields agent/team run events
                     if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
                         item, tuple(get_args(TeamRunOutputEvent))
@@ -1439,7 +1448,7 @@ class Model(ABC):
                                 # Capture output
                                 function_call_output += item.content or ""
 
-                            if fc.function.show_result:
+                            if function_call.function.show_result:
                                 yield ModelResponse(content=item.content)
                                 continue
 
@@ -1447,10 +1456,10 @@ class Model(ABC):
                         yield item
                     else:
                         function_call_output += str(item)
-                        if fc.function.show_result:
+                        if function_call.function.show_result:
                             yield ModelResponse(content=str(item))
-            elif isinstance(fc.result, (AsyncGeneratorType, collections.abc.AsyncIterator)):
-                async for item in fc.result:
+            elif isinstance(function_call.result, (AsyncGeneratorType, collections.abc.AsyncIterator)):
+                async for item in function_call.result:
                     # This function yields agent/team run events
                     if isinstance(item, tuple(get_args(RunOutputEvent))) or isinstance(
                         item, tuple(get_args(TeamRunOutputEvent))
@@ -1463,7 +1472,7 @@ class Model(ABC):
                                 # Capture output
                                 function_call_output += item.content or ""
 
-                            if fc.function.show_result:
+                            if function_call.function.show_result:
                                 yield ModelResponse(content=item.content)
                                 continue
 
@@ -1471,19 +1480,19 @@ class Model(ABC):
                         yield item
                     else:
                         function_call_output += str(item)
-                        if fc.function.show_result:
+                        if function_call.function.show_result:
                             yield ModelResponse(content=str(item))
             else:
-                function_call_output = str(fc.result)
-                if fc.function.show_result:
+                function_call_output = str(function_call.result)
+                if function_call.function.show_result:
                     yield ModelResponse(content=function_call_output)
 
             # Create and yield function call result
             function_call_result = self.create_function_call_result(
-                fc, success=function_call_success, output=function_call_output, timer=function_call_timer
+                function_call, success=function_call_success, output=function_call_output, timer=function_call_timer
             )
             yield ModelResponse(
-                content=f"{fc.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.",
+                content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.",
                 tool_executions=[
                     ToolExecution(
                         tool_call_id=function_call_result.tool_call_id,
@@ -1496,6 +1505,7 @@ class Model(ABC):
                     )
                 ],
                 event=ModelResponseEvent.tool_call_completed.value,
+                updated_session_state=updated_session_state,
             )
 
             # Add function call result to function call results

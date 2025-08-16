@@ -502,7 +502,7 @@ class SurrealDb(VectorDb):
         """
         try:
             # Query for documents with the given content_id
-            query = f"SELECT * FROM {self.table_name} WHERE content_id = $content_id"
+            query = f"SELECT * FROM {self.collection} WHERE content_id = $content_id"
             result = self.client.query(query, {"content_id": content_id})
 
             if not result or not result[0].get("result"):

@@ -551,7 +551,6 @@ class SqliteDb(BaseDb):
                         session_id=serialized_session.get("session_id"),
                         session_type=SessionType.AGENT.value,
                         agent_id=serialized_session.get("agent_id"),
-                        team_session_id=serialized_session.get("team_session_id"),
                         user_id=serialized_session.get("user_id"),
                         agent_data=serialized_session.get("agent_data"),
                         session_data=serialized_session.get("session_data"),
@@ -566,7 +565,6 @@ class SqliteDb(BaseDb):
                         index_elements=["session_id"],
                         set_=dict(
                             agent_id=serialized_session.get("agent_id"),
-                            team_session_id=serialized_session.get("team_session_id"),
                             user_id=serialized_session.get("user_id"),
                             runs=serialized_session.get("runs"),
                             chat_history=serialized_session.get("chat_history"),

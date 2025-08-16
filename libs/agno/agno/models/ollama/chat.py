@@ -14,6 +14,7 @@ from agno.utils.log import log_debug, log_warning
 try:
     from ollama import AsyncClient as AsyncOllamaClient
     from ollama import Client as OllamaClient
+    from ollama._types import ChatResponse
     from ollama._types import Message as OllamaMessage
 except ImportError:
     raise ImportError("`ollama` not installed. Please install using `pip install ollama`")
@@ -335,7 +336,7 @@ class Ollama(Model):
 
         return model_response
 
-    def _parse_provider_response_delta(self, response_delta: dict) -> ModelResponse:
+    def _parse_provider_response_delta(self, response_delta: ChatResponse) -> ModelResponse:
         """
         Parse the provider response delta.
 

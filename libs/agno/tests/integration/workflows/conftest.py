@@ -5,20 +5,12 @@ import pytest
 
 from agno.agent.agent import Agent
 from agno.db.json import JsonDb
-from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.workflow import Condition, Loop, Parallel, Router
 from agno.workflow.step import Step
 from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
-
-
-@pytest.fixture
-def workflow_db(tmp_path):
-    """Create a workflow storage for testing."""
-    db = SqliteDb(session_table="workflow_session", db_file=str(tmp_path / "test_workflow_v2.db"))
-    return db
 
 
 @pytest.fixture
@@ -59,7 +51,7 @@ def simple_workflow(mock_agent, tmp_path):
 
 
 @pytest.fixture
-def multi_step_workflow(mock_agent, workflow_db):
+def multi_step_workflow(mock_agent, shared_db):
     """Create a multi-step workflow for testing"""
     agent2 = Agent(
         name="Second Test Agent",
@@ -70,7 +62,7 @@ def multi_step_workflow(mock_agent, workflow_db):
     return Workflow(
         name="Multi-Step Background Workflow",
         description="Multi-step workflow for background execution testing",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Step(name="First Step", agent=mock_agent),
             Step(name="Second Step", agent=agent2),

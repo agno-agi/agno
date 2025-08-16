@@ -112,6 +112,8 @@ class ModelResponse:
 
     extra: Optional[Dict[str, Any]] = None
 
+    updated_session_state: Optional[Dict[str, Any]] = None
+
 
 class FileType(str, Enum):
     MP4 = "mp4"

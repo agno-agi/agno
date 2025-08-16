@@ -95,7 +95,7 @@ class MistralEmbedder(Embedder):
                 import asyncio
 
                 loop = asyncio.get_running_loop()
-                response: EmbeddingResponse = await loop.run_in_executor(
+                response: EmbeddingResponse = await loop.run_in_executor(  # type: ignore
                     None,
                     lambda: self.client.embeddings.create(
                         inputs=text, model=self.id, **self.request_params if self.request_params else {}
@@ -122,7 +122,7 @@ class MistralEmbedder(Embedder):
                 import asyncio
 
                 loop = asyncio.get_running_loop()
-                response: EmbeddingResponse = await loop.run_in_executor(
+                response: EmbeddingResponse = await loop.run_in_executor(  # type: ignore
                     None,
                     lambda: self.client.embeddings.create(
                         inputs=text, model=self.id, **self.request_params if self.request_params else {}

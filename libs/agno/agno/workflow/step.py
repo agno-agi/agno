@@ -1,4 +1,5 @@
 import inspect
+from copy import copy
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
@@ -18,6 +19,7 @@ from agno.run.workflow import (
 )
 from agno.team import Team
 from agno.utils.log import log_debug, logger, use_agent_logger, use_team_logger, use_workflow_logger
+from agno.utils.merge_dict import merge_dictionaries
 from agno.workflow.types import StepInput, StepOutput, StepType
 
 StepExecutor = Callable[
@@ -168,6 +170,7 @@ class Step:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         store_executor_responses: bool = True,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
@@ -245,6 +248,7 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
+                        session_state_copy = copy(session_state)
                         response = self.active_executor.run(  # type: ignore[misc]
                             input=message,
                             images=images,
@@ -252,11 +256,15 @@ class Step:
                             audio=audios,
                             session_id=session_id,
                             user_id=user_id,
+                            session_state=session_state_copy,  # Send a copy to the executor
                             **kwargs,
                         )
 
-                        if store_executor_responses and workflow_run_response is not None:
-                            self._store_executor_response(workflow_run_response)
+                        # Update workflow session state
+                        merge_dictionaries(session_state, session_state_copy)  # type: ignore
+
+                        if store_executor_responses:
+                            self._store_executor_response(workflow_run_response, response)
 
                         # Switch back to workflow logger after execution
                         use_workflow_logger()
@@ -289,6 +297,7 @@ class Step:
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_responses: bool = True,
         parent_step_id: Optional[str] = None,
@@ -382,6 +391,7 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
+                        session_state_copy = copy(session_state)
                         response_stream = self.active_executor.run(  # type: ignore[call-overload, misc]
                             input=message,
                             images=images,
@@ -389,6 +399,7 @@ class Step:
                             audio=audios,
                             session_id=session_id,
                             user_id=user_id,
+                            session_state=session_state_copy,  # Send a copy to the executor
                             stream=True,
                             stream_intermediate_steps=stream_intermediate_steps,
                             # Pass workflow context directly via kwargs
@@ -399,15 +410,24 @@ class Step:
                                 "step_name": self.name,
                                 "step_index": step_index,
                             },
+                            yield_run_response=True,
                             **kwargs,
                         )
 
-                        if store_executor_responses and workflow_run_response is not None:
-                            self._store_executor_response(workflow_run_response)
-
+                        active_executor_run_response = None
                         for event in response_stream:
+                            if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
+                                active_executor_run_response = event
+                                break
                             yield event  # type: ignore[misc]
-                        final_response = self._process_step_output(self.active_executor.run_response)  # type: ignore
+
+                        # Update workflow session state
+                        merge_dictionaries(session_state, session_state_copy)  # type: ignore
+
+                        if store_executor_responses:
+                            self._store_executor_response(workflow_run_response, active_executor_run_response)
+
+                        final_response = self._process_step_output(active_executor_run_response)  # type: ignore
 
                     else:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
@@ -462,6 +482,7 @@ class Step:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         store_executor_responses: bool = True,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
@@ -556,6 +577,7 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
+                        session_state_copy = copy(session_state)
                         response = await self.active_executor.arun(  # type: ignore
                             input=message,
                             images=images,
@@ -563,11 +585,15 @@ class Step:
                             audio=audios,
                             session_id=session_id,
                             user_id=user_id,
+                            session_state=session_state_copy,
                             **kwargs,
                         )
 
-                        if store_executor_responses and workflow_run_response is not None:
-                            self._store_executor_response(workflow_run_response)
+                        # Update workflow session state
+                        merge_dictionaries(session_state, session_state_copy)  # type: ignore
+
+                        if store_executor_responses:
+                            self._store_executor_response(workflow_run_response, response)
 
                         # Switch back to workflow logger after execution
                         use_workflow_logger()
@@ -600,6 +626,7 @@ class Step:
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_responses: bool = True,
         parent_step_id: Optional[str] = None,
@@ -711,6 +738,7 @@ class Step:
                         if isinstance(self.active_executor, Team):
                             kwargs["store_member_responses"] = True
 
+                        session_state_copy = copy(session_state)
                         response_stream = self.active_executor.arun(  # type: ignore
                             input=message,
                             images=images,
@@ -718,6 +746,7 @@ class Step:
                             audio=audios,
                             session_id=session_id,
                             user_id=user_id,
+                            session_state=session_state_copy,
                             stream=True,
                             stream_intermediate_steps=stream_intermediate_steps,
                             # Pass workflow context directly via kwargs
@@ -728,16 +757,25 @@ class Step:
                                 "step_name": self.name,
                                 "step_index": step_index,
                             },
+                            yield_run_response=True,
                             **kwargs,
                         )
 
-                        if store_executor_responses and workflow_run_response is not None:
-                            self._store_executor_response(workflow_run_response)
-
+                        active_executor_run_response = None
                         async for event in response_stream:
                             log_debug(f"Received async event from agent: {type(event).__name__}")
+                            if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
+                                active_executor_run_response = event
+                                break
                             yield event  # type: ignore[misc]
-                        final_response = self._process_step_output(self.active_executor.run_response)  # type: ignore
+
+                        # Update workflow session state
+                        merge_dictionaries(session_state, session_state_copy)  # type: ignore
+
+                        if store_executor_responses:
+                            self._store_executor_response(workflow_run_response, active_executor_run_response)
+
+                        final_response = self._process_step_output(active_executor_run_response)  # type: ignore
                     else:
                         raise ValueError(f"Unsupported executor type: {self._executor_type}")
 
@@ -784,15 +822,17 @@ class Step:
 
         return
 
-    def _store_executor_response(self, workflow_run_response: "WorkflowRunOutput") -> None:
+    def _store_executor_response(
+        self, workflow_run_response: "WorkflowRunOutput", executor_run_response: Union[RunOutput, TeamRunOutput]
+    ) -> None:
         """Store agent/team responses in step_executor_runs if enabled"""
         if self._executor_type in ["agent", "team"]:
             # propogate the workflow run id as parent run id to the executor response
-            self.active_executor.run_response.parent_run_id = workflow_run_response.run_id  # type: ignore
-            self.active_executor.run_response.workflow_step_id = self.step_id  # type: ignore
+            executor_run_response.parent_run_id = workflow_run_response.run_id
+            executor_run_response.workflow_step_id = self.step_id
 
             # Get the raw response from the step's active executor
-            raw_response = self.active_executor.run_response
+            raw_response = executor_run_response
             if raw_response and isinstance(raw_response, (RunOutput, TeamRunOutput)):
                 if workflow_run_response.step_executor_runs is None:
                     workflow_run_response.step_executor_runs = []

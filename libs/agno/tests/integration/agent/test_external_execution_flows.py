@@ -5,7 +5,7 @@ from agno.models.openai import OpenAIChat
 from agno.tools.decorator import tool
 
 
-def test_tool_call_requires_external_execution():
+def test_tool_call_requires_external_execution(shared_db):
     @tool(external_execution=True)
     def send_email(to: str, subject: str, body: str):
         pass
@@ -13,6 +13,7 @@ def test_tool_call_requires_external_execution():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[send_email],
+        db=shared_db,
         markdown=True,
         telemetry=False,
     )
@@ -31,13 +32,14 @@ def test_tool_call_requires_external_execution():
     assert response.is_paused is False
 
 
-def test_tool_call_requires_external_execution_stream():
+def test_tool_call_requires_external_execution_stream(shared_db):
     @tool(external_execution=True)
     def send_email(to: str, subject: str, body: str):
         pass
 
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
         tools=[send_email],
         markdown=True,
         telemetry=False,
@@ -69,7 +71,7 @@ def test_tool_call_requires_external_execution_stream():
 
 
 @pytest.mark.asyncio
-async def test_tool_call_requires_external_execution_async():
+async def test_tool_call_requires_external_execution_async(shared_db):
     @tool(external_execution=True)
     async def send_email(to: str, subject: str, body: str):
         pass
@@ -77,6 +79,7 @@ async def test_tool_call_requires_external_execution_async():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[send_email],
+        db=shared_db,
         markdown=True,
         telemetry=False,
     )
@@ -101,7 +104,7 @@ async def test_tool_call_requires_external_execution_async():
     assert response.is_paused is False
 
 
-def test_tool_call_requires_external_execution_error():
+def test_tool_call_requires_external_execution_error(shared_db):
     @tool(external_execution=True)
     def send_email(to: str, subject: str, body: str):
         pass
@@ -109,6 +112,7 @@ def test_tool_call_requires_external_execution_error():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[send_email],
+        db=shared_db,
         markdown=True,
         telemetry=False,
     )
@@ -121,7 +125,7 @@ def test_tool_call_requires_external_execution_error():
 
 
 @pytest.mark.asyncio
-async def test_tool_call_requires_external_execution_stream_async():
+async def test_tool_call_requires_external_execution_stream_async(shared_db):
     @tool(external_execution=True)
     async def send_email(to: str, subject: str, body: str):
         pass
@@ -129,6 +133,7 @@ async def test_tool_call_requires_external_execution_stream_async():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[send_email],
+        db=shared_db,
         markdown=True,
         telemetry=False,
     )
@@ -158,7 +163,7 @@ async def test_tool_call_requires_external_execution_stream_async():
     assert found_external_execution is False, "Some tools still require external execution"
 
 
-def test_tool_call_multiple_requires_external_execution():
+def test_tool_call_multiple_requires_external_execution(shared_db):
     @tool(external_execution=True)
     def get_the_weather(city: str):
         pass
@@ -169,6 +174,7 @@ def test_tool_call_multiple_requires_external_execution():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather, get_activities],
+        db=shared_db,
         markdown=True,
         telemetry=False,
     )
