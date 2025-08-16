@@ -182,14 +182,14 @@ class Condition:
 
         for i, step in enumerate(self.steps):
             try:
-                step_output = step.execute(
+                step_output = step.execute( # type: ignore[union-attr]
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_responses=store_executor_responses,
                     session_state=session_state,
-                )  # type: ignore[union-attr]
+                )  
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
                 if isinstance(step_output, list):
@@ -438,14 +438,14 @@ class Condition:
 
         for i, step in enumerate(self.steps):
             try:
-                step_output = await step.aexecute(
+                step_output = await step.aexecute( # type: ignore[union-attr]
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_responses=store_executor_responses,
                     session_state=session_state,
-                )  # type: ignore[union-attr]
+                )  
 
                 # Handle both single StepOutput and List[StepOutput]
                 if isinstance(step_output, list):
