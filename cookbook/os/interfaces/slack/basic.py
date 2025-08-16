@@ -4,9 +4,7 @@ from agno.models.openai import OpenAIChat
 from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
 
-agent_db = SqliteDb(
-    session_table="agent_sessions", db_file="tmp/persistent_memory.db"
-)
+agent_db = SqliteDb(session_table="agent_sessions", db_file="tmp/persistent_memory.db")
 
 basic_agent = Agent(
     name="Basic Agent",

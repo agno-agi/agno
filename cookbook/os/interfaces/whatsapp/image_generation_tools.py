@@ -5,9 +5,7 @@ from agno.os.app import AgentOS
 from agno.os.interfaces.whatsapp import Whatsapp
 from agno.tools.openai import OpenAITools
 
-agent_db = SqliteDb(
-    db_file="tmp/persistent_memory.db"
-)
+agent_db = SqliteDb(db_file="tmp/persistent_memory.db")
 image_agent = Agent(
     id="image_generation_tools",
     db=agent_db,
@@ -17,7 +15,6 @@ image_agent = Agent(
     debug_mode=True,
     add_history_to_context=True,
 )
-
 
 
 # Setup our AgentOS app

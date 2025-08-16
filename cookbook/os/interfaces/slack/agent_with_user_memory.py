@@ -8,11 +8,9 @@ from agno.os.app import AgentOS
 from agno.os.interfaces.slack import Slack
 from agno.tools.googlesearch import GoogleSearchTools
 
-agent_db = SqliteDb(
-    session_table="agent_sessions", db_file="tmp/persistent_memory.db"
-)
+agent_db = SqliteDb(session_table="agent_sessions", db_file="tmp/persistent_memory.db")
 
-memory_manager=MemoryManager(
+memory_manager = MemoryManager(
     memory_capture_instructions="""\
                     Collect User's name,
                     Collect Information about user's passion and hobbies,

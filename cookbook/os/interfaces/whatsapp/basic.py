@@ -4,9 +4,7 @@ from agno.models.openai import OpenAIChat
 from agno.os.app import AgentOS
 from agno.os.interfaces.whatsapp import Whatsapp
 
-agent_db = SqliteDb(
-    db_file="tmp/persistent_memory.db"
-)
+agent_db = SqliteDb(db_file="tmp/persistent_memory.db")
 basic_agent = Agent(
     name="Basic Agent",
     model=OpenAIChat(id="gpt-4o"),

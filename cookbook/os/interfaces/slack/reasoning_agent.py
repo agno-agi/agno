@@ -6,9 +6,7 @@ from agno.os.interfaces.slack.slack import Slack
 from agno.tools.thinking import ThinkingTools
 from agno.tools.yfinance import YFinanceTools
 
-agent_db = SqliteDb(
-    session_table="agent_sessions", db_file="tmp/persistent_memory.db"
-)
+agent_db = SqliteDb(session_table="agent_sessions", db_file="tmp/persistent_memory.db")
 
 reasoning_finance_agent = Agent(
     name="Reasoning Finance Agent",

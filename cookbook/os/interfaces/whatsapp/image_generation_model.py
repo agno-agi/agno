@@ -4,9 +4,7 @@ from agno.models.google import Gemini
 from agno.os.app import AgentOS
 from agno.os.interfaces.whatsapp import Whatsapp
 
-agent_db = SqliteDb(
-    db_file="tmp/persistent_memory.db"
-)
+agent_db = SqliteDb(db_file="tmp/persistent_memory.db")
 image_agent = Agent(
     id="image_generation_model",
     db=agent_db,

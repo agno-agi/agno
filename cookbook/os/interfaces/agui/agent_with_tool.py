@@ -1,8 +1,8 @@
 from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.yfinance import YFinanceTools
 from agno.os import AgentOS
 from agno.os.interfaces.agui import AGUI
+from agno.tools.yfinance import YFinanceTools
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),

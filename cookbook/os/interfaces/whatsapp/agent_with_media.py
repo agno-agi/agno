@@ -4,9 +4,7 @@ from agno.models.google import Gemini
 from agno.os.app import AgentOS
 from agno.os.interfaces.whatsapp import Whatsapp
 
-agent_db = SqliteDb(
-    db_file="tmp/persistent_memory.db"
-)
+agent_db = SqliteDb(db_file="tmp/persistent_memory.db")
 media_agent = Agent(
     name="Media Agent",
     model=Gemini(id="gemini-2.0-flash"),

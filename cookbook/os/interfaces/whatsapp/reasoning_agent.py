@@ -1,14 +1,12 @@
 from agno.agent import Agent
-from agno.models.anthropic.claude import Claude
 from agno.db.sqlite import SqliteDb
+from agno.models.anthropic.claude import Claude
 from agno.os.app import AgentOS
 from agno.os.interfaces.whatsapp import Whatsapp
 from agno.tools.thinking import ThinkingTools
 from agno.tools.yfinance import YFinanceTools
 
-agent_db = SqliteDb(
-    db_file="tmp/persistent_memory.db"
-)
+agent_db = SqliteDb(db_file="tmp/persistent_memory.db")
 
 reasoning_finance_agent = Agent(
     name="Reasoning Finance Agent",

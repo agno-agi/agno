@@ -1,18 +1,16 @@
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.os.app import AgentOS
 from agno.db.sqlite import SqliteDb
 from agno.memory.manager import MemoryManager
 from agno.models.google import Gemini
-from agno.tools.googlesearch import GoogleSearchTools
+from agno.os.app import AgentOS
 from agno.os.interfaces.whatsapp import Whatsapp
+from agno.tools.googlesearch import GoogleSearchTools
 
-agent_db = SqliteDb(
-    db_file="tmp/persistent_memory.db"
-)
+agent_db = SqliteDb(db_file="tmp/persistent_memory.db")
 
-memory_manager=MemoryManager(
+memory_manager = MemoryManager(
     memory_capture_instructions="""\
                     Collect User's name,
                     Collect Information about user's passion and hobbies,
