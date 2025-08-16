@@ -579,6 +579,11 @@ class PerformanceEval:
 
         # 7. Log results to the Agno platform if requested
         if self.db:
+            eval_input = {
+                "num_iterations": self.num_iterations,
+                "warmup_runs": self.warmup_runs,
+            }
+
             log_eval_run(
                 db=self.db,
                 run_id=self.eval_id,  # type: ignore
@@ -590,6 +595,7 @@ class PerformanceEval:
                 team_id=self.team_id,
                 model_id=self.model_id,
                 model_provider=self.model_provider,
+                eval_input=eval_input,
             )
 
         log_debug(f"*********** Evaluation End: {self.eval_id} ***********")
@@ -707,6 +713,11 @@ class PerformanceEval:
 
         # 7. Log results to the Agno platform if requested
         if self.db:
+            eval_input = {
+                "num_iterations": self.num_iterations,
+                "warmup_runs": self.warmup_runs,
+            }
+
             await async_log_eval_run(
                 db=self.db,
                 run_id=self.eval_id,  # type: ignore
@@ -718,6 +729,7 @@ class PerformanceEval:
                 team_id=self.team_id,
                 model_id=self.model_id,
                 model_provider=self.model_provider,
+                eval_input=eval_input,
             )
 
         log_debug(f"*********** Evaluation End: {self.eval_id} ***********")

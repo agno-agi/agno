@@ -30,3 +30,4 @@ class EvalRunRecord(BaseModel):
     run_id: str
     eval_type: EvalType
     eval_data: Dict[str, Any]
+    eval_input: Optional[Dict[str, Any]]

@@ -46,6 +46,7 @@ class EvalSchema(BaseModel):
     evaluated_component_name: Optional[str] = None
     eval_type: EvalType
     eval_data: Dict[str, Any]
+    eval_input: Optional[Dict[str, Any]] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -62,6 +63,7 @@ class EvalSchema(BaseModel):
             evaluated_component_name=eval_run.get("evaluated_component_name"),
             eval_type=eval_run["eval_type"],
             eval_data=eval_run["eval_data"],
+            eval_input=eval_run.get("eval_input"),
             created_at=datetime.fromtimestamp(eval_run["created_at"], tz=timezone.utc),
             updated_at=datetime.fromtimestamp(eval_run["updated_at"], tz=timezone.utc),
         )
