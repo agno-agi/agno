@@ -27,7 +27,12 @@ from uuid import NAMESPACE_DNS, uuid4, uuid5
 
 from pydantic import BaseModel
 
-from agno.agent.print import build_panels, build_panels_stream
+from agno.agent.print import (
+    aprint_response,
+    aprint_response_stream,
+    print_response,
+    print_response_stream,
+)
 from agno.db.base import BaseDb, SessionType, UserMemory
 from agno.exceptions import ModelProviderError, StopAgentRun
 from agno.knowledge.knowledge import Knowledge
@@ -44,7 +49,6 @@ from agno.run.response import (
     RunEvent,
     RunOutput,
     RunOutputEvent,
-    RunPausedEvent,
 )
 from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager
@@ -88,9 +92,6 @@ from agno.utils.reasoning import (
 )
 from agno.utils.response import (
     async_generator_wrapper,
-    create_panel,
-    create_paused_run_output_panel,
-    escape_markdown_tags,
     format_tool_calls,
     generator_wrapper,
     get_paused_content,
@@ -5920,7 +5921,7 @@ class Agent:
         files: Optional[Sequence[File]] = None,
         stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
-        markdown: bool = False,
+        markdown: Optional[bool] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
         show_full_reasoning: bool = False,
@@ -5931,242 +5932,63 @@ class Agent:
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
-        import json
-
-        from rich.console import Group
-        from rich.json import JSON
-        from rich.live import Live
-        from rich.markdown import Markdown
-        from rich.status import Status
-        from rich.text import Text
-
-        if markdown:
-            self.markdown = True
+        if markdown is None:
+            markdown = self.markdown
 
         if self.response_model is not None:
-            self.markdown = False
+            markdown = False
 
         stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps
         stream = stream or self.stream or False
         if stream:
-            _response_content: str = ""
-            _response_thinking: str = ""
-            response_content_batch: Union[str, JSON, Markdown] = ""
-            reasoning_steps: List[ReasoningStep] = []
+            print_response_stream(
+                agent=self,
+                input=input,
+                session_id=session_id,
+                session_state=session_state,
+                user_id=user_id,
+                audio=audio,
+                images=images,
+                videos=videos,
+                files=files,
+                stream_intermediate_steps=stream_intermediate_steps,
+                knowledge_filters=knowledge_filters,
+                debug_mode=debug_mode,
+                markdown=markdown,
+                show_message=show_message,
+                show_reasoning=show_reasoning,
+                show_full_reasoning=show_full_reasoning,
+                tags_to_include_in_markdown=tags_to_include_in_markdown,
+                console=console,
+                **kwargs,
+            )
 
-            with Live(console=console) as live_log:
-                status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
-                live_log.update(status)
-                response_timer = Timer()
-                response_timer.start()
-                # Flag which indicates if the panels should be rendered
-                render = False
-                # Panels to be rendered
-                panels = [status]
-                # First render the message panel if the message is not None
-                if input and show_message:
-                    render = True
-                    # Convert message to a panel
-                    message_content = get_text_from_message(input)
-                    message_panel = create_panel(
-                        content=Text(message_content, style="green"),
-                        title="Message",
-                        border_style="cyan",
-                    )
-                    panels.append(message_panel)
-                if render:
-                    live_log.update(Group(*panels))
-
-                for response_event in self.run(
-                    input=input,
-                    session_id=session_id,
-                    session_state=session_state,
-                    user_id=user_id,
-                    audio=audio,
-                    images=images,
-                    videos=videos,
-                    files=files,
-                    stream=True,
-                    stream_intermediate_steps=stream_intermediate_steps,
-                    knowledge_filters=knowledge_filters,
-                    debug_mode=debug_mode,
-                    **kwargs,
-                ):
-                    if isinstance(response_event, tuple(get_args(RunOutputEvent))):
-                        if response_event.is_paused:
-                            response_event = cast(RunPausedEvent, response_event)
-                            response_panel = create_paused_run_output_panel(response_event)
-                            panels.append(response_panel)
-                            live_log.update(Group(*panels))
-                            return
-                        if response_event.event == RunEvent.run_content:
-                            if hasattr(response_event, "content"):
-                                if isinstance(response_event.content, str):
-                                    _response_content += response_event.content
-                                elif self.response_model is not None and isinstance(response_event.content, BaseModel):
-                                    try:
-                                        response_content_batch = JSON(  # type: ignore
-                                            response_event.content.model_dump_json(exclude_none=True), indent=2
-                                        )
-                                    except Exception as e:
-                                        log_warning(f"Failed to convert response to JSON: {e}")
-                                else:
-                                    try:
-                                        response_content_batch = JSON(json.dumps(response_event.content), indent=4)
-                                    except Exception as e:
-                                        log_warning(f"Failed to convert response to JSON: {e}")
-                            if hasattr(response_event, "thinking") and response_event.thinking is not None:
-                                _response_thinking += response_event.thinking
-                        if (
-                            hasattr(response_event, "metadata")
-                            and response_event.metadata is not None
-                            and response_event.metadata.reasoning_steps is not None
-                        ):
-                            reasoning_steps = response_event.metadata.reasoning_steps
-
-                    # Escape special tags before markdown conversion
-                    if markdown:
-                        escaped_content = escape_markdown_tags(_response_content, tags_to_include_in_markdown)
-                        response_content_batch = Markdown(escaped_content)
-
-                    response_content_stream: str = _response_content
-
-                    # Check if we have any response content to display
-                    if response_content_stream and not markdown:
-                        response_content = response_content_stream
-                    else:
-                        response_content = response_content_batch  # type: ignore
-
-                    # Sanitize empty Markdown content
-                    if isinstance(response_content, Markdown):
-                        if not (response_content.markup and response_content.markup.strip()):
-                            response_content = None  # type: ignore
-
-                    panels = [status]
-                    if show_message:
-                        # Convert message to a panel
-                        message_content = get_text_from_message(input)
-                        message_panel = create_panel(
-                            content=Text(message_content, style="green"),
-                            title="Message",
-                            border_style="cyan",
-                        )
-                        panels.append(message_panel)
-
-                    additional_panels = build_panels_stream(
-                        response_content=response_content,
-                        response_event=response_event,
-                        response_timer=response_timer,
-                        response_thinking_buffer=_response_thinking,
-                        reasoning_steps=reasoning_steps,
-                        show_reasoning=show_reasoning,
-                        show_full_reasoning=show_full_reasoning,
-                    )
-                    panels.extend(additional_panels)
-                    if panels:
-                        live_log.update(Group(*panels))
-
-                if self.memory_manager is not None and self.memory_manager.memories_updated:
-                    memory_panel = create_panel(
-                        content=Text("Memories updated"),
-                        title="Memories",
-                        border_style="green",
-                    )
-                    panels.append(memory_panel)
-                    live_log.update(Group(*panels))
-                    self.memory_manager.memories_updated = False
-
-                if self.session_summary_manager is not None and self.session_summary_manager.summaries_updated:
-                    summary_panel = create_panel(
-                        content=Text("Session summary updated"),
-                        title="Session Summary",
-                        border_style="green",
-                    )
-                    panels.append(summary_panel)
-                    live_log.update(Group(*panels))
-                    self.session_summary_manager.summaries_updated = False
-
-                response_timer.stop()
-
-                # Final update to remove the "Thinking..." status
-                panels = [p for p in panels if not isinstance(p, Status)]
-                live_log.update(Group(*panels))
         else:
-            with Live(console=console) as live_log:
-                status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
-                live_log.update(status)
-                response_timer = Timer()
-                response_timer.start()
-                # Panels to be rendered
-                panels = [status]
-                # First render the message panel if the message is not None
-                if input and show_message:
-                    # Convert message to a panel
-                    message_content = get_text_from_message(input)
-                    message_panel = create_panel(
-                        content=Text(message_content, style="green"),
-                        title="Message",
-                        border_style="cyan",
-                    )
-                    panels.append(message_panel)
-                    live_log.update(Group(*panels))
-
-                # Run the agent
-                run_response = self.run(
-                    input=input,
-                    session_id=session_id,
-                    session_state=session_state,
-                    user_id=user_id,
-                    audio=audio,
-                    images=images,
-                    videos=videos,
-                    files=files,
-                    stream=False,
-                    stream_intermediate_steps=stream_intermediate_steps,
-                    knowledge_filters=knowledge_filters,
-                    debug_mode=debug_mode,
-                    **kwargs,
-                )
-                response_timer.stop()
-
-                additional_panels = build_panels(
-                    run_response=run_response,
-                    response_model=self.response_model,
-                    response_timer=response_timer,
-                    show_reasoning=show_reasoning,
-                    show_full_reasoning=show_full_reasoning,
-                    tags_to_include_in_markdown=tags_to_include_in_markdown,
-                    markdown=markdown,
-                )
-                panels.extend(additional_panels)
-
-                if self.memory_manager is not None and self.memory_manager.memories_updated:
-                    memory_panel = create_panel(
-                        content=Text("Memories updated"),
-                        title="Memories",
-                        border_style="green",
-                    )
-                    panels.append(memory_panel)
-                    live_log.update(Group(*panels))
-                    self.memory_manager.memories_updated = False
-
-                if self.session_summary_manager is not None and self.session_summary_manager.summaries_updated:
-                    summary_panel = create_panel(
-                        content=Text("Session summary updated"),
-                        title="Session Summary",
-                        border_style="green",
-                    )
-                    panels.append(summary_panel)
-                    live_log.update(Group(*panels))
-                    self.session_summary_manager.summaries_updated = False
-
-                # Final update to remove the "Thinking..." status
-                panels = [p for p in panels if not isinstance(p, Status)]
-                live_log.update(Group(*panels))
+            print_response(
+                agent=self,
+                input=input,
+                session_id=session_id,
+                session_state=session_state,
+                user_id=user_id,
+                audio=audio,
+                images=images,
+                videos=videos,
+                files=files,
+                stream_intermediate_steps=stream_intermediate_steps,
+                knowledge_filters=knowledge_filters,
+                debug_mode=debug_mode,
+                markdown=markdown,
+                show_message=show_message,
+                show_reasoning=show_reasoning,
+                show_full_reasoning=show_full_reasoning,
+                tags_to_include_in_markdown=tags_to_include_in_markdown,
+                console=console,
+                **kwargs,
+            )
 
     async def aprint_response(
         self,
-        input: Optional[Union[List, Dict, str, Message, BaseModel, List[Message]]] = None,
+        input: Union[List, Dict, str, Message, BaseModel, List[Message]],
         *,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -6177,7 +5999,7 @@ class Agent:
         files: Optional[Sequence[File]] = None,
         stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
-        markdown: bool = False,
+        markdown: Optional[bool] = None,
         show_message: bool = True,
         show_reasoning: bool = True,
         show_full_reasoning: bool = False,
@@ -6188,235 +6010,58 @@ class Agent:
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
-        import json
-
-        from rich.console import Group
-        from rich.json import JSON
-        from rich.live import Live
-        from rich.markdown import Markdown
-        from rich.status import Status
-        from rich.text import Text
-
-        if markdown:
-            self.markdown = True
+        if markdown is None:
+            markdown = self.markdown
 
         if self.response_model is not None:
-            self.markdown = False
+            markdown = False
 
         stream_intermediate_steps = stream_intermediate_steps or self.stream_intermediate_steps
         stream = stream or self.stream or False
         if stream:
-            _response_content: str = ""
-            _response_thinking: str = ""
-            reasoning_steps: List[ReasoningStep] = []
-            response_content_batch: Union[str, JSON, Markdown] = ""
-
-            with Live(console=console) as live_log:
-                status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
-                live_log.update(status)
-                response_timer = Timer()
-                response_timer.start()
-                # Flag which indicates if the panels should be rendered
-                render = False
-                # Panels to be rendered
-                panels = [status]
-                # First render the message panel if the message is not None
-                if input and show_message:
-                    render = True
-                    # Convert message to a panel
-                    message_content = get_text_from_message(input)
-                    message_panel = create_panel(
-                        content=Text(message_content, style="green"),
-                        title="Message",
-                        border_style="cyan",
-                    )
-                    panels.append(message_panel)
-                if render:
-                    live_log.update(Group(*panels))
-
-                result = self.arun(
-                    input=input,
-                    session_id=session_id,
-                    session_state=session_state,
-                    user_id=user_id,
-                    audio=audio,
-                    images=images,
-                    videos=videos,
-                    files=files,
-                    stream=True,
-                    stream_intermediate_steps=stream_intermediate_steps,
-                    knowledge_filters=knowledge_filters,
-                    debug_mode=debug_mode,
-                    **kwargs,
-                )
-
-                async for resp in result:  # type: ignore
-                    if isinstance(resp, tuple(get_args(RunOutputEvent))):
-                        if resp.is_paused:
-                            response_panel = create_paused_run_output_panel(resp)
-                            panels.append(response_panel)
-                            live_log.update(Group(*panels))
-                            break
-
-                        if resp.event == RunEvent.run_content:
-                            if isinstance(resp.content, str):
-                                _response_content += resp.content
-                            elif self.response_model is not None and isinstance(resp.content, BaseModel):
-                                try:
-                                    response_content_batch = JSON(
-                                        resp.content.model_dump_json(exclude_none=True), indent=2
-                                    )  # type: ignore
-                                except Exception as e:
-                                    log_warning(f"Failed to convert response to JSON: {e}")
-                            else:
-                                try:
-                                    response_content_batch = JSON(json.dumps(resp.content), indent=4)
-                                except Exception as e:
-                                    log_warning(f"Failed to convert response to JSON: {e}")
-                            if resp.thinking is not None:
-                                _response_thinking += resp.thinking
-
-                        if (
-                            hasattr(resp, "metadata")
-                            and resp.metadata is not None
-                            and resp.metadata.reasoning_steps is not None
-                        ):
-                            reasoning_steps = resp.metadata.reasoning_steps
-
-                    response_content_stream: str = _response_content
-                    # Escape special tags before markdown conversion
-                    if self.markdown:
-                        escaped_content = escape_markdown_tags(_response_content, tags_to_include_in_markdown)
-                        response_content_batch = Markdown(escaped_content)
-
-                    panels = [status]
-
-                    if input and show_message:
-                        render = True
-                        # Convert message to a panel
-                        message_content = get_text_from_message(input)
-                        message_panel = create_panel(
-                            content=Text(message_content, style="green"),
-                            title="Message",
-                            border_style="cyan",
-                        )
-                        panels.append(message_panel)
-                        
-                    additional_panels = build_panels_stream(
-                        response_content=response_content_stream,
-                        response_event=resp,
-                        response_timer=response_timer,
-                        response_thinking_buffer=_response_thinking,
-                        reasoning_steps=reasoning_steps,
-                        show_reasoning=show_reasoning,
-                        show_full_reasoning=show_full_reasoning,
-                    )
-                    panels.extend(additional_panels)
-                    if panels:
-                        live_log.update(Group(*panels))
-
-
-                if self.memory_manager is not None and self.memory_manager.memories_updated:
-                    memory_panel = create_panel(
-                        content=Text("Memories updated"),
-                        title="Memories",
-                        border_style="green",
-                    )
-                    panels.append(memory_panel)
-                    live_log.update(Group(*panels))
-                    self.memory_manager.memories_updated = False
-
-                if self.session_summary_manager is not None and self.session_summary_manager.summaries_updated:
-                    summary_panel = create_panel(
-                        content=Text("Session summary updated"),
-                        title="Session Summary",
-                        border_style="green",
-                    )
-                    panels.append(summary_panel)
-                    live_log.update(Group(*panels))
-                    self.session_summary_manager.summaries_updated = False
-
-                response_timer.stop()
-
-                # Final update to remove the "Thinking..." status
-                panels = [p for p in panels if not isinstance(p, Status)]
-                live_log.update(Group(*panels))
+            await aprint_response_stream(
+                agent=self,
+                input=input,
+                session_id=session_id,
+                session_state=session_state,
+                user_id=user_id,
+                audio=audio,
+                images=images,
+                videos=videos,
+                files=files,
+                stream_intermediate_steps=stream_intermediate_steps,
+                knowledge_filters=knowledge_filters,
+                debug_mode=debug_mode,
+                markdown=markdown,
+                show_message=show_message,
+                show_reasoning=show_reasoning,
+                show_full_reasoning=show_full_reasoning,
+                tags_to_include_in_markdown=tags_to_include_in_markdown,
+                console=console,
+                **kwargs,
+            )
         else:
-            with Live(console=console) as live_log:
-                status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
-                live_log.update(status)
-                response_timer = Timer()
-                response_timer.start()
-                # Panels to be rendered
-                panels = [status]
-                # First render the message panel if the message is not None
-                if input and show_message:
-                    # Convert message to a panel
-                    message_content = get_text_from_message(input)
-                    message_panel = create_panel(
-                        content=Text(message_content, style="green"),
-                        title="Message",
-                        border_style="cyan",
-                    )
-                    panels.append(message_panel)
-                    live_log.update(Group(*panels))
-
-                # Run the agent
-                run_response = await self.arun(
-                    input=input,
-                    session_id=session_id,
-                    session_state=session_state,
-                    user_id=user_id,
-                    audio=audio,
-                    images=images,
-                    videos=videos,
-                    files=files,
-                    stream=False,
-                    stream_intermediate_steps=stream_intermediate_steps,
-                    knowledge_filters=knowledge_filters,
-                    debug_mode=debug_mode,
-                    **kwargs,
-                )
-                response_timer.stop()
-
-                additional_panels = build_panels(
-                    run_response=run_response,
-                    response_model=self.response_model,
-                    response_timer=response_timer,
-                    show_reasoning=show_reasoning,
-                    show_full_reasoning=show_full_reasoning,
-                    tags_to_include_in_markdown=tags_to_include_in_markdown,
-                    markdown=markdown,
-                )
-                panels.extend(additional_panels)
-
-
-                if self.memory_manager is not None and self.memory_manager.memories_updated:
-                    memory_panel = create_panel(
-                        content=Text("Memories updated"),
-                        title="Memories",
-                        border_style="green",
-                    )
-                    panels.append(memory_panel)
-                    live_log.update(Group(*panels))
-                    self.memory_manager.memories_updated = False
-
-                if (
-                    self.session_summary_manager is not None
-                    and self.session_summary_manager.summaries_updated is not None
-                ):
-                    summary_panel = create_panel(
-                        content=Text("Session summary updated"),
-                        title="Session Summary",
-                        border_style="green",
-                    )
-                    self.session_summary_manager.summaries_updated = False
-                    panels.append(summary_panel)
-                    live_log.update(Group(*panels))
-
-                # Final update to remove the "Thinking..." status
-                panels = [p for p in panels if not isinstance(p, Status)]
-                live_log.update(Group(*panels))
+            await aprint_response(
+                agent=self,
+                input=input,
+                session_id=session_id,
+                session_state=session_state,
+                user_id=user_id,
+                audio=audio,
+                images=images,
+                videos=videos,
+                files=files,
+                stream_intermediate_steps=stream_intermediate_steps,
+                knowledge_filters=knowledge_filters,
+                debug_mode=debug_mode,
+                markdown=markdown,
+                show_message=show_message,
+                show_reasoning=show_reasoning,
+                show_full_reasoning=show_full_reasoning,
+                tags_to_include_in_markdown=tags_to_include_in_markdown,
+                console=console,
+                **kwargs,
+            )
 
     def update_reasoning_content_from_tool_call(
         self, run_response: RunOutput, tool_name: str, tool_args: Dict[str, Any]
