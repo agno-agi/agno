@@ -29,7 +29,7 @@ class MovieScript(BaseModel):
 json_mode_agent = Agent(
     model=Together(id="meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"),
     description="You write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
     use_json_mode=True,
 )
 

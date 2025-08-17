@@ -93,7 +93,7 @@ screening_agent = Agent(
         "Give specific feedback on strengths and areas of concern.",
         "Extract the candidate's name and email from the resume if available.",
     ],
-    response_model=ScreeningResult,
+    output_schema=ScreeningResult,
 )
 
 scheduler_agent = Agent(
@@ -106,7 +106,7 @@ scheduler_agent = Agent(
         "Provide realistic future dates and times.",
     ],
     tools=[simulate_zoom_scheduling],
-    response_model=ScheduledCall,
+    output_schema=ScheduledCall,
 )
 
 email_writer_agent = Agent(
@@ -118,7 +118,7 @@ email_writer_agent = Agent(
         "Keep emails concise but warm and welcoming.",
         "Sign emails as 'John Doe, Senior Software Engineer' with email john@agno.com",
     ],
-    response_model=EmailContent,
+    output_schema=EmailContent,
 )
 
 email_sender_agent = Agent(

@@ -84,7 +84,7 @@ class ResearchReportGenerator(Workflow):
         - Diverse perspectives from recognized experts
         Avoid opinion pieces and non-authoritative sources.\
         """),
-        response_model=SearchResults,
+        output_schema=SearchResults,
     )
 
     article_scraper: Agent = Agent(
@@ -104,7 +104,7 @@ class ResearchReportGenerator(Workflow):
            - Handle paywalled content gracefully
         Format everything in clean markdown for optimal readability.\
         """),
-        response_model=ScrapedArticle,
+        output_schema=ScrapedArticle,
     )
 
     writer: Agent = Agent(

@@ -51,7 +51,7 @@ class GameGenerator(Workflow):
             "Ensure instructions for the game are displayed on the HTML page."
             "Use user-friendly colours and make the game canvas large enough for the game to be playable on a larger screen.",
         ],
-        response_model=GameOutput,
+        output_schema=GameOutput,
     )
 
     qa_agent: Agent = Agent(
@@ -62,7 +62,7 @@ class GameGenerator(Workflow):
             "You will be given some HTML5 code."
             "Your task is to read the code and evaluate it for correctness, but also that it matches the original task description.",
         ],
-        response_model=QAOutput,
+        output_schema=QAOutput,
     )
 
     def run(self, game_description: str) -> Iterator[RunOutputEvent]:

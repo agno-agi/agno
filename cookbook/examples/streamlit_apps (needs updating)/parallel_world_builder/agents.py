@@ -136,6 +136,6 @@ def get_world_builder(
         - Maintain internal logic
         - Consider multiple cultural perspectives
         - Add unexpected but fitting elements"""),
-        response_model=World,
+        output_schema=World,
         debug_mode=debug_mode,
     )

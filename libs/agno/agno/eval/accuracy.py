@@ -236,7 +236,7 @@ You are an expert judge tasked with comparing the quality of an AI Agent’s out
 {additional_guidelines}{additional_context}
 Remember: You must only compare the agent_output to the expected_output. The expected_output is correct as it was provided by the user.
 """,
-            response_model=AccuracyAgentResponse,
+            output_schema=AccuracyAgentResponse,
             structured_outputs=True,
         )
 

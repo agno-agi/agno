@@ -18,7 +18,7 @@ class MovieScript(BaseModel):
     )
 
 
-agent = Agent(model=OpenAIChat(id="gpt-4o"), response_model=MovieScript)
+agent = Agent(model=OpenAIChat(id="gpt-4o"), output_schema=MovieScript)
 
 response = agent.run(
     "Write a movie about this image",

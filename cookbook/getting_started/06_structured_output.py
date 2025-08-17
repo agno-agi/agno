@@ -78,7 +78,7 @@ json_mode_agent = Agent(
 
         Transform every location into an unforgettable cinematic experience!\
     """),
-    response_model=MovieScript,
+    output_schema=MovieScript,
     use_json_mode=True,
 )
 
@@ -117,7 +117,7 @@ structured_output_agent = Agent(
 
         Transform every location into an unforgettable cinematic experience!\
     """),
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 # Example usage with different locations

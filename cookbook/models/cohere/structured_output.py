@@ -28,7 +28,7 @@ class MovieScript(BaseModel):
 structured_output_agent = Agent(
     model=Cohere(id="command-a-03-2025"),
     description="You help people write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 # Get the response in a variable
