@@ -268,6 +268,8 @@ class Agent:
     exponential_backoff: bool = False
 
     # --- Agent Response Model Settings ---
+    # Provide an input schema to validate the input
+    input_schema: Optional[Type[BaseModel]] = None
     # Provide a response model to get the response as a Pydantic model
     response_model: Optional[Type[BaseModel]] = None
     # Provide a secondary model to parse the response from the primary model
@@ -384,6 +386,7 @@ class Agent:
         exponential_backoff: bool = False,
         parser_model: Optional[Model] = None,
         parser_model_prompt: Optional[str] = None,
+        input_schema: Optional[Type[BaseModel]] = None,
         response_model: Optional[Type[BaseModel]] = None,
         parse_response: bool = True,
         structured_outputs: Optional[bool] = None,
@@ -479,6 +482,7 @@ class Agent:
         self.exponential_backoff = exponential_backoff
         self.parser_model = parser_model
         self.parser_model_prompt = parser_model_prompt
+        self.input_schema = input_schema
         self.response_model = response_model
         self.parse_response = parse_response
 
@@ -557,6 +561,45 @@ class Agent:
 
             log_info("Setting default model to OpenAI Chat")
             self.model = OpenAIChat(id="gpt-4o")
+
+    def _validate_input(self, message: Optional[Union[str, List, Dict, Message, BaseModel]]) -> Optional[BaseModel]:
+        """Parse and validate input against input_schema if provided"""
+        if self.input_schema is None:
+            return None
+
+        if message is None:
+            raise ValueError("Input required when input_schema is set")
+
+        # Handle Message objects - extract content
+        if isinstance(message, Message):
+            message = message.content
+
+        # Case 1: Message is already a BaseModel instance
+        if isinstance(message, BaseModel):
+            if isinstance(message, self.input_schema):
+                try:
+                    # Re-validate to catch any field validation errors
+                    message.model_validate(message.model_dump())
+                    return message
+                except Exception as e:
+                    raise ValueError(f"BaseModel validation failed: {str(e)}")
+            else:
+                # Different BaseModel types
+                raise ValueError(f"Expected {self.input_schema.__name__} but got {type(message).__name__}")
+
+        # Case 2: Message is a dict
+        elif isinstance(message, dict):
+            try:
+                validated_model = self.input_schema(**message)
+                return validated_model
+            except Exception as e:
+                raise ValueError(f"Failed to parse dict into {self.input_schema.__name__}: {str(e)}")
+
+        # Case 3: Other types not supported for structured input
+        else:
+            raise ValueError(
+                f"Cannot validate {type(message)} against input_schema. Expected dict or {self.input_schema.__name__} instance."
+            )
 
     def _set_memory_manager(self) -> None:
         if self.db is None:
@@ -895,6 +938,11 @@ class Agent:
 
         # Create a run_id for this specific run
         run_id = str(uuid4())
+
+        # Validate input against input_schema if provided
+        validated_input = self._validate_input(input)
+        if validated_input is not None:
+            input = validated_input
 
         session_id, user_id, session_state = self._initialize_session(
             run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
@@ -1303,6 +1351,11 @@ class Agent:
 
         # Create a run_id for this specific run
         run_id = str(uuid4())
+
+        # Validate input against input_schema if provided
+        validated_input = self._validate_input(input)
+        if validated_input is not None:
+            input = validated_input
 
         session_id, user_id, session_state = self._initialize_session(
             run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state

@@ -7,6 +7,7 @@ from agno.models.message import Message
 
 def get_text_from_message(message: Optional[Union[List, Dict, str, Message, BaseModel]]) -> str:
     """Return the user texts from the message"""
+    import json
 
     if isinstance(message, str):
         return message
@@ -42,6 +43,8 @@ def get_text_from_message(message: Optional[Union[List, Dict, str, Message, Base
     if isinstance(message, dict):
         if "content" in message:
             return get_text_from_message(message["content"])
+        else:
+            return json.dumps(message, indent=2)
     if isinstance(message, Message) and message.content is not None:
         return get_text_from_message(message.content)
     return ""
