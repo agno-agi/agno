@@ -70,7 +70,7 @@ def test_route_team_structured_output():
     finance_agent = Agent(
         name="Finance Agent",
         model=OpenAIChat("gpt-4o"),
-        response_model=StockInfo,
+        output_schema=StockInfo,
         role="Get financial data",
         tools=[get_stock_price],
     )

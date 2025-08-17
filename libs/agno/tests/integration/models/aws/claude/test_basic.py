@@ -101,7 +101,7 @@ def test_structured_output():
 
     agent = Agent(
         model=Claude(id="anthropic.claude-3-sonnet-20240229-v1:0"),
-        response_model=MovieScript,
+        output_schema=MovieScript,
         telemetry=False,
     )
 
@@ -122,7 +122,7 @@ def test_json_response_mode():
 
     agent = Agent(
         model=Claude(id="anthropic.claude-3-sonnet-20240229-v1:0"),
-        response_model=MovieScript,
+        output_schema=MovieScript,
         use_json_mode=True,
         telemetry=False,
     )

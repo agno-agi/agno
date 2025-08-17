@@ -21,7 +21,7 @@ class ParkGuide(BaseModel):
 agent = Agent(
     name="National Park Expert",
     model=OpenAIChat(id="gpt-4o"),
-    response_model=ParkGuide,
+    output_schema=ParkGuide,
     parser_model=Claude(id="claude-sonnet-4-20250514"),
     description="You are an expert on national parks and provide concise guides.",
 )

@@ -74,7 +74,7 @@ team = Team(
     mode="coordinate",
     model=OpenAIChat("gpt-4o"),
     members=[stock_searcher, company_info_agent],
-    response_model=StockReport,
+    output_schema=StockReport,
     markdown=True,
     show_members_responses=True,
 )

@@ -355,7 +355,7 @@ def test_intermediate_steps_with_structured_output(shared_db):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         db=shared_db,
-        response_model=Person,
+        output_schema=Person,
         telemetry=False,
     )
 
@@ -404,7 +404,7 @@ def test_intermediate_steps_with_parser_model(shared_db):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         db=shared_db,
-        response_model=Person,
+        output_schema=Person,
         parser_model=OpenAIChat(id="gpt-4o-mini"),
         telemetry=False,
     )

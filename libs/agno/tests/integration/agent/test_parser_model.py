@@ -22,7 +22,7 @@ def test_claude_with_openai_parser_model():
     park_agent = Agent(
         model=Claude(id="claude-sonnet-4-20250514"),  # Main model to generate the content
         description="You are an expert on national parks and provide concise guides.",
-        response_model=ParkGuide,
+        output_schema=ParkGuide,
         parser_model=OpenAIChat(id="gpt-4o"),  # Model to parse the output
     )
 
@@ -47,7 +47,7 @@ def test_openai_with_claude_parser_model():
     park_agent = Agent(
         model=OpenAIChat(id="gpt-4o"),  # Main model to generate the content
         description="You are an expert on national parks and provide concise guides.",
-        response_model=ParkGuide,
+        output_schema=ParkGuide,
         parser_model=Claude(id="claude-sonnet-4-20250514"),  # Model to parse the output
     )
 
@@ -72,7 +72,7 @@ def test_gemini_with_openai_parser_model():
     park_agent = Agent(
         model=Gemini(id="gemini-2.0-flash-001"),  # Main model to generate the content
         description="You are an expert on national parks and provide concise guides.",
-        response_model=ParkGuide,
+        output_schema=ParkGuide,
         parser_model=OpenAIChat(id="gpt-4o"),  # Model to parse the output
     )
 
@@ -97,7 +97,7 @@ def test_parser_model_stream(shared_db):
     park_agent = Agent(
         model=OpenAIChat(id="gpt-4o"),  # Main model to generate the content
         description="You are an expert on national parks and provide concise guides.",
-        response_model=ParkGuide,
+        output_schema=ParkGuide,
         db=shared_db,
         parser_model=Claude(id="claude-sonnet-4-20250514"),  # Model to parse the output
     )

@@ -19,7 +19,7 @@ class ParkGuide(BaseModel):
 team = Team(
     name="National Park Expert",
     members=[],
-    response_model=ParkGuide,
+    output_schema=ParkGuide,
     parser_model=Claude(id="claude-sonnet-4-20250514"),
     instructions="You have no members, answer directly",
     description="You are an expert on national parks and provide concise guides.",

@@ -65,7 +65,7 @@ def test_with_memory():
     _assert_metrics(response2)
 
 
-def test_response_model():
+def test_output_schema():
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
@@ -73,7 +73,7 @@ def test_response_model():
 
     agent = Agent(
         model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
-        response_model=MovieScript,
+        output_schema=MovieScript,
         markdown=True,
         telemetry=False,
     )
@@ -95,7 +95,7 @@ def test_json_response_mode():
 
     agent = Agent(
         model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
-        response_model=MovieScript,
+        output_schema=MovieScript,
         use_json_mode=True,
         telemetry=False,
     )
@@ -178,7 +178,7 @@ async def test_async_with_memory():
 
 
 @pytest.mark.asyncio
-async def test_async_response_model():
+async def test_async_output_schema():
     """Test async agent with structured response model."""
 
     class MovieScript(BaseModel):
@@ -188,7 +188,7 @@ async def test_async_response_model():
 
     agent = Agent(
         model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
-        response_model=MovieScript,
+        output_schema=MovieScript,
         markdown=True,
         telemetry=False,
     )
@@ -212,7 +212,7 @@ async def test_async_json_response_mode():
 
     agent = Agent(
         model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
-        response_model=MovieScript,
+        output_schema=MovieScript,
         use_json_mode=True,
         telemetry=False,
     )
