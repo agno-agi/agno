@@ -11,9 +11,9 @@ from agno.utils.log import log_debug, log_warning
 
 # TODO: Look into moving all managers into a separate dir
 if TYPE_CHECKING:
+    from agno.session import Session
     from agno.session.agent import AgentSession
     from agno.session.team import TeamSession
-    from agno.session import Session
 
 
 @dataclass
