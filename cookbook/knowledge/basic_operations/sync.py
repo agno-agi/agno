@@ -1,5 +1,5 @@
 """This cookbook shows how to add content from a local file to the knowledge base.
-1. Run: `python cookbook/agent_concepts/knowledge/01_from_path.py` to run the cookbook
+1. Run: `python cookbook/agent_concepts/knowledge/13_sync.py` to run the cookbook
 """
 
 from agno.agent import Agent
