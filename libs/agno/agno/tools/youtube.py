@@ -132,10 +132,12 @@ class YouTubeTools(Toolkit):
                 kwargs["languages"] = self.languages or ["en"]
             if self.proxies:
                 kwargs["proxies"] = self.proxies
-            captions = YouTubeTranscriptApi.get_transcript(video_id, **kwargs)
-            # log_debug(f"Captions for video {video_id}: {captions}")
+            if video_id is not None:
+                captions = YouTubeTranscriptApi().fetch(video_id, **kwargs)
+            else:
+                return "No video ID found"
             if captions:
-                return " ".join(line["text"] for line in captions)
+                return " ".join(line.text for line in captions)
             return "No captions found for video"
         except Exception as e:
             return f"Error getting captions for video: {e}"
@@ -166,12 +168,12 @@ class YouTubeTools(Toolkit):
             if self.proxies:
                 kwargs["proxies"] = self.proxies
 
-            captions = YouTubeTranscriptApi.get_transcript(video_id, **kwargs)
+            captions = YouTubeTranscriptApi().fetch(video_id, **kwargs)
             timestamps = []
             for line in captions:
-                start = int(line["start"])
+                start = int(line.start)
                 minutes, seconds = divmod(start, 60)
-                timestamps.append(f"{minutes}:{seconds:02d} - {line['text']}")
+                timestamps.append(f"{minutes}:{seconds:02d} - {line.text}")
             return "\n".join(timestamps)
         except Exception as e:
             return f"Error generating timestamps: {e}"

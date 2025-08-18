@@ -192,10 +192,5 @@ class S3Bucket(AwsResource):
         for object_summary in object_summaries:
             if prefix is not None and not object_summary.key.startswith(prefix):
                 continue
-            all_objects.append(
-                S3Object(
-                    bucket_name=bucket.name,
-                    name=object_summary.key,
-                )
-            )
+            all_objects.append(S3Object(bucket_name=bucket.name, key=object_summary.key))
         return all_objects

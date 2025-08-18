@@ -23,6 +23,7 @@ try:
         EventDeltaTextDelta,
         EventDeltaToolCallDelta,
         EventDeltaToolCallDeltaFunction,
+        EventMetric,
     )
     from llama_api_client.types.message_text_content_item import MessageTextContentItem
 except ImportError:
@@ -268,7 +269,7 @@ class Llama(Model):
                 stream=True,
                 **self.get_request_params(tools=tools, response_format=response_format),
             ):
-                yield self._parse_provider_response_delta(chunk)
+                yield self._parse_provider_response_delta(chunk)  # type: ignore
 
             assistant_message.metrics.stop_timer()
 
@@ -300,7 +301,7 @@ class Llama(Model):
                 stream=True,
                 **self.get_request_params(tools=tools, response_format=response_format),
             ):
-                yield self._parse_provider_response_delta(chunk)
+                yield self._parse_provider_response_delta(chunk)  # type: ignore
 
             assistant_message.metrics.stop_timer()
 
@@ -308,8 +309,7 @@ class Llama(Model):
             log_error(f"Error from Llama API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    @staticmethod
-    def parse_tool_calls(tool_calls_data: List[EventDeltaToolCallDeltaFunction]) -> List[Dict[str, Any]]:
+    def parse_tool_calls(self, tool_calls_data: List[EventDeltaToolCallDeltaFunction]) -> List[Dict[str, Any]]:
         """
         Parse the tool calls from the Llama API.
 
@@ -410,13 +410,13 @@ class Llama(Model):
                 log_warning(f"Error processing tool calls: {e}")
 
         # Add metrics from the metrics list
-        if hasattr(response, "metrics"):
+        if hasattr(response, "metrics") and response.metrics is not None:
             model_response.response_usage = self._get_metrics(response.metrics)
 
         return model_response
 
     def _parse_provider_response_delta(
-        self, response_delta: CreateChatCompletionResponseStreamChunk, **kwargs
+        self, response: CreateChatCompletionResponseStreamChunk, **kwargs
     ) -> ModelResponse:
         """
         Parse the Llama streaming response into a ModelResponse.
@@ -429,8 +429,8 @@ class Llama(Model):
         """
         model_response = ModelResponse()
 
-        if response_delta is not None:
-            delta = response_delta.event
+        if response is not None:
+            delta = response.event
 
             # Capture metrics event
             if delta.event_type == "metrics" and delta.metrics is not None:
@@ -445,7 +445,7 @@ class Llama(Model):
 
         return model_response
 
-    def _get_metrics(self, response_usage: List[Metric]) -> Metrics:
+    def _get_metrics(self, response_usage: Union[List[Metric], List[EventMetric]]) -> Metrics:
         """
         Parse the given Llama usage into an Agno Metrics object.
 

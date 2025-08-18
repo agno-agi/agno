@@ -37,9 +37,6 @@ def test_basic_stream():
     for response in agent.run("Share a 2 sentence horror story", stream=True):
         assert response.content is not None
 
-    assert agent.run_response is not None
-    _assert_metrics(agent.run_response)
-
 
 @pytest.mark.asyncio
 async def test_async_basic():
@@ -61,12 +58,10 @@ async def test_async_basic_stream():
     async for response in agent.arun("Share a 2 sentence horror story", stream=True):
         assert response.content is not None
 
-    assert agent.run_response is not None
-    _assert_metrics(agent.run_response)
-
 
 def test_with_memory():
     agent = Agent(
+        db=SqliteDb(db_file="tmp/test_with_memory.db"),
         model=OllamaTools(id="llama3.2:latest"),
         add_history_to_context=True,
         markdown=True,
@@ -137,13 +132,15 @@ def test_history():
         add_history_to_context=True,
         telemetry=False,
     )
-    agent.run("Hello")
-    assert agent.run_response is not None
-    assert agent.run_response.messages is not None
-    assert len(agent.run_response.messages) == 3
-    agent.run("Hello 2")
-    assert len(agent.run_response.messages) == 5
-    agent.run("Hello 3")
-    assert len(agent.run_response.messages) == 7
-    agent.run("Hello 4")
-    assert len(agent.run_response.messages) == 9
+    run_output = agent.run("Hello")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 3
+    run_output = agent.run("Hello 2")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 5
+    run_output = agent.run("Hello 3")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 7
+    run_output = agent.run("Hello 4")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 9

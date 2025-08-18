@@ -912,7 +912,7 @@ class Weaviate(VectorDb):
             collection = weaviate_client.collections.get(self.collection)
 
             # Query for objects with the given content_id
-            query_result = collection.query.fetch_objects(
+            query_result = collection.query.fetch_objects(  # type: ignore
                 where=Filter.by_property("content_id").equal(content_id),
                 limit=1000,  # Get all matching objects
             )

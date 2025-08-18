@@ -147,10 +147,7 @@ class ZepTools(Toolkit):
             return "Error: Zep client/session not initialized."
 
         try:
-            zep_message = ZepMessage(
-                role=role,
-                content=content,
-            )
+            zep_message = ZepMessage(role=role, content=content, role_type=role)
 
             # Prepare ignore_roles if needed
             ignore_roles_list = ["assistant"] if self.ignore_assistant_messages else None
@@ -360,10 +357,7 @@ class ZepAsyncTools(Toolkit):
             return "Error: Zep client/session not initialized."
 
         try:
-            zep_message = ZepMessage(
-                role=role.upper(),
-                content=content,
-            )
+            zep_message = ZepMessage(role=role.upper(), content=content, role_type=role)
 
             # Prepare ignore_roles if needed
             ignore_roles_list = ["assistant"] if self.ignore_assistant_messages else None

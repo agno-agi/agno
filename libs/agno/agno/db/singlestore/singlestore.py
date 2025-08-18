@@ -113,7 +113,7 @@ class SingleStoreDb(BaseDb):
         try:
             table_schema = get_table_schema_definition(table_type)
 
-            columns = []
+            columns: List[Column] = []
             # Get the columns from the table schema
             for col_name, col_config in table_schema.items():
                 # Skip constraint definitions
@@ -159,7 +159,9 @@ class SingleStoreDb(BaseDb):
             table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
             log_debug(f"Creating table {table_ref} with schema: {table_schema}")
 
-            columns, indexes, unique_constraints = [], [], []
+            columns: List[Column] = []
+            indexes: List[str] = []
+            unique_constraints: List[str] = []
             schema_unique_constraints = table_schema.pop("_unique_constraints", [])
 
             # Get the columns, indexes, and unique constraints from the table schema
@@ -455,7 +457,7 @@ class SingleStoreDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-    ) -> Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
+    ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
 
@@ -873,7 +875,6 @@ class SingleStoreDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
         topics: Optional[List[str]] = None,
         search_content: Optional[str] = None,
         limit: Optional[int] = None,
@@ -888,7 +889,6 @@ class SingleStoreDb(BaseDb):
             user_id (Optional[str]): The ID of the user to filter by.
             agent_id (Optional[str]): The ID of the agent to filter by.
             team_id (Optional[str]): The ID of the team to filter by.
-            workflow_id (Optional[str]): The ID of the workflow to filter by.
             topics (Optional[List[str]]): The topics to filter by.
             search_content (Optional[str]): The content to search for.
             limit (Optional[int]): The maximum number of memories to return.
@@ -917,8 +917,6 @@ class SingleStoreDb(BaseDb):
                     stmt = stmt.where(table.c.agent_id == agent_id)
                 if team_id is not None:
                     stmt = stmt.where(table.c.team_id == team_id)
-                if workflow_id is not None:
-                    stmt = stmt.where(table.c.workflow_id == workflow_id)
                 if topics is not None:
                     topic_conditions = [func.JSON_ARRAY_CONTAINS_STRING(table.c.topics, topic) for topic in topics]
                     if topic_conditions:
@@ -1162,12 +1160,11 @@ class SingleStoreDb(BaseDb):
                     return result._mapping["date"]
 
         # 2. No metrics records. Return the date of the first recorded session.
-        sessions_result = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
-        if isinstance(sessions_result, tuple):
-            first_session, _ = sessions_result
-        else:
-            first_session = sessions_result
-        first_session_date = first_session[0]["created_at"] if first_session and len(first_session) > 0 else None  # type: ignore
+        sessions_result, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
+        if not isinstance(sessions_result, list):
+            raise ValueError("Error obtaining session list to calculate metrics")
+
+        first_session_date = sessions_result[0]["created_at"] if sessions_result and len(sessions_result) > 0 else None  # type: ignore
 
         # 3. No metrics records and no sessions records. Return None.
         if first_session_date is None:

@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from types import AsyncGeneratorType, GeneratorType
 from typing import (
     Any,
-    AsyncGenerator,
     AsyncIterator,
     Dict,
     Iterator,
@@ -145,19 +144,19 @@ class Model(ABC):
         return self.provider or self.name or self.__class__.__name__
 
     @abstractmethod
-    def invoke(self, *args, **kwargs) -> Any:
+    def invoke(self, *args, **kwargs) -> ModelResponse:
         pass
 
     @abstractmethod
-    async def ainvoke(self, *args, **kwargs) -> Any:
+    async def ainvoke(self, *args, **kwargs) -> ModelResponse:
         pass
 
     @abstractmethod
-    def invoke_stream(self, *args, **kwargs) -> Iterator[Any]:
+    def invoke_stream(self, *args, **kwargs) -> Iterator[ModelResponse]:
         pass
 
     @abstractmethod
-    async def ainvoke_stream(self, *args, **kwargs) -> AsyncGenerator[Any, None]:
+    def ainvoke_stream(self, *args, **kwargs) -> AsyncIterator[ModelResponse]:
         pass
 
     @abstractmethod
@@ -1028,7 +1027,7 @@ class Model(ABC):
             tool_args=function_call.arguments,
             tool_call_error=not success,
             stop_after_tool_call=function_call.function.stop_after_tool_call,
-            **kwargs,
+            **kwargs,  # type: ignore
         )
 
     def create_tool_call_limit_error_result(self, function_call: FunctionCall) -> Message:

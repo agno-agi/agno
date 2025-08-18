@@ -274,7 +274,7 @@ class MongoDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-    ) -> Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
+    ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions.
 
         Args:
@@ -350,14 +350,20 @@ class MongoDb(BaseDb):
             if not deserialize:
                 return sessions_raw, total_count
 
-            sessions = []
+            sessions: List[AgentSession | TeamSession | WorkflowSession] = []
             for record in sessions_raw:
                 if session_type == SessionType.AGENT.value:
-                    sessions.append(AgentSession.from_dict(record))
+                    agent_session = AgentSession.from_dict(record)
+                    if agent_session is not None:
+                        sessions.append(agent_session)
                 elif session_type == SessionType.TEAM.value:
-                    sessions.append(TeamSession.from_dict(record))
+                    team_session = TeamSession.from_dict(record)
+                    if team_session is not None:
+                        sessions.append(team_session)
                 elif session_type == SessionType.WORKFLOW.value:
-                    sessions.append(WorkflowSession.from_dict(record))
+                    workflow_session = WorkflowSession.from_dict(record)
+                    if workflow_session is not None:
+                        sessions.append(workflow_session)
 
             return sessions
 
@@ -641,7 +647,6 @@ class MongoDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
         topics: Optional[List[str]] = None,
         search_content: Optional[str] = None,
         limit: Optional[int] = None,
@@ -656,7 +661,6 @@ class MongoDb(BaseDb):
             user_id (Optional[str]): The ID of the user to get the memories for.
             agent_id (Optional[str]): The ID of the agent to get the memories for.
             team_id (Optional[str]): The ID of the team to get the memories for.
-            workflow_id (Optional[str]): The ID of the workflow to get the memories for.
             topics (Optional[List[str]]): The topics to filter the memories by.
             search_content (Optional[str]): The content to filter the memories by.
             limit (Optional[int]): The limit of the memories to get.
@@ -681,8 +685,6 @@ class MongoDb(BaseDb):
                 query["agent_id"] = agent_id
             if team_id is not None:
                 query["team_id"] = team_id
-            if workflow_id is not None:
-                query["workflow_id"] = workflow_id
             if topics is not None:
                 query["topics"] = {"$in": topics}
             if search_content is not None:
@@ -749,7 +751,7 @@ class MongoDb(BaseDb):
 
             # Get total count
             count_pipeline = pipeline + [{"$count": "total"}]
-            count_result = list(collection.aggregate(count_pipeline))
+            count_result = list(collection.aggregate(count_pipeline))  # type: ignore
             total_count = count_result[0]["total"] if count_result else 0
 
             # Apply pagination
@@ -758,7 +760,7 @@ class MongoDb(BaseDb):
                     pipeline.append({"$skip": (page - 1) * limit})
                 pipeline.append({"$limit": limit})
 
-            results = list(collection.aggregate(pipeline))
+            results = list(collection.aggregate(pipeline))  # type: ignore
 
             formatted_results = [
                 {

@@ -54,7 +54,7 @@ class GCSContent:
     ):
         # Import Google Cloud Storage only when actually needed
         try:
-            from google.cloud import storage
+            from google.cloud import storage  # type: ignore
         except ImportError:
             raise ImportError(
                 "The `google-cloud-storage` package is not installed. Please install it via `pip install google-cloud-storage`."

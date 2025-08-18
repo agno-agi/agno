@@ -208,7 +208,7 @@ class Ollama(Model):
 
         assistant_message.metrics.stop_timer()
 
-        model_response = self._parse_provider_response(provider_response, response_format=response_format)
+        model_response = self._parse_provider_response(provider_response)  # type: ignore
         return model_response
 
     async def ainvoke(
@@ -238,7 +238,7 @@ class Ollama(Model):
 
         assistant_message.metrics.stop_timer()
 
-        model_response = self._parse_provider_response(provider_response, response_format=response_format)
+        model_response = self._parse_provider_response(provider_response)  # type: ignore
         return model_response
 
     def invoke_stream(
@@ -295,11 +295,7 @@ class Ollama(Model):
 
         assistant_message.metrics.stop_timer()
 
-    def _parse_provider_response(
-        self,
-        response: dict,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-    ) -> ModelResponse:
+    def _parse_provider_response(self, response: dict) -> ModelResponse:
         """
         Parse the provider response.
         """
@@ -336,19 +332,19 @@ class Ollama(Model):
 
         return model_response
 
-    def _parse_provider_response_delta(self, response_delta: ChatResponse) -> ModelResponse:
+    def _parse_provider_response_delta(self, response: ChatResponse) -> ModelResponse:
         """
         Parse the provider response delta.
 
         Args:
-            response_delta (ChatResponse): The response from the provider.
+            response (ChatResponse): The response from the provider.
 
         Returns:
             Iterator[ModelResponse]: An iterator of the model response.
         """
         model_response = ModelResponse()
 
-        response_message = response_delta.get("message")
+        response_message = response.get("message")
 
         if response_message is not None:
             content_delta = response_message.get("content")
@@ -367,12 +363,12 @@ class Ollama(Model):
                     }
                     model_response.tool_calls.append({"type": "function", "function": function_def})
 
-        if response_delta.get("done"):
-            model_response.response_usage = self._get_metrics(response_delta)
+        if response.get("done"):
+            model_response.response_usage = self._get_metrics(response)
 
         return model_response
 
-    def _get_metrics(self, response: dict) -> Metrics:
+    def _get_metrics(self, response: Union[dict, ChatResponse]) -> Metrics:
         """
         Parse the given Ollama usage into an Agno Metrics object.
 

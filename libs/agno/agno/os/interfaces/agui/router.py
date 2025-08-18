@@ -44,7 +44,9 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
 
         # Stream the response content in AG-UI format
         async for event in async_stream_agno_response_as_agui_events(
-            response_stream=response_stream, thread_id=run_input.thread_id, run_id=run_id
+            response_stream=response_stream,  # type: ignore
+            thread_id=run_input.thread_id,
+            run_id=run_id,
         ):
             yield event
 

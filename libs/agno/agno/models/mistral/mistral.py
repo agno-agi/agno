@@ -14,21 +14,25 @@ from agno.utils.log import log_debug, log_error
 from agno.utils.models.mistral import format_messages
 
 try:
-    from mistralai import CompletionEvent
-    from mistralai import Mistral as MistralClient
-    from mistralai.extra import response_format_from_pydantic_model
-    from mistralai.extra.struct_chat import ParsedChatCompletionResponse
-    from mistralai.models import (
-        AssistantMessage,
-        HTTPValidationError,
-        SDKError,
-        SystemMessage,
-        ToolMessage,
-        UserMessage,
+    # TODO: Adapt these imports to the new Mistral SDK versions
+    from mistralai import CompletionEvent  # type: ignore
+    from mistralai import Mistral as MistralClient  # type: ignore
+    from mistralai.extra import response_format_from_pydantic_model  # type: ignore
+    from mistralai.extra.struct_chat import ParsedChatCompletionResponse  # type: ignore
+    from mistralai.models import (  # type: ignore
+        AssistantMessage,  # type: ignore
+        HTTPValidationError,  # type: ignore
+        SDKError,  # type: ignore
+        SystemMessage,  # type: ignore
+        ToolMessage,  # type: ignore
+        UserMessage,  # type: ignore
     )
-    from mistralai.models.chatcompletionresponse import ChatCompletionResponse, ChatCompletionResponseUsage
-    from mistralai.models.deltamessage import DeltaMessage
-    from mistralai.types.basemodel import Unset
+    from mistralai.models.chatcompletionresponse import (  # type: ignore
+        ChatCompletionResponse,  # type: ignore
+        ChatCompletionResponseUsage,  # type: ignore
+    )
+    from mistralai.models.deltamessage import DeltaMessage  # type: ignore
+    from mistralai.types.basemodel import Unset  # type: ignore
 
     MistralMessage = Union[UserMessage, AssistantMessage, SystemMessage, ToolMessage]
 

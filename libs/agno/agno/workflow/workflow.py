@@ -2156,7 +2156,31 @@ class Workflow:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert workflow to dictionary representation"""
-        # TODO: Handle nested
+
+        def serialize_step(step):
+            step_dict = {
+                "name": step.name if hasattr(step, "name") else f"unnamed_{type(step).__name__.lower()}",
+                "description": step.description if hasattr(step, "description") else "User-defined callable step",
+                "type": STEP_TYPE_MAPPING[type(step)].value,  # type: ignore
+            }
+
+            # Handle agent/team/tools
+            if hasattr(step, "agent"):
+                step_dict["agent"] = step.agent if hasattr(step, "agent") else None  # type: ignore
+            if hasattr(step, "team"):
+                step_dict["team"] = step.team if hasattr(step, "team") else None  # type: ignore
+
+            # Handle nested steps for Router/Loop
+            if isinstance(step, (Router)):
+                step_dict["steps"] = (
+                    [serialize_step(step) for step in step.choices] if hasattr(step, "choices") else None
+                )
+
+            elif isinstance(step, (Loop, Condition, Steps, Parallel)):
+                step_dict["steps"] = [serialize_step(step) for step in step.steps] if hasattr(step, "steps") else None
+
+            return step_dict
+
         if self.steps is None or callable(self.steps):
             steps_list = []
         elif isinstance(self.steps, Steps):
@@ -2168,18 +2192,7 @@ class Workflow:
             "name": self.name,
             "workflow_id": self.id,
             "description": self.description,
-            "steps": [
-                # TODO: this should be encapsulated in step.to_dict() - for all step classes
-                {
-                    "name": s.name if hasattr(s, "name") else s.__name__,
-                    "description": s.description if hasattr(s, "description") else "User-defined callable step",
-                    # TODO: The step should have a type field
-                    "type": STEP_TYPE_MAPPING[type(s)].value,  # type: ignore
-                    "agent": s.agent if hasattr(s, "agent") else None,  # type: ignore
-                    "team": s.team if hasattr(s, "team") else None,  # type: ignore
-                }
-                for s in steps_list
-            ],
+            "steps": [serialize_step(s) for s in steps_list],
             "session_id": self.session_id,
         }
 

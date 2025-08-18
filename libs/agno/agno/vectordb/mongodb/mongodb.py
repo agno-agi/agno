@@ -1286,7 +1286,7 @@ class MongoDb(VectorDb):
             metadata (Dict[str, Any]): The metadata to update
         """
         try:
-            collection = self._client[self.database][self.collection_name]
+            collection = self._client[self.database][self.collection_name]  # type: ignore
 
             # Create query filter for content_id
             filter_query = {"content_id": content_id}

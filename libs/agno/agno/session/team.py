@@ -62,7 +62,7 @@ class TeamSession:
             return None
 
         if data.get("summary") is not None:
-            data["summary"] = SessionSummary.from_dict(data["summary"])
+            data["summary"] = SessionSummary.from_dict(data["summary"])  # type: ignore
 
         runs = data.get("runs", [])
         serialized_runs: List[Union[TeamRunOutput, RunOutput]] = []

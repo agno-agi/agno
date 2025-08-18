@@ -18,7 +18,7 @@ from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
-    from google.cloud import storage as gcs
+    from google.cloud import storage as gcs  # type: ignore
 except ImportError:
     raise ImportError("`google-cloud-storage` not installed. Please install it with `pip install google-cloud-storage`")
 
@@ -202,6 +202,7 @@ class GcsJsonDb(BaseDb):
                 if session_data.get("session_id") == session_id:
                     if user_id is not None and session_data.get("user_id") != user_id:
                         continue
+
                     session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
                     if session_data.get("session_type") != session_type_value:
                         continue
@@ -215,6 +216,8 @@ class GcsJsonDb(BaseDb):
                         return TeamSession.from_dict(session_data)
                     elif session_type == SessionType.WORKFLOW:
                         return WorkflowSession.from_dict(session_data)
+
+            return None
 
         except Exception as e:
             log_warning(f"Exception reading from session file: {e}")
@@ -233,7 +236,7 @@ class GcsJsonDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-    ) -> Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
+    ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions from the GCS JSON file with filtering and pagination.
 
         Args:
@@ -302,11 +305,11 @@ class GcsJsonDb(BaseDb):
                 return filtered_sessions, total_count
 
             if session_type == SessionType.AGENT:
-                return [AgentSession.from_dict(session) for session in filtered_sessions]
+                return [AgentSession.from_dict(session) for session in filtered_sessions]  # type: ignore
             elif session_type == SessionType.TEAM:
-                return [TeamSession.from_dict(session) for session in filtered_sessions]
+                return [TeamSession.from_dict(session) for session in filtered_sessions]  # type: ignore
             elif session_type == SessionType.WORKFLOW:
-                return [WorkflowSession.from_dict(session) for session in filtered_sessions]
+                return [WorkflowSession.from_dict(session) for session in filtered_sessions]  # type: ignore
             else:
                 raise ValueError(f"Invalid session type: {session_type}")
 
@@ -405,7 +408,7 @@ class GcsJsonDb(BaseDb):
         return False
 
     # -- Memory methods --
-    def delete_user_memory(self, memory_id: str) -> bool:
+    def delete_user_memory(self, memory_id: str) -> None:
         """Delete a user memory from the GCS JSON file."""
         try:
             memories = self._read_json_file(self.memory_table_name)
@@ -415,13 +418,12 @@ class GcsJsonDb(BaseDb):
             if len(memories) < original_count:
                 self._write_json_file(self.memory_table_name, memories)
                 log_debug(f"Successfully deleted user memory id: {memory_id}")
-                return True
+
             else:
                 log_debug(f"No user memory found with id: {memory_id}")
-                return False
+
         except Exception as e:
             log_warning(f"Error deleting user memory: {e}")
-            return False
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
         """Delete multiple user memories from the GCS JSON file."""
@@ -471,7 +473,6 @@ class GcsJsonDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
         topics: Optional[List[str]] = None,
         search_content: Optional[str] = None,
         limit: Optional[int] = None,
@@ -492,8 +493,6 @@ class GcsJsonDb(BaseDb):
                 if agent_id is not None and memory_data.get("agent_id") != agent_id:
                     continue
                 if team_id is not None and memory_data.get("team_id") != team_id:
-                    continue
-                if workflow_id is not None and memory_data.get("workflow_id") != workflow_id:
                     continue
                 if topics is not None:
                     memory_topics = memory_data.get("topics", [])
@@ -917,8 +916,8 @@ class GcsJsonDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        eval_type: Optional[List[EvalType]] = None,
         filter_type: Optional[EvalFilterType] = None,
+        eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the GCS JSON file with filtering and pagination."""
