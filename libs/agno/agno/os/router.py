@@ -234,8 +234,12 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
             return
 
         # Generate session_id if not provided
+        # Use workflow's default session_id if not provided in message
         if not session_id:
-            session_id = str(uuid4())
+            if workflow.session_id:
+                session_id = workflow.session_id
+            else:
+                session_id = str(uuid4())
 
         # Execute workflow in background with streaming
         await workflow.arun(
