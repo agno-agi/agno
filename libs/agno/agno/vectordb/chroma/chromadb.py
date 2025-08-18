@@ -1,6 +1,6 @@
 import asyncio
 from hashlib import md5
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import Any, Dict, List, Mapping, Optional, Union, cast
 
 try:
     from chromadb import Client as ChromaDbClient
@@ -391,7 +391,7 @@ class ChromaDb(VectorDb):
         for e in embeddings_raw:
             if hasattr(e, "tolist") and callable(getattr(e, "tolist", None)):
                 try:
-                    embeddings.append(list(e.tolist()))
+                    embeddings.append(list(cast(Any, e).tolist()))
                 except (AttributeError, TypeError):
                     embeddings.append(list(e) if isinstance(e, (list, tuple)) else [])
             elif isinstance(e, (list, tuple)):
@@ -767,9 +767,7 @@ class ChromaDb(VectorDb):
 
                 # Update the documents
                 # Convert to the expected type for ChromaDB
-                chroma_metadatas = [
-                    cast(Dict[str, Union[str, int, float, bool, None]], meta) for meta in updated_metadatas
-                ]
+                chroma_metadatas = cast(List[Mapping[str, Union[str, int, float, bool, None]]], updated_metadatas)
                 collection.update(ids=ids, metadatas=chroma_metadatas)
                 logger.debug(f"Updated metadata for {len(ids)} documents with content_id: {content_id}")
 

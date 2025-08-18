@@ -133,9 +133,7 @@ class StepInput:
         # Regular step, return content directly
         return step_output.content  # type: ignore[return-value]
 
-    def _get_deepest_step_content(
-        self, step_output: "StepOutput"
-    ) -> Optional[Union[str, Dict[str, str]]]:
+    def _get_deepest_step_content(self, step_output: "StepOutput") -> Optional[Union[str, Dict[str, str]]]:
         """Helper method to recursively extract deepest content from nested steps"""
         # If this step has nested steps, go deeper
         if step_output.steps and len(step_output.steps) > 0:

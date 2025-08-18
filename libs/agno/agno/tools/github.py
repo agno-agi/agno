@@ -7,7 +7,6 @@ from agno.utils.log import log_debug, logger
 
 try:
     from github import Auth, Github, GithubException
-    from github.GithubObject import NotSet
 
 except ImportError:
     raise ImportError("`PyGithub` not installed. Please install using `pip install pygithub`")
