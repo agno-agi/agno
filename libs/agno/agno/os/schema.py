@@ -562,16 +562,32 @@ class WorkflowResponse(BaseModel):
     team: Optional[TeamResponse] = None
 
     @classmethod
+    def _resolve_agents_and_teams_recursively(cls, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Parse Agents and Teams into AgentResponse and TeamResponse objects.
+
+        If the given steps have nested steps, recursively work on those."""
+        if not steps:
+            return steps
+
+        for step in steps:
+            if step.get("agent"):
+                step["agent"] = AgentResponse.from_agent(step["agent"])
+
+            if step.get("team"):
+                step["team"] = TeamResponse.from_team(step["team"])
+
+            if step.get("steps"):
+                step["steps"] = cls._resolve_agents_and_teams_recursively(step["steps"])
+
+        return steps
+
+    @classmethod
     def from_workflow(cls, workflow: Workflow) -> "WorkflowResponse":
         workflow_dict = workflow.to_dict()
         steps = workflow_dict.get("steps")
 
         if steps:
-            for step in steps:
-                if step.get("agent"):
-                    step["agent"] = AgentResponse.from_agent(step["agent"])
-                if step.get("team"):
-                    step["team"] = TeamResponse.from_team(step["team"])
+            steps = cls._resolve_agents_and_teams_recursively(steps)
 
         return cls(
             id=workflow.id,
