@@ -2157,25 +2157,27 @@ class Workflow:
     def to_dict(self) -> Dict[str, Any]:
         """Convert workflow to dictionary representation"""
 
-        def serialize_step(s):
+        def serialize_step(step):
             step_dict = {
-                "name": s.name if hasattr(s, "name") else s.__name__,
-                "description": s.description if hasattr(s, "description") else "User-defined callable step",
-                "type": STEP_TYPE_MAPPING[type(s)].value,  # type: ignore
+                "name": step.name if hasattr(step, "name") else f"unnamed_{type(step).__name__.lower()}",
+                "description": step.description if hasattr(step, "description") else "User-defined callable step",
+                "type": STEP_TYPE_MAPPING[type(step)].value,  # type: ignore
             }
 
             # Handle agent/team/tools
-            if hasattr(s, "agent"):
-                step_dict["agent"] = s.agent if hasattr(s, "agent") else None  # type: ignore   
-            if hasattr(s, "team"):
-                step_dict["team"] = s.team if hasattr(s, "team") else None  # type: ignore
+            if hasattr(step, "agent"):
+                step_dict["agent"] = step.agent if hasattr(step, "agent") else None  # type: ignore
+            if hasattr(step, "team"):
+                step_dict["team"] = step.team if hasattr(step, "team") else None  # type: ignore
 
             # Handle nested steps for Router/Loop
-            if isinstance(s, (Router)):
-                step_dict["steps"] = [serialize_step(step) for step in s.choices] if hasattr(s, "choices") else None
+            if isinstance(step, (Router)):
+                step_dict["steps"] = (
+                    [serialize_step(step) for step in step.choices] if hasattr(step, "choices") else None
+                )
 
-            elif isinstance(s, (Loop, Condition, Steps, Parallel)):
-                step_dict["steps"] = [serialize_step(step) for step in s.steps] if hasattr(s, "steps") else None
+            elif isinstance(step, (Loop, Condition, Steps, Parallel)):
+                step_dict["steps"] = [serialize_step(step) for step in step.steps] if hasattr(step, "steps") else None
 
             return step_dict
 
