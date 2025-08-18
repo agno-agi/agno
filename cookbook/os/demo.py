@@ -1,6 +1,9 @@
-"""AgentOS Demo"""
+"""
+AgentOS Demo
 
-from textwrap import dedent
+Set the OS_SECURITY_KEY environment variable to your OS security key to enable authentication.
+"""
+
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.eval.accuracy import AccuracyEval
@@ -43,7 +46,7 @@ agno_agent = Agent(
 finance_agent = Agent(
     name="Finance Agent",
     model=OpenAIChat(id="gpt-4.1"),
-    db=PostgresDb(db_url=db_url),
+    db=db,
     tools=[YFinanceTools()],
     markdown=True,
 )
@@ -52,7 +55,7 @@ finance_agent = Agent(
 simple_agent = Agent(
     name="Simple Agent",
     role="Simple agent",
-    agent_id="simple_agent",
+    id="simple_agent",
     model=OpenAIChat(id="gpt-4o"),
     instructions=["You are a simple agent"],
     db=db,
@@ -62,7 +65,7 @@ simple_agent = Agent(
 research_agent = Agent(
     name="Research Agent",
     role="Research agent",
-    agent_id="research_agent",
+    id="research_agent",
     model=OpenAIChat(id="gpt-4o"),
     instructions=["You are a research agent"],
     tools=[DuckDuckGoTools()],
@@ -76,22 +79,20 @@ research_team = Team(
     members=[research_agent, simple_agent],
     model=OpenAIChat(id="gpt-4o"),
     mode="coordinate",
-    team_id="research_team",
-    success_criteria="A comprehensive research report with clear sections and data-driven insights.",
+    id="research_team",
     instructions=[
         "You are the lead researcher of a research team! 🔍",
     ],
     db=db,
     enable_user_memories=True,
-    add_datetime_to_instructions=True,
-    show_tool_calls=True,
+    add_datetime_to_context=True,
     markdown=True,
     enable_agentic_context=True,
 )
 
 # Setting up and running an eval for our agent
 evaluation = AccuracyEval(
-    db=PostgresDb(db_url=db_url),
+    db=db,
     name="Calculator Evaluation",
     model=OpenAIChat(id="gpt-4o"),
     agent=agno_agent,

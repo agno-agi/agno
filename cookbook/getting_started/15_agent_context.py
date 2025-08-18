@@ -45,7 +45,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     # Each function in the context is evaluated when the agent is run,
     # think of it as dependency injection for Agents
-    context={"top_hackernews_stories": get_top_hackernews_stories},
+    dependencies={"top_hackernews_stories": get_top_hackernews_stories},
     # Alternatively, you can manually add the context to the instructions
     instructions=dedent("""\
         You are an insightful tech trend observer! 📰

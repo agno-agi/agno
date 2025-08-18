@@ -13,5 +13,6 @@ agent.print_response(
     files=[File(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf")],
 )
 
-print("Citations:")
-print(agent.run_response.citations)
+if agent.run_response and agent.run_response.citations:
+    print("Citations:")
+    print(agent.run_response.citations)

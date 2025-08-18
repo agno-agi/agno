@@ -106,11 +106,13 @@ class ModelResponse:
 
     citations: Optional[Citations] = None
 
-    response_usage: Optional[Any] = None
+    response_usage: Optional[Metrics] = None
 
     created_at: int = int(time())
 
     extra: Optional[Dict[str, Any]] = None
+
+    updated_session_state: Optional[Dict[str, Any]] = None
 
 
 class FileType(str, Enum):

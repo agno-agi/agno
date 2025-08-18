@@ -6,8 +6,8 @@ from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from agno.db.base import SessionType
-from agno.run.response import RunResponse
-from agno.run.team import TeamRunResponse
+from agno.run.response import RunOutput
+from agno.run.team import TeamRunOutput
 from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug
 
@@ -25,9 +25,9 @@ def hydrate_session(session: dict) -> dict:
         session["summary"] = SessionSummary.from_dict(session["summary"])
     if session.get("runs") is not None:
         if session["session_type"] == SessionType.AGENT:
-            session["runs"] = [RunResponse.from_dict(run) for run in session["runs"]]
+            session["runs"] = [RunOutput.from_dict(run) for run in session["runs"]]
         elif session["session_type"] == SessionType.TEAM:
-            session["runs"] = [TeamRunResponse.from_dict(run) for run in session["runs"]]
+            session["runs"] = [TeamRunOutput.from_dict(run) for run in session["runs"]]
 
     return session
 
@@ -84,14 +84,14 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
         "input_tokens": 0,
         "output_tokens": 0,
         "total_tokens": 0,
-        "audio_tokens": 0,
-        "input_audio_tokens": 0,
-        "output_audio_tokens": 0,
-        "cached_tokens": 0,
+        "audio_total_tokens": 0,
+        "audio_input_tokens": 0,
+        "audio_output_tokens": 0,
+        "cache_read_tokens": 0,
         "cache_write_tokens": 0,
         "reasoning_tokens": 0,
     }
-    model_counts = {}
+    model_counts: Dict[str, int] = {}
 
     session_types = [
         ("agent", "agent_sessions_count", "agent_runs_count"),
@@ -166,12 +166,14 @@ def fetch_all_sessions_data(
     if not dates_to_process:
         return None
 
-    all_sessions_data = {
+    all_sessions_data: Dict[str, Dict[str, List[Dict[str, Any]]]] = {
         date_to_process.isoformat(): {"agent": [], "team": [], "workflow": []} for date_to_process in dates_to_process
     }
 
     for session in sessions:
-        session_date = date.fromtimestamp(session.get("created_at", start_timestamp)).isoformat()
+        session_date = (
+            datetime.fromtimestamp(session.get("created_at", start_timestamp), tz=timezone.utc).date().isoformat()
+        )
         if session_date in all_sessions_data:
             all_sessions_data[session_date][session["session_type"]].append(session)
 

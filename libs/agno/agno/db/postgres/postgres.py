@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
-from sqlalchemy import Index, UniqueConstraint
+from sqlalchemy import Index, String, UniqueConstraint
 
 from agno.db.base import BaseDb, SessionType
 from agno.db.postgres.schemas import get_table_schema_definition
@@ -24,7 +24,7 @@ from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
-    from sqlalchemy import and_, func, update
+    from sqlalchemy import func, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -37,9 +37,9 @@ except ImportError:
 class PostgresDb(BaseDb):
     def __init__(
         self,
+        db_url: Optional[str] = None,
         db_engine: Optional[Engine] = None,
         db_schema: Optional[str] = None,
-        db_url: Optional[str] = None,
         session_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
@@ -91,7 +91,6 @@ class PostgresDb(BaseDb):
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
 
     # -- DB methods --
-
     def _create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
         """
         Create a table with the appropriate schema based on the table type.
@@ -105,9 +104,11 @@ class PostgresDb(BaseDb):
             Table: SQLAlchemy Table object
         """
         try:
-            table_schema = get_table_schema_definition(table_type)
+            table_schema = get_table_schema_definition(table_type).copy()
 
-            columns, indexes, unique_constraints = [], [], []
+            columns: List[Column] = []
+            indexes: List[str] = []
+            unique_constraints: List[str] = []
             schema_unique_constraints = table_schema.pop("_unique_constraints", [])
 
             # Get the columns, indexes, and unique constraints from the table schema
@@ -123,7 +124,7 @@ class PostgresDb(BaseDb):
                 if col_config.get("unique", False):
                     column_kwargs["unique"] = True
                     unique_constraints.append(col_name)
-                columns.append(Column(*column_args, **column_kwargs))
+                columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
             table_metadata = MetaData(schema=db_schema)
@@ -307,10 +308,10 @@ class PostgresDb(BaseDb):
     def get_session(
         self,
         session_id: str,
+        session_type: SessionType,
         user_id: Optional[str] = None,
-        session_type: Optional[SessionType] = None,
         deserialize: Optional[bool] = True,
-    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Read a session from the database.
 
@@ -354,6 +355,8 @@ class PostgresDb(BaseDb):
                 return TeamSession.from_dict(session)
             elif session_type == SessionType.WORKFLOW:
                 return WorkflowSession.from_dict(session)
+            else:
+                raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_error(f"Exception reading from session table: {e}")
@@ -372,7 +375,7 @@ class PostgresDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-    ) -> Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
+    ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
 
@@ -517,12 +520,16 @@ class PostgresDb(BaseDb):
                 return TeamSession.from_dict(session)
             elif session_type == SessionType.WORKFLOW:
                 return WorkflowSession.from_dict(session)
+            else:
+                raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_error(f"Exception renaming session: {e}")
             return None
 
-    def upsert_session(self, session: Session, deserialize: Optional[bool] = True) -> Optional[Session]:
+    def upsert_session(
+        self, session: Session, deserialize: Optional[bool] = True
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Insert or update a session in the database.
 
@@ -548,39 +555,37 @@ class PostgresDb(BaseDb):
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.AGENT.value,
                         agent_id=session_dict.get("agent_id"),
-                        team_session_id=session_dict.get("team_session_id"),
                         user_id=session_dict.get("user_id"),
                         runs=session_dict.get("runs"),
                         agent_data=session_dict.get("agent_data"),
                         session_data=session_dict.get("session_data"),
                         summary=session_dict.get("summary"),
-                        extra_data=session_dict.get("extra_data"),
+                        metadata=session_dict.get("metadata"),
                         created_at=session_dict.get("created_at"),
                         updated_at=session_dict.get("created_at"),
                     )
-                    stmt = stmt.on_conflict_do_update(
+                    stmt = stmt.on_conflict_do_update(  # type: ignore
                         index_elements=["session_id"],
                         set_=dict(
                             agent_id=session_dict.get("agent_id"),
-                            team_session_id=session_dict.get("team_session_id"),
                             user_id=session_dict.get("user_id"),
                             agent_data=session_dict.get("agent_data"),
                             session_data=session_dict.get("session_data"),
                             summary=session_dict.get("summary"),
-                            extra_data=session_dict.get("extra_data"),
+                            metadata=session_dict.get("metadata"),
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
                     ).returning(table)
                     result = sess.execute(stmt)
                     row = result.fetchone()
-                    session = row._mapping
+                    session_dict = dict(row._mapping)
 
                     log_debug(f"Upserted agent session with id '{session_dict.get('session_id')}'")
 
-                    if session is None or not deserialize:
-                        return session
-                    return AgentSession.from_dict(session)  # type: ignore
+                    if session_dict is None or not deserialize:
+                        return session_dict
+                    return AgentSession.from_dict(session_dict)
 
             elif isinstance(session, TeamSession):
                 with self.Session() as sess, sess.begin():
@@ -588,39 +593,37 @@ class PostgresDb(BaseDb):
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.TEAM.value,
                         team_id=session_dict.get("team_id"),
-                        team_session_id=session_dict.get("team_session_id"),
                         user_id=session_dict.get("user_id"),
                         runs=session_dict.get("runs"),
                         team_data=session_dict.get("team_data"),
                         session_data=session_dict.get("session_data"),
                         summary=session_dict.get("summary"),
-                        extra_data=session_dict.get("extra_data"),
+                        metadata=session_dict.get("metadata"),
                         created_at=session_dict.get("created_at"),
                         updated_at=session_dict.get("created_at"),
                     )
-                    stmt = stmt.on_conflict_do_update(
+                    stmt = stmt.on_conflict_do_update(  # type: ignore
                         index_elements=["session_id"],
                         set_=dict(
                             team_id=session_dict.get("team_id"),
-                            team_session_id=session_dict.get("team_session_id"),
                             user_id=session_dict.get("user_id"),
                             team_data=session_dict.get("team_data"),
                             session_data=session_dict.get("session_data"),
                             summary=session_dict.get("summary"),
-                            extra_data=session_dict.get("extra_data"),
+                            metadata=session_dict.get("metadata"),
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
                     ).returning(table)
                     result = sess.execute(stmt)
                     row = result.fetchone()
-                    session = row._mapping
+                    session_dict = dict(row._mapping)
 
                     log_debug(f"Upserted team session with id '{session_dict.get('session_id')}'")
 
-                    if session is None or not deserialize:
-                        return session
-                    return TeamSession.from_dict(session)  # type: ignore
+                    if session_dict is None or not deserialize:
+                        return session_dict
+                    return TeamSession.from_dict(session_dict)
 
             elif isinstance(session, WorkflowSession):
                 with self.Session() as sess, sess.begin():
@@ -633,11 +636,11 @@ class PostgresDb(BaseDb):
                         workflow_data=session_dict.get("workflow_data"),
                         session_data=session_dict.get("session_data"),
                         summary=session_dict.get("summary"),
-                        extra_data=session_dict.get("extra_data"),
+                        metadata=session_dict.get("metadata"),
                         created_at=session_dict.get("created_at"),
                         updated_at=session_dict.get("created_at"),
                     )
-                    stmt = stmt.on_conflict_do_update(
+                    stmt = stmt.on_conflict_do_update(  # type: ignore
                         index_elements=["session_id"],
                         set_=dict(
                             workflow_id=session_dict.get("workflow_id"),
@@ -645,27 +648,30 @@ class PostgresDb(BaseDb):
                             workflow_data=session_dict.get("workflow_data"),
                             session_data=session_dict.get("session_data"),
                             summary=session_dict.get("summary"),
-                            extra_data=session_dict.get("extra_data"),
+                            metadata=session_dict.get("metadata"),
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
                     ).returning(table)
                     result = sess.execute(stmt)
                     row = result.fetchone()
-                    session = row._mapping
+                    session_dict = dict(row._mapping)
 
                     log_debug(f"Upserted workflow session with id '{session_dict.get('session_id')}'")
 
-                    if session is None or not deserialize:
-                        return session
-                    return WorkflowSession.from_dict(session)  # type: ignore
+                    if session_dict is None or not deserialize:
+                        return session_dict
+                    return WorkflowSession.from_dict(session_dict)
+
+            else:
+                raise ValueError(f"Invalid session type: {session.session_type}")
 
         except Exception as e:
             log_error(f"Exception upserting into sessions table: {e}")
             return None
 
     # -- Memory methods --
-    def delete_user_memory(self, memory_id: str) -> bool:
+    def delete_user_memory(self, memory_id: str):
         """Delete a user memory from the database.
 
         Returns:
@@ -687,11 +693,8 @@ class PostgresDb(BaseDb):
                 else:
                     log_debug(f"No user memory found with id: {memory_id}")
 
-                return success
-
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
-            return False
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
         """Delete user memories from the database.
@@ -729,13 +732,16 @@ class PostgresDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 stmt = select(func.json_array_elements_text(table.c.topics))
                 result = sess.execute(stmt).fetchall()
-                return [record[0] for record in result]
+
+                return list(set([record[0] for record in result]))
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
             return []
 
-    def get_user_memory(self, memory_id: str, deserialize: Optional[bool] = True) -> Optional[UserMemory]:
+    def get_user_memory(
+        self, memory_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """Get a memory from the database.
 
         Args:
@@ -760,7 +766,7 @@ class PostgresDb(BaseDb):
                 if not result:
                     return None
 
-                memory_raw = result._mapping
+                memory_raw = dict(result._mapping)
                 if not deserialize:
                     return memory_raw
 
@@ -775,7 +781,6 @@ class PostgresDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
         topics: Optional[List[str]] = None,
         search_content: Optional[str] = None,
         limit: Optional[int] = None,
@@ -790,7 +795,6 @@ class PostgresDb(BaseDb):
             user_id (Optional[str]): The ID of the user to filter by.
             agent_id (Optional[str]): The ID of the agent to filter by.
             team_id (Optional[str]): The ID of the team to filter by.
-            workflow_id (Optional[str]): The ID of the workflow to filter by.
             topics (Optional[List[str]]): The topics to filter by.
             search_content (Optional[str]): The content to search for.
             limit (Optional[int]): The maximum number of memories to return.
@@ -819,11 +823,9 @@ class PostgresDb(BaseDb):
                     stmt = stmt.where(table.c.agent_id == agent_id)
                 if team_id is not None:
                     stmt = stmt.where(table.c.team_id == team_id)
-                if workflow_id is not None:
-                    stmt = stmt.where(table.c.workflow_id == workflow_id)
                 if topics is not None:
-                    topic_conditions = [text(f"topics::text LIKE '%\"{topic}\"%'") for topic in topics]
-                    stmt = stmt.where(and_(*topic_conditions))
+                    for topic in topics:
+                        stmt = stmt.where(func.cast(table.c.topics, String).like(f'%"{topic}"%'))
                 if search_content is not None:
                     stmt = stmt.where(func.cast(table.c.memory, postgresql.TEXT).ilike(f"%{search_content}%"))
 
@@ -901,11 +903,11 @@ class PostgresDb(BaseDb):
                     select(
                         table.c.user_id,
                         func.count(table.c.memory_id).label("total_memories"),
-                        func.max(table.c.last_updated).label("last_memory_updated_at"),
+                        func.max(table.c.updated_at).label("last_memory_updated_at"),
                     )
                     .where(table.c.user_id.is_not(None))
                     .group_by(table.c.user_id)
-                    .order_by(func.max(table.c.last_updated).desc())
+                    .order_by(func.max(table.c.updated_at).desc())
                 )
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
@@ -966,10 +968,9 @@ class PostgresDb(BaseDb):
                     agent_id=memory.agent_id,
                     team_id=memory.team_id,
                     topics=memory.topics,
-                    workflow_id=memory.workflow_id,
-                    last_updated=int(time.time()),
+                    updated_at=int(time.time()),
                 )
-                stmt = stmt.on_conflict_do_update(
+                stmt = stmt.on_conflict_do_update(  # type: ignore
                     index_elements=["memory_id"],
                     set_=dict(
                         memory=memory.memory,
@@ -977,15 +978,14 @@ class PostgresDb(BaseDb):
                         input=memory.input,
                         agent_id=memory.agent_id,
                         team_id=memory.team_id,
-                        workflow_id=memory.workflow_id,
-                        last_updated=int(time.time()),
+                        updated_at=int(time.time()),
                     ),
                 ).returning(table)
 
                 result = sess.execute(stmt)
                 row = result.fetchone()
 
-            memory_raw = row._mapping
+            memory_raw = dict(row._mapping)
 
             log_debug(f"Upserted user memory with id '{memory.memory_id}'")
 
@@ -1033,6 +1033,7 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess:
                 result = sess.execute(stmt).fetchall()
+
                 return [record._mapping for record in result]
 
         except Exception as e:
@@ -1065,7 +1066,8 @@ class PostgresDb(BaseDb):
 
         # 2. No metrics records. Return the date of the first recorded session.
         first_session, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
-        first_session_date = first_session[0]["created_at"] if first_session else None
+
+        first_session_date = first_session[0]["created_at"] if first_session else None  # type: ignore[index]
 
         # 3. No metrics records and no sessions records. Return None.
         if first_session_date is None:
@@ -1086,6 +1088,7 @@ class PostgresDb(BaseDb):
             table = self._get_table(table_type="metrics")
 
             starting_date = self._get_metrics_calculation_starting_date(table)
+
             if starting_date is None:
                 log_info("No session data found. Won't calculate metrics.")
                 return None
@@ -1095,14 +1098,19 @@ class PostgresDb(BaseDb):
                 log_info("Metrics already calculated for all relevant dates.")
                 return None
 
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             sessions = self._get_all_sessions_for_metrics_calculation(
                 start_timestamp=start_timestamp, end_timestamp=end_timestamp
             )
+
             all_sessions_data = fetch_all_sessions_data(
                 sessions=sessions, dates_to_process=dates_to_process, start_timestamp=start_timestamp
             )
@@ -1122,6 +1130,7 @@ class PostgresDb(BaseDb):
                     continue
 
                 metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
+
                 metrics_records.append(metrics_record)
 
             if metrics_records:
@@ -1175,24 +1184,45 @@ class PostgresDb(BaseDb):
             return [], None
 
     # -- Knowledge methods --
-
     def delete_knowledge_content(self, id: str):
-        table = self._get_table(table_type="knowledge")
-        with self.Session() as sess, sess.begin():
-            stmt = table.delete().where(table.c.id == id)
-            sess.execute(stmt)
+        """Delete a knowledge row from the database.
 
-        return
+        Args:
+            id (str): The ID of the knowledge row to delete.
+        """
+        table = self._get_table(table_type="knowledge")
+
+        try:
+            with self.Session() as sess, sess.begin():
+                stmt = table.delete().where(table.c.id == id)
+                sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Exception deleting knowledge content: {e}")
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+        """Get a knowledge row from the database.
+
+        Args:
+            id (str): The ID of the knowledge row to get.
+
+        Returns:
+            Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
+        """
         table = self._get_table(table_type="knowledge")
-        print(f"Getting knowledge content: {id}, {table}")
-        with self.Session() as sess, sess.begin():
-            stmt = select(table).where(table.c.id == id)
-            result = sess.execute(stmt).fetchone()
-            if result is None:
-                return None
-            return KnowledgeRow.model_validate(result._mapping)
+
+        try:
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.id == id)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+
+                return KnowledgeRow.model_validate(result._mapping)
+
+        except Exception as e:
+            log_error(f"Exception getting knowledge content: {e}")
+            return None
 
     def get_knowledge_contents(
         self,
@@ -1211,27 +1241,36 @@ class PostgresDb(BaseDb):
 
         Returns:
             List[KnowledgeRow]: The knowledge contents.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
         """
         table = self._get_table(table_type="knowledge")
-        with self.Session() as sess, sess.begin():
-            stmt = select(table)
 
-            # Apply sorting
-            if sort_by is not None:
-                stmt = stmt.order_by(getattr(table.c, sort_by) * (1 if sort_order == "asc" else -1))
+        try:
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
 
-            # Get total count before applying limit and pagination
-            count_stmt = select(func.count()).select_from(stmt.alias())
-            total_count = sess.execute(count_stmt).scalar()
+                # Apply sorting
+                if sort_by is not None:
+                    stmt = stmt.order_by(getattr(table.c, sort_by) * (1 if sort_order == "asc" else -1))
 
-            # Apply pagination after count
-            if limit is not None:
-                stmt = stmt.limit(limit)
-                if page is not None:
-                    stmt = stmt.offset((page - 1) * limit)
+                # Get total count before applying limit and pagination
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
 
-            result = sess.execute(stmt).fetchall()
-            return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
+                # Apply pagination after count
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = sess.execute(stmt).fetchall()
+                return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
+
+        except Exception as e:
+            log_error(f"Exception getting knowledge contents: {e}")
+            return [], 0
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
         """Upsert knowledge content in the database.
@@ -1266,6 +1305,7 @@ class PostgresDb(BaseDb):
                     "status_message": "status_message",
                     "created_at": "created_at",
                     "updated_at": "updated_at",
+                    "external_id": "external_id",
                 }
 
                 # Build insert and update data only for fields that exist in the table
@@ -1310,7 +1350,6 @@ class PostgresDb(BaseDb):
             return None
 
     # -- Eval methods --
-
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
         """Create an EvalRunRecord in the database.
 
@@ -1409,7 +1448,7 @@ class PostgresDb(BaseDb):
                 if result is None:
                     return None
 
-                eval_run_raw = result._mapping
+                eval_run_raw = dict(result._mapping)
                 if not deserialize:
                     return eval_run_raw
 
@@ -1429,8 +1468,8 @@ class PostgresDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        eval_type: Optional[List[EvalType]] = None,
         filter_type: Optional[EvalFilterType] = None,
+        eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
@@ -1542,3 +1581,62 @@ class PostgresDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error upserting eval run name {eval_run_id}: {e}")
+            return None
+
+    # -- Migrations --
+
+    def migrate_table_from_v1_to_v2(self, v1_db_schema: str, v1_table_name: str, v1_table_type: str):
+        """Migrate all content in the given table to the right v2 table"""
+
+        from agno.db.migrations.v1_to_v2 import (
+            get_all_table_content,
+            parse_agent_sessions,
+            parse_memories,
+            parse_team_sessions,
+            parse_workflow_sessions,
+        )
+
+        # Get all content from the old table
+        old_content: list[dict[str, Any]] = get_all_table_content(
+            db=self,
+            db_schema=v1_db_schema,
+            table_name=v1_table_name,
+        )
+        if not old_content:
+            log_info(f"No content to migrate from table {v1_table_name}")
+            return
+
+        # Parse the content into the new format
+        memories: List[UserMemory] = []
+        sessions: List[AgentSession] | List[TeamSession] | List[WorkflowSession] = []
+        if v1_table_type == "agent_sessions":
+            sessions = parse_agent_sessions(old_content)
+        elif v1_table_type == "team_sessions":
+            sessions = parse_team_sessions(old_content)
+        elif v1_table_type == "workflow_sessions":
+            sessions = parse_workflow_sessions(old_content)
+        elif v1_table_type == "memories":
+            memories = parse_memories(old_content)
+        else:
+            raise ValueError(f"Invalid table type: {v1_table_type}")
+
+        # Insert the new content into the new table
+        if v1_table_type == "agent_sessions":
+            for session in sessions:
+                self.upsert_session(session)
+            log_info(f"Migrated {len(sessions)} Agent sessions to table: {self.session_table}")
+
+        elif v1_table_type == "team_sessions":
+            for session in sessions:
+                self.upsert_session(session)
+            log_info(f"Migrated {len(sessions)} Team sessions to table: {self.session_table}")
+
+        elif v1_table_type == "workflow_sessions":
+            for session in sessions:
+                self.upsert_session(session)
+            log_info(f"Migrated {len(sessions)} Workflow sessions to table: {self.session_table}")
+
+        elif v1_table_type == "memories":
+            for memory in memories:
+                self.upsert_user_memory(memory)
+            log_info(f"Migrated {len(memories)} memories to table: {self.memory_table}")

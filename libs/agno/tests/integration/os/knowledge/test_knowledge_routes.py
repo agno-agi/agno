@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
 from agno.os.apps.knowledge.router import attach_routes
+from agno.os.apps.knowledge.schemas import ContentStatus
 
 
 @pytest.fixture
@@ -33,7 +34,7 @@ def mock_content():
         description="Test content description",
         file_data=file_data,
         size=len(b"test content"),
-        status="Completed",
+        status=ContentStatus.COMPLETED,
         created_at=1234567890,
         updated_at=1234567890,
     )
@@ -70,9 +71,9 @@ class TestKnowledgeContentEndpoints:
                 },
             )
 
-            assert response.status_code == 200
+            assert response.status_code == 202
             data = response.json()
-            assert "content_id" in data
+            assert "id" in data
             assert data["status"] == "processing"
 
             # Verify background task was added
@@ -91,9 +92,9 @@ class TestKnowledgeContentEndpoints:
                 },
             )
 
-            assert response.status_code == 200
+            assert response.status_code == 202
             data = response.json()
-            assert "content_id" in data
+            assert "id" in data
             assert data["status"] == "processing"
 
     def test_upload_content_invalid_json(self, test_app):
@@ -110,13 +111,28 @@ class TestKnowledgeContentEndpoints:
             )
 
             # Should still succeed as the code handles invalid JSON gracefully
-            assert response.status_code == 200
+            assert response.status_code == 202
             data = response.json()
-            assert "content_id" in data
+            assert "id" in data
 
     def test_edit_content_success(self, test_app, mock_knowledge):
         """Test successful content editing."""
         content_id = str(uuid4())
+
+        # Mock the return value of patch_content
+        mock_content_dict = {
+            "id": content_id,
+            "name": "Updated Content",
+            "description": "Updated description",
+            "file_type": "text/plain",
+            "size": 100,
+            "metadata": {"updated": "true"},
+            "status": "completed",
+            "status_message": "Successfully updated",
+            "created_at": 1234567890,
+            "updated_at": 1234567900,
+        }
+        mock_knowledge.patch_content.return_value = mock_content_dict
 
         response = test_app.patch(
             f"/content/{content_id}",
@@ -125,7 +141,10 @@ class TestKnowledgeContentEndpoints:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "success"
+        assert data["id"] == content_id
+        assert data["name"] == "Updated Content"
+        assert data["description"] == "Updated description"
+        assert data["status"] == "completed"
 
         # Verify knowledge.patch_content was called
         mock_knowledge.patch_content.assert_called_once()
@@ -214,13 +233,13 @@ class TestKnowledgeContentEndpoints:
         """Test getting content status."""
         content_id = str(uuid4())
         # Mock the method to return a tuple (status, status_message)
-        mock_knowledge.get_content_status.return_value = ("Failed", "Could not read content")
+        mock_knowledge.get_content_status.return_value = (ContentStatus.FAILED, "Could not read content")
 
         response = test_app.get(f"/content/{content_id}/status")
 
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "Failed"
+        assert data["status"] == ContentStatus.FAILED
         assert data["status_message"] == "Could not read content"
 
     def test_get_config(self, test_app, mock_knowledge):
@@ -252,7 +271,7 @@ class TestKnowledgeContentEndpoints:
 class TestBackgroundTaskProcessing:
     """Test suite for background task processing."""
 
-    def test_process_content_success(self, mock_knowledge, mock_content):
+    async def test_process_content_success(self, mock_knowledge, mock_content):
         """Test successful content processing."""
         from agno.os.apps.knowledge.router import process_content
 
@@ -264,19 +283,19 @@ class TestBackgroundTaskProcessing:
         mock_knowledge.readers = {"text_reader": mock_reader}
 
         # Mock the knowledge.process_content method
-        with patch.object(mock_knowledge, "process_content") as mock_add:
+        with patch.object(mock_knowledge, "_load_content") as mock_add:
             # Call the function
-            process_content(mock_knowledge, content_id, mock_content, reader_id)
+            await process_content(mock_knowledge, content_id, mock_content, reader_id)
 
             # Verify the content was added
-            mock_add.assert_called_once_with(mock_content)
+            mock_add.assert_called_once_with(mock_content, upsert=False, skip_if_exists=True)
 
             # Also verify that the content ID was set
             assert mock_content.id == content_id
             # And that the reader was set
             assert mock_content.reader == mock_reader
 
-    def test_process_content_with_exception(self, mock_knowledge, mock_content):
+    async def test_process_content_with_exception(self, mock_knowledge, mock_content):
         """Test content processing with exception."""
         from agno.os.apps.knowledge.router import process_content
 
@@ -284,9 +303,9 @@ class TestBackgroundTaskProcessing:
         reader_id = "test_reader"
 
         # Mock the knowledge.process_content method to raise an exception
-        with patch.object(mock_knowledge, "process_content", side_effect=Exception("Test error")):
+        with patch.object(mock_knowledge, "_load_content", side_effect=Exception("Test error")):
             # Should not raise an exception
-            process_content(mock_knowledge, content_id, mock_content, reader_id)
+            await process_content(mock_knowledge, content_id, mock_content, reader_id)
 
 
 class TestFileUploadScenarios:
@@ -303,9 +322,9 @@ class TestFileUploadScenarios:
                 "/content", files={"file": ("large_file.txt", test_file, "text/plain")}, data={"name": "Large File"}
             )
 
-            assert response.status_code == 200
+            assert response.status_code == 202
             data = response.json()
-            assert "content_id" in data
+            assert "id" in data
 
     def test_upload_without_file(self, test_app):
         """Test uploading content without a file."""
@@ -315,9 +334,9 @@ class TestFileUploadScenarios:
                 data={"name": "Text Content", "description": "Content without file", "metadata": '{"type": "text"}'},
             )
 
-            assert response.status_code == 200
+            assert response.status_code == 202
             data = response.json()
-            assert "content_id" in data
+            assert "id" in data
 
     def test_upload_with_special_characters(self, test_app):
         """Test uploading content with special characters in metadata."""
@@ -328,6 +347,6 @@ class TestFileUploadScenarios:
                 "/content", data={"name": "Special Content", "metadata": json.dumps(special_metadata)}
             )
 
-            assert response.status_code == 200
+            assert response.status_code == 202
             data = response.json()
-            assert "content_id" in data
+            assert "id" in data

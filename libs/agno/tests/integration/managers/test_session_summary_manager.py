@@ -7,7 +7,7 @@ import pytest
 
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.run.response import Message, RunResponse
+from agno.run.response import Message, RunOutput
 from agno.session.agent import AgentSession
 from agno.session.summary import SessionSummary, SessionSummaryManager, SessionSummaryResponse
 
@@ -92,9 +92,9 @@ def agent_session_with_db():
     ]
 
     # Create sample runs
-    run1 = RunResponse(run_id="run_1", messages=messages1, status=RunStatus.completed)
+    run1 = RunOutput(run_id="run_1", messages=messages1, status=RunStatus.completed)
 
-    run2 = RunResponse(run_id="run_2", messages=messages2, status=RunStatus.completed)
+    run2 = RunOutput(run_id="run_2", messages=messages2, status=RunStatus.completed)
 
     # Create agent session
     session = AgentSession(session_id="test_session", agent_id="test_agent", user_id="test_user", runs=[run1, run2])
@@ -209,7 +209,7 @@ def test_process_summary_response_native_structured(session_summary_manager):
     assert isinstance(result, SessionSummary)
     assert result.summary == "Discussion about Python list comprehensions"
     assert result.topics == ["Python", "programming", "list comprehensions"]
-    assert result.last_updated is not None
+    assert result.updated_at is not None
 
 
 def test_process_summary_response_string_content(session_summary_manager):
@@ -359,25 +359,25 @@ def test_create_session_summary_with_real_session(session_summary_manager, agent
 def test_session_summary_to_dict():
     """Test SessionSummary to_dict method."""
     summary = SessionSummary(
-        summary="Test summary", topics=["topic1", "topic2"], last_updated=datetime(2023, 1, 1, 12, 0, 0)
+        summary="Test summary", topics=["topic1", "topic2"], updated_at=datetime(2023, 1, 1, 12, 0, 0)
     )
 
     result = summary.to_dict()
 
     assert result["summary"] == "Test summary"
     assert result["topics"] == ["topic1", "topic2"]
-    assert result["last_updated"] == "2023-01-01T12:00:00"
+    assert result["updated_at"] == "2023-01-01T12:00:00"
 
 
 def test_session_summary_from_dict():
     """Test SessionSummary from_dict method."""
-    data = {"summary": "Test summary", "topics": ["topic1", "topic2"], "last_updated": "2023-01-01T12:00:00"}
+    data = {"summary": "Test summary", "topics": ["topic1", "topic2"], "updated_at": "2023-01-01T12:00:00"}
 
     summary = SessionSummary.from_dict(data)
 
     assert summary.summary == "Test summary"
     assert summary.topics == ["topic1", "topic2"]
-    assert summary.last_updated == datetime(2023, 1, 1, 12, 0, 0)
+    assert summary.updated_at == datetime(2023, 1, 1, 12, 0, 0)
 
 
 def test_session_summary_from_dict_no_timestamp():
@@ -388,7 +388,7 @@ def test_session_summary_from_dict_no_timestamp():
 
     assert summary.summary == "Test summary"
     assert summary.topics == ["topic1", "topic2"]
-    assert summary.last_updated is None
+    assert summary.updated_at is None
 
 
 def test_session_summary_response_to_dict():

@@ -5,7 +5,7 @@ from agno.tools.slack import SlackTools
 
 slack_tools = SlackTools()
 
-agent = Agent(tools=[slack_tools], show_tool_calls=True)
+agent = Agent(tools=[slack_tools])
 
 # Example 1: Send a message to a Slack channel
 agent.print_response(

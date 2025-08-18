@@ -14,7 +14,6 @@ agent = Agent(
             square_root=True,
         )
     ],
-    show_tool_calls=True,
     markdown=True,
 )
 agent.print_response("What is 10*5 then to the power of 2, do it step by step")

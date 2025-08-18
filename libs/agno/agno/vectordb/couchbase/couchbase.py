@@ -299,6 +299,11 @@ class CouchbaseSearch(VectorDb):
 
         docs_to_insert: Dict[str, Any] = {}
         for document in documents:
+            if document.embedding is None:
+                document.embed(embedder=self.embedder)
+
+            if document.embedding is None:
+                raise ValueError(f"Failed to generate embedding for document: {document.name}")
             try:
                 doc_data = self.prepare_doc(content_hash, document)
                 if filters:
@@ -387,6 +392,12 @@ class CouchbaseSearch(VectorDb):
         docs_to_upsert: Dict[str, Any] = {}
         for document in documents:
             try:
+                if document.embedding is None:
+                    document.embed(embedder=self.embedder)
+
+                if document.embedding is None:
+                    raise ValueError(f"Failed to generate embedding for document: {document.name}")
+
                 doc_data = self.prepare_doc(content_hash, document)
                 if filters:
                     doc_data["filters"] = filters
@@ -568,13 +579,6 @@ class CouchbaseSearch(VectorDb):
             raise ValueError(f"Document {document.name} has no content")
 
         logger.debug(f"Preparing document: {document.name}")
-
-        # Generate embedding if needed
-        if document.embedding is None:
-            document.embed(embedder=self.embedder)
-
-        if document.embedding is None:
-            raise ValueError(f"Failed to generate embedding for document: {document.name}")
 
         # Clean content and generate ID
         cleaned_content = document.content.replace("\x00", "\ufffd")
@@ -867,6 +871,9 @@ class CouchbaseSearch(VectorDb):
         async_collection_instance = await self.get_async_collection()
         all_docs_to_insert: Dict[str, Any] = {}
 
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
+
         for document in documents:
             try:
                 # User edit: self.prepare_doc is no longer awaited with to_thread
@@ -929,6 +936,9 @@ class CouchbaseSearch(VectorDb):
 
         async_collection_instance = await self.get_async_collection()
         all_docs_to_upsert: Dict[str, Any] = {}
+
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
 
         for document in documents:
             try:
@@ -1176,7 +1186,7 @@ class CouchbaseSearch(VectorDb):
 
             # Build WHERE clause for metadata matching
             where_conditions = []
-            named_parameters = {}
+            named_parameters: Dict[str, Any] = {}
 
             for key, value in metadata.items():
                 if isinstance(value, (list, tuple)):
@@ -1285,3 +1295,57 @@ class CouchbaseSearch(VectorDb):
         except Exception as e:
             log_info(f"Error deleting documents with content_hash {content_hash}: {e}")
             return False
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for documents with the given content_id.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        try:
+            # Query for documents with the given content_id
+            query = f"SELECT META().id as doc_id, meta_data, filters FROM `{self.bucket_name}` WHERE content_id = $content_id"
+            result = self.cluster.query(query, content_id=content_id)
+
+            updated_count = 0
+            for row in result:
+                doc_id = row.get("doc_id")
+                current_metadata = row.get("meta_data", {})
+                current_filters = row.get("filters", {})
+
+                # Merge existing metadata with new metadata
+                if isinstance(current_metadata, dict):
+                    updated_metadata = current_metadata.copy()
+                    updated_metadata.update(metadata)
+                else:
+                    updated_metadata = metadata
+
+                # Merge existing filters with new metadata
+                if isinstance(current_filters, dict):
+                    updated_filters = current_filters.copy()
+                    updated_filters.update(metadata)
+                else:
+                    updated_filters = metadata
+
+                # Update the document
+                try:
+                    doc = self.collection.get(doc_id)
+                    doc_content = doc.content_as[dict]
+                    doc_content["meta_data"] = updated_metadata
+                    doc_content["filters"] = updated_filters
+
+                    self.collection.upsert(doc_id, doc_content)
+                    updated_count += 1
+                except Exception as doc_error:
+                    logger.warning(f"Failed to update document {doc_id}: {doc_error}")
+
+            if updated_count == 0:
+                logger.debug(f"No documents found with content_id: {content_id}")
+            else:
+                logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
+
+        except Exception as e:
+            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+            raise

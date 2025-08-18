@@ -2,7 +2,7 @@ import math
 from typing import List, Optional
 from uuid import uuid4
 
-from fastapi import HTTPException, Path, Query
+from fastapi import Depends, HTTPException, Path, Query
 from fastapi.routing import APIRouter
 
 from agno.db.base import BaseDb
@@ -14,6 +14,18 @@ from agno.os.apps.memory.schemas import (
     UserStatsSchema,
 )
 from agno.os.apps.utils import PaginatedResponse, PaginationInfo, SortOrder
+
+
+def parse_topics(topics: Optional[List[str]] = Query(default=None)) -> Optional[List[str]]:
+    """Parse a comma-separated string of topics into a list of topics"""
+    if not topics:
+        return None
+
+    try:
+        return [topic.strip() for topic in topics[0].split(",") if topic.strip()]
+
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Invalid topics: {e}")
 
 
 def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
@@ -46,12 +58,11 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         user_id: Optional[str] = Query(default=None, description="Filter memories by user ID"),
         agent_id: Optional[str] = Query(default=None, description="Filter memories by agent ID"),
         team_id: Optional[str] = Query(default=None, description="Filter memories by team ID"),
-        workflow_id: Optional[str] = Query(default=None, description="Filter memories by workflow ID"),
-        topics: Optional[List[str]] = Query(default=None, description="Filter memories by topics"),
+        topics: Optional[List[str]] = Depends(parse_topics),
         search_content: Optional[str] = Query(default=None, description="Fuzzy search memory content"),
         limit: Optional[int] = Query(default=20, description="Number of memories to return"),
         page: Optional[int] = Query(default=1, description="Page number"),
-        sort_by: Optional[str] = Query(default="last_updated", description="Field to sort by"),
+        sort_by: Optional[str] = Query(default="updated_at", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
     ) -> PaginatedResponse[UserMemorySchema]:
         user_memories, total_count = db.get_user_memories(
@@ -60,7 +71,6 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             user_id=user_id,
             agent_id=agent_id,
             team_id=team_id,
-            workflow_id=workflow_id,
             topics=topics,
             search_content=search_content,
             sort_by=sort_by,

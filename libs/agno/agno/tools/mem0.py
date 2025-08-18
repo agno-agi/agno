@@ -7,7 +7,8 @@ from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
-    from mem0 import Memory, MemoryClient
+    from mem0.client.main import MemoryClient
+    from mem0.memory.main import Memory
 except ImportError:
     raise ImportError("`mem0ai` package not found. Please install it with `pip install mem0ai`")
 
@@ -18,6 +19,8 @@ class Mem0Tools(Toolkit):
         config: Optional[Dict[str, Any]] = None,
         api_key: Optional[str] = None,
         user_id: Optional[str] = None,
+        org_id: Optional[str] = None,
+        project_id: Optional[str] = None,
         infer: bool = True,
         **kwargs,
     ):
@@ -33,13 +36,20 @@ class Mem0Tools(Toolkit):
         )
         self.api_key = api_key or getenv("MEM0_API_KEY")
         self.user_id = user_id
+        self.org_id = org_id or getenv("MEM0_ORG_ID")
+        self.project_id = project_id or getenv("MEM0_PROJECT_ID")
         self.client: Union[Memory, MemoryClient]
         self.infer = infer
 
         try:
             if self.api_key:
                 log_debug("Using Mem0 Platform API key.")
-                self.client = MemoryClient(api_key=self.api_key)
+                client_kwargs = {"api_key": self.api_key}
+                if self.org_id:
+                    client_kwargs["org_id"] = self.org_id
+                if self.project_id:
+                    client_kwargs["project_id"] = self.project_id
+                self.client = MemoryClient(**client_kwargs)
             elif config is not None:
                 log_debug("Using Mem0 with config.")
                 self.client = Memory.from_config(config)
@@ -100,6 +110,7 @@ class Mem0Tools(Toolkit):
                 messages_list,
                 user_id=resolved_user_id,
                 infer=self.infer,
+                output_format="v1.1",
             )
             return json.dumps(result)
         except Exception as e:
@@ -120,6 +131,7 @@ class Mem0Tools(Toolkit):
             results = self.client.search(
                 query=query,
                 user_id=resolved_user_id,
+                output_format="v1.1",
             )
 
             if isinstance(results, dict) and "results" in results:
@@ -147,6 +159,7 @@ class Mem0Tools(Toolkit):
         try:
             results = self.client.get_all(
                 user_id=resolved_user_id,
+                output_format="v1.1",
             )
 
             if isinstance(results, dict) and "results" in results:

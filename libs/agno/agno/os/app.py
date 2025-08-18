@@ -10,7 +10,6 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 
 from agno.agent.agent import Agent
-from agno.app.utils import generate_id
 from agno.cli.console import console
 from agno.os.apps import (
     EvalApp,
@@ -23,8 +22,9 @@ from agno.os.apps.base import BaseApp
 from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router
 from agno.os.settings import AgnoAPISettings
+from agno.os.utils import generate_id
 from agno.team.team import Team
-from agno.utils.log import log_debug, log_info
+from agno.utils.log import log_debug, log_warning
 from agno.workflow.workflow import Workflow
 
 
@@ -42,7 +42,6 @@ class AgentOS:
         apps: Optional[List[BaseApp]] = None,
         settings: Optional[AgnoAPISettings] = None,
         fastapi_app: Optional[FastAPI] = None,
-        monitoring: bool = True,
     ):
         if not agents and not workflows and not teams:
             raise ValueError("Either agents, teams or workflows must be provided.")
@@ -58,7 +57,6 @@ class AgentOS:
         self.apps = apps or []
 
         self.os_id: Optional[str] = os_id
-        self.monitoring = monitoring
         self.description = description
 
         self.interfaces_loaded: List[Tuple[str, str]] = []
@@ -68,8 +66,6 @@ class AgentOS:
 
         if self.agents:
             for agent in self.agents:
-                if not agent.os_id:
-                    agent.os_id = self.os_id
                 agent.initialize_agent()
 
                 # Required for the built-in routes to work
@@ -86,9 +82,6 @@ class AgentOS:
 
                 for member in team.members:
                     if isinstance(member, Agent):
-                        if not member.os_id:
-                            member.os_id = self.os_id
-
                         member.team_id = None
                         member.initialize_agent()
                     elif isinstance(member, Team):
@@ -96,12 +89,8 @@ class AgentOS:
 
         if self.workflows:
             for workflow in self.workflows:
-                if not workflow.os_id:
-                    workflow.os_id = self.os_id
-                if not workflow.workflow_id:
-                    workflow.workflow_id = generate_id(workflow.name)
-    
-    
+                if not workflow.id:
+                    workflow.id = generate_id(workflow.name)
 
     def _auto_discover_apps(self) -> List[BaseApp]:
         """Auto-discover apps from agents, teams, and workflows."""
@@ -121,36 +110,41 @@ class AgentOS:
                 seen_components[component_type].add(component_id)
                 return True
             return False
-        
+
         def _auto_discover_entity_apps(entity: Union[Agent, Team]) -> List[BaseApp]:
             if entity.db:
                 # Memory app
                 if _add_unique_component("memory", f"{entity.db.memory_table_name}"):
-                    discovered_apps.append(MemoryApp(db=entity.db))
+                    discovered_apps.append(MemoryApp(db=entity.db, display_name=entity.db.memory_table_name))
 
                 # Session app
                 if entity.db.session_table_name:
                     if _add_unique_component("session", f"{entity.db.session_table_name}"):
-                        discovered_apps.append(SessionApp(db=entity.db))
+                        discovered_apps.append(SessionApp(db=entity.db, display_name=entity.db.session_table_name))
 
                 # Metrics app
                 if entity.db.metrics_table_name:
                     if _add_unique_component("metrics", f"{entity.db.metrics_table_name}"):
-                        discovered_apps.append(MetricsApp(db=entity.db))
+                        discovered_apps.append(MetricsApp(db=entity.db, display_name=entity.db.metrics_table_name))
 
                 # Eval app
                 if entity.db.eval_table_name:
                     if _add_unique_component("eval", f"{entity.db.eval_table_name}"):
-                        discovered_apps.append(EvalApp(db=entity.db))
+                        discovered_apps.append(EvalApp(db=entity.db, display_name=entity.db.eval_table_name))
 
             # Knowledge app
             if entity.knowledge:
                 if not entity.knowledge.contents_db:
                     log_warning("Knowledge contents_db is required to use knowledge inside AgentOS.")
-                    return
+                    return []
+
                 db = entity.knowledge.contents_db
-                if _add_unique_component("knowledge", f"{db.knowledge_table_name}"):
-                    discovered_apps.append(KnowledgeApp(knowledge=agent.knowledge))
+                if _add_unique_component("knowledge", f"{db.knowledge_table_name}") and entity.knowledge:
+                    discovered_apps.append(
+                        KnowledgeApp(knowledge=entity.knowledge, display_name=db.knowledge_table_name)
+                    )
+
+            return discovered_apps
 
         # Process agents
         if self.agents:
@@ -169,8 +163,7 @@ class AgentOS:
 
         # Log discovered apps
         if discovered_apps:
-            for app in discovered_apps:
-                log_debug(f"{app.type.title()} App added to AgentOS")
+            log_debug(f"Apps added to AgentOS: {[app.display_name for app in discovered_apps]}")
 
         return discovered_apps
 
@@ -180,14 +173,6 @@ class AgentOS:
             self.os_id = str(uuid4())
 
         return self.os_id
-
-    def _set_monitoring(self) -> None:
-        """Override monitoring and telemetry settings based on environment variables."""
-
-        # Only override if the environment variable is set
-        monitor_env = getenv("AGNO_MONITOR")
-        if monitor_env is not None:
-            self.monitoring = monitor_env.lower() == "true"
 
     def get_app(self) -> FastAPI:
         if not self.fastapi_app:
@@ -219,11 +204,11 @@ class AgentOS:
 
         self.fastapi_app.middleware("http")(general_exception_handler)
 
-        # Attach base router
-        self.fastapi_app.include_router(get_base_router(self))
+        self.fastapi_app.include_router(get_base_router(self, settings=self.settings))
 
         for interface in self.interfaces:
-            self.fastapi_app.include_router(interface.get_router())
+            interface_router = interface.get_router()
+            self.fastapi_app.include_router(interface_router)
             self.interfaces_loaded.append((interface.type, interface.router_prefix))
 
         # Auto-discover apps if none are provided
@@ -236,16 +221,16 @@ class AgentOS:
 
             # Passing contextual agents and teams to the eval app, so it can use them to run evals.
             if app.type == "eval":
-                self.fastapi_app.include_router(
-                    app.get_router(
-                        index=app_index_map[app.type],
-                        agents=self.agents,
-                        teams=self.teams,
-                    )
+                app_router = app.get_router(
+                    index=app_index_map[app.type],
+                    agents=self.agents,
+                    teams=self.teams,
+                    settings=self.settings,
                 )
             else:
-                self.fastapi_app.include_router(app.get_router(index=app_index_map[app.type]))
+                app_router = app.get_router(index=app_index_map[app.type], settings=self.settings)
 
+            self.fastapi_app.include_router(app_router)
             self.apps_loaded.append((app.type, app.router_prefix))
 
         self.fastapi_app.add_middleware(
@@ -270,53 +255,27 @@ class AgentOS:
     ):
         import uvicorn
 
-        full_host = host
+        if getenv("AGNO_API_RUNTIME", "").lower() == "stg":
+            public_endpoint = "https://os-stg.agno.com/"
+        else:
+            public_endpoint = "https://os.agno.com/"
 
-        log_info(f"Starting AgentOS on {full_host}:{port}")
+        # Create a terminal panel to announce OS initialization and provide useful info
+        from rich.align import Align
+        from rich.console import Group
 
-        self.host_url = f"{full_host}:{port}"
+        aligned_endpoint = Align.center(f"[bold cyan]{public_endpoint}[/bold cyan]")
+        connection_endpoint = f"\n\n[bold dark_orange]Running on:[/bold dark_orange] http://{host}:{port}"
 
-        # Create a panel with the Home and interface URLs
-        panels = []
-        encoded_endpoint = f"http://{full_host}:{port}/home"
-        panels.append(
+        console.print(
             Panel(
-                f"[bold green]Home URL:[/bold green] {encoded_endpoint}",
-                title="Home",
+                Group(aligned_endpoint, connection_endpoint),
+                title="AgentOS",
                 expand=False,
-                border_style="green",
-                box=box.HEAVY,
+                border_style="dark_orange",
+                box=box.DOUBLE_EDGE,
                 padding=(2, 2),
             )
         )
-        for interface_type, interface_prefix in self.interfaces_loaded:
-            if interface_type == "whatsapp":
-                encoded_endpoint = f"{full_host}:{port}{interface_prefix}"
-                panels.append(
-                    Panel(
-                        f"[bold cyan]Whatsapp URL:[/bold cyan] {encoded_endpoint}",
-                        title="Whatsapp",
-                        expand=False,
-                        border_style="cyan",
-                        box=box.HEAVY,
-                        padding=(2, 2),
-                    )
-                )
-            elif interface_type == "slack":
-                encoded_endpoint = f"{full_host}:{port}{interface_prefix}"
-                panels.append(
-                    Panel(
-                        f"[bold purple]Slack URL:[/bold purple] {encoded_endpoint}",
-                        title="Slack",
-                        expand=False,
-                        border_style="purple",
-                        box=box.HEAVY,
-                        padding=(2, 2),
-                    )
-                )
-
-        # Print the panel
-        for panel in panels:
-            console.print(panel)
 
         uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)

@@ -1,6 +1,6 @@
 from io import BytesIO
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.google import Gemini
 from PIL import Image
 
@@ -16,12 +16,13 @@ agent = Agent(
 response = agent.run("Make me an image of a cat in a tree.", stream=True)
 
 for chunk in response:
-    if chunk.images:
-        images = chunk.images
+    if hasattr(chunk, "images") and chunk.images:  # type: ignore
+        images = chunk.images  # type: ignore
         if images and isinstance(images, list):
             for image_response in images:
                 image_bytes = image_response.content
-                image = Image.open(BytesIO(image_bytes))
-                image.show()
-                # Save the image to a file
-                # image.save("generated_image.png")
+                if image_bytes:
+                    image = Image.open(BytesIO(image_bytes))
+                    image.show()
+                    # Save the image to a file
+                    # image.save("generated_image.png")

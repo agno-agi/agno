@@ -20,7 +20,7 @@ USER_MEMORY_COLLECTION_SCHEMA = [
     {"key": "team_id"},
     {"key": "workflow_id"},
     {"key": "topics"},
-    {"key": "last_updated"},
+    {"key": "updated_at"},
 ]
 
 EVAL_COLLECTION_SCHEMA = [
@@ -37,10 +37,17 @@ EVAL_COLLECTION_SCHEMA = [
 KNOWLEDGE_COLLECTION_SCHEMA = [
     {"key": "id", "unique": True},
     {"key": "name"},
+    {"key": "description"},
     {"key": "type"},
     {"key": "status"},
+    {"key": "status_message"},
+    {"key": "metadata"},
+    {"key": "size"},
+    {"key": "linked_to"},
+    {"key": "access_count"},
     {"key": "created_at"},
     {"key": "updated_at"},
+    {"key": "external_id"},
 ]
 
 METRICS_COLLECTION_SCHEMA = [
@@ -57,7 +64,7 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
     """Get the index definitions for a specific collection type."""
     index_definitions = {
         "sessions": SESSION_COLLECTION_SCHEMA,
-        "user_memories": USER_MEMORY_COLLECTION_SCHEMA,
+        "memories": USER_MEMORY_COLLECTION_SCHEMA,
         "metrics": METRICS_COLLECTION_SCHEMA,
         "evals": EVAL_COLLECTION_SCHEMA,
         "knowledge": KNOWLEDGE_COLLECTION_SCHEMA,
@@ -67,4 +74,4 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
     if not indexes:
         raise ValueError(f"Unknown collection type: {collection_type}")
 
-    return indexes
+    return indexes  # type: ignore[return-value]

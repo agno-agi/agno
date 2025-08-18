@@ -199,8 +199,10 @@ class JsonDb(BaseDb):
                         return AgentSession.from_dict(session)
                     elif session_type == SessionType.TEAM:
                         return TeamSession.from_dict(session)
-                    elif session_type == SessionType.WORKFLOW:
+                    else:
                         return WorkflowSession.from_dict(session)
+
+            return None
 
         except Exception as e:
             log_error(f"Exception reading from session file: {e}")
@@ -219,7 +221,7 @@ class JsonDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-    ) -> Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
+    ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions from the JSON file with filtering and pagination.
 
         Args:
@@ -326,7 +328,7 @@ class JsonDb(BaseDb):
                         return AgentSession.from_dict(session)
                     elif session_type == SessionType.TEAM:
                         return TeamSession.from_dict(session)
-                    elif session_type == SessionType.WORKFLOW:
+                    else:
                         return WorkflowSession.from_dict(session)
 
             return None
@@ -393,7 +395,7 @@ class JsonDb(BaseDb):
         return False
 
     # -- Memory methods --
-    def delete_user_memory(self, memory_id: str) -> bool:
+    def delete_user_memory(self, memory_id: str):
         """Delete a user memory from the JSON file."""
         try:
             memories = self._read_json_file(self.memory_table_name)
@@ -403,14 +405,11 @@ class JsonDb(BaseDb):
             if len(memories) < original_count:
                 self._write_json_file(self.memory_table_name, memories)
                 log_debug(f"Successfully deleted user memory id: {memory_id}")
-                return True
             else:
                 log_debug(f"No memory found with id: {memory_id}")
-                return False
 
         except Exception as e:
             log_error(f"Error deleting memory: {e}")
-            return False
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
         """Delete multiple user memories from the JSON file."""
@@ -428,6 +427,7 @@ class JsonDb(BaseDb):
         """Get all memory topics from the JSON file."""
         try:
             memories = self._read_json_file(self.memory_table_name)
+
             topics = set()
             for memory in memories:
                 memory_topics = memory.get("topics", [])
@@ -463,7 +463,6 @@ class JsonDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
         topics: Optional[List[str]] = None,
         search_content: Optional[str] = None,
         limit: Optional[int] = None,
@@ -484,8 +483,6 @@ class JsonDb(BaseDb):
                 if agent_id is not None and memory_data.get("agent_id") != agent_id:
                     continue
                 if team_id is not None and memory_data.get("team_id") != team_id:
-                    continue
-                if workflow_id is not None and memory_data.get("workflow_id") != workflow_id:
                     continue
                 if topics is not None:
                     memory_topics = memory_data.get("topics", [])
@@ -533,9 +530,9 @@ class JsonDb(BaseDb):
                     if user_id not in user_stats:
                         user_stats[user_id] = {"user_id": user_id, "total_memories": 0, "last_memory_updated_at": 0}
                     user_stats[user_id]["total_memories"] += 1
-                    last_updated = memory.get("last_updated", 0)
-                    if last_updated > user_stats[user_id]["last_memory_updated_at"]:
-                        user_stats[user_id]["last_memory_updated_at"] = last_updated
+                    updated_at = memory.get("updated_at", 0)
+                    if updated_at > user_stats[user_id]["last_memory_updated_at"]:
+                        user_stats[user_id]["last_memory_updated_at"] = updated_at
 
             stats_list = list(user_stats.values())
             stats_list.sort(key=lambda x: x["last_memory_updated_at"], reverse=True)
@@ -566,7 +563,7 @@ class JsonDb(BaseDb):
                 memory.memory_id = str(uuid4())
 
             memory_dict = memory.to_dict() if hasattr(memory, "to_dict") else memory.__dict__
-            memory_dict["last_updated"] = int(time.time())
+            memory_dict["updated_at"] = int(time.time())
 
             # Find existing memory to update
             memory_updated = False
@@ -759,17 +756,36 @@ class JsonDb(BaseDb):
             return [], None
 
     # -- Knowledge methods --
+
     def delete_knowledge_content(self, id: str):
-        """Delete knowledge content by ID."""
+        """Delete a knowledge row from the database.
+
+        Args:
+            id (str): The ID of the knowledge row to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
             knowledge_items = [item for item in knowledge_items if item.get("id") != id]
             self._write_json_file(self.knowledge_table_name, knowledge_items)
+
         except Exception as e:
             log_error(f"Error deleting knowledge content: {e}")
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
-        """Get knowledge content by ID."""
+        """Get a knowledge row from the database.
+
+        Args:
+            id (str): The ID of the knowledge row to get.
+
+        Returns:
+            Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
 
@@ -790,7 +806,20 @@ class JsonDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
-        """Get all knowledge contents from the JSON file."""
+        """Get all knowledge contents from the database.
+
+        Args:
+            limit (Optional[int]): The maximum number of knowledge contents to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+
+        Returns:
+            Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
 
@@ -813,7 +842,17 @@ class JsonDb(BaseDb):
             return [], 0
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
-        """Upsert knowledge content in the JSON file."""
+        """Upsert knowledge content in the database.
+
+        Args:
+            knowledge_row (KnowledgeRow): The knowledge row to upsert.
+
+        Returns:
+            Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
             knowledge_dict = knowledge_row.model_dump()
@@ -840,6 +879,7 @@ class JsonDb(BaseDb):
             return None
 
     # -- Eval methods --
+
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
         """Create an EvalRunRecord in the JSON file."""
         try:
@@ -923,8 +963,8 @@ class JsonDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        eval_type: Optional[List[EvalType]] = None,
         filter_type: Optional[EvalFilterType] = None,
+        eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the JSON file with filtering and pagination."""

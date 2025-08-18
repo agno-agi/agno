@@ -30,9 +30,7 @@ agent_team = Team(
     model=Groq(
         id="llama-3.3-70b-versatile"
     ),  # You can use a different model for the team leader agent
-    success_criteria="The team has successfully completed the task",
     instructions=["Always include sources", "Use tables to display data"],
-    show_tool_calls=True,  # Comment to hide transfer of tasks between agents
     markdown=True,
     enable_agentic_context=True,
     debug_mode=True,
@@ -41,6 +39,6 @@ agent_team = Team(
 
 # Give the team a task
 agent_team.print_response(
-    message="Summarize the latest news about Nvidia and share its stock price?",
+    input="Summarize the latest news about Nvidia and share its stock price?",
     stream=True,
 )

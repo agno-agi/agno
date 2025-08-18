@@ -7,9 +7,9 @@ from pathlib import Path
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteStorage
+from agno.db.sqlite import SqliteDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.knowledge.url import UrlKnowledge
+from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.tools.dalle import DalleTools
 from agno.tools.eleven_labs import ElevenLabsTools
@@ -22,8 +22,7 @@ tmp_dir = cwd.joinpath("tmp")
 tmp_dir.mkdir(parents=True, exist_ok=True)
 
 # Initialize knowledge & storage
-agent_knowledge = UrlKnowledge(
-    urls=["https://docs.agno.com/llms-full.txt"],
+agent_knowledge = Knowledge(
     vector_db=LanceDb(
         uri=str(tmp_dir.joinpath("lancedb")),
         table_name="agno_assist_knowledge",
@@ -31,10 +30,9 @@ agent_knowledge = UrlKnowledge(
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
 )
-agent_storage = SqliteStorage(
-    table_name="agno_assist_sessions",
-    db_file=str(tmp_dir.joinpath("agent_sessions.db")),
-)
+agent_knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt")
+
+db = SqliteDb(db_file=str(tmp_dir.joinpath("agent_sessions.db")))
 
 agno_assist = Agent(
     name="Agno Assist",
@@ -110,9 +108,9 @@ agno_assist = Agent(
     - Tool integration
     - Model support and configuration
     - Best practices and common patterns"""),
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     knowledge=agent_knowledge,
-    storage=agent_storage,
+    db=db,
     tools=[
         PythonTools(base_dir=tmp_dir.joinpath("agents"), read_files=True),
         ElevenLabsTools(
@@ -130,16 +128,11 @@ agno_assist = Agent(
     # 1. Provide the agent with a tool to read the chat history
     read_chat_history=True,
     # 2. Automatically add the chat history to the messages sent to the model
-    add_history_to_messages=True,
+    add_history_to_context=True,
     # Number of historical responses to add to the messages.
-    num_history_responses=3,
+    num_history_runs=3,
     markdown=True,
 )
 
 if __name__ == "__main__":
-    # Set to False after the knowledge base is loaded
-    load_knowledge = False
-    if load_knowledge:
-        agent_knowledge.load()
-
     agno_assist.print_response("Tell me about the Agno framework", stream=True)

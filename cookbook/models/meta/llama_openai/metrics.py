@@ -1,6 +1,6 @@
 from typing import Iterator
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent, RunOutput
 from agno.models.meta import LlamaOpenAI
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.pprint import pprint_run_response
@@ -10,10 +10,9 @@ agent = Agent(
     model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
     tools=[YFinanceTools(stock_price=True)],
     markdown=True,
-    show_tool_calls=True,
 )
 
-run_stream: Iterator[RunResponse] = agent.run(
+run_stream: Iterator[RunOutputEvent] = agent.run(
     "What is the stock price of NVDA", stream=True
 )
 pprint_run_response(run_stream, markdown=True)

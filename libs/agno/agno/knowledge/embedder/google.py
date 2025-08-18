@@ -44,6 +44,11 @@ class GeminiEmbedder(Embedder):
 
         return self.gemini_client
 
+    @property
+    def aclient(self) -> GeminiClient:
+        """Returns the same client instance since Google GenAI Client supports both sync and async operations."""
+        return self.client
+
     def _response(self, text: str) -> EmbedContentResponse:
         # If a user provides a model id with the `models/` prefix, we need to remove it
         _id = self.id
@@ -84,6 +89,74 @@ class GeminiEmbedder(Embedder):
             usage = {"billable_character_count": response.metadata.billable_character_count}
 
         try:
+            if response.embeddings and len(response.embeddings) > 0:
+                values = response.embeddings[0].values
+                if values is not None:
+                    return values, usage
+            log_info("No embeddings found in response")
+            return [], usage
+        except Exception as e:
+            log_error(f"Error extracting embeddings: {e}")
+            return [], usage
+
+    async def async_get_embedding(self, text: str) -> List[float]:
+        """Async version of get_embedding using client.aio."""
+        # If a user provides a model id with the `models/` prefix, we need to remove it
+        _id = self.id
+        if _id.startswith("models/"):
+            _id = _id.split("/")[-1]
+
+        _request_params: Dict[str, Any] = {"contents": text, "model": _id, "config": {}}
+        if self.dimensions:
+            _request_params["config"]["output_dimensionality"] = self.dimensions
+        if self.task_type:
+            _request_params["config"]["task_type"] = self.task_type
+        if self.title:
+            _request_params["config"]["title"] = self.title
+        if not _request_params["config"]:
+            del _request_params["config"]
+
+        if self.request_params:
+            _request_params.update(self.request_params)
+
+        try:
+            response = await self.aclient.aio.models.embed_content(**_request_params)
+            if response.embeddings and len(response.embeddings) > 0:
+                values = response.embeddings[0].values
+                if values is not None:
+                    return values
+            log_info("No embeddings found in response")
+            return []
+        except Exception as e:
+            log_error(f"Error extracting embeddings: {e}")
+            return []
+
+    async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
+        """Async version of get_embedding_and_usage using client.aio."""
+        # If a user provides a model id with the `models/` prefix, we need to remove it
+        _id = self.id
+        if _id.startswith("models/"):
+            _id = _id.split("/")[-1]
+
+        _request_params: Dict[str, Any] = {"contents": text, "model": _id, "config": {}}
+        if self.dimensions:
+            _request_params["config"]["output_dimensionality"] = self.dimensions
+        if self.task_type:
+            _request_params["config"]["task_type"] = self.task_type
+        if self.title:
+            _request_params["config"]["title"] = self.title
+        if not _request_params["config"]:
+            del _request_params["config"]
+
+        if self.request_params:
+            _request_params.update(self.request_params)
+
+        try:
+            response = await self.aclient.aio.models.embed_content(**_request_params)
+            usage = None
+            if response.metadata and hasattr(response.metadata, "billable_character_count"):
+                usage = {"billable_character_count": response.metadata.billable_character_count}
+
             if response.embeddings and len(response.embeddings) > 0:
                 values = response.embeddings[0].values
                 if values is not None:

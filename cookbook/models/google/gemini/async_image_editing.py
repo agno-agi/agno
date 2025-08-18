@@ -1,7 +1,7 @@
 import asyncio
 from io import BytesIO
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.media import Image
 from agno.models.google import Gemini
 from PIL import Image as PILImage
@@ -26,10 +26,11 @@ async def modify_image():
     if images and isinstance(images, list):
         for image_response in images:
             image_bytes = image_response.content
-            image = PILImage.open(BytesIO(image_bytes))
-            image.show()
-            # Save the image to a file
-            # image.save("generated_image.png")
+            if image_bytes:
+                image = PILImage.open(BytesIO(image_bytes))
+                image.show()
+                # Save the image to a file
+                # image.save("generated_image.png")
 
 
 if __name__ == "__main__":

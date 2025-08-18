@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -19,6 +20,7 @@ class KnowledgeRow(BaseModel):
     status_message: Optional[str] = None
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
+    external_id: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True)
 
@@ -31,6 +33,8 @@ class KnowledgeRow(BaseModel):
         return self
 
     def to_dict(self) -> Dict[str, Any]:
-        _dict = self.model_dump(exclude={"last_updated"})
-        _dict["last_updated"] = self.last_updated.isoformat() if self.last_updated else None
+        _dict = self.model_dump(exclude={"updated_at"})
+
+        _dict["updated_at"] = datetime.fromtimestamp(self.updated_at).isoformat() if self.updated_at else None
+
         return _dict

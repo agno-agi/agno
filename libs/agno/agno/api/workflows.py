@@ -19,8 +19,13 @@ def create_workflow(workflow: WorkflowCreate) -> None:
             log_debug(f"Could not create Workflow: {e}")
 
 
+<<<<<<< HEAD
 async def acreate_workflow(workflow: WorkflowCreate) -> None:
     if not agno_api_settings.api_enabled:
+=======
+async def acreate_workflow(workflow: WorkflowRunCreate) -> None:
+    if not agno_cli_settings.api_enabled:
+>>>>>>> 8f3e6387ff46e5584dc79645d244769a1ea5b96c
         return
 
     async with api.AuthenticatedAsyncClient() as api_client:

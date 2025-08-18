@@ -68,3 +68,10 @@ coverage_report
 
 # JSON files used as testing DB
 agno_json_data/
+
+# AI
+.claude/
+.cursor/
+
+# ignore pyrightconfig.json
+pyrightconfig.json

@@ -1,7 +1,6 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.brightdata import BrightDataTools
-from agno.utils.media import save_base64_data
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
@@ -11,7 +10,6 @@ agent = Agent(
         )
     ],
     markdown=True,
-    show_tool_calls=True,
 )
 
 # Example 1: Scrape a webpage as Markdown

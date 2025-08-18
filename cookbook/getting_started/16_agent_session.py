@@ -12,12 +12,14 @@ Run `pip install openai sqlalchemy agno` to install dependencies.
 """
 
 import json
-from typing import Optional
+from typing import List, Optional
 
 import typer
 from agno.agent import Agent
-from agno.db.sqlite import SqliteStorage
+from agno.db.base import SessionType
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
+from agno.session import AgentSession
 from rich import print
 from rich.console import Console
 from rich.json import JSON
@@ -34,22 +36,24 @@ def create_agent(user: str = "user"):
     new = typer.confirm("Do you want to start a new session?")
 
     # Get existing session if user doesn't want a new one
-    agent_storage = SqliteStorage(table_name="agent_sessions", db_file="tmp/agents.db")
+    db = SqliteDb(db_file="tmp/agents.db")
 
     if not new:
-        existing_sessions = agent_storage.get_all_session_ids(user)
+        existing_sessions: List[AgentSession] = db.get_sessions(
+            user_id=user, session_type=SessionType.AGENT
+        )  # type: ignore
         if len(existing_sessions) > 0:
-            session_id = existing_sessions[0]
+            session_id = existing_sessions[0].session_id
 
     agent = Agent(
         user_id=user,
         # Set the session_id on the agent to resume the conversation
         session_id=session_id,
         model=OpenAIChat(id="gpt-4o"),
-        storage=agent_storage,
+        db=db,
         # Add chat history to messages
-        add_history_to_messages=True,
-        num_history_responses=3,
+        add_history_to_context=True,
+        num_history_runs=3,
         markdown=True,
     )
 
@@ -94,7 +98,7 @@ def main(user: str = "user"):
         if message in exit_on:
             break
 
-        agent.print_response(message=message, stream=True, markdown=True)
+        agent.print_response(input=message, stream=True, markdown=True)
         print_messages(agent)
 
 

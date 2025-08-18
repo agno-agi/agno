@@ -59,7 +59,6 @@ except (ModuleNotFoundError, ImportError):
 
 agent = Agent(
     tools=[GoogleCalendarTools(credentials_path="<PATH_TO_YOUR_CREDENTIALS_FILE>")],
-    show_tool_calls=True,
     instructions=[
         f"""
 You are scheduling assistant . Today is {datetime.datetime.now()} and the users timezone is {get_localzone_name()}.
@@ -69,7 +68,7 @@ You should help users to perform these actions in their Google calendar :
 """
     ],
     model=MistralChat(api_key=os.getenv("MISTRAL_API_KEY")),
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 agent.print_response("Give me the list of todays events", markdown=True)

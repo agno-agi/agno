@@ -28,7 +28,7 @@ class ApifyTools(Toolkit):
             pip install agno apify-client
 
             2. Set the APIFY_API_TOKEN environment variable:
-            Add a .env file with APIFY_API_TOKEN=your_apify_api_key
+            Add a .env file with APIFY_API_TOKEN=your_apify_api_token
 
             Import necessary components:
 
@@ -54,7 +54,6 @@ class ApifyTools(Toolkit):
                         "compass/crawler-google-places"
                     ])
                 ],
-                show_tool_calls=True
             )
             agent.print_response(
                 '''

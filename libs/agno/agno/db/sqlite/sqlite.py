@@ -81,13 +81,13 @@ class SqliteDb(BaseDb):
             elif db_file is not None:
                 db_path = Path(db_file).resolve()
                 db_path.parent.mkdir(parents=True, exist_ok=True)
-                self.db_file = str(db_path)
+                db_file = str(db_path)
                 _engine = create_engine(f"sqlite:///{db_path}")
             else:
                 # If none of db_engine, db_url, or db_file are provided, create a db in the current directory
                 default_db_path = Path("./agno.db").resolve()
                 _engine = create_engine(f"sqlite:///{default_db_path}")
-                self.db_file = str(default_db_path)
+                db_file = str(default_db_path)
                 log_debug(f"Created SQLite database: {default_db_path}")
 
         self.db_engine: Engine = _engine
@@ -115,7 +115,9 @@ class SqliteDb(BaseDb):
             table_schema = get_table_schema_definition(table_type)
             log_debug(f"Creating table {table_name} with schema: {table_schema}")
 
-            columns, indexes, unique_constraints = [], [], []
+            columns: List[Column] = []
+            indexes: List[str] = []
+            unique_constraints: List[str] = []
             schema_unique_constraints = table_schema.pop("_unique_constraints", [])
 
             # Get the columns, indexes, and unique constraints from the table schema
@@ -133,7 +135,7 @@ class SqliteDb(BaseDb):
                     column_kwargs["unique"] = True
                     unique_constraints.append(col_name)
 
-                columns.append(Column(*column_args, **column_kwargs))
+                columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
             table_metadata = MetaData()
@@ -166,6 +168,7 @@ class SqliteDb(BaseDb):
                             continue
 
                     idx.create(self.db_engine)
+
                 except Exception as e:
                     log_warning(f"Error creating index {idx.name}: {e}")
 
@@ -214,6 +217,14 @@ class SqliteDb(BaseDb):
                 self.eval_table = self._get_or_create_table(table_name=self.eval_table_name, table_type="evals")
 
             return self.eval_table
+
+        elif table_type == "knowledge":
+            if not hasattr(self, "knowledge_table"):
+                self.knowledge_table = self._get_or_create_table(
+                    table_name=self.knowledge_table_name, table_type="knowledge"
+                )
+
+            return self.knowledge_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
@@ -302,8 +313,8 @@ class SqliteDb(BaseDb):
     def get_session(
         self,
         session_id: str,
+        session_type: SessionType,
         user_id: Optional[str] = None,
-        session_type: Optional[SessionType] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
@@ -349,6 +360,8 @@ class SqliteDb(BaseDb):
                 return TeamSession.from_dict(session_raw)
             elif session_type == SessionType.WORKFLOW:
                 return WorkflowSession.from_dict(session_raw)
+            else:
+                raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_debug(f"Exception reading from sessions table: {e}")
@@ -367,7 +380,7 @@ class SqliteDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-    ) -> Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
+    ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
         Args:
@@ -505,6 +518,8 @@ class SqliteDb(BaseDb):
                 return TeamSession.from_dict(session_raw)
             elif session_type == SessionType.WORKFLOW:
                 return WorkflowSession.from_dict(session_raw)
+            else:
+                raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_error(f"Exception renaming session: {e}")
@@ -538,11 +553,10 @@ class SqliteDb(BaseDb):
                         session_id=serialized_session.get("session_id"),
                         session_type=SessionType.AGENT.value,
                         agent_id=serialized_session.get("agent_id"),
-                        team_session_id=serialized_session.get("team_session_id"),
                         user_id=serialized_session.get("user_id"),
                         agent_data=serialized_session.get("agent_data"),
                         session_data=serialized_session.get("session_data"),
-                        extra_data=serialized_session.get("extra_data"),
+                        metadata=serialized_session.get("metadata"),
                         runs=serialized_session.get("runs"),
                         chat_history=serialized_session.get("chat_history"),
                         summary=serialized_session.get("summary"),
@@ -553,18 +567,17 @@ class SqliteDb(BaseDb):
                         index_elements=["session_id"],
                         set_=dict(
                             agent_id=serialized_session.get("agent_id"),
-                            team_session_id=serialized_session.get("team_session_id"),
                             user_id=serialized_session.get("user_id"),
                             runs=serialized_session.get("runs"),
                             chat_history=serialized_session.get("chat_history"),
                             summary=serialized_session.get("summary"),
                             agent_data=serialized_session.get("agent_data"),
                             session_data=serialized_session.get("session_data"),
-                            extra_data=serialized_session.get("extra_data"),
+                            metadata=serialized_session.get("metadata"),
                             updated_at=int(time.time()),
                         ),
                     )
-                    stmt = stmt.returning(*table.columns)
+                    stmt = stmt.returning(*table.columns)  # type: ignore
                     result = sess.execute(stmt)
                     row = result.fetchone()
 
@@ -587,7 +600,7 @@ class SqliteDb(BaseDb):
                         updated_at=serialized_session.get("created_at"),
                         team_data=serialized_session.get("team_data"),
                         session_data=serialized_session.get("session_data"),
-                        extra_data=serialized_session.get("extra_data"),
+                        metadata=serialized_session.get("metadata"),
                     )
 
                     stmt = stmt.on_conflict_do_update(
@@ -600,11 +613,11 @@ class SqliteDb(BaseDb):
                             runs=serialized_session.get("runs"),
                             team_data=serialized_session.get("team_data"),
                             session_data=serialized_session.get("session_data"),
-                            extra_data=serialized_session.get("extra_data"),
+                            metadata=serialized_session.get("metadata"),
                             updated_at=int(time.time()),
                         ),
                     )
-                    stmt = stmt.returning(*table.columns)
+                    stmt = stmt.returning(*table.columns)  # type: ignore
                     result = sess.execute(stmt)
                     row = result.fetchone()
 
@@ -613,7 +626,7 @@ class SqliteDb(BaseDb):
                         return session_raw
                     return TeamSession.from_dict(session_raw)
 
-            elif isinstance(session, WorkflowSession):
+            else:
                 with self.Session() as sess, sess.begin():
                     stmt = sqlite.insert(table).values(
                         session_id=serialized_session.get("session_id"),
@@ -623,11 +636,11 @@ class SqliteDb(BaseDb):
                         runs=serialized_session.get("runs"),
                         chat_history=serialized_session.get("chat_history"),
                         summary=serialized_session.get("summary"),
-                        created_at=serialized_session.get("created_at"),
-                        updated_at=serialized_session.get("created_at"),
+                        created_at=serialized_session.get("created_at") or int(time.time()),
+                        updated_at=serialized_session.get("updated_at") or int(time.time()),
                         workflow_data=serialized_session.get("workflow_data"),
                         session_data=serialized_session.get("session_data"),
-                        extra_data=serialized_session.get("extra_data"),
+                        metadata=serialized_session.get("metadata"),
                     )
                     stmt = stmt.on_conflict_do_update(
                         index_elements=["session_id"],
@@ -639,11 +652,11 @@ class SqliteDb(BaseDb):
                             runs=serialized_session.get("runs"),
                             workflow_data=serialized_session.get("workflow_data"),
                             session_data=serialized_session.get("session_data"),
-                            extra_data=serialized_session.get("extra_data"),
+                            metadata=serialized_session.get("metadata"),
                             updated_at=int(time.time()),
                         ),
                     )
-                    stmt = stmt.returning(*table.columns)
+                    stmt = stmt.returning(*table.columns)  # type: ignore
                     result = sess.execute(stmt)
                     row = result.fetchone()
 
@@ -658,7 +671,7 @@ class SqliteDb(BaseDb):
 
     # -- Memory methods --
 
-    def delete_user_memory(self, memory_id: str) -> bool:
+    def delete_user_memory(self, memory_id: str):
         """Delete a user memory from the database.
 
         Returns:
@@ -680,11 +693,8 @@ class SqliteDb(BaseDb):
                 else:
                     log_debug(f"No user memory found with id: {memory_id}")
 
-                return success
-
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
-            return False
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
         """Delete user memories from the database.
@@ -719,7 +729,8 @@ class SqliteDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 stmt = select(func.json_array_elements_text(table.c.topics))
                 result = sess.execute(stmt).fetchall()
-                return [record[0] for record in result]
+
+                return list(set([record[0] for record in result]))
 
         except Exception as e:
             log_debug(f"Exception reading from memory table: {e}")
@@ -766,7 +777,6 @@ class SqliteDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
         topics: Optional[List[str]] = None,
         search_content: Optional[str] = None,
         limit: Optional[int] = None,
@@ -781,7 +791,6 @@ class SqliteDb(BaseDb):
             user_id (Optional[str]): The ID of the user to filter by.
             agent_id (Optional[str]): The ID of the agent to filter by.
             team_id (Optional[str]): The ID of the team to filter by.
-            workflow_id (Optional[str]): The ID of the workflow to filter by.
             topics (Optional[List[str]]): The topics to filter by.
             search_content (Optional[str]): The content to search for.
             limit (Optional[int]): The maximum number of memories to return.
@@ -811,8 +820,6 @@ class SqliteDb(BaseDb):
                     stmt = stmt.where(table.c.agent_id == agent_id)
                 if team_id is not None:
                     stmt = stmt.where(table.c.team_id == team_id)
-                if workflow_id is not None:
-                    stmt = stmt.where(table.c.workflow_id == workflow_id)
                 if topics is not None:
                     topic_conditions = [text(f"topics::text LIKE '%\"{topic}\"%'") for topic in topics]
                     stmt = stmt.where(and_(*topic_conditions))
@@ -880,11 +887,11 @@ class SqliteDb(BaseDb):
                     select(
                         table.c.user_id,
                         func.count(table.c.memory_id).label("total_memories"),
-                        func.max(table.c.last_updated).label("last_memory_updated_at"),
+                        func.max(table.c.updated_at).label("last_memory_updated_at"),
                     )
                     .where(table.c.user_id.is_not(None))
                     .group_by(table.c.user_id)
-                    .order_by(func.max(table.c.last_updated).desc())
+                    .order_by(func.max(table.c.updated_at).desc())
                 )
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
@@ -944,15 +951,15 @@ class SqliteDb(BaseDb):
                     memory=memory.memory,
                     topics=memory.topics,
                     input=memory.input,
-                    last_updated=int(time.time()),
+                    updated_at=int(time.time()),
                 )
-                stmt = stmt.on_conflict_do_update(
+                stmt = stmt.on_conflict_do_update(  # type: ignore
                     index_elements=["memory_id"],
                     set_=dict(
                         memory=memory.memory,
                         topics=memory.topics,
                         input=memory.input,
-                        last_updated=int(time.time()),
+                        updated_at=int(time.time()),
                     ),
                 ).returning(table)
 
@@ -1088,9 +1095,13 @@ class SqliteDb(BaseDb):
                 log_info("Metrics already calculated for all relevant dates.")
                 return None
 
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             sessions = self._get_all_sessions_for_metrics_calculation(
@@ -1169,103 +1180,113 @@ class SqliteDb(BaseDb):
 
     # -- Knowledge methods --
 
-    def _get_knowledge_table(self) -> Table:
-        """Get or create the knowledge table.
-
-        Returns:
-            Table: The knowledge table.
-        """
-        if not hasattr(self, "knowledge_table"):
-            if self.knowledge_table_name is None:
-                raise ValueError("Knowledge table was not provided on initialization")
-
-            log_info(f"Getting knowledge table: {self.knowledge_table_name}")
-            self.knowledge_table = self._get_or_create_table(
-                table_name=self.knowledge_table_name,
-                table_type="knowledge_documents",
-            )
-
-        return self.knowledge_table
-
-    def delete_knowledge_document(self, document_id: str):
-        """Delete a knowledge document from the database.
+    def delete_knowledge_content(self, id: str):
+        """Delete a knowledge row from the database.
 
         Args:
-            document_id (str): The ID of the document to delete.
+            id (str): The ID of the knowledge row to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
         """
-        table = self._get_knowledge_table()
-        with self.Session() as sess, sess.begin():
-            stmt = table.delete().where(table.c.id == document_id)
-            sess.execute(stmt)
-            sess.commit()
-        return
+        table = self._get_table(table_type="knowledge")
 
-    def get_document_status(self, document_id: str) -> Optional[str]:
-        table = self._get_knowledge_table()
-        with self.Session() as sess, sess.begin():
-            stmt = select(table.c.status).where(table.c.id == document_id)
-            result = sess.execute(stmt).fetchone()
-            return result._mapping["status"]
+        try:
+            with self.Session() as sess, sess.begin():
+                stmt = table.delete().where(table.c.id == id)
+                sess.execute(stmt)
 
-    def get_knowledge_document(self, document_id: str) -> Optional[KnowledgeRow]:
-        table = self._get_knowledge_table()
-        with self.Session() as sess, sess.begin():
-            stmt = select(table).where(table.c.id == document_id)
-            result = sess.execute(stmt).fetchone()
-            return KnowledgeRow.model_validate(result._mapping)
+        except Exception as e:
+            log_error(f"Error deleting knowledge content: {e}")
 
-    def get_knowledge_documents(
+    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+        """Get a knowledge row from the database.
+
+        Args:
+            id (str): The ID of the knowledge row to get.
+
+        Returns:
+            Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
+        table = self._get_table(table_type="knowledge")
+
+        try:
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(table.c.id == id)
+                result = sess.execute(stmt).fetchone()
+                if result is None:
+                    return None
+
+                return KnowledgeRow.model_validate(result._mapping)
+
+        except Exception as e:
+            log_error(f"Error getting knowledge content: {e}")
+            return None
+
+    def get_knowledge_contents(
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
-        """Get all knowledge documents from the database.
+        """Get all knowledge contents from the database.
 
         Args:
-            limit (Optional[int]): The maximum number of knowledge documents to return.
+            limit (Optional[int]): The maximum number of knowledge contents to return.
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
 
         Returns:
-            List[KnowledgeRow]: The knowledge documents.
+            Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
         """
-        table = self._get_knowledge_table()
-        with self.Session() as sess, sess.begin():
-            stmt = select(table)
+        table = self._get_table(table_type="knowledge")
 
-            # Apply sorting
-            if sort_by is not None:
-                stmt = stmt.order_by(getattr(table.c, sort_by) * (1 if sort_order == "asc" else -1))
+        try:
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
 
-            # Get total count before applying limit and pagination
-            count_stmt = select(func.count()).select_from(stmt.alias())
-            total_count = sess.execute(count_stmt).scalar()
+                # Apply sorting
+                if sort_by is not None:
+                    stmt = stmt.order_by(getattr(table.c, sort_by) * (1 if sort_order == "asc" else -1))
 
-            # Apply pagination after count
-            if limit is not None:
-                stmt = stmt.limit(limit)
-                if page is not None:
-                    stmt = stmt.offset((page - 1) * limit)
+                # Get total count before applying limit and pagination
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
 
-            result = sess.execute(stmt).fetchall()
-            return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
+                # Apply pagination after count
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
 
-    def upsert_knowledge_document(self, knowledge_row: KnowledgeRow):
-        """Upsert a knowledge document in the database.
+                result = sess.execute(stmt).fetchall()
+                return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
+
+        except Exception as e:
+            log_error(f"Error getting knowledge contents: {e}")
+            return [], 0
+
+    def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
+        """Upsert knowledge content in the database.
 
         Args:
-            knowledge_document (KnowledgeRow): The knowledge document to upsert.
+            knowledge_row (KnowledgeRow): The knowledge row to upsert.
 
         Returns:
-            Optional[KnowledgeRow]: The upserted knowledge document, or None if the operation fails.
+            Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
         """
         try:
-            table = self._get_knowledge_table()
+            table = self._get_table(table_type="knowledge")
+
             with self.Session() as sess, sess.begin():
-                # Only include fields that are not None in the update
                 update_fields = {
                     k: v
                     for k, v in {
@@ -1279,7 +1300,9 @@ class SqliteDb(BaseDb):
                         "status": knowledge_row.status,
                         "created_at": knowledge_row.created_at,
                         "updated_at": knowledge_row.updated_at,
+                        "external_id": knowledge_row.external_id,
                     }.items()
+                    # Filtering out None fields if updating
                     if v is not None
                 }
 
@@ -1289,36 +1312,14 @@ class SqliteDb(BaseDb):
                     .on_conflict_do_update(index_elements=["id"], set_=update_fields)
                 )
                 sess.execute(stmt)
-                sess.commit()
 
-            log_debug(f"Upserted knowledge document with id '{knowledge_row.id}'")
+            log_debug(f"Upserted knowledge content with id '{knowledge_row.id}'")
 
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Error upserting knowledge document: {e}")
+            log_error(f"Error upserting knowledge content: {e}")
             return None
-
-    def delete_knowledge_source(self, source_id: str):
-        pass
-
-    def get_knowledge_source(self, source_id: str) -> Optional[KnowledgeRow]:
-        pass
-
-    def get_knowledge_sources(
-        self,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-    ):
-        pass
-
-    def get_source_status(self, source_id: str) -> Optional[str]:
-        pass
-
-    def upsert_knowledge_source(self, knowledge_source):
-        pass
 
     # -- Eval methods --
 
@@ -1441,8 +1442,8 @@ class SqliteDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        eval_type: Optional[List[EvalType]] = None,
         filter_type: Optional[EvalFilterType] = None,
+        eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
@@ -1560,3 +1561,61 @@ class SqliteDb(BaseDb):
         except Exception as e:
             log_error(f"Error renaming eval run {eval_run_id}: {e}")
             raise
+
+    # -- Migrations --
+
+    def migrate_table_from_v1_to_v2(self, v1_db_schema: str, v1_table_name: str, v1_table_type: str):
+        """Migrate all content in the given table to the right v2 table"""
+
+        from agno.db.migrations.v1_to_v2 import (
+            get_all_table_content,
+            parse_agent_sessions,
+            parse_memories,
+            parse_team_sessions,
+            parse_workflow_sessions,
+        )
+
+        # Get all content from the old table
+        old_content: list[dict[str, Any]] = get_all_table_content(
+            db=self,
+            db_schema=v1_db_schema,
+            table_name=v1_table_name,
+        )
+        if not old_content:
+            log_info(f"No content to migrate from table {v1_table_name}")
+            return
+
+        # Parse the content into the new format
+        memories: List[UserMemory] = []
+        sessions: List[AgentSession] | List[TeamSession] | List[WorkflowSession] = []
+        if v1_table_type == "agent_sessions":
+            sessions = parse_agent_sessions(old_content)
+        elif v1_table_type == "team_sessions":
+            sessions = parse_team_sessions(old_content)
+        elif v1_table_type == "workflow_sessions":
+            sessions = parse_workflow_sessions(old_content)
+        elif v1_table_type == "memories":
+            memories = parse_memories(old_content)
+        else:
+            raise ValueError(f"Invalid table type: {v1_table_type}")
+
+        # Insert the new content into the new table
+        if v1_table_type == "agent_sessions":
+            for session in sessions:
+                self.upsert_session(session)
+            log_info(f"Migrated {len(sessions)} Agent sessions to table: {self.session_table}")
+
+        elif v1_table_type == "team_sessions":
+            for session in sessions:
+                self.upsert_session(session)
+            log_info(f"Migrated {len(sessions)} Team sessions to table: {self.session_table}")
+
+        elif v1_table_type == "workflow_sessions":
+            for session in sessions:
+                self.upsert_session(session)
+            log_info(f"Migrated {len(sessions)} Workflow sessions to table: {self.session_table}")
+
+        elif v1_table_type == "memories":
+            for memory in memories:
+                self.upsert_user_memory(memory)
+            log_info(f"Migrated {len(memories)} memories to table: {self.memory_table}")

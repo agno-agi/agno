@@ -117,7 +117,7 @@ def test_agent_storage_crud(agent_storage):
         memory={"key": "value"},
         agent_data={"name": "Test Agent"},
         session_data={"state": "active"},
-        extra_data={"custom": "data"},
+        metadata={"custom": "data"},
     )
 
     # Test upsert
@@ -166,7 +166,7 @@ def test_workflow_storage_crud(workflow_storage):
         memory={"key": "value"},
         workflow_data={"name": "Test Workflow"},
         session_data={"state": "active"},
-        extra_data={"custom": "data"},
+        metadata={"custom": "data"},
     )
 
     # Mock the read method
@@ -205,7 +205,7 @@ def test_get_all_sessions(agent_storage):
             "memory": {},
             "agent_data": {},
             "session_data": {},
-            "extra_data": {},
+            "metadata": {},
             "created_at": 1000000,
             "updated_at": None,
         }
@@ -219,7 +219,7 @@ def test_get_all_sessions(agent_storage):
     assert len(result) == 4
     assert all(isinstance(s, AgentSession) for s in result)
     mock_table.scan.assert_called_once_with(
-        ProjectionExpression="session_id, agent_id, user_id, team_session_id, memory, agent_data, session_data, extra_data, created_at, updated_at"
+        ProjectionExpression="session_id, agent_id, user_id, team_session_id, memory, agent_data, session_data, metadata, created_at, updated_at"
     )
 
     # Test filtering by user_id
@@ -234,7 +234,7 @@ def test_get_all_sessions(agent_storage):
     mock_table.query.assert_called_once_with(
         IndexName="user_id-index",
         KeyConditionExpression=Key("user_id").eq("user-1"),
-        ProjectionExpression="session_id, agent_id, user_id, team_session_id, memory, agent_data, session_data, extra_data, created_at, updated_at",
+        ProjectionExpression="session_id, agent_id, user_id, team_session_id, memory, agent_data, session_data, metadata, created_at, updated_at",
     )
 
     # Test filtering by agent_id
@@ -248,7 +248,7 @@ def test_get_all_sessions(agent_storage):
     mock_table.query.assert_called_once_with(
         IndexName="agent_id-index",
         KeyConditionExpression=Key("agent_id").eq("agent-1"),
-        ProjectionExpression="session_id, agent_id, user_id, team_session_id, memory, agent_data, session_data, extra_data, created_at, updated_at",
+        ProjectionExpression="session_id, agent_id, user_id, team_session_id, memory, agent_data, session_data, metadata, created_at, updated_at",
     )
 
 

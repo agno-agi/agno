@@ -1,28 +1,28 @@
 import pytest
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent, RunOutput
 from agno.models.litellm import LiteLLMOpenAI
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
 
 
-def _assert_metrics(response: RunResponse):
+def _assert_metrics(response: RunOutput):
     """Helper function to assert metrics are present and valid"""
     # Check that metrics dictionary exists
     assert response.metrics is not None
 
     # Check that we have some token counts
-    assert "input_tokens" in response.metrics
-    assert "output_tokens" in response.metrics
-    assert "total_tokens" in response.metrics
+    assert response.metrics.input_tokens is not None
+    assert response.metrics.output_tokens is not None
+    assert response.metrics.total_tokens is not None
 
     # Check that we have timing information
-    assert "time" in response.metrics
+    assert response.metrics.duration is not None
 
     # Check that the total tokens is the sum of input and output tokens
-    input_tokens = sum(response.metrics.get("input_tokens", []))
-    output_tokens = sum(response.metrics.get("output_tokens", []))
-    total_tokens = sum(response.metrics.get("total_tokens", []))
+    input_tokens = response.metrics.input_tokens
+    output_tokens = response.metrics.output_tokens
+    total_tokens = response.metrics.total_tokens
 
     # The total should be at least the sum of input and output
     assert total_tokens >= input_tokens + output_tokens - 5  # Allow small margin of error
@@ -35,17 +35,18 @@ def test_tool_use():
         markdown=True,
         tools=[DuckDuckGoTools(cache_results=True)],
         telemetry=False,
-        monitoring=False,
     )
 
     # Get the response with a query that should trigger tool use
-    response: RunResponse = agent.run("What's the latest news about SpaceX?")
+    response: RunOutput = agent.run("What's the latest news about SpaceX?")
 
     assert response.content is not None
     # system, user, assistant (and possibly tool messages)
+    assert response.messages is not None
     assert len(response.messages) >= 3
 
     # Check if tool was used
+    assert response.messages is not None
     tool_messages = [m for m in response.messages if m.role == "tool"]
     assert len(tool_messages) > 0, "Tool should have been used"
 
@@ -59,7 +60,6 @@ def test_tool_use_stream():
         markdown=True,
         tools=[YFinanceTools(cache_results=True)],
         telemetry=False,
-        monitoring=False,
     )
 
     response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
@@ -70,14 +70,15 @@ def test_tool_use_stream():
     for chunk in response_stream:
         responses.append(chunk)
         print(chunk.content)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:  # type: ignore
+            if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
+        if chunk.content is not None and "TSLA" in chunk.content:
+            keyword_seen_in_response = True
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    all_content = "".join([r.content for r in responses if r.content])
-    assert "TSLA" in all_content
+    assert keyword_seen_in_response, "Keyword not found in response"
 
 
 @pytest.mark.asyncio
@@ -88,7 +89,6 @@ async def test_async_tool_use():
         markdown=True,
         tools=[DuckDuckGoTools(cache_results=True)],
         telemetry=False,
-        monitoring=False,
     )
 
     # Get the response with a query that should trigger tool use
@@ -96,9 +96,11 @@ async def test_async_tool_use():
 
     assert response.content is not None
     # system, user, assistant (and possibly tool messages)
+    assert response.messages is not None
     assert len(response.messages) >= 3
 
     # Check if tool was used
+    assert response.messages is not None
     tool_messages = [m for m in response.messages if m.role == "tool"]
     assert len(tool_messages) > 0, "Tool should have been used"
 
@@ -113,26 +115,17 @@ async def test_async_tool_use_streaming():
         markdown=True,
         tools=[YFinanceTools(cache_results=True)],
         telemetry=False,
-        monitoring=False,
     )
 
-    response_stream = await agent.arun(
-        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
-    )
-
-    responses = []
-    tool_call_seen = False
-
-    async for chunk in response_stream:
-        responses.append(chunk)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
+    async for response in agent.arun("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True):
+        if response.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(response, "tool") and response.tool:  # type: ignore
+            if response.tool.tool_name:  # type: ignore
                 tool_call_seen = True
+        if response.content is not None and "TSLA" in response.content:
+            keyword_seen_in_response = True
 
-    assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    all_content = "".join([r.content for r in responses if r.content])
-    assert "TSLA" in all_content
+    assert keyword_seen_in_response, "Keyword not found in response"
 
 
 def test_parallel_tool_calls():
@@ -142,13 +135,13 @@ def test_parallel_tool_calls():
         markdown=True,
         tools=[DuckDuckGoTools(cache_results=True)],
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What are the latest news about both SpaceX and NASA?")
 
     # Verify tool usage
-    tool_calls = [msg.tool_calls for msg in response.messages if msg.tool_calls]
+    assert response.messages is not None
+    tool_calls = [msg.tool_calls for msg in response.messages if msg.tool_calls is not None]
     assert len(tool_calls) >= 1  # At least one message has tool calls
     assert sum(len(calls) for calls in tool_calls) == 2  # Total of 2 tool calls made
     assert response.content is not None
@@ -167,13 +160,13 @@ def test_multiple_tool_calls():
         markdown=True,
         tools=[DuckDuckGoTools(cache_results=True), get_weather],
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What's the latest news about SpaceX and what's the weather?")
 
     # Verify tool usage
-    tool_calls = [msg.tool_calls for msg in response.messages if msg.tool_calls]
+    assert response.messages is not None
+    tool_calls = [msg.tool_calls for msg in response.messages if msg.tool_calls is not None]
     assert len(tool_calls) >= 1  # At least one message has tool calls
     assert sum(len(calls) for calls in tool_calls) == 2  # Total of 2 tool calls made
     assert response.content is not None
@@ -192,12 +185,12 @@ def test_tool_call_custom_tool_no_parameters():
         markdown=True,
         tools=[get_time],
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What time is it?")
 
-    assert any(msg.tool_calls for msg in response.messages)
+    assert response.messages is not None
+    assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)
     assert response.content is not None
     assert "12:00" in response.content
     _assert_metrics(response)
@@ -220,12 +213,12 @@ def test_tool_call_custom_tool_untyped_parameters():
         markdown=True,
         tools=[echo_message],
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Can you echo 'Hello World'?")
 
-    assert any(msg.tool_calls for msg in response.messages)
+    assert response.messages is not None
+    assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)
     assert response.content is not None
     assert "Echo: Hello World" in response.content
     _assert_metrics(response)

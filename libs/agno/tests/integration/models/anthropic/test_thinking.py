@@ -2,7 +2,7 @@ import pytest
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
-from agno.run.response import RunResponse
+from agno.run.response import RunOutput
 from agno.tools.yfinance import YFinanceTools
 
 
@@ -15,17 +15,17 @@ def test_thinking():
         ),
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # Print the response in the terminal
-    response: RunResponse = agent.run("Share a 2 sentence horror story")
+    response: RunOutput = agent.run("Share a 2 sentence horror story")
 
     assert response.content is not None
     assert response.thinking is not None
+    assert response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
-    assert response.messages[2].thinking is not None
+    assert response.messages[2].thinking is not None if response.messages is not None else False
 
 
 def test_thinking_stream():
@@ -37,7 +37,6 @@ def test_thinking_stream():
         ),
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # Print the response in the terminal
@@ -62,17 +61,17 @@ async def test_async_thinking():
         ),
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # Print the response in the terminal
-    response: RunResponse = await agent.arun("Share a 2 sentence horror story")
+    response: RunOutput = await agent.arun("Share a 2 sentence horror story")
 
     assert response.content is not None
     assert response.thinking is not None
+    assert response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
-    assert response.messages[2].thinking is not None
+    assert response.messages[2].thinking is not None if response.messages is not None else False
 
 
 @pytest.mark.asyncio
@@ -85,19 +84,11 @@ async def test_async_thinking_stream():
         ),
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # Print the response in the terminal
-    response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
-
-    # Verify it's an async iterator
-    assert hasattr(response_stream, "__aiter__")
-
-    responses = [response async for response in response_stream]
-    assert len(responses) > 0
-    for response in responses:
-        assert response.content is not None or response.thinking is not None
+    async for response in agent.arun("Share a 2 sentence horror story", stream=True):
+        assert response.content is not None or response.thinking is not None  # type: ignore
 
 
 def test_redacted_thinking():
@@ -109,7 +100,6 @@ def test_redacted_thinking():
         ),
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
     # Testing string from anthropic
     response = agent.run(
@@ -132,6 +122,7 @@ def test_thinking_with_tool_calls():
     response = agent.run("What is the current price of TSLA?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
     assert "TSLA" in response.content
@@ -145,7 +136,7 @@ def test_redacted_thinking_with_tool_calls():
             thinking={"type": "enabled", "budget_tokens": 1024},
         ),
         tools=[YFinanceTools(cache_results=True)],
-        add_history_to_messages=True,
+        add_history_to_context=True,
         markdown=True,
     )
 
@@ -157,6 +148,7 @@ def test_redacted_thinking_with_tool_calls():
     response = agent.run("What is the current price of TSLA?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
     assert "TSLA" in response.content

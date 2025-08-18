@@ -7,11 +7,10 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Type, Union
 
 from pydantic import BaseModel, Field
 
-from agno.db.base import BaseDb, SessionType
-from agno.db.schemas.memory import UserMemory
+from agno.db.base import BaseDb
+from agno.db.schemas import UserMemory
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.session import Session
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_error, log_warning, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.prompts import get_json_output_prompt
@@ -94,11 +93,11 @@ class MemoryManager:
         if self.db:
             # If no user_id is provided, read all memories
             if user_id is None:
-                all_memories = self.db.get_user_memories()
+                all_memories: List[UserMemory] = self.db.get_user_memories()  # type: ignore
             else:
-                all_memories = self.db.get_user_memories(user_id=user_id)
+                all_memories = self.db.get_user_memories(user_id=user_id)  # type: ignore
 
-            memories = {}
+            memories: Dict[str, List[UserMemory]] = {}
             for memory in all_memories:
                 if memory.user_id is not None and memory.memory_id is not None:
                     memories.setdefault(memory.user_id, []).append(memory)
@@ -153,7 +152,7 @@ class MemoryManager:
         self,
         memory: UserMemory,
         user_id: Optional[str] = None,
-    ) -> str:
+    ) -> Optional[str]:
         """Add a user memory for a given user id
         Args:
             memory (UserMemory): The memory to add
@@ -162,21 +161,22 @@ class MemoryManager:
             str: The id of the memory
         """
         if self.db:
-            from uuid import uuid4
-
-            memory_id = memory.memory_id or str(uuid4())
             if memory.memory_id is None:
+                from uuid import uuid4
+
+                memory_id = memory.memory_id or str(uuid4())
                 memory.memory_id = memory_id
+
             if user_id is None:
                 user_id = "default"
             memory.user_id = user_id
 
-            if not memory.last_updated:
-                memory.last_updated = datetime.now()
+            if not memory.updated_at:
+                memory.updated_at = datetime.now()
 
-            if self.db:
-                self._upsert_db_memory(memory=memory)
+            self._upsert_db_memory(memory=memory)
             return memory_id
+
         else:
             log_warning("Memory Db not provided.")
             return None
@@ -199,8 +199,8 @@ class MemoryManager:
             if user_id is None:
                 user_id = "default"
 
-            if not memory.last_updated:
-                memory.last_updated = datetime.now()
+            if not memory.updated_at:
+                memory.updated_at = datetime.now()
 
             memory.memory_id = memory_id
             memory.user_id = user_id
@@ -418,33 +418,6 @@ class MemoryManager:
             log_warning(f"Error deleting memory in db: {e}")
             return f"Error deleting memory: {e}"
 
-    # -*- Session Db Functions
-    def read_session(self, session_id: str, session_type: SessionType) -> Optional[Session]:
-        """Get a Session from the database."""
-        try:
-            if not self.db:
-                raise ValueError("Db not initialized")
-            session = self.db.get_session(session_id=session_id, session_type=session_type)
-            return session
-        except Exception as e:
-            log_warning(f"Error getting session from db: {e}")
-            return None
-
-    def upsert_session(self, session: Session) -> Optional[Session]:
-        """Upsert a Session into the database."""
-        from copy import deepcopy
-
-        session_copy = deepcopy(session)
-        session_copy.summary = deepcopy(session.summary)
-
-        try:
-            if not self.db:
-                raise ValueError("Db not initialized")
-            return self.db.upsert_session(session=session_copy)
-        except Exception as e:
-            log_warning(f"Error upserting session into db: {e}")
-            return None
-
     # -*- Utility Functions
     def search_user_memories(
         self,
@@ -498,7 +471,7 @@ class MemoryManager:
         else:  # Default to last_n
             return self._get_last_n_memories(user_id=user_id, limit=limit)
 
-    def get_response_format(self) -> Union[Dict[str, Any], Type[BaseModel]]:
+    def _get_response_format(self) -> Union[Dict[str, Any], Type[BaseModel]]:
         model = self.get_model()
         if model.supports_native_structured_outputs:
             return MemorySearchResponse
@@ -525,7 +498,7 @@ class MemoryManager:
 
         model = self.get_model()
 
-        response_format = self.get_response_format()
+        response_format = self._get_response_format()
 
         log_debug("Searching for memories", center=True)
 
@@ -572,7 +545,7 @@ class MemoryManager:
             try:
                 memory_search = parse_response_model_str(response.content, MemorySearchResponse)  # type: ignore
 
-                # Update RunResponse
+                # Update RunOutput
                 if memory_search is None:
                     log_warning("Failed to convert memory_search response to MemorySearchResponse")
                     return []
@@ -603,13 +576,13 @@ class MemoryManager:
 
         memories_list = memories.get(user_id, [])
 
-        # Sort memories by last_updated timestamp if available
+        # Sort memories by updated_at timestamp if available
         if memories_list:
-            # Sort memories by last_updated timestamp (newest first)
-            # If last_updated is None, place at the beginning of the list
+            # Sort memories by updated_at timestamp (newest first)
+            # If updated_at is None, place at the beginning of the list
             sorted_memories_list = sorted(
                 memories_list,
-                key=lambda memory: memory.last_updated or datetime.min,
+                key=lambda memory: memory.updated_at or datetime.min,
             )
         else:
             sorted_memories_list = []
@@ -633,13 +606,13 @@ class MemoryManager:
             memories = {}
 
         memories_list = memories.get(user_id, [])
-        # Sort memories by last_updated timestamp if available
+        # Sort memories by updated_at timestamp if available
         if memories_list:
-            # Sort memories by last_updated timestamp (oldest first)
-            # If last_updated is None, place at the end of the list
+            # Sort memories by updated_at timestamp (oldest first)
+            # If updated_at is None, place at the end of the list
             sorted_memories_list = sorted(
                 memories_list,
-                key=lambda memory: memory.last_updated or datetime.max,
+                key=lambda memory: memory.updated_at or datetime.max,
             )
 
         else:
@@ -649,25 +622,6 @@ class MemoryManager:
             sorted_memories_list = sorted_memories_list[:limit]
 
         return sorted_memories_list
-
-    def deep_copy(self) -> "MemoryManager":
-        from copy import deepcopy
-
-        # Create a shallow copy of the object
-        copied_obj = self.__class__(**self.to_dict())
-
-        # Manually deepcopy fields that are known to be safe
-        for field_name, field_value in self.__dict__.items():
-            if field_name not in ["db"]:
-                try:
-                    setattr(copied_obj, field_name, deepcopy(field_value))
-                except Exception as e:
-                    log_warning(f"Failed to deepcopy field: {field_name} - {e}")
-                    setattr(copied_obj, field_name, field_value)
-
-        copied_obj.db = self.db
-
-        return copied_obj
 
     # --Memory Manager Functions--
     def determine_tools_for_model(self, tools: List[Callable]) -> None:
@@ -777,7 +731,7 @@ class MemoryManager:
             log_error("No model provided for memory manager")
             return "No model provided for memory manager"
 
-        log_debug("MemoryConnector Start", center=True)
+        log_debug("MemoryManager Start", center=True)
 
         if len(messages) == 1:
             input_string = messages[0].get_content_string()
@@ -815,7 +769,7 @@ class MemoryManager:
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
-        log_debug("MemoryConnector End", center=True)
+        log_debug("MemoryManager End", center=True)
 
         return response.content or "No response from model"
 
@@ -834,7 +788,7 @@ class MemoryManager:
             log_error("No model provided for memory manager")
             return "No model provided for memory manager"
 
-        log_debug("MemoryConnector Start", center=True)
+        log_debug("MemoryManager Start", center=True)
 
         if len(messages) == 1:
             input_string = messages[0].get_content_string()
@@ -872,7 +826,7 @@ class MemoryManager:
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
-        log_debug("MemoryConnector End", center=True)
+        log_debug("MemoryManager End", center=True)
 
         return response.content or "No response from model"
 
@@ -889,7 +843,7 @@ class MemoryManager:
             log_error("No model provided for memory manager")
             return "No model provided for memory manager"
 
-        log_debug("MemoryConnector Start", center=True)
+        log_debug("MemoryManager Start", center=True)
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
@@ -915,7 +869,7 @@ class MemoryManager:
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
-        log_debug("MemoryConnector End", center=True)
+        log_debug("MemoryManager End", center=True)
 
         return response.content or "No response from model"
 
@@ -932,7 +886,7 @@ class MemoryManager:
             log_error("No model provided for memory manager")
             return "No model provided for memory manager"
 
-        log_debug("MemoryConnector Start", center=True)
+        log_debug("MemoryManager Start", center=True)
 
         model_copy = deepcopy(self.model)
         # Update the Model (set defaults, add logit etc.)
@@ -958,7 +912,7 @@ class MemoryManager:
 
         if response.tool_calls is not None and len(response.tool_calls) > 0:
             self.memories_updated = True
-        log_debug("MemoryConnector End", center=True)
+        log_debug("MemoryManager End", center=True)
 
         return response.content or "No response from model"
 

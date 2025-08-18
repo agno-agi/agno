@@ -12,7 +12,7 @@ except ImportError:
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.reranker.base import Reranker
-from agno.utils.log import log_debug, log_info, logger
+from agno.utils.log import log_debug, log_error, log_info
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
@@ -207,11 +207,6 @@ class Milvus(VectorDb):
             Dictionary with document data where values can be strings, vectors (List[float]),
             sparse vectors (Dict[int, float]), or None
         """
-        # Ensure document is embedded if vectors are needed
-        if include_vectors and document.embedding is None:
-            document.embed(embedder=self.embedder)
-            if document.embedding is None:
-                raise ValueError(f"Failed to embed document: {document.name}")
 
         cleaned_content = document.content.replace("\x00", "\ufffd")
         doc_id = md5(cleaned_content.encode()).hexdigest()
@@ -400,8 +395,8 @@ class Milvus(VectorDb):
 
     def _insert_hybrid_document(self, content_hash: str, document: Document) -> None:
         """Insert a document with both dense and sparse vectors."""
-        data = self._prepare_document_data(content_hash=document.content_hash, document=document, include_vectors=True)
-
+        data = self._prepare_document_data(content_hash=content_hash, document=document, include_vectors=True)
+        document.embed(embedder=self.embedder)
         self.client.insert(
             collection_name=self.collection,
             data=data,
@@ -410,7 +405,7 @@ class Milvus(VectorDb):
 
     async def _async_insert_hybrid_document(self, content_hash: str, document: Document) -> None:
         """Insert a document with both dense and sparse vectors asynchronously."""
-        data = self._prepare_document_data(content_hash=document.content_hash, document=document, include_vectors=True)
+        data = self._prepare_document_data(content_hash=content_hash, document=document, include_vectors=True)
 
         await self.async_client.insert(
             collection_name=self.collection,
@@ -458,6 +453,9 @@ class Milvus(VectorDb):
     ) -> None:
         """Insert documents asynchronously based on search type."""
         log_info(f"Inserting {len(documents)} documents asynchronously")
+
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
 
         if self.search_type == SearchType.hybrid:
             await asyncio.gather(
@@ -543,8 +541,10 @@ class Milvus(VectorDb):
     ) -> None:
         log_debug(f"Upserting {len(documents)} documents asynchronously")
 
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
+
         async def process_document(document):
-            document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             doc_id = md5(cleaned_content.encode()).hexdigest()
             data = {
@@ -595,7 +595,7 @@ class Milvus(VectorDb):
 
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
+            log_error(f"Error getting embedding for Query: {query}")
             return []
 
         results = self.client.search(
@@ -633,7 +633,7 @@ class Milvus(VectorDb):
 
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
+            log_error(f"Error getting embedding for Query: {query}")
             return []
 
         results = await self.async_client.search(
@@ -682,11 +682,11 @@ class Milvus(VectorDb):
         sparse_vector = self._get_sparse_vector(query)
 
         if dense_vector is None:
-            logger.error(f"Error getting dense embedding for Query: {query}")
+            log_error(f"Error getting dense embedding for Query: {query}")
             return []
 
         if self._client is None:
-            logger.error("Milvus client not initialized")
+            log_error("Milvus client not initialized")
             return []
 
         try:
@@ -751,7 +751,7 @@ class Milvus(VectorDb):
             return search_results
 
         except Exception as e:
-            logger.error(f"Error during hybrid search: {e}")
+            log_error(f"Error during hybrid search: {e}")
             return []
 
     def drop(self) -> None:
@@ -923,3 +923,55 @@ class Milvus(VectorDb):
 
     def async_name_exists(self, name: str) -> bool:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for documents with the given content_id.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        try:
+            # Search for documents with the given content_id
+            search_expr = f'content_id == "{content_id}"'
+            results = self.client.query(
+                collection_name=self.collection, filter=search_expr, output_fields=["id", "meta_data", "filters"]
+            )
+
+            if not results:
+                log_debug(f"No documents found with content_id: {content_id}")
+                return
+
+            # Update each document
+            updated_count = 0
+            for result in results:
+                doc_id = result["id"]
+                current_metadata = result.get("meta_data", {})
+                current_filters = result.get("filters", {})
+
+                # Merge existing metadata with new metadata
+                if isinstance(current_metadata, dict):
+                    updated_metadata = current_metadata.copy()
+                    updated_metadata.update(metadata)
+                else:
+                    updated_metadata = metadata
+
+                if isinstance(current_filters, dict):
+                    updated_filters = current_filters.copy()
+                    updated_filters.update(metadata)
+                else:
+                    updated_filters = metadata
+
+                # Update the document
+                self.client.upsert(
+                    collection_name=self.collection,
+                    data=[{"id": doc_id, "meta_data": updated_metadata, "filters": updated_filters}],
+                )
+                updated_count += 1
+
+            log_debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
+
+        except Exception as e:
+            log_error(f"Error updating metadata for content_id '{content_id}': {e}")
+            raise

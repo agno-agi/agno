@@ -30,6 +30,7 @@ async def run_accuracy_eval(
         input=eval_run_input.input,
         expected_output=eval_run_input.expected_output,
         additional_guidelines=eval_run_input.additional_guidelines,
+        additional_context=eval_run_input.additional_context,
         num_iterations=eval_run_input.num_iterations or 1,
         name=eval_run_input.name,
     )
@@ -79,8 +80,8 @@ async def run_performance_eval(
         func=run_component,
         num_iterations=eval_run_input.num_iterations or 10,
         warmup_runs=eval_run_input.warmup_runs,
-        agent_id=agent.agent_id if agent else None,
-        team_id=team.team_id if team else None,
+        agent_id=agent.id if agent else None,
+        team_id=team.id if team else None,
         model_id=model_id,
         model_provider=model_provider,
     )
@@ -91,8 +92,8 @@ async def run_performance_eval(
     eval_run = EvalSchema.from_performance_eval(
         performance_eval=performance_eval,
         result=result,
-        agent_id=agent.agent_id if agent else None,
-        team_id=team.team_id if team else None,
+        agent_id=agent.id if agent else None,
+        team_id=team.id if team else None,
         model_id=model_id,
         model_provider=model_provider,
     )
@@ -146,7 +147,7 @@ async def run_reliability_eval(
     eval_run = EvalSchema.from_reliability_eval(
         reliability_eval=reliability_eval,
         result=result,
-        agent_id=agent.agent_id if agent else None,
+        agent_id=agent.id if agent else None,
         model_id=model_id,
         model_provider=model_provider,
     )

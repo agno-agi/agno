@@ -15,12 +15,11 @@ SESSION_TABLE_SCHEMA = {
     "team_id": {"type": String, "nullable": True},
     "workflow_id": {"type": String, "nullable": True},
     "user_id": {"type": String, "nullable": True},
-    "team_session_id": {"type": String, "nullable": True},
     "session_data": {"type": JSON, "nullable": True},
     "agent_data": {"type": JSON, "nullable": True},
     "team_data": {"type": JSON, "nullable": True},
     "workflow_data": {"type": JSON, "nullable": True},
-    "extra_data": {"type": JSON, "nullable": True},
+    "metadata": {"type": JSON, "nullable": True},
     "chat_history": {"type": JSON, "nullable": True},
     "runs": {"type": JSON, "nullable": True},
     "summary": {"type": JSON, "nullable": True},
@@ -37,7 +36,7 @@ USER_MEMORY_TABLE_SCHEMA = {
     "workflow_id": {"type": String, "nullable": True},
     "user_id": {"type": String, "nullable": True, "index": True},
     "topics": {"type": JSON, "nullable": True},
-    "last_updated": {"type": BigInteger, "nullable": True, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True, "index": True},
 }
 
 EVAL_TABLE_SCHEMA = {
@@ -64,10 +63,11 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "size": {"type": BigInteger, "nullable": True},
     "linked_to": {"type": String, "nullable": True},
     "access_count": {"type": BigInteger, "nullable": True},
-    "created_at": {"type": BigInteger, "nullable": True},
-    "updated_at": {"type": BigInteger, "nullable": True},
     "status": {"type": String, "nullable": True},
     "status_message": {"type": String, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "external_id": {"type": String, "nullable": True},
 }
 
 METRICS_TABLE_SCHEMA = {
@@ -94,8 +94,6 @@ METRICS_TABLE_SCHEMA = {
     ],
 }
 
-LEARNING_TABLE_SCHEMA = {}
-
 
 def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
@@ -111,11 +109,12 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "sessions": SESSION_TABLE_SCHEMA,
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
-        "user_memories": USER_MEMORY_TABLE_SCHEMA,
-        "knowledge_documents": KNOWLEDGE_TABLE_SCHEMA,
-        "learnings": {},
+        "memories": USER_MEMORY_TABLE_SCHEMA,
+        "knowledge": KNOWLEDGE_TABLE_SCHEMA,
     }
     schema = schemas.get(table_type, {})
+
     if not schema:
         raise ValueError(f"Unknown table type: {table_type}")
-    return schema
+
+    return schema  # type: ignore[return-value]

@@ -66,7 +66,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             return AgentSessionDetailSchema.from_session(session)  # type: ignore
         elif session_type == SessionType.TEAM:
             return TeamSessionDetailSchema.from_session(session)  # type: ignore
-        elif session_type == SessionType.WORKFLOW:
+        else:
             return WorkflowSessionDetailSchema.from_session(session)  # type: ignore
 
     @router.get(
@@ -90,7 +90,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         elif session_type == SessionType.TEAM:
             return [TeamRunSchema.from_dict(run) for run in runs]
 
-        elif session_type == SessionType.WORKFLOW:
+        else:
             return [RunSchema.from_dict(run) for run in runs]
 
     @router.delete("/sessions/{session_id}", status_code=204)
@@ -121,7 +121,7 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             return AgentSessionDetailSchema.from_session(session)  # type: ignore
         elif session_type == SessionType.TEAM:
             return TeamSessionDetailSchema.from_session(session)  # type: ignore
-        elif session_type == SessionType.WORKFLOW:
+        else:
             return WorkflowSessionDetailSchema.from_session(session)  # type: ignore
 
     return router

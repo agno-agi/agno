@@ -9,7 +9,7 @@ player_1 = Agent(
     name="Player 1",
     role="Play Tic Tac Toe",
     model=OpenAIChat(id="gpt-4o"),
-    add_name_to_instructions=True,
+    add_name_to_context=True,
     instructions=dedent("""
     You are a Tic Tac Toe player.
     You will be given a Tic Tac Toe board and a player to play against.
@@ -21,7 +21,7 @@ player_2 = Agent(
     name="Player 2",
     role="Play Tic Tac Toe",
     model=Gemini(id="gemini-2.0-flash"),
-    add_name_to_instructions=True,
+    add_name_to_context=True,
     instructions=dedent("""
     You are a Tic Tac Toe player.
     You will be given a Tic Tac Toe board and a player to play against.
@@ -34,7 +34,6 @@ agent_team = Team(
     name="Tic Tac Toe Team",
     mode="coordinate",
     model=OpenAIChat("gpt-4o"),
-    success_criteria="The game is won by one of the players.",
     members=[player_1, player_2],
     instructions=[
         "You are a games master.",
@@ -46,14 +45,13 @@ agent_team = Team(
     ],
     enable_agentic_context=True,
     share_member_interactions=True,
-    show_tool_calls=True,
     debug_mode=True,
     markdown=True,
     show_members_responses=True,
 )
 
 agent_team.print_response(
-    message="Run a full Tic Tac Toe game. After the game, report the final board state and the results.",
+    input="Run a full Tic Tac Toe game. After the game, report the final board state and the results.",
     stream=True,
     stream_intermediate_steps=True,
 )

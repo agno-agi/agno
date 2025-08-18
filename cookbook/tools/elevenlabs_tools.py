@@ -24,7 +24,6 @@ audio_agent = Agent(
         "The audio should be long and detailed.",
     ],
     markdown=True,
-    show_tool_calls=True,
 )
 
 audio_agent.print_response("Generate a very long audio of history of french revolution")

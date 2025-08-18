@@ -41,13 +41,12 @@ agent = Agent(
     instructions=agent_instructions,
     model=OpenAIChat(id="gpt-4o"),
     tools=[CartesiaTools(voice_localize_enabled=True)],
-    show_tool_calls=True,
 )
 
 agent.print_response(
     "Convert this phrase 'hello! how are you? Tell me more about the weather in Paris?' to French and create a voice note"
 )
-response = agent.run_response
+response = agent.get_last_run_response()
 
 print("\nChecking for Audio Artifacts on Agent...")
 if response.audio:

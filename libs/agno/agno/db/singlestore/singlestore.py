@@ -113,7 +113,7 @@ class SingleStoreDb(BaseDb):
         try:
             table_schema = get_table_schema_definition(table_type)
 
-            columns = []
+            columns: List[Column] = []
             # Get the columns from the table schema
             for col_name, col_config in table_schema.items():
                 # Skip constraint definitions
@@ -121,7 +121,7 @@ class SingleStoreDb(BaseDb):
                     continue
 
                 column_args = [col_name, col_config["type"]()]
-                column_kwargs = {}
+                column_kwargs: Dict[str, Any] = {}
                 if col_config.get("primary_key", False):
                     column_kwargs["primary_key"] = True
                 if "nullable" in col_config:
@@ -159,13 +159,15 @@ class SingleStoreDb(BaseDb):
             table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
             log_debug(f"Creating table {table_ref} with schema: {table_schema}")
 
-            columns, indexes, unique_constraints = [], [], []
+            columns: List[Column] = []
+            indexes: List[str] = []
+            unique_constraints: List[str] = []
             schema_unique_constraints = table_schema.pop("_unique_constraints", [])
 
             # Get the columns, indexes, and unique constraints from the table schema
             for col_name, col_config in table_schema.items():
                 column_args = [col_name, col_config["type"]()]
-                column_kwargs = {}
+                column_kwargs: Dict[str, Any] = {}
                 if col_config.get("primary_key", False):
                     column_kwargs["primary_key"] = True
                 if "nullable" in col_config:
@@ -388,10 +390,10 @@ class SingleStoreDb(BaseDb):
     def get_session(
         self,
         session_id: str,
+        session_type: SessionType,
         user_id: Optional[str] = None,
-        session_type: Optional[SessionType] = None,
         deserialize: Optional[bool] = True,
-    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Read a session from the database.
 
@@ -435,6 +437,8 @@ class SingleStoreDb(BaseDb):
                 return TeamSession.from_dict(session)
             elif session_type == SessionType.WORKFLOW:
                 return WorkflowSession.from_dict(session)
+            else:
+                raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_error(f"Exception reading from session table: {e}")
@@ -453,7 +457,7 @@ class SingleStoreDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-    ) -> Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
+    ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
 
@@ -596,6 +600,8 @@ class SingleStoreDb(BaseDb):
                 return TeamSession.from_dict(session)
             elif session_type == SessionType.WORKFLOW:
                 return WorkflowSession.from_dict(session)
+            else:
+                raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_error(f"Error renaming session: {e}")
@@ -627,24 +633,22 @@ class SingleStoreDb(BaseDb):
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.AGENT.value,
                         agent_id=session_dict.get("agent_id"),
-                        team_session_id=session_dict.get("team_session_id"),
                         user_id=session_dict.get("user_id"),
                         runs=session_dict.get("runs"),
                         agent_data=session_dict.get("agent_data"),
                         session_data=session_dict.get("session_data"),
                         summary=session_dict.get("summary"),
-                        extra_data=session_dict.get("extra_data"),
+                        metadata=session_dict.get("metadata"),
                         created_at=session_dict.get("created_at"),
                         updated_at=session_dict.get("created_at"),
                     )
                     stmt = stmt.on_duplicate_key_update(
                         agent_id=stmt.inserted.agent_id,
-                        team_session_id=stmt.inserted.team_session_id,
                         user_id=stmt.inserted.user_id,
                         agent_data=stmt.inserted.agent_data,
                         session_data=stmt.inserted.session_data,
                         summary=stmt.inserted.summary,
-                        extra_data=stmt.inserted.extra_data,
+                        metadata=stmt.inserted.metadata,
                         runs=stmt.inserted.runs,
                         updated_at=int(time.time()),
                     )
@@ -672,24 +676,22 @@ class SingleStoreDb(BaseDb):
                         session_id=session_dict.get("session_id"),
                         session_type=SessionType.TEAM.value,
                         team_id=session_dict.get("team_id"),
-                        team_session_id=session_dict.get("team_session_id"),
                         user_id=session_dict.get("user_id"),
                         runs=session_dict.get("runs"),
                         team_data=session_dict.get("team_data"),
                         session_data=session_dict.get("session_data"),
                         summary=session_dict.get("summary"),
-                        extra_data=session_dict.get("extra_data"),
+                        metadata=session_dict.get("metadata"),
                         created_at=session_dict.get("created_at"),
                         updated_at=session_dict.get("created_at"),
                     )
                     stmt = stmt.on_duplicate_key_update(
                         team_id=stmt.inserted.team_id,
-                        team_session_id=stmt.inserted.team_session_id,
                         user_id=stmt.inserted.user_id,
                         team_data=stmt.inserted.team_data,
                         session_data=stmt.inserted.session_data,
                         summary=stmt.inserted.summary,
-                        extra_data=stmt.inserted.extra_data,
+                        metadata=stmt.inserted.metadata,
                         runs=stmt.inserted.runs,
                         updated_at=int(time.time()),
                     )
@@ -711,7 +713,7 @@ class SingleStoreDb(BaseDb):
 
                     return TeamSession.from_dict(row._mapping)
 
-            elif isinstance(session, WorkflowSession):
+            else:
                 with self.Session() as sess, sess.begin():
                     stmt = mysql.insert(table).values(
                         session_id=session_dict.get("session_id"),
@@ -722,7 +724,7 @@ class SingleStoreDb(BaseDb):
                         workflow_data=session_dict.get("workflow_data"),
                         session_data=session_dict.get("session_data"),
                         summary=session_dict.get("summary"),
-                        extra_data=session_dict.get("extra_data"),
+                        metadata=session_dict.get("metadata"),
                         created_at=session_dict.get("created_at"),
                         updated_at=session_dict.get("created_at"),
                     )
@@ -732,7 +734,7 @@ class SingleStoreDb(BaseDb):
                         workflow_data=stmt.inserted.workflow_data,
                         session_data=stmt.inserted.session_data,
                         summary=stmt.inserted.summary,
-                        extra_data=stmt.inserted.extra_data,
+                        metadata=stmt.inserted.metadata,
                         runs=stmt.inserted.runs,
                         updated_at=int(time.time()),
                     )
@@ -759,7 +761,7 @@ class SingleStoreDb(BaseDb):
             return None
 
     # -- Memory methods --
-    def delete_user_memory(self, memory_id: str) -> bool:
+    def delete_user_memory(self, memory_id: str):
         """Delete a user memory from the database.
 
         Args:
@@ -784,11 +786,8 @@ class SingleStoreDb(BaseDb):
                 else:
                     log_debug(f"No memory found with id: {memory_id}")
 
-                return success
-
         except Exception as e:
             log_error(f"Error deleting memory: {e}")
-            return False
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
         """Delete user memories from the database.
@@ -831,7 +830,7 @@ class SingleStoreDb(BaseDb):
                         if isinstance(topic_list, list):
                             topics.extend(topic_list)
 
-                return topics
+                return list(set(topics))
 
         except Exception as e:
             log_error(f"Exception reading from memory table: {e}")
@@ -876,7 +875,6 @@ class SingleStoreDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
         topics: Optional[List[str]] = None,
         search_content: Optional[str] = None,
         limit: Optional[int] = None,
@@ -891,7 +889,6 @@ class SingleStoreDb(BaseDb):
             user_id (Optional[str]): The ID of the user to filter by.
             agent_id (Optional[str]): The ID of the agent to filter by.
             team_id (Optional[str]): The ID of the team to filter by.
-            workflow_id (Optional[str]): The ID of the workflow to filter by.
             topics (Optional[List[str]]): The topics to filter by.
             search_content (Optional[str]): The content to search for.
             limit (Optional[int]): The maximum number of memories to return.
@@ -920,8 +917,6 @@ class SingleStoreDb(BaseDb):
                     stmt = stmt.where(table.c.agent_id == agent_id)
                 if team_id is not None:
                     stmt = stmt.where(table.c.team_id == team_id)
-                if workflow_id is not None:
-                    stmt = stmt.where(table.c.workflow_id == workflow_id)
                 if topics is not None:
                     topic_conditions = [func.JSON_ARRAY_CONTAINS_STRING(table.c.topics, topic) for topic in topics]
                     if topic_conditions:
@@ -988,11 +983,11 @@ class SingleStoreDb(BaseDb):
                     select(
                         table.c.user_id,
                         func.count(table.c.memory_id).label("total_memories"),
-                        func.max(table.c.last_updated).label("last_memory_updated_at"),
+                        func.max(table.c.updated_at).label("last_memory_updated_at"),
                     )
                     .where(table.c.user_id.is_not(None))
                     .group_by(table.c.user_id)
-                    .order_by(func.max(table.c.last_updated).desc())
+                    .order_by(func.max(table.c.updated_at).desc())
                 )
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
@@ -1053,8 +1048,7 @@ class SingleStoreDb(BaseDb):
                     agent_id=memory.agent_id,
                     team_id=memory.team_id,
                     topics=memory.topics,
-                    workflow_id=memory.workflow_id,
-                    last_updated=int(time.time()),
+                    updated_at=int(time.time()),
                 )
                 stmt = stmt.on_duplicate_key_update(
                     memory=stmt.inserted.memory,
@@ -1063,8 +1057,7 @@ class SingleStoreDb(BaseDb):
                     user_id=stmt.inserted.user_id,
                     agent_id=stmt.inserted.agent_id,
                     team_id=stmt.inserted.team_id,
-                    workflow_id=stmt.inserted.workflow_id,
-                    last_updated=int(time.time()),
+                    updated_at=int(time.time()),
                 )
 
                 sess.execute(stmt)
@@ -1167,12 +1160,11 @@ class SingleStoreDb(BaseDb):
                     return result._mapping["date"]
 
         # 2. No metrics records. Return the date of the first recorded session.
-        sessions_result = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
-        if isinstance(sessions_result, tuple):
-            first_session, _ = sessions_result
-        else:
-            first_session = sessions_result
-        first_session_date = first_session[0]["created_at"] if first_session and len(first_session) > 0 else None  # type: ignore
+        sessions_result, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
+        if not isinstance(sessions_result, list):
+            raise ValueError("Error obtaining session list to calculate metrics")
+
+        first_session_date = sessions_result[0]["created_at"] if sessions_result and len(sessions_result) > 0 else None  # type: ignore
 
         # 3. No metrics records and no sessions records. Return None.
         if first_session_date is None:
@@ -1281,30 +1273,14 @@ class SingleStoreDb(BaseDb):
 
     # -- Knowledge methods --
 
-    def _get_knowledge_table(self) -> Table:
-        """Get or create the knowledge table.
-
-        Returns:
-            Table: The knowledge table.
-        """
-        if not hasattr(self, "knowledge_table"):
-            if self.knowledge_table_name is None:
-                raise ValueError("Knowledge table was not provided on initialization")
-
-            log_info(f"Getting knowledge table: {self.knowledge_table_name}")
-            self.knowledge_table = self._get_or_create_table(
-                table_name=self.knowledge_table_name, table_type="knowledge_contents", db_schema=self.db_schema
-            )
-
-        return self.knowledge_table
-
     def delete_knowledge_content(self, id: str):
-        """Delete knowledge content from the database.
+        """Delete a knowledge row from the database.
 
         Args:
-            id (str): The ID of the knowledge content to delete.
+            id (str): The ID of the knowledge row to delete.
         """
-        table = self._get_knowledge_table()
+        table = self._get_table(table_type="knowledge")
+
         with self.Session() as sess, sess.begin():
             stmt = table.delete().where(table.c.id == id)
             sess.execute(stmt)
@@ -1312,16 +1288,16 @@ class SingleStoreDb(BaseDb):
         log_debug(f"Deleted knowledge content with id '{id}'")
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
-        """Get knowledge content from the database.
+        """Get a knowledge row from the database.
 
         Args:
-            id (str): The ID of the knowledge content to get.
+            id (str): The ID of the knowledge row to get.
 
         Returns:
-            Optional[KnowledgeRow]: The knowledge content, or None if not found.
+            Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
         """
-        table = self._get_knowledge_table()
-        print(f"Getting knowledge content: {id}, {table}")
+        table = self._get_table(table_type="knowledge")
+
         with self.Session() as sess, sess.begin():
             stmt = select(table).where(table.c.id == id)
             result = sess.execute(stmt).fetchone()
@@ -1345,28 +1321,40 @@ class SingleStoreDb(BaseDb):
             sort_order (Optional[str]): The order to sort by.
 
         Returns:
-            List[KnowledgeRow]: The knowledge contents.
+            Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
         """
-        table = self._get_knowledge_table()
-        with self.Session() as sess, sess.begin():
-            stmt = select(table)
+        table = self._get_table(table_type="knowledge")
 
-            # Apply sorting
-            if sort_by is not None:
-                stmt = stmt.order_by(getattr(table.c, sort_by) * (1 if sort_order == "asc" else -1))
+        try:
+            with self.Session() as sess, sess.begin():
+                stmt = select(table)
 
-            # Get total count before applying limit and pagination
-            count_stmt = select(func.count()).select_from(stmt.alias())
-            total_count = sess.execute(count_stmt).scalar()
+                # Apply sorting
+                if sort_by is not None:
+                    stmt = stmt.order_by(getattr(table.c, sort_by) * (1 if sort_order == "asc" else -1))
 
-            # Apply pagination after count
-            if limit is not None:
-                stmt = stmt.limit(limit)
-                if page is not None:
-                    stmt = stmt.offset((page - 1) * limit)
+                # Get total count before applying limit and pagination
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar()
 
-            result = sess.execute(stmt).fetchall()
-            return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
+                # Apply pagination after count
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = sess.execute(stmt).fetchall()
+                if result is None:
+                    return [], 0
+
+                return [KnowledgeRow.model_validate(record._mapping) for record in result], total_count
+
+        except Exception as e:
+            log_error(f"Error getting knowledge contents: {e}")
+            return [], 0
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
         """Upsert knowledge content in the database.
@@ -1378,7 +1366,8 @@ class SingleStoreDb(BaseDb):
             Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
         """
         try:
-            table = self._get_knowledge_table()
+            table = self._get_table(table_type="knowledge")
+
             with self.Session() as sess, sess.begin():
                 # Only include fields that are not None in the update
                 update_fields = {
@@ -1395,6 +1384,7 @@ class SingleStoreDb(BaseDb):
                         "status_message": knowledge_row.status_message,
                         "created_at": knowledge_row.created_at,
                         "updated_at": knowledge_row.updated_at,
+                        "external_id": knowledge_row.external_id,
                     }.items()
                     if v is not None
                 }
@@ -1531,8 +1521,8 @@ class SingleStoreDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        eval_type: Optional[List[EvalType]] = None,
         filter_type: Optional[EvalFilterType] = None,
+        eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.

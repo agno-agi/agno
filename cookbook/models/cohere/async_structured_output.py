@@ -1,7 +1,7 @@
 import asyncio
 from typing import List
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.cohere import Cohere
 from agno.tools.duckduckgo import DuckDuckGoTools
 from pydantic import BaseModel, Field
@@ -34,12 +34,11 @@ agent = Agent(
     tools=[DuckDuckGoTools()],
     description="You help people write movie scripts.",
     response_model=MovieScript,
-    show_tool_calls=True,
     debug_mode=True,
 )
 
 # Get the response in a variable
-# response: RunResponse = await agent.arun("New York")
+# response: RunOutput = await agent.arun("New York")
 # pprint(response.content)
 
 asyncio.run(agent.aprint_response("Find a cool movie idea about London and write it."))

@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import requests
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.openai import OpenAIChat
 from agno.utils.audio import write_audio_to_file
 
@@ -18,8 +18,8 @@ agent = Agent(
         modalities=["text", "audio"],
         audio={"voice": "alloy", "format": "wav"},
     ),
-    # Set add_history_to_messages=true to add the previous chat history to the messages sent to the Model.
-    add_history_to_messages=True,
+    # Set add_history_to_context=true to add the previous chat history to the context sent to the Model.
+    add_history_to_context=True,
     # Number of historical responses to add to the messages.
     num_history_responses=3,
 )

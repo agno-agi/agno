@@ -18,7 +18,6 @@ agent = Agent(
     model=LangDB(id="grok-2", project_id="langdb-project-id"),
     tools=[duckdb_tools],
     markdown=True,
-    show_tool_calls=True,
     additional_context=dedent("""\
     You have access to the following tables:
     - movies: contains information about movies from IMDB.

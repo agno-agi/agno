@@ -12,22 +12,21 @@ from agno.models.openai import OpenAIChat
 from agno.tools.openai import OpenAITools
 from agno.utils.media import save_base64_data
 
-output_file: str = Path("tmp/speech_output.mp3")
+output_file: str = str(Path("tmp/speech_output.mp3"))
 
 agent: Agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[OpenAITools()],
     markdown=True,
-    show_tool_calls=True,
 )
 
 # Ask the agent to generate speech, but not save it
 response = agent.run(
-    f'Please generate speech for the following text: "Hello from Agno! This is a demonstration of the text-to-speech capability using OpenAI"'
+    'Please generate speech for the following text: "Hello from Agno! This is a demonstration of the text-to-speech capability using OpenAI"'
 )
 
 print(f"Agent response: {response.get_content_as_string()}")
 
-if response.audio:
+if response.audio and response.audio[0].base64_audio:
     save_base64_data(response.audio[0].base64_audio, output_file)
     print(f"Successfully saved generated speech to{output_file}")

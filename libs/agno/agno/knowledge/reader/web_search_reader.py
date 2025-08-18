@@ -1,10 +1,9 @@
 import asyncio
-import json
 import random
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Literal, Optional, Set, Tuple
-from urllib.parse import urljoin, urlparse
+from typing import Dict, List, Literal, Optional, Set
+from urllib.parse import urlparse
 
 import httpx
 
@@ -37,7 +36,7 @@ class WebSearchReader(Reader):
     user_agent: str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 
     # Search engine configuration
-    search_engine: Literal["duckduckgo", "google", "bing"] = "duckduckgo"
+    search_engine: Literal["duckduckgo", "google"] = "duckduckgo"
     search_delay: float = 3.0  # Delay between search requests
     max_search_retries: int = 2  # Retries for search operations
 
@@ -106,6 +105,7 @@ class WebSearchReader(Reader):
                 else:
                     logger.error(f"All DuckDuckGo search attempts failed: {e}")
                     return []
+        return []
 
     def _perform_google_search(self, query: str) -> List[Dict[str, str]]:
         """Perform web search using Google (requires googlesearch-python)"""
@@ -144,32 +144,7 @@ class WebSearchReader(Reader):
                     logger.error(f"All Google search attempts failed: {e}")
                     return []
 
-    def _perform_bing_search(self, query: str) -> List[Dict[str, str]]:
-        """Perform web search using Bing (requires bing-search)"""
-        log_debug(f"Performing Bing search for: {query}")
-
-        try:
-            from bing_search import BingSearch
-        except ImportError:
-            logger.error("Bing search requires 'bing-search'. Install with: pip install bing-search")
-            return []
-
-        for attempt in range(self.max_search_retries):
-            try:
-                self._respect_rate_limits()
-
-                # Note: Bing search typically requires an API key
-                # This is a placeholder implementation
-                logger.warning("Bing search implementation requires API key setup")
-                return []
-
-            except Exception as e:
-                logger.warning(f"Bing search attempt {attempt + 1} failed: {e}")
-                if attempt < self.max_search_retries - 1:
-                    time.sleep(self.search_delay)
-                else:
-                    logger.error(f"All Bing search attempts failed: {e}")
-                    return []
+        return []
 
     def _perform_web_search(self, query: str) -> List[Dict[str, str]]:
         """Perform web search using the configured search engine"""
@@ -177,8 +152,6 @@ class WebSearchReader(Reader):
             return self._perform_duckduckgo_search(query)
         elif self.search_engine == "google":
             return self._perform_google_search(query)
-        elif self.search_engine == "bing":
-            return self._perform_bing_search(query)
         else:
             logger.error(f"Unsupported search engine: {self.search_engine}")
             return []
@@ -187,7 +160,7 @@ class WebSearchReader(Reader):
         """Check if URL is valid and not already visited"""
         try:
             parsed = urlparse(url)
-            return parsed.scheme in ["http", "https"] and parsed.netloc and url not in self._visited_urls
+            return bool(parsed.scheme in ["http", "https"] and parsed.netloc and url not in self._visited_urls)
         except Exception:
             return False
 
@@ -272,7 +245,7 @@ class WebSearchReader(Reader):
             logger.warning(f"No search results found for query: {query}")
             return []
 
-        documents = []
+        documents: List[Document] = []
 
         for result in search_results:
             url = result.get("url", "")

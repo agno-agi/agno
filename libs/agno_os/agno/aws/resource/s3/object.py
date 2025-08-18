@@ -1,8 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import Field, dataclass
 from pathlib import Path
 from typing import Any, Optional
-
-from pydantic import Field
 
 from agno.aws.api_client import AwsApiClient
 from agno.aws.resource.base import AwsResource

@@ -15,7 +15,7 @@ for i in range(1, 7):
             name=f"Player{i}",
             role="Werewolf Game Player",
             model=OpenAIChat(id="gpt-4o-mini"),
-            add_name_to_instructions=True,
+            add_name_to_context=True,
             instructions=dedent(f"""
             You are Player{i} in a simplified Werewolf game.
             The game moderator will tell you your role (villager or imposter).
@@ -42,7 +42,6 @@ werewolf_team = Team(
     mode="coordinate",
     model=Claude(id="claude-3-5-sonnet-20241022"),
     reasoning_model=DeepSeek(id="deepseek-reasoner"),
-    success_criteria="The game ends with either villagers or imposters winning. Don't stop the game until the end!",
     members=player_agents,
     instructions=[
         "You are the moderator of a simplified Werewolf game with 6 players.",
@@ -86,7 +85,6 @@ werewolf_team = Team(
     ],
     enable_agentic_context=True,
     enable_team_history=True,
-    show_tool_calls=True,
     markdown=True,
     show_members_responses=True,
     debug_mode=True,
@@ -95,7 +93,7 @@ werewolf_team = Team(
 # Run the game
 asyncio.run(
     werewolf_team.aprint_response(
-        message="Start a new Werewolf game. First plan how you will run the game. Then assign roles and initialize the game state. Then proceed with the first day phase and continue until the game is over.",
+        input="Start a new Werewolf game. First plan how you will run the game. Then assign roles and initialize the game state. Then proceed with the first day phase and continue until the game is over.",
         stream=True,
         stream_intermediate_steps=True,
     )

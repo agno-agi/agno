@@ -21,7 +21,7 @@ from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
 
 try:
-    from google.cloud.firestore import Client, FieldFilter
+    from google.cloud.firestore import Client, FieldFilter  # type: ignore[import-untyped]
 except ImportError:
     raise ImportError(
         "`google-cloud-firestore` not installed. Please install it using `pip install google-cloud-firestore`"
@@ -159,6 +159,7 @@ class FirestoreDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to delete.
+            session_type (SessionType): The type of session to delete. Defaults to SessionType.AGENT.
 
         Returns:
             bool: True if the session was deleted, False otherwise.
@@ -209,10 +210,10 @@ class FirestoreDb(BaseDb):
     def get_session(
         self,
         session_id: str,
+        session_type: SessionType,
         user_id: Optional[str] = None,
-        session_type: Optional[SessionType] = None,
         deserialize: Optional[bool] = True,
-    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Read a session from the database.
 
         Args:
@@ -256,7 +257,7 @@ class FirestoreDb(BaseDb):
                 return AgentSession.from_dict(session)
             elif session_type == SessionType.TEAM:
                 return TeamSession.from_dict(session)
-            elif session_type == SessionType.WORKFLOW:
+            else:
                 return WorkflowSession.from_dict(session)
 
         except Exception as e:
@@ -276,7 +277,7 @@ class FirestoreDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-    ) -> Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
+    ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions.
 
         Args:
@@ -350,14 +351,23 @@ class FirestoreDb(BaseDb):
             if not deserialize:
                 return sessions_raw, total_count
 
-            sessions = []
+            sessions: List[AgentSession | TeamSession | WorkflowSession] = []
             for session in sessions_raw:
                 if session["session_type"] == SessionType.AGENT.value:
-                    sessions.append(AgentSession.from_dict(session))
+                    agent_session = AgentSession.from_dict(session)
+                    if agent_session is not None:
+                        sessions.append(agent_session)
                 elif session["session_type"] == SessionType.TEAM.value:
-                    sessions.append(TeamSession.from_dict(session))
+                    team_session = TeamSession.from_dict(session)
+                    if team_session is not None:
+                        sessions.append(team_session)
                 elif session["session_type"] == SessionType.WORKFLOW.value:
-                    sessions.append(WorkflowSession.from_dict(session))
+                    workflow_session = WorkflowSession.from_dict(session)
+                    if workflow_session is not None:
+                        sessions.append(workflow_session)
+
+            if not sessions:
+                return [] if deserialize else ([], 0)
 
             return sessions
 
@@ -413,7 +423,7 @@ class FirestoreDb(BaseDb):
                 return AgentSession.from_dict(deserialized_session)
             elif session_type == SessionType.TEAM:
                 return TeamSession.from_dict(deserialized_session)
-            elif session_type == SessionType.WORKFLOW:
+            else:
                 return WorkflowSession.from_dict(deserialized_session)
 
         except Exception as e:
@@ -443,13 +453,12 @@ class FirestoreDb(BaseDb):
                     "session_id": serialized_session_dict.get("session_id"),
                     "session_type": SessionType.AGENT.value,
                     "agent_id": serialized_session_dict.get("agent_id"),
-                    "team_session_id": serialized_session_dict.get("team_session_id"),
                     "user_id": serialized_session_dict.get("user_id"),
                     "runs": serialized_session_dict.get("runs"),
                     "agent_data": serialized_session_dict.get("agent_data"),
                     "session_data": serialized_session_dict.get("session_data"),
                     "summary": serialized_session_dict.get("summary"),
-                    "extra_data": serialized_session_dict.get("extra_data"),
+                    "metadata": serialized_session_dict.get("metadata"),
                     "created_at": serialized_session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
@@ -459,13 +468,12 @@ class FirestoreDb(BaseDb):
                     "session_id": serialized_session_dict.get("session_id"),
                     "session_type": SessionType.TEAM.value,
                     "team_id": serialized_session_dict.get("team_id"),
-                    "team_session_id": serialized_session_dict.get("team_session_id"),
                     "user_id": serialized_session_dict.get("user_id"),
                     "runs": serialized_session_dict.get("runs"),
                     "team_data": serialized_session_dict.get("team_data"),
                     "session_data": serialized_session_dict.get("session_data"),
                     "summary": serialized_session_dict.get("summary"),
-                    "extra_data": serialized_session_dict.get("extra_data"),
+                    "metadata": serialized_session_dict.get("metadata"),
                     "created_at": serialized_session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
@@ -480,7 +488,7 @@ class FirestoreDb(BaseDb):
                     "workflow_data": serialized_session_dict.get("workflow_data"),
                     "session_data": serialized_session_dict.get("session_data"),
                     "summary": serialized_session_dict.get("summary"),
-                    "extra_data": serialized_session_dict.get("extra_data"),
+                    "metadata": serialized_session_dict.get("metadata"),
                     "created_at": serialized_session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
@@ -514,7 +522,7 @@ class FirestoreDb(BaseDb):
                 return AgentSession.from_dict(deserialized_session)
             elif isinstance(session, TeamSession):
                 return TeamSession.from_dict(deserialized_session)
-            elif isinstance(session, WorkflowSession):
+            else:
                 return WorkflowSession.from_dict(deserialized_session)
 
         except Exception as e:
@@ -523,7 +531,7 @@ class FirestoreDb(BaseDb):
 
     # -- Memory methods --
 
-    def delete_user_memory(self, memory_id: str) -> bool:
+    def delete_user_memory(self, memory_id: str):
         """Delete a user memory from the database.
 
         Args:
@@ -550,11 +558,8 @@ class FirestoreDb(BaseDb):
             else:
                 log_debug(f"No user memory found with id: {memory_id}")
 
-            return success
-
         except Exception as e:
             log_error(f"Error deleting user memory: {e}")
-            return False
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
         """Delete user memories from the database.
@@ -650,7 +655,6 @@ class FirestoreDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
         topics: Optional[List[str]] = None,
         search_content: Optional[str] = None,
         limit: Optional[int] = None,
@@ -665,7 +669,6 @@ class FirestoreDb(BaseDb):
             user_id (Optional[str]): The ID of the user to get the memories for.
             agent_id (Optional[str]): The ID of the agent to get the memories for.
             team_id (Optional[str]): The ID of the team to get the memories for.
-            workflow_id (Optional[str]): The ID of the workflow to get the memories for.
             topics (Optional[List[str]]): The topics to filter the memories by.
             search_content (Optional[str]): The content to filter the memories by.
             limit (Optional[int]): The limit of the memories to get.
@@ -690,8 +693,6 @@ class FirestoreDb(BaseDb):
                 query = query.where(filter=FieldFilter("agent_id", "==", agent_id))
             if team_id is not None:
                 query = query.where(filter=FieldFilter("team_id", "==", team_id))
-            if workflow_id is not None:
-                query = query.where(filter=FieldFilter("workflow_id", "==", workflow_id))
             if topics is not None and len(topics) > 0:
                 query = query.where(filter=FieldFilter("topics", "array_contains_any", topics))
             if search_content is not None:
@@ -757,9 +758,9 @@ class FirestoreDb(BaseDb):
                             "last_memory_updated_at": 0,
                         }
                     user_stats[user_id]["total_memories"] += 1
-                    last_updated = data.get("last_updated", 0)
-                    if last_updated > user_stats[user_id]["last_memory_updated_at"]:
-                        user_stats[user_id]["last_memory_updated_at"] = last_updated
+                    updated_at = data.get("updated_at", 0)
+                    if updated_at > user_stats[user_id]["last_memory_updated_at"]:
+                        user_stats[user_id]["last_memory_updated_at"] = updated_at
 
             # Convert to list and sort
             formatted_results = list(user_stats.values())
@@ -804,7 +805,7 @@ class FirestoreDb(BaseDb):
                 memory.memory_id = str(uuid4())
 
             update_doc = memory.to_dict()
-            update_doc["last_updated"] = int(time.time())
+            update_doc["updated_at"] = int(time.time())
 
             # Find existing document or create new one
             docs = collection_ref.where("memory_id", "==", memory.memory_id).stream()
@@ -911,11 +912,11 @@ class FirestoreDb(BaseDb):
                     return result_date
 
             # No metrics records. Return the date of the first recorded session.
-            first_session_result = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1)
+            first_session_result = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
             first_session_date = None
 
             if isinstance(first_session_result, list) and len(first_session_result) > 0:
-                first_session_date = first_session_result[0].created_at
+                first_session_date = first_session_result[0].created_at  # type: ignore
             elif isinstance(first_session_result, tuple) and len(first_session_result[0]) > 0:
                 first_session_date = first_session_result[0][0].get("created_at")
 
@@ -1019,7 +1020,14 @@ class FirestoreDb(BaseDb):
     # -- Knowledge methods --
 
     def delete_knowledge_content(self, id: str):
-        """Delete a knowledge source by ID."""
+        """Delete a knowledge row from the database.
+
+        Args:
+            id (str): The ID of the knowledge row to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
         try:
             collection_ref = self._get_collection(table_type="knowledge")
             docs = collection_ref.where(filter=FieldFilter("id", "==", id)).stream()
@@ -1031,7 +1039,17 @@ class FirestoreDb(BaseDb):
             log_error(f"Error deleting knowledge source: {e}")
 
     def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
-        """Get a knowledge document by ID."""
+        """Get a knowledge row from the database.
+
+        Args:
+            id (str): The ID of the knowledge row to get.
+
+        Returns:
+            Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         try:
             collection_ref = self._get_collection(table_type="knowledge")
             docs = collection_ref.where(filter=FieldFilter("id", "==", id)).stream()
@@ -1053,7 +1071,20 @@ class FirestoreDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
-        """Get all knowledge documents from the database."""
+        """Get all knowledge contents from the database.
+
+        Args:
+            limit (Optional[int]): The maximum number of knowledge contents to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+
+        Returns:
+            Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         try:
             collection_ref = self._get_collection(table_type="knowledge")
 
@@ -1080,7 +1111,14 @@ class FirestoreDb(BaseDb):
             return [], 0
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
-        """Upsert a knowledge document in the database."""
+        """Upsert knowledge content in the database.
+
+        Args:
+            knowledge_row (KnowledgeRow): The knowledge row to upsert.
+
+        Returns:
+            Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
+        """
         try:
             collection_ref = self._get_collection(table_type="knowledge")
             update_doc = knowledge_row.model_dump()
@@ -1224,8 +1262,8 @@ class FirestoreDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        eval_type: Optional[List[EvalType]] = None,
         filter_type: Optional[EvalFilterType] = None,
+        eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.

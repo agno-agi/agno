@@ -3,7 +3,6 @@ Gmail Agent that can read, draft and send emails using the Gmail.
 """
 
 from agno.agent import Agent
-from agno.models.google import Gemini
 from agno.models.openai import OpenAIChat
 from agno.tools.gmail import GmailTools
 from pydantic import BaseModel, Field
@@ -30,22 +29,21 @@ agent = Agent(
         "Attachments can be added to the email",
     ],
     markdown=True,
-    show_tool_calls=False,
     response_model=FindEmailOutput,
 )
 
 # Example 1: Find the last email from a specific sender
 email = "<replace_with_email_address>"
-response: FindEmailOutput = agent.run(
+response = agent.run(
     f"Find the last email from {email} along with the message id, references and in-reply-to",
     markdown=True,
     stream=True,
-).content
-
+)
+response_content: FindEmailOutput = response.content  # type: ignore
 
 agent.print_response(
     f"""Send an email in order to reply to the last email from {email}.
-    Use the thread_id {response.thread_id} and message_id {response.in_reply_to}. The subject should be 'Re: {response.subject}' and the body should be 'Hello'""",
+    Use the thread_id {response_content.thread_id} and message_id {response_content.in_reply_to}. The subject should be 'Re: {response_content.subject}' and the body should be 'Hello'""",
     markdown=True,
     stream=True,
 )

@@ -19,5 +19,5 @@ agent.print_response(
 
 response = agent.run_response
 
-if response.audio:
-    save_base64_data(response.audio[0].base64_audio, Path("tmp/sample-en.mp3"))
+if response and response.audio:
+    save_base64_data(response.audio[0].base64_audio, Path("tmp/sample-en.mp3"))  # type: ignore

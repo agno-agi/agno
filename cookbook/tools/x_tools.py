@@ -47,7 +47,6 @@ agent = Agent(
         "Respect X's usage policies and rate limits",
     ],
     tools=[x_tools],
-    show_tool_calls=True,
     debug_mode=True,
 )
 

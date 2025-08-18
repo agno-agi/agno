@@ -3,43 +3,39 @@
 from agno.agent import Agent
 from agno.db.singlestore import SingleStoreDb
 from agno.eval.accuracy import AccuracyEval
-from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team.team import Team
 
-SINGLE_STORE_DB_URL = ""
+SINGLE_STORE_DB_URL = "mysql+pymysql://root:ai@localhost:3306/ai"
 
 # Setup the SingleStore database
 db = SingleStoreDb(
     db_url=SINGLE_STORE_DB_URL,
     session_table="sessions",
     eval_table="eval_runs",
-    user_memory_table="user_memories",
+    memory_table="user_memories",
     metrics_table="metrics",
 )
-
-# Setup the memory
-memory = Memory(db=db)
 
 # Setup a basic agent and a basic team
 agent = Agent(
     name="Basic Agent",
-    agent_id="basic-agent",
+    id="basic-agent",
     model=OpenAIChat(id="gpt-4o"),
-    memory=memory,
+    db=db,
     enable_user_memories=True,
     enable_session_summaries=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_runs=3,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 team = Team(
-    team_id="basic-team",
+    id="basic-team",
     name="Team Agent",
     model=OpenAIChat(id="gpt-4o"),
-    memory=memory,
+    db=db,
     members=[agent],
     debug_mode=True,
 )
@@ -57,7 +53,7 @@ evaluation = AccuracyEval(
 # evaluation.run(print_results=True)
 
 agent_os = AgentOS(
-    description="Example app for basic agent with playground capabilities",
+    description="Example OS setup",
     os_id="basic-app",
     agents=[agent],
     teams=[team],

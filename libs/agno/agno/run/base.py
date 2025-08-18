@@ -12,7 +12,7 @@ from agno.utils.log import log_error
 
 
 @dataclass
-class BaseRunResponseEvent:
+class BaseRunOutputEvent:
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
             k: v
@@ -22,7 +22,7 @@ class BaseRunResponseEvent:
             not in [
                 "tools",
                 "tool",
-                "extra_data",
+                "metadata",
                 "image",
                 "images",
                 "videos",
@@ -33,9 +33,9 @@ class BaseRunResponseEvent:
             ]
         }
 
-        if hasattr(self, "extra_data") and self.extra_data is not None:
-            _dict["extra_data"] = (
-                self.extra_data.to_dict() if isinstance(self.extra_data, RunResponseExtraData) else self.extra_data
+        if hasattr(self, "metadata") and self.metadata is not None:
+            _dict["metadata"] = (
+                self.metadata.to_dict() if isinstance(self.metadata, RunOutputMetaData) else self.metadata
             )
 
         if hasattr(self, "member_responses") and self.member_responses:
@@ -139,9 +139,9 @@ class BaseRunResponseEvent:
         if response_audio:
             data["response_audio"] = AudioResponse.model_validate(response_audio)
 
-        extra_data = data.pop("extra_data", None)
-        if extra_data:
-            data["extra_data"] = RunResponseExtraData.from_dict(extra_data)
+        metadata = data.pop("metadata", None)
+        if metadata:
+            data["metadata"] = RunOutputMetaData.from_dict(metadata)
 
         # To make it backwards compatible
         if "event" in data:
@@ -159,16 +159,18 @@ class BaseRunResponseEvent:
 
 
 @dataclass
-class RunResponseExtraData:
+class RunOutputMetaData:
     references: Optional[List[MessageReferences]] = None
-    add_messages: Optional[List[Message]] = None
+    additional_input: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_messages: Optional[List[Message]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {}
-        if self.add_messages is not None:
-            _dict["add_messages"] = [m.to_dict() for m in self.add_messages]
+        if self.additional_input is not None:
+            _dict["additional_input"] = [m.to_dict() for m in self.additional_input]
+            # Backward compatibility
+            _dict["additional_messages"] = [m.to_dict() for m in self.additional_input]
         if self.reasoning_messages is not None:
             _dict["reasoning_messages"] = [m.to_dict() for m in self.reasoning_messages]
         if self.reasoning_steps is not None:
@@ -178,10 +180,13 @@ class RunResponseExtraData:
         return _dict
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "RunResponseExtraData":
-        add_messages = data.pop("add_messages", None)
-        if add_messages is not None:
-            add_messages = [Message.model_validate(message) for message in add_messages]
+    def from_dict(cls, data: Dict[str, Any]) -> "RunOutputMetaData":
+        additional_input = data.pop("additional_input", None)
+        # Backward compatibility - check for old field name
+        if additional_input is None:
+            additional_input = data.pop("additional_messages", None)
+        if additional_input is not None:
+            additional_input = [Message.model_validate(message) for message in additional_input]
 
         reasoning_steps = data.pop("reasoning_steps", None)
         if reasoning_steps is not None:
@@ -196,7 +201,7 @@ class RunResponseExtraData:
             references = [MessageReferences.model_validate(reference) for reference in references]
 
         return cls(
-            add_messages=add_messages,
+            additional_input=additional_input,
             reasoning_steps=reasoning_steps,
             reasoning_messages=reasoning_messages,
             references=references,

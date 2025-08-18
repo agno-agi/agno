@@ -3,43 +3,32 @@
 from agno.agent import Agent
 from agno.db.mongo import MongoDb
 from agno.eval.accuracy import AccuracyEval
-from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team.team import Team
 
 # Setup the Mongo database
-db = MongoDb(
-    db_url="mongodb://localhost:27017",
-    session_collection="sessions",
-    eval_collection="eval_runs",
-    user_memory_collection="user_memories",
-    metrics_collection="metrics",
-)
-
-# Setup the memory
-memory = Memory(db=db)
+db = MongoDb(db_url="mongodb://localhost:27017")
 
 # Setup a basic agent and a basic team
 basic_agent = Agent(
     name="Basic Agent",
-    agent_id="basic-agent",
+    id="basic-agent",
     model=OpenAIChat(id="gpt-4o"),
-    memory=memory,
+    db=db,
     enable_user_memories=True,
     enable_session_summaries=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     num_history_runs=3,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 basic_team = Team(
-    team_id="basic-team",
+    id="basic-team",
     name="Team Agent",
     model=OpenAIChat(id="gpt-4o"),
-    memory=memory,
+    db=db,
     members=[basic_agent],
-    debug_mode=True,
 )
 
 # Evals
@@ -55,7 +44,7 @@ evaluation = AccuracyEval(
 # evaluation.run(print_results=True)
 
 agent_os = AgentOS(
-    description="Example app for basic agent with playground capabilities",
+    description="Example OS setup",
     os_id="basic-app",
     agents=[basic_agent],
     teams=[basic_team],

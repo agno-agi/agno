@@ -13,7 +13,7 @@ web_agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[DuckDuckGoTools()],
     instructions="Always include sources",
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 finance_agent = Agent(
@@ -30,7 +30,7 @@ finance_agent = Agent(
         "Briefly summarize recent company-specific news if available.",
         "Focus on delivering the requested financial data points clearly.",
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 team_leader = Team(

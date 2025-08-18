@@ -71,7 +71,6 @@ agent = Agent(
         - End with a friendly tech-themed sign-off\
     """),
     tools=[get_top_hackernews_stories],
-    show_tool_calls=True,
     markdown=True,
 )
 
@@ -81,7 +80,7 @@ agent = Agent(
 # - "Get the top 5 stories (you can try accepting and declining the confirmation)"
 response = agent.run("What are the top 2 hackernews stories?")
 if response.is_paused:
-    for tool in response.tools:
+    for tool in response.tools:  # type: ignore
         # Ask for confirmation
         console.print(
             f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] requires confirmation."

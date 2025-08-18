@@ -24,8 +24,8 @@ from agno.models.openai import OpenAIChat
 # Define a tool that increments our counter and returns the new value
 def increment_counter(agent: Agent) -> str:
     """Increment the session counter and return the new value."""
-    agent.session_state["count"] += 1
-    return f"The count is now {agent.session_state['count']}"
+    agent.session_state["count"] += 1  # type: ignore
+    return f"The count is now {agent.session_state['count']}"  # type: ignore
 
 
 # Create a State Manager Agent that maintains state
@@ -51,7 +51,6 @@ agent = Agent(
 
         Starting state (count) is: {count}\
     """),
-    show_tool_calls=True,
     add_state_in_messages=True,
     markdown=True,
 )

@@ -33,18 +33,23 @@ agent = Agent(
         "For videos: show live recording with countdown timer",
     ],
     tools=[OpenCVTools(show_preview=True)],  # Enable live preview
-    show_tool_calls=True,
 )
 
 agent.print_response("Take a quick test photo to verify the camera is working")
 
-response = agent.run_response
-if response.images:
-    save_base64_data(response.images[0].content, "tmp/captured_test_image.png")
+response = agent.get_last_run_response()
+if response and response.images:
+    save_base64_data(
+        base64_data=str(response.images[0].content),
+        output_path="tmp/captured_test_image.png",
+    )
 
 # Example 2: Capture a video
 agent.print_response("Capture a 5 second webcam video")
 
-response = agent.run_response
-if response.videos:
-    save_base64_data(response.videos[0].content, "tmp/captured_test_video.mp4")
+response = agent.get_last_run_response()
+if response and response.videos:
+    save_base64_data(
+        base64_data=str(response.videos[0].content),
+        output_path="tmp/captured_test_video.mp4",
+    )

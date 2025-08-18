@@ -1,5 +1,5 @@
 import asyncio
-from typing import List, Optional
+from typing import List
 
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader

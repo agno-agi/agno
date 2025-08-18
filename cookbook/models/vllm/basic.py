@@ -1,4 +1,4 @@
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent, RunOutput
 from agno.models.vllm import vLLM
 
 agent = Agent(

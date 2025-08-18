@@ -7,7 +7,7 @@ from typing import List
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.run.team import TeamRunResponse  # type: ignore
+from agno.run.team import TeamRunOutput  # type: ignore
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
@@ -33,7 +33,7 @@ web_searcher = Agent(
     model=OpenAIChat("gpt-4o"),
     role="Searches the web for information on a topic",
     tools=[DuckDuckGoTools()],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 article_reader = Agent(
@@ -58,7 +58,6 @@ hn_team = Team(
     response_model=Article,
     enable_agentic_context=True,
     share_member_interactions=True,
-    show_tool_calls=True,
     markdown=True,
     debug_mode=True,
     show_members_responses=True,

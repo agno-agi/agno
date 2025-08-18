@@ -212,10 +212,10 @@ class MongoDb(BaseDb):
     def get_session(
         self,
         session_id: str,
+        session_type: SessionType,
         user_id: Optional[str] = None,
-        session_type: Optional[SessionType] = None,
         deserialize: Optional[bool] = True,
-    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Read a session from the database.
 
         Args:
@@ -254,7 +254,7 @@ class MongoDb(BaseDb):
                 return AgentSession.from_dict(session)
             elif session_type == SessionType.TEAM.value:
                 return TeamSession.from_dict(session)
-            elif session_type == SessionType.WORKFLOW.value:
+            else:
                 return WorkflowSession.from_dict(session)
 
         except Exception as e:
@@ -274,7 +274,7 @@ class MongoDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-    ) -> Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
+    ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions.
 
         Args:
@@ -302,7 +302,7 @@ class MongoDb(BaseDb):
             collection = self._get_collection(table_type="sessions")
 
             # Filtering
-            query = {}
+            query: Dict[str, Any] = {}
             if user_id is not None:
                 query["user_id"] = user_id
             if session_type is not None:
@@ -350,14 +350,20 @@ class MongoDb(BaseDb):
             if not deserialize:
                 return sessions_raw, total_count
 
-            sessions = []
+            sessions: List[AgentSession | TeamSession | WorkflowSession] = []
             for record in sessions_raw:
                 if session_type == SessionType.AGENT.value:
-                    sessions.append(AgentSession.from_dict(record))
+                    agent_session = AgentSession.from_dict(record)
+                    if agent_session is not None:
+                        sessions.append(agent_session)
                 elif session_type == SessionType.TEAM.value:
-                    sessions.append(TeamSession.from_dict(record))
+                    team_session = TeamSession.from_dict(record)
+                    if team_session is not None:
+                        sessions.append(team_session)
                 elif session_type == SessionType.WORKFLOW.value:
-                    sessions.append(WorkflowSession.from_dict(record))
+                    workflow_session = WorkflowSession.from_dict(record)
+                    if workflow_session is not None:
+                        sessions.append(workflow_session)
 
             return sessions
 
@@ -414,7 +420,7 @@ class MongoDb(BaseDb):
                 return AgentSession.from_dict(deserialized_session)
             elif session_type == SessionType.TEAM.value:
                 return TeamSession.from_dict(deserialized_session)
-            elif session_type == SessionType.WORKFLOW.value:
+            else:
                 return WorkflowSession.from_dict(deserialized_session)
 
         except Exception as e:
@@ -444,14 +450,13 @@ class MongoDb(BaseDb):
                     "session_id": serialized_session_dict.get("session_id"),
                     "session_type": SessionType.AGENT.value,
                     "agent_id": serialized_session_dict.get("agent_id"),
-                    "team_session_id": serialized_session_dict.get("team_session_id"),
                     "user_id": serialized_session_dict.get("user_id"),
                     "runs": serialized_session_dict.get("runs"),
                     "agent_data": serialized_session_dict.get("agent_data"),
                     "session_data": serialized_session_dict.get("session_data"),
                     "chat_history": serialized_session_dict.get("chat_history"),
                     "summary": serialized_session_dict.get("summary"),
-                    "extra_data": serialized_session_dict.get("extra_data"),
+                    "metadata": serialized_session_dict.get("metadata"),
                     "created_at": serialized_session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
@@ -467,7 +472,7 @@ class MongoDb(BaseDb):
 
                 session = deserialize_session_json_fields(result)  # type: ignore
 
-                log_debug(f"Upserted session with id '{session.session_id}'")
+                log_debug("Upserted session'")
 
                 if not deserialize:
                     return session
@@ -479,13 +484,12 @@ class MongoDb(BaseDb):
                     "session_id": serialized_session_dict.get("session_id"),
                     "session_type": SessionType.TEAM.value,
                     "team_id": serialized_session_dict.get("team_id"),
-                    "team_session_id": serialized_session_dict.get("team_session_id"),
                     "user_id": serialized_session_dict.get("user_id"),
                     "runs": serialized_session_dict.get("runs"),
                     "team_data": serialized_session_dict.get("team_data"),
                     "session_data": serialized_session_dict.get("session_data"),
                     "summary": serialized_session_dict.get("summary"),
-                    "extra_data": serialized_session_dict.get("extra_data"),
+                    "metadata": serialized_session_dict.get("metadata"),
                     "chat_history": serialized_session_dict.get("chat_history"),
                     "created_at": serialized_session_dict.get("created_at"),
                     "updated_at": int(time.time()),
@@ -509,7 +513,7 @@ class MongoDb(BaseDb):
 
                 return TeamSession.from_dict(session)  # type: ignore
 
-            elif isinstance(session, WorkflowSession):
+            else:
                 record = {
                     "session_id": serialized_session_dict.get("session_id"),
                     "session_type": SessionType.WORKFLOW.value,
@@ -519,7 +523,7 @@ class MongoDb(BaseDb):
                     "workflow_data": serialized_session_dict.get("workflow_data"),
                     "session_data": serialized_session_dict.get("session_data"),
                     "summary": serialized_session_dict.get("summary"),
-                    "extra_data": serialized_session_dict.get("extra_data"),
+                    "metadata": serialized_session_dict.get("metadata"),
                     "chat_history": serialized_session_dict.get("chat_history"),
                     "created_at": serialized_session_dict.get("created_at"),
                     "updated_at": int(time.time()),
@@ -549,7 +553,7 @@ class MongoDb(BaseDb):
 
     # -- Memory methods --
 
-    def delete_user_memory(self, memory_id: str) -> bool:
+    def delete_user_memory(self, memory_id: str):
         """Delete a user memory from the database.
 
         Args:
@@ -571,11 +575,8 @@ class MongoDb(BaseDb):
             else:
                 log_debug(f"No memory found with id: {memory_id}")
 
-            return success
-
         except Exception as e:
             log_error(f"Error deleting memory: {e}")
-            return False
 
     def delete_user_memories(self, memory_ids: List[str]) -> None:
         """Delete user memories from the database.
@@ -646,7 +647,6 @@ class MongoDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
         topics: Optional[List[str]] = None,
         search_content: Optional[str] = None,
         limit: Optional[int] = None,
@@ -661,7 +661,6 @@ class MongoDb(BaseDb):
             user_id (Optional[str]): The ID of the user to get the memories for.
             agent_id (Optional[str]): The ID of the agent to get the memories for.
             team_id (Optional[str]): The ID of the team to get the memories for.
-            workflow_id (Optional[str]): The ID of the workflow to get the memories for.
             topics (Optional[List[str]]): The topics to filter the memories by.
             search_content (Optional[str]): The content to filter the memories by.
             limit (Optional[int]): The limit of the memories to get.
@@ -679,15 +678,13 @@ class MongoDb(BaseDb):
         try:
             collection = self._get_collection(table_type="memories")
 
-            query = {}
+            query: Dict[str, Any] = {}
             if user_id is not None:
                 query["user_id"] = user_id
             if agent_id is not None:
                 query["agent_id"] = agent_id
             if team_id is not None:
                 query["team_id"] = team_id
-            if workflow_id is not None:
-                query["workflow_id"] = workflow_id
             if topics is not None:
                 query["topics"] = {"$in": topics}
             if search_content is not None:
@@ -746,7 +743,7 @@ class MongoDb(BaseDb):
                     "$group": {
                         "_id": "$user_id",
                         "total_memories": {"$sum": 1},
-                        "last_memory_updated_at": {"$max": "$last_updated"},
+                        "last_memory_updated_at": {"$max": "$updated_at"},
                     }
                 },
                 {"$sort": {"last_memory_updated_at": -1}},
@@ -754,7 +751,7 @@ class MongoDb(BaseDb):
 
             # Get total count
             count_pipeline = pipeline + [{"$count": "total"}]
-            count_result = list(collection.aggregate(count_pipeline))
+            count_result = list(collection.aggregate(count_pipeline))  # type: ignore
             total_count = count_result[0]["total"] if count_result else 0
 
             # Apply pagination
@@ -763,7 +760,7 @@ class MongoDb(BaseDb):
                     pipeline.append({"$skip": (page - 1) * limit})
                 pipeline.append({"$limit": limit})
 
-            results = list(collection.aggregate(pipeline))
+            results = list(collection.aggregate(pipeline))  # type: ignore
 
             formatted_results = [
                 {
@@ -807,11 +804,10 @@ class MongoDb(BaseDb):
                 "user_id": memory.user_id,
                 "agent_id": memory.agent_id,
                 "team_id": memory.team_id,
-                "workflow_id": None,
                 "memory_id": memory.memory_id,
                 "memory": memory.memory,
                 "topics": memory.topics,
-                "last_updated": int(time.time()),
+                "updated_at": int(time.time()),
             }
 
             result = collection.replace_one({"memory_id": memory.memory_id}, update_doc, upsert=True)
@@ -889,8 +885,8 @@ class MongoDb(BaseDb):
                     return result_date
 
             # No metrics records. Return the date of the first recorded session.
-            first_session_result = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1)
-            first_session_date = first_session_result[0].created_at if first_session_result[0] else None  # type: ignore
+            first_session_result = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
+            first_session_date = first_session_result[0][0]["created_at"] if first_session_result[0] else None  # type: ignore
 
             if first_session_date is None:
                 return None
@@ -916,9 +912,13 @@ class MongoDb(BaseDb):
                 log_info("Metrics already calculated for all relevant dates.")
                 return None
 
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             sessions = self._get_all_sessions_for_metrics_calculation(
@@ -963,12 +963,12 @@ class MongoDb(BaseDb):
 
             query = {}
             if starting_date:
-                query["date"] = {"$gte": starting_date}
+                query["date"] = {"$gte": starting_date.isoformat()}
             if ending_date:
                 if "date" in query:
-                    query["date"]["$lte"] = ending_date
+                    query["date"]["$lte"] = ending_date.isoformat()
                 else:
-                    query["date"] = {"$lte": ending_date}
+                    query["date"] = {"$lte": ending_date.isoformat()}
 
             records = list(collection.find(query))
             if not records:
@@ -985,54 +985,74 @@ class MongoDb(BaseDb):
 
     # -- Knowledge methods --
 
-    def delete_knowledge_source(self, id: str):
-        """Delete a knowledge source by ID."""
+    def delete_knowledge_content(self, id: str):
+        """Delete a knowledge row from the database.
+
+        Args:
+            id (str): The ID of the knowledge row to delete.
+
+        Raises:
+            Exception: If an error occurs during deletion.
+        """
         try:
             collection = self._get_collection(table_type="knowledge")
             collection.delete_one({"id": id})
 
-            log_debug(f"Deleted knowledge source with id '{id}'")
+            log_debug(f"Deleted knowledge content with id '{id}'")
 
         except Exception as e:
-            log_error(f"Error deleting knowledge source: {e}")
+            log_error(f"Error deleting knowledge content: {e}")
             raise
 
-    def get_source_status(self, id: str) -> Optional[str]:
-        """Get the status of a knowledge source by ID."""
-        try:
-            collection = self._get_collection(table_type="knowledge")
-            result = collection.find_one({"id": id}, {"status": 1})
-            return result.get("status") if result else None
+    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+        """Get a knowledge row from the database.
 
-        except Exception as e:
-            log_error(f"Error getting knowledge source status: {e}")
-            return None
+        Args:
+            id (str): The ID of the knowledge row to get.
 
-    def get_knowledge_source(self, id: str) -> Optional[KnowledgeRow]:
-        """Get a knowledge document by ID."""
+        Returns:
+            Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         try:
             collection = self._get_collection(table_type="knowledge")
             result = collection.find_one({"id": id})
             if result is None:
                 return None
+
             return KnowledgeRow.model_validate(result)
 
         except Exception as e:
-            log_error(f"Error getting knowledge source: {e}")
+            log_error(f"Error getting knowledge content: {e}")
             return None
 
-    def get_knowledge_sources(
+    def get_knowledge_contents(
         self,
         limit: Optional[int] = None,
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
-        """Get all knowledge documents from the database."""
+        """Get all knowledge contents from the database.
+
+        Args:
+            limit (Optional[int]): The maximum number of knowledge contents to return.
+            page (Optional[int]): The page number.
+            sort_by (Optional[str]): The column to sort by.
+            sort_order (Optional[str]): The order to sort by.
+
+        Returns:
+            Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
+
+        Raises:
+            Exception: If an error occurs during retrieval.
+        """
         try:
             collection = self._get_collection(table_type="knowledge")
 
-            query = {}
+            query: Dict[str, Any] = {}
 
             # Get total count
             total_count = collection.count_documents(query)
@@ -1057,11 +1077,21 @@ class MongoDb(BaseDb):
             return knowledge_rows, total_count
 
         except Exception as e:
-            log_error(f"Error getting knowledge sources: {e}")
+            log_error(f"Error getting knowledge contents: {e}")
             return [], 0
 
-    def upsert_knowledge_source(self, knowledge_row: KnowledgeRow):
-        """Upsert a knowledge document in the database."""
+    def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
+        """Upsert knowledge content in the database.
+
+        Args:
+            knowledge_row (KnowledgeRow): The knowledge row to upsert.
+
+        Returns:
+            Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
+
+        Raises:
+            Exception: If an error occurs during upsert.
+        """
         try:
             collection = self._get_collection(table_type="knowledge")
 
@@ -1071,7 +1101,7 @@ class MongoDb(BaseDb):
             return knowledge_row
 
         except Exception as e:
-            log_error(f"Error upserting knowledge document: {e}")
+            log_error(f"Error upserting knowledge content: {e}")
             return None
 
     # -- Eval methods --
@@ -1178,8 +1208,8 @@ class MongoDb(BaseDb):
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
         model_id: Optional[str] = None,
-        eval_type: Optional[List[EvalType]] = None,
         filter_type: Optional[EvalFilterType] = None,
+        eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
@@ -1208,7 +1238,7 @@ class MongoDb(BaseDb):
         try:
             collection = self._get_collection(table_type="evals")
 
-            query = {}
+            query: Dict[str, Any] = {}
             if agent_id is not None:
                 query["agent_id"] = agent_id
             if team_id is not None:
