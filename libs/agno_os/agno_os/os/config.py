@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from agno_os.infra.base import InfraBase
 from agno_os.infra.resources import InfraResources
@@ -19,9 +19,9 @@ class OSConfig(BaseModel):
     os_root_path: Path
 
     # Path to the "infra" directory inside the OS root
-    _os_infra_dir_path: Optional[Path] = Field(None)
+    os_infra_dir_path: Optional[Path] = None
     # OSSettings
-    _os_settings: Optional[OSSettings] = Field(None)
+    os_settings: Optional[OSSettings] = None
 
     def to_dict(self) -> dict:
         return {
@@ -30,12 +30,12 @@ class OSConfig(BaseModel):
 
     @property
     def os_infra_dir_path(self) -> Optional[Path]:
-        if self._os_infra_dir_path is None:
+        if self.os_infra_dir_path is None:
             if self.os_root_path is not None:
                 from agno_os.os.helpers import get_os_infra_dir_path
 
-                self._os_infra_dir_path = get_os_infra_dir_path(self.os_root_path)
-        return self._os_infra_dir_path
+                self.os_infra_dir_path = get_os_infra_dir_path(self.os_root_path)
+        return self.os_infra_dir_path
 
     def validate_os_settings(self, obj: Any) -> bool:
         if not isinstance(obj, OSSettings):
@@ -48,14 +48,14 @@ class OSConfig(BaseModel):
 
     @property
     def os_settings(self) -> Optional[OSSettings]:
-        if self._os_settings is not None:
-            return self._os_settings
+        if self.os_settings is not None:
+            return self.os_settings
 
         os_settings_file: Optional[Path] = None
         if self.os_infra_dir_path is not None:
-            _os_settings_file = self.os_infra_dir_path.joinpath("settings.py")
-            if _os_settings_file.exists() and _os_settings_file.is_file():
-                os_settings_file = _os_settings_file
+            _os_settings_file_path = self.os_infra_dir_path.joinpath("settings.py")
+            if _os_settings_file_path.exists() and _os_settings_file_path.is_file():
+                os_settings_file = _os_settings_file_path
         if os_settings_file is None:
             logger.debug("os_settings file not found")
             return None
@@ -68,11 +68,11 @@ class OSConfig(BaseModel):
             for obj_name, obj in python_objects.items():
                 if isinstance(obj, OSSettings):
                     if self.validate_os_settings(obj):
-                        self._os_settings = obj
+                        self.os_settings = obj
         except Exception:
             logger.warning(f"Error in {os_settings_file}")
             raise
-        return self._os_settings
+        return self.os_settings
 
     def set_local_env(self) -> None:
         from os import environ
@@ -152,7 +152,7 @@ class OSConfig(BaseModel):
                         if isinstance(obj, OSSettings):
                             logger.debug(f"Found: {obj.__class__.__module__}: {obj_name}")
                             if self.validate_os_settings(obj):
-                                self._os_settings = obj
+                                self.os_settings = obj
                         elif isinstance(obj, InfraResources):
                             logger.debug(f"Found: {obj.__class__.__module__}: {obj_name}")
                             if not obj.enabled:
@@ -188,17 +188,17 @@ class OSConfig(BaseModel):
 
         # Updated resources with the os settings
         # Create a temporary os settings object if it does not exist
-        if self._os_settings is None:
-            self._os_settings = OSSettings(
+        if self.os_settings is None:
+            self.os_settings = OSSettings(
                 os_root=self.os_root_path,
                 os_name=self.os_root_path.stem,
             )
-            logger.debug(f"Created OSSettings: {self._os_settings}")
+            logger.debug(f"Created OSSettings: {self.os_settings}")
         # Update the resources with the os settings
-        if self._os_settings is not None:
+        if self.os_settings is not None:
             for resource_name, resource in filtered_infra_objects_by_env.items():
                 logger.debug(f"Setting os settings for {resource.__class__.__name__}")
-                resource.set_os_settings(self._os_settings)
+                resource.set_os_settings(self.os_settings)
 
         # Create a list of InfraResources from the filtered resources
         infra_resources_list: List[InfraResources] = []
@@ -278,16 +278,16 @@ class OSConfig(BaseModel):
 
         # Updated resources with the os settings
         # Create a temporary os settings object if it does not exist
-        if temporary_os_config._os_settings is None:
-            temporary_os_config._os_settings = OSSettings(
+        if temporary_os_config.os_settings is None:
+            temporary_os_config.os_settings = OSSettings(
                 os_root=temporary_os_config.os_root_path,
                 os_name=temporary_os_config.os_root_path.stem,
             )
         # Update the resources with the os settings
-        if temporary_os_config._os_settings is not None:
+        if temporary_os_config.os_settings is not None:
             for resource_name, resource in filtered_os_objects_by_env.items():
                 logger.debug(f"Setting os settings for {resource.__class__.__name__}")
-                resource.set_os_settings(temporary_os_config._os_settings)
+                resource.set_os_settings(temporary_os_config.os_settings)
 
         # Create a list of InfraResources from the filtered resources
         os_resources_list: List[InfraResources] = []
