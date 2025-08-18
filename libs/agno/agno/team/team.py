@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 from collections import ChainMap, defaultdict, deque
 from copy import deepcopy
@@ -6223,7 +6224,7 @@ class Team:
 
         async def arun_member_agents(
             task_description: str, expected_output: Optional[str] = None
-        ) -> AsyncIterator[str]:
+        ) -> AsyncIterator[Union[RunResponseEvent, TeamRunResponseEvent, str]]:
             """
             Send the same task to all the member agents and return the responses.
 
@@ -6243,92 +6244,177 @@ class Team:
                 session_id, images, videos, audio
             )
 
-            # Create tasks for all member agents
-            tasks = []
-            for member_agent_index, member_agent in enumerate(self.members):
-                # We cannot stream responses with async gather
-                current_agent = member_agent  # Create a reference to the current agent
-                current_index = member_agent_index  # Create a reference to the current index
-                self._initialize_member(current_agent, session_id=session_id)
+            if stream:
+                # Concurrent streaming: launch each member as a streaming worker and merge events
+                done_marker = object()
+                queue: "asyncio.Queue[Union[RunResponseEvent, TeamRunResponseEvent, str, object]]" = asyncio.Queue()
 
-                # Don't override the expected output of a member agent
-                if current_agent.expected_output is not None:
-                    expected_output = None
+                async def stream_member(agent: Union[Agent, "Team"], idx: int) -> None:
+                    # Compute expected output per agent (do not mutate shared var)
+                    local_expected_output = None if agent.expected_output is not None else expected_output
 
-                member_agent_task = self._format_member_agent_task(
-                    task_description, expected_output, team_context_str, team_member_interactions_str
-                )
+                    member_agent_task = self._format_member_agent_task(
+                        task_description, local_expected_output, team_context_str, team_member_interactions_str
+                    )
 
-                async def run_member_agent(agent=current_agent, idx=current_index) -> str:
-                    response = await agent.arun(
+                    # Stream events from the member
+                    member_stream = await agent.arun(
                         member_agent_task,
                         user_id=user_id,
-                        # All members have the same session_id
                         session_id=session_id,
                         images=images,
                         videos=videos,
                         audio=audio,
                         files=files,
-                        stream=False,
+                        stream=True,
+                        stream_intermediate_steps=stream_intermediate_steps,
                         refresh_session_before_write=True,
                     )
-                    check_if_run_cancelled(response)
-
-                    member_name = agent.name if agent.name else f"agent_{idx}"
-                    self.memory = cast(TeamMemory, self.memory)
-                    if isinstance(self.memory, TeamMemory):
-                        self.memory = cast(TeamMemory, self.memory)
-                        self.memory.add_interaction_to_team_context(
-                            member_name=member_name, task=task_description, run_response=agent.run_response
-                        )
-                    else:
-                        self.memory = cast(Memory, self.memory)
-                        self.memory.add_interaction_to_team_context(
-                            session_id=session_id,
-                            member_name=member_name,
-                            task=task_description,
-                            run_response=agent.run_response,
-                        )
-
-                    # Add the member run to the team run response
-                    self.run_response = cast(TeamRunResponse, self.run_response)
-                    self.run_response.add_member_run(agent.run_response)
-
-                    # Update team session state
-                    self._update_team_session_state(current_agent)
-
-                    self._update_workflow_session_state(current_agent)
-
-                    # Update the team media
-                    self._update_team_media(agent.run_response)
 
                     try:
-                        if response.content is None and (response.tools is None or len(response.tools) == 0):
-                            return f"Agent {member_name}: No response from the member agent."
-                        elif isinstance(response.content, str):
-                            if len(response.content.strip()) > 0:
-                                return f"Agent {member_name}: {response.content}"
-                            elif response.tools is not None and len(response.tools) > 0:
-                                return (
-                                    f"Agent {member_name}: {','.join([tool.get('content') for tool in response.tools])}"
-                                )
-                        elif issubclass(type(response.content), BaseModel):
-                            return f"Agent {member_name}: {response.content.model_dump_json(indent=2)}"  # type: ignore
+                        async for event in member_stream:
+                            check_if_run_cancelled(event)
+                            await queue.put(event)
+                    finally:
+                        # After the stream completes, update memory and team state
+                        member_name = agent.name if agent.name else f"agent_{idx}"
+                        if isinstance(self.memory, TeamMemory):
+                            self.memory = cast(TeamMemory, self.memory)
+                            self.memory.add_interaction_to_team_context(
+                                member_name=member_name,
+                                task=task_description,
+                                run_response=agent.run_response,  # type: ignore
+                            )
                         else:
-                            import json
+                            self.memory = cast(Memory, self.memory)
+                            self.memory.add_interaction_to_team_context(
+                                session_id=session_id,
+                                member_name=member_name,
+                                task=task_description,
+                                run_response=agent.run_response,  # type: ignore
+                            )
 
-                            return f"Agent {member_name}: {json.dumps(response.content, indent=2)}"
-                    except Exception as e:
-                        return f"Agent {member_name}: Error - {str(e)}"
+                        # Add the member run to the team run response
+                        self.run_response = cast(TeamRunResponse, self.run_response)
+                        self.run_response.add_member_run(agent.run_response)  # type: ignore
 
-                    return f"Agent {member_name}: No Response"
+                        # Update team session/workflow state and media
+                        self._update_team_session_state(agent)
+                        self._update_workflow_session_state(agent)
+                        self._update_team_media(agent.run_response)  # type: ignore
 
-                tasks.append(run_member_agent)
+                        # Signal completion for this member
+                        await queue.put(done_marker)
 
-            # Need to collect and process yielded values from each task
-            results = await asyncio.gather(*[task() for task in tasks])
-            for result in results:
-                yield result
+                # Initialize and launch all members
+                tasks: List[asyncio.Task[None]] = []
+                for member_agent_index, member_agent in enumerate(self.members):
+                    current_agent = member_agent
+                    current_index = member_agent_index
+                    self._initialize_member(current_agent, session_id=session_id)
+                    tasks.append(asyncio.create_task(stream_member(current_agent, current_index)))
+
+                # Drain queue until all members reported done
+                completed = 0
+                try:
+                    while completed < len(tasks):
+                        item = await queue.get()
+                        if item is done_marker:
+                            completed += 1
+                        else:
+                            yield item  # type: ignore
+                finally:
+                    # Ensure tasks do not leak on cancellation
+                    for t in tasks:
+                        if not t.done():
+                            t.cancel()
+                    # Await cancellation to suppress warnings
+                    for t in tasks:
+                        with contextlib.suppress(Exception):
+                            await t
+            else:
+                # Non-streaming concurrent run of members; collect results when done
+                tasks = []
+                for member_agent_index, member_agent in enumerate(self.members):
+                    current_agent = member_agent
+                    current_index = member_agent_index
+                    self._initialize_member(current_agent, session_id=session_id)
+
+                    # Don't override the expected output of a member agent
+                    if current_agent.expected_output is not None:
+                        expected_output = None
+
+                    member_agent_task = self._format_member_agent_task(
+                        task_description, expected_output, team_context_str, team_member_interactions_str
+                    )
+
+                    async def run_member_agent(agent=current_agent, idx=current_index) -> str:
+                        response = await agent.arun(
+                            member_agent_task,
+                            user_id=user_id,
+                            # All members have the same session_id
+                            session_id=session_id,
+                            images=images,
+                            videos=videos,
+                            audio=audio,
+                            files=files,
+                            stream=False,
+                            refresh_session_before_write=True,
+                        )
+                        check_if_run_cancelled(response)
+
+                        member_name = agent.name if agent.name else f"agent_{idx}"
+                        self.memory = cast(TeamMemory, self.memory)
+                        if isinstance(self.memory, TeamMemory):
+                            self.memory = cast(TeamMemory, self.memory)
+                            self.memory.add_interaction_to_team_context(
+                                member_name=member_name, task=task_description, run_response=agent.run_response
+                            )
+                        else:
+                            self.memory = cast(Memory, self.memory)
+                            self.memory.add_interaction_to_team_context(
+                                session_id=session_id,
+                                member_name=member_name,
+                                task=task_description,
+                                run_response=agent.run_response,
+                            )
+
+                        # Add the member run to the team run response
+                        self.run_response = cast(TeamRunResponse, self.run_response)
+                        self.run_response.add_member_run(agent.run_response)
+
+                        # Update team session state
+                        self._update_team_session_state(current_agent)
+
+                        self._update_workflow_session_state(current_agent)
+
+                        # Update the team media
+                        self._update_team_media(agent.run_response)
+
+                        try:
+                            if response.content is None and (response.tools is None or len(response.tools) == 0):
+                                return f"Agent {member_name}: No response from the member agent."
+                            elif isinstance(response.content, str):
+                                if len(response.content.strip()) > 0:
+                                    return f"Agent {member_name}: {response.content}"
+                                elif response.tools is not None and len(response.tools) > 0:
+                                    return f"Agent {member_name}: {','.join([tool.get('content') for tool in response.tools])}"
+                            elif issubclass(type(response.content), BaseModel):
+                                return f"Agent {member_name}: {response.content.model_dump_json(indent=2)}"  # type: ignore
+                            else:
+                                import json
+
+                                return f"Agent {member_name}: {json.dumps(response.content, indent=2)}"
+                        except Exception as e:
+                            return f"Agent {member_name}: Error - {str(e)}"
+
+                        return f"Agent {member_name}: No Response"
+
+                    tasks.append(run_member_agent)  # type: ignore
+
+                results = await asyncio.gather(*[task() for task in tasks])  # type: ignore
+                for result in results:
+                    yield result
 
             # Afterward, switch back to the team logger
             use_team_logger()
