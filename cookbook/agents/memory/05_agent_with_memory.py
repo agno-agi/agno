@@ -15,7 +15,7 @@ from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-db = PostgresDb(db_url=db_url, user_memory_table="user_memories")
+db = PostgresDb(db_url=db_url, memory_table="user_memories")
 
 session_id = str(uuid4())
 john_doe_id = "john_doe@example.com"

@@ -11,7 +11,7 @@ from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-db = PostgresDb(db_url=db_url, user_memory_table="user_memories")
+db = PostgresDb(db_url=db_url, memory_table="user_memories")
 
 john_doe_id = "john_doe@example.com"
 
