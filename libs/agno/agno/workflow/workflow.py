@@ -2166,9 +2166,9 @@ class Workflow:
 
             # Handle agent/team/tools
             if hasattr(s, "agent"):
-                step_dict["agent"] = s.agent.to_dict() if hasattr(s.agent, "to_dict") else None
+                step_dict["agent"] = s.agent if hasattr(s, "agent") else None  # type: ignore   
             if hasattr(s, "team"):
-                step_dict["team"] = s.team.to_dict() if hasattr(s.team, "to_dict") else None
+                step_dict["team"] = s.team if hasattr(s, "team") else None  # type: ignore
 
             # Handle nested steps for Router/Loop
             if isinstance(s, (Router)):
