@@ -167,7 +167,9 @@ class Cohere(Model):
 
             assistant_message.metrics.start_timer()
             provider_response = self.get_client().chat(
-                model=self.id, messages=format_messages(messages), **request_kwargs
+                model=self.id,
+                messages=format_messages(messages),  # type: ignore
+                **request_kwargs,
             )  # type: ignore
             assistant_message.metrics.stop_timer()
 

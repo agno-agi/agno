@@ -39,10 +39,8 @@ async def test_async_basic_events():
         members=[],
         telemetry=False,
     )
-    response_generator = await team.arun("Hello, how are you?", stream=True, stream_intermediate_steps=False)
-
     event_counts = {}
-    async for run_response in response_generator:
+    async for run_response in team.arun("Hello, how are you?", stream=True, stream_intermediate_steps=False):
         event_counts[run_response.event] = event_counts.get(run_response.event, 0) + 1
 
     assert event_counts.keys() == {TeamRunEvent.run_content}
@@ -78,12 +76,12 @@ def test_basic_intermediate_steps_events():
     assert len(events[TeamRunEvent.run_completed]) == 1
 
 
-def test_basic_intermediate_steps_events_persisted(team_db):
+def test_basic_intermediate_steps_events_persisted(shared_db):
     """Test that the agent streams events."""
     team = Team(
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[],
-        db=team_db,
+        db=shared_db,
         store_events=True,
         telemetry=False,
     )
@@ -98,12 +96,12 @@ def test_basic_intermediate_steps_events_persisted(team_db):
 
     assert events.keys() == {TeamRunEvent.run_started, TeamRunEvent.run_content, TeamRunEvent.run_completed}
 
-    run_response_from_storage = team_db.get_all_sessions()[0].memory["runs"][0]
+    run_response_from_storage = team.get_last_run_response()
 
-    assert run_response_from_storage["events"] is not None
-    assert len(run_response_from_storage["events"]) == 2, "We should only have the run started and run completed events"
-    assert run_response_from_storage["events"][0]["event"] == TeamRunEvent.run_started
-    assert run_response_from_storage["events"][1]["event"] == TeamRunEvent.run_completed
+    assert run_response_from_storage.events is not None
+    assert len(run_response_from_storage.events) == 2, "We should only have the run started and run completed events"
+    assert run_response_from_storage.events[0].event == TeamRunEvent.run_started
+    assert run_response_from_storage.events[1].event == TeamRunEvent.run_completed
 
 
 def test_intermediate_steps_with_tools():
@@ -140,10 +138,10 @@ def test_intermediate_steps_with_tools():
     assert events[TeamRunEvent.tool_call_completed][0].tool.result is not None
 
 
-def test_intermediate_steps_with_tools_events_persisted(team_db):
+def test_intermediate_steps_with_tools_events_persisted(shared_db):
     team = Team(
         model=OpenAIChat(id="gpt-4o-mini"),
-        db=team_db,
+        db=shared_db,
         store_events=True,
         members=[],
         tools=[YFinanceTools(cache_results=True)],
@@ -166,14 +164,14 @@ def test_intermediate_steps_with_tools_events_persisted(team_db):
         TeamRunEvent.run_completed,
     }
 
-    run_response_from_storage = team_db.get_all_sessions()[0].memory["runs"][0]
+    run_response_from_storage = team.get_last_run_response()
 
-    assert run_response_from_storage["events"] is not None
-    assert len(run_response_from_storage["events"]) == 4
-    assert run_response_from_storage["events"][0]["event"] == TeamRunEvent.run_started
-    assert run_response_from_storage["events"][1]["event"] == TeamRunEvent.tool_call_started
-    assert run_response_from_storage["events"][2]["event"] == TeamRunEvent.tool_call_completed
-    assert run_response_from_storage["events"][3]["event"] == TeamRunEvent.run_completed
+    assert run_response_from_storage.events is not None
+    assert len(run_response_from_storage.events) == 4
+    assert run_response_from_storage.events[0].event == TeamRunEvent.run_started
+    assert run_response_from_storage.events[1].event == TeamRunEvent.tool_call_started
+    assert run_response_from_storage.events[2].event == TeamRunEvent.tool_call_completed
+    assert run_response_from_storage.events[3].event == TeamRunEvent.run_completed
 
 
 def test_intermediate_steps_with_reasoning():
@@ -297,12 +295,11 @@ def test_intermediate_steps_with_user_confirmation():
     assert team.run_response.is_paused is False
 
 
-def test_intermediate_steps_with_memory(team_db, memory):
+def test_intermediate_steps_with_memory(shared_db):
     team = Team(
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[],
-        memory=memory,
-        db=team_db,
+        db=shared_db,
         enable_user_memories=True,
         telemetry=False,
     )
@@ -330,7 +327,7 @@ def test_intermediate_steps_with_memory(team_db, memory):
     assert len(events[TeamRunEvent.memory_update_completed]) == 1
 
 
-def test_intermediate_steps_with_structured_output(team_db):
+def test_intermediate_steps_with_structured_output(shared_db):
     """Test that the agent streams events."""
 
     class Person(BaseModel):
@@ -341,7 +338,7 @@ def test_intermediate_steps_with_structured_output(team_db):
     team = Team(
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[],
-        db=team_db,
+        db=shared_db,
         response_model=Person,
         instructions="You have no members, answer directly",
         telemetry=False,
@@ -376,7 +373,7 @@ def test_intermediate_steps_with_structured_output(team_db):
     assert len(events[TeamRunEvent.run_completed][0].content.description) > 1
 
 
-def test_intermediate_steps_with_parser_model(team_db):
+def test_intermediate_steps_with_parser_model(shared_db):
     """Test that the agent streams events."""
 
     class Person(BaseModel):
@@ -387,7 +384,7 @@ def test_intermediate_steps_with_parser_model(team_db):
     team = Team(
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[],
-        db=team_db,
+        db=shared_db,
         response_model=Person,
         parser_model=OpenAIChat(id="gpt-4o-mini"),
         instructions="You have no members, answer directly",
@@ -401,6 +398,8 @@ def test_intermediate_steps_with_parser_model(team_db):
         if run_response_delta.event not in events:
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
+
+    run_response = team.get_last_run_response()
 
     assert events.keys() == {
         TeamRunEvent.run_started,
@@ -428,9 +427,9 @@ def test_intermediate_steps_with_parser_model(team_db):
     assert events[TeamRunEvent.run_completed][0].content.name == "Elon Musk"
     assert len(events[TeamRunEvent.run_completed][0].content.description) > 1
 
-    assert team.run_response.content is not None
-    assert team.run_response.content_type == "Person"
-    assert team.run_response.content.name == "Elon Musk"
+    assert run_response.content is not None
+    assert run_response.content_type == "Person"
+    assert run_response.content.name == "Elon Musk"
 
 
 def test_intermediate_steps_with_member_agents():

@@ -61,11 +61,11 @@ def route_b_step(step_input: StepInput) -> StepOutput:
     return StepOutput(content="Processed via Route B", success=True)
 
 
-def test_loop_with_parallel(workflow_db):
+def test_loop_with_parallel(shared_db):
     """Test Loop containing Parallel steps."""
     workflow = Workflow(
         name="Loop with Parallel",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Loop(
                 name="research_loop",
@@ -86,11 +86,11 @@ def test_loop_with_parallel(workflow_db):
     assert len(loop_output.steps) >= 2  # At least two steps per iteration
 
 
-def test_loop_with_condition(workflow_db):
+def test_loop_with_condition(shared_db):
     """Test Loop containing Condition steps."""
     workflow = Workflow(
         name="Loop with Condition",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Loop(
                 name="research_loop",
@@ -111,11 +111,11 @@ def test_loop_with_condition(workflow_db):
     assert find_content_in_steps(response.step_results[0], "Analysis")
 
 
-def test_condition_with_loop(workflow_db):
+def test_condition_with_loop(shared_db):
     """Test Condition containing Loop steps."""
     workflow = Workflow(
         name="Condition with Loop",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             research_step,
             Condition(
@@ -138,11 +138,11 @@ def test_condition_with_loop(workflow_db):
     assert len(response.step_results) == 2  # Research + Condition
 
 
-def test_parallel_with_loops(workflow_db):
+def test_parallel_with_loops(shared_db):
     """Test Parallel containing multiple Loops."""
     workflow = Workflow(
         name="Parallel with Loops",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Parallel(
                 Loop(
@@ -170,11 +170,11 @@ def test_parallel_with_loops(workflow_db):
     assert parallel_output.step_type == "Parallel"
 
 
-def test_nested_conditions_and_loops(workflow_db):
+def test_nested_conditions_and_loops(shared_db):
     """Test nested Conditions and Loops."""
     workflow = Workflow(
         name="Nested Conditions and Loops",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Condition(
                 name="outer_condition",
@@ -202,11 +202,11 @@ def test_nested_conditions_and_loops(workflow_db):
     assert condition_output.step_type == "Condition"
 
 
-def test_parallel_with_conditions_and_loops(workflow_db):
+def test_parallel_with_conditions_and_loops(shared_db):
     """Test Parallel with mix of Conditions and Loops."""
     workflow = Workflow(
         name="Mixed Parallel",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Parallel(
                 Loop(
@@ -228,11 +228,11 @@ def test_parallel_with_conditions_and_loops(workflow_db):
 
 
 @pytest.mark.asyncio
-async def test_async_complex_combination(workflow_db):
+async def test_async_complex_combination(shared_db):
     """Test async execution of complex step combinations."""
     workflow = Workflow(
         name="Async Complex",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Loop(
                 name="outer_loop",
@@ -255,11 +255,11 @@ async def test_async_complex_combination(workflow_db):
     assert find_content_in_steps(response.step_results[-1], "Summary")
 
 
-def test_complex_streaming(workflow_db):
+def test_complex_streaming(shared_db):
     """Test streaming with complex step combinations."""
     workflow = Workflow(
         name="Complex Streaming",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Loop(
                 name="main_loop",
@@ -286,7 +286,7 @@ def test_complex_streaming(workflow_db):
     assert len(completed_events) == 1
 
 
-def test_router_with_loop(workflow_db):
+def test_router_with_loop(shared_db):
     """Test Router with Loop in routes."""
     from agno.workflow.step import Step
 
@@ -305,7 +305,7 @@ def test_router_with_loop(workflow_db):
 
     workflow = Workflow(
         name="Router with Loop",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Router(
                 name="research_router",
@@ -323,7 +323,7 @@ def test_router_with_loop(workflow_db):
     assert find_content_in_steps(response.step_results[0], "Research")
 
 
-def test_loop_with_router(workflow_db):
+def test_loop_with_router(shared_db):
     """Test Loop containing Router."""
     from agno.workflow.step import Step
 
@@ -342,7 +342,7 @@ def test_loop_with_router(workflow_db):
 
     workflow = Workflow(
         name="Loop with Router",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Loop(
                 name="main_loop",
@@ -364,7 +364,7 @@ def test_loop_with_router(workflow_db):
     assert loop_output.step_type == "Loop"
 
 
-def test_parallel_with_routers(workflow_db):
+def test_parallel_with_routers(shared_db):
     """Test Parallel execution of multiple Routers."""
     from agno.workflow.step import Step
 
@@ -386,7 +386,7 @@ def test_parallel_with_routers(workflow_db):
 
     workflow = Workflow(
         name="Parallel Routers",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Parallel(
                 Router(
@@ -420,7 +420,7 @@ def test_parallel_with_routers(workflow_db):
     assert parallel_output.step_type == "Parallel"
 
 
-def test_router_with_condition_and_loop(workflow_db):
+def test_router_with_condition_and_loop(shared_db):
     """Test Router with Condition and Loop in routes."""
     research_loop = Loop(
         name="research_loop",
@@ -438,7 +438,7 @@ def test_router_with_condition_and_loop(workflow_db):
 
     workflow = Workflow(
         name="Complex Router",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Router(
                 name="complex_router",
@@ -455,7 +455,7 @@ def test_router_with_condition_and_loop(workflow_db):
     assert len(response.step_results) == 2
 
 
-def test_nested_routers(workflow_db):
+def test_nested_routers(shared_db):
     """Test nested Routers."""
     from agno.workflow.step import Step
 
@@ -480,7 +480,7 @@ def test_nested_routers(workflow_db):
 
     workflow = Workflow(
         name="Nested Routers",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Router(
                 name="outer_router",
@@ -503,7 +503,7 @@ def test_nested_routers(workflow_db):
     assert router_output.step_type == "Router"
 
 
-def test_router_streaming(workflow_db):
+def test_router_streaming(shared_db):
     """Test streaming with Router combinations."""
     parallel_research = Parallel(research_step, analysis_step, name="parallel_research")
     research_loop = Loop(
@@ -522,7 +522,7 @@ def test_router_streaming(workflow_db):
 
     workflow = Workflow(
         name="Streaming Router",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Router(
                 name="stream_router",

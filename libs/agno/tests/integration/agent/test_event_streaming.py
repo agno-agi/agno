@@ -74,11 +74,11 @@ def test_basic_intermediate_steps_events():
     assert len(events[RunEvent.run_completed]) == 1
 
 
-def test_basic_intermediate_steps_events_persisted(agent_db):
+def test_basic_intermediate_steps_events_persisted(shared_db):
     """Test that the agent streams events."""
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        db=agent_db,
+        db=shared_db,
         store_events=True,
         telemetry=False,
     )
@@ -93,7 +93,7 @@ def test_basic_intermediate_steps_events_persisted(agent_db):
 
     assert events.keys() == {RunEvent.run_started, RunEvent.run_content, RunEvent.run_completed}
 
-    run_response_from_storage = agent_db.get_sessions(session_type=SessionType.AGENT)[0].runs[0]  # type: ignore
+    run_response_from_storage = shared_db.get_sessions(session_type=SessionType.AGENT)[0].runs[0]
 
     assert run_response_from_storage.events is not None
     assert len(run_response_from_storage.events) == 2, "We should only have the run started and run completed events"
@@ -135,12 +135,12 @@ def test_intermediate_steps_with_tools():
     assert events[RunEvent.tool_call_completed][0].tool.result is not None  # type: ignore
 
 
-def test_intermediate_steps_with_tools_events_persisted(agent_db):
+def test_intermediate_steps_with_tools_events_persisted(shared_db):
     """Test that the agent streams events."""
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[YFinanceTools(cache_results=True)],
-        db=agent_db,
+        db=shared_db,
         store_events=True,
         telemetry=False,
     )
@@ -161,7 +161,7 @@ def test_intermediate_steps_with_tools_events_persisted(agent_db):
         RunEvent.run_completed,
     }
 
-    run_response_from_storage = agent_db.get_sessions(session_type=SessionType.AGENT)[0].runs[0]  # type: ignore
+    run_response_from_storage = shared_db.get_sessions(session_type=SessionType.AGENT)[0].runs[0]
 
     assert run_response_from_storage.events is not None
     assert len(run_response_from_storage.events) == 4
@@ -220,7 +220,7 @@ def test_intermediate_steps_with_reasoning():
     assert events[RunEvent.reasoning_step][0].reasoning_content is not None  # type: ignore
 
 
-def test_intermediate_steps_with_user_confirmation(agent_db):
+def test_intermediate_steps_with_user_confirmation(shared_db):
     """Test that the agent streams events."""
 
     @tool(requires_confirmation=True)
@@ -230,7 +230,7 @@ def test_intermediate_steps_with_user_confirmation(agent_db):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather],
-        db=agent_db,
+        db=shared_db,
         store_events=True,
         add_history_to_context=True,
         num_history_runs=2,
@@ -245,27 +245,27 @@ def test_intermediate_steps_with_user_confirmation(agent_db):
         if run_response_delta.event not in events:
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
-
+    run_response = agent.get_last_run_response()
     assert events.keys() == {RunEvent.run_started, RunEvent.run_paused}
     assert len(events[RunEvent.run_started]) == 1
     assert len(events[RunEvent.run_paused]) == 1
     assert events[RunEvent.run_paused][0].tools[0].requires_confirmation is True  # type: ignore
 
-    assert agent.is_paused
+    assert run_response.is_paused
 
-    assert agent.run_response.tools[0].requires_confirmation  # type: ignore
+    assert run_response.tools[0].requires_confirmation
 
     # Mark the tool as confirmed
-    updated_tools = agent.run_response.tools  # type: ignore
-    run_id = agent.run_response.run_id  # type: ignore
-    updated_tools[0].confirmed = True  # type: ignore
+    updated_tools = run_response.tools
+    run_id = run_response.run_id
+    updated_tools[0].confirmed = True
 
-    stored_session = agent.db.get_sessions(session_type=SessionType.AGENT)[0].runs[0]  # type: ignore
-
-    assert stored_session.events is not None
-    assert len(stored_session.events) == 2
-    assert stored_session.events[0].event == RunEvent.run_started
-    assert stored_session.events[1].event == RunEvent.run_paused
+    # Check stored events
+    stored_session = shared_db.get_sessions(session_type=SessionType.AGENT)[0]
+    assert stored_session.runs[0].events is not None
+    assert len(stored_session.runs[0].events) == 2
+    assert stored_session.runs[0].events[0].event == RunEvent.run_started
+    assert stored_session.runs[0].events[1].event == RunEvent.run_paused
 
     # Then we continue the run
     response_generator = agent.continue_run(
@@ -278,7 +278,8 @@ def test_intermediate_steps_with_user_confirmation(agent_db):
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
 
-    assert agent.run_response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"  # type: ignore
+    run_response = agent.get_last_run_response()
+    assert run_response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
 
     assert events.keys() == {
         RunEvent.run_continued,
@@ -297,26 +298,25 @@ def test_intermediate_steps_with_user_confirmation(agent_db):
     assert len(events[RunEvent.run_content]) > 1
     assert len(events[RunEvent.run_completed]) == 1
 
-    assert agent.run_response is not None
-    assert agent.run_response.is_paused is False
+    assert run_response.is_paused is False
 
     # Check stored events
-    stored_session = agent_db.get_sessions(session_type=SessionType.AGENT)[0].runs[0]  # type: ignore
-    assert stored_session.events is not None
-    assert len(stored_session.events) == 6
-    assert stored_session.events[0].event == RunEvent.run_started
-    assert stored_session.memory["runs"][0]["events"][1]["event"] == RunEvent.run_paused
-    assert stored_session.memory["runs"][0]["events"][2]["event"] == RunEvent.run_continued
-    assert stored_session.memory["runs"][0]["events"][3]["event"] == RunEvent.tool_call_started
-    assert stored_session.memory["runs"][0]["events"][4]["event"] == RunEvent.tool_call_completed
-    assert stored_session.memory["runs"][0]["events"][5]["event"] == RunEvent.run_completed
+    stored_session = shared_db.get_sessions(session_type=SessionType.AGENT)[0]
+    assert stored_session.runs[0].events is not None
+    assert len(stored_session.runs[0].events) == 6
+    assert stored_session.runs[0].events[0].event == RunEvent.run_started
+    assert stored_session.runs[0].events[1].event == RunEvent.run_paused
+    assert stored_session.runs[0].events[2].event == RunEvent.run_continued
+    assert stored_session.runs[0].events[3].event == RunEvent.tool_call_started
+    assert stored_session.runs[0].events[4].event == RunEvent.tool_call_completed
+    assert stored_session.runs[0].events[5].event == RunEvent.run_completed
 
 
-def test_intermediate_steps_with_memory(agent_db):
+def test_intermediate_steps_with_memory(shared_db):
     """Test that the agent streams events."""
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        db=agent_db,
+        db=shared_db,
         enable_user_memories=True,
         telemetry=False,
     )
@@ -344,7 +344,7 @@ def test_intermediate_steps_with_memory(agent_db):
     assert len(events[RunEvent.memory_update_completed]) == 1
 
 
-def test_intermediate_steps_with_structured_output(agent_db):
+def test_intermediate_steps_with_structured_output(shared_db):
     """Test that the agent streams events."""
 
     class Person(BaseModel):
@@ -354,7 +354,7 @@ def test_intermediate_steps_with_structured_output(agent_db):
 
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        db=agent_db,
+        db=shared_db,
         response_model=Person,
         telemetry=False,
     )
@@ -366,6 +366,7 @@ def test_intermediate_steps_with_structured_output(agent_db):
         if run_response_delta.event not in events:
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
+    run_response = agent.get_last_run_response()
 
     assert events.keys() == {
         RunEvent.run_started,
@@ -387,13 +388,12 @@ def test_intermediate_steps_with_structured_output(agent_db):
     assert events[RunEvent.run_completed][0].content.name == "Elon Musk"  # type: ignore
     assert len(events[RunEvent.run_completed][0].content.description) > 1  # type: ignore
 
-    assert agent.run_response is not None
-    assert agent.run_response.content is not None  # type: ignore
-    assert agent.run_response.content_type == "Person"  # type: ignore
-    assert agent.run_response.content.name == "Elon Musk"  # type: ignore
+    assert run_response.content is not None
+    assert run_response.content_type == "Person"
+    assert run_response.content["name"] == "Elon Musk"
 
 
-def test_intermediate_steps_with_parser_model(agent_db):
+def test_intermediate_steps_with_parser_model(shared_db):
     """Test that the agent streams events."""
 
     class Person(BaseModel):
@@ -403,7 +403,7 @@ def test_intermediate_steps_with_parser_model(agent_db):
 
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        db=agent_db,
+        db=shared_db,
         response_model=Person,
         parser_model=OpenAIChat(id="gpt-4o-mini"),
         telemetry=False,
@@ -416,6 +416,7 @@ def test_intermediate_steps_with_parser_model(agent_db):
         if run_response_delta.event not in events:
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
+    run_response = agent.get_last_run_response()
 
     assert events.keys() == {
         RunEvent.run_started,
@@ -443,7 +444,6 @@ def test_intermediate_steps_with_parser_model(agent_db):
     assert events[RunEvent.run_completed][0].content.name == "Elon Musk"  # type: ignore
     assert len(events[RunEvent.run_completed][0].content.description) > 1  # type: ignore
 
-    assert agent.run_response is not None
-    assert agent.run_response.content is not None
-    assert agent.run_response.content_type == "Person"
-    assert agent.run_response.content.name == "Elon Musk"
+    assert run_response.content is not None
+    assert run_response.content_type == "Person"
+    assert run_response.content["name"] == "Elon Musk"

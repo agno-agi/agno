@@ -428,7 +428,7 @@ class GithubTools(Toolkit):
             logger.error(f"Error getting pull request changes: {e}")
             return json.dumps({"error": str(e)})
 
-    def create_issue(self, repo_name: str, title: str, body: Optional[str] = NotSet) -> str:
+    def create_issue(self, repo_name: str, title: str, body: Optional[str] = None) -> str:
         """Create an issue in a repository.
 
         Args:
@@ -442,7 +442,7 @@ class GithubTools(Toolkit):
         log_debug(f"Creating issue in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
-            issue = repo.create_issue(title=title, body=body)
+            issue = repo.create_issue(title=title, body=body)  # type: ignore
             issue_info = {
                 "id": issue.id,
                 "number": issue.number,
@@ -669,8 +669,8 @@ class GithubTools(Toolkit):
         self,
         repo_name: str,
         issue_number: int,
-        title: Optional[str] = NotSet,
-        body: Optional[str] = NotSet,
+        title: Optional[str] = None,
+        body: Optional[str] = None,
     ) -> str:
         """Edit the title or body of an issue.
 
@@ -687,7 +687,7 @@ class GithubTools(Toolkit):
         try:
             repo = self.g.get_repo(repo_name)
             issue = repo.get_issue(number=issue_number)
-            issue.edit(title=title, body=body)
+            issue.edit(title=title, body=body)  # type: ignore
             return json.dumps({"message": f"Issue #{issue_number} updated."}, indent=2)
         except GithubException as e:
             logger.error(f"Error editing issue: {e}")
@@ -1296,7 +1296,7 @@ class GithubTools(Toolkit):
         path: str,
         content: str,
         message: str,
-        branch: Optional[str] = NotSet,
+        branch: Optional[str] = None,
     ) -> str:
         """Create a new file in a repository.
 
@@ -1322,7 +1322,7 @@ class GithubTools(Toolkit):
 
             # Extract relevant information
             file_info = {
-                "path": result["content"].path,
+                "path": result["content"].path,  # type: ignore
                 "sha": result["content"].sha,
                 "url": result["content"].html_url,
                 "commit": {

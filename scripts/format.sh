@@ -11,7 +11,6 @@ AGNO_DIR="${REPO_ROOT}/libs/agno"
 AGNO_DOCKER_DIR="${REPO_ROOT}/libs/infra/agno_docker"
 AGNO_AWS_DIR="${REPO_ROOT}/libs/infra/agno_aws"
 COOKBOOK_DIR="${REPO_ROOT}/cookbook"
-COOKBOOK_V2_DIR="${REPO_ROOT}/cookbook_v2"
 AGNO_TESTS_DIR="${AGNO_DIR}/tests"
 source ${CURR_DIR}/_utils.sh
 
@@ -23,4 +22,3 @@ source ${AGNO_TESTS_DIR}/scripts/format.sh
 
 # Format all cookbook examples
 source ${COOKBOOK_DIR}/scripts/format.sh
-source ${COOKBOOK_V2_DIR}/scripts/format.sh

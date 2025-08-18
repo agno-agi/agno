@@ -117,6 +117,7 @@ class Steps:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         store_executor_responses: bool = True,
     ) -> StepOutput:
         """Execute all steps in sequence and return the final result"""
@@ -140,13 +141,14 @@ class Steps:
                 log_debug(f"Steps {self.name}: Executing step {i + 1}/{len(self.steps)} - {step_name}")
 
                 # Execute step
-                step_output = step.execute(
+                step_output = step.execute(  # type: ignore
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_responses=store_executor_responses,
-                )  # type: ignore
+                    session_state=session_state,
+                )
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
                 if isinstance(step_output, list):
@@ -195,6 +197,7 @@ class Steps:
         self,
         step_input: StepInput,
         workflow_run_response: WorkflowRunOutput,
+        session_state: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
@@ -251,6 +254,7 @@ class Steps:
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
+                    session_state=session_state,
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
@@ -331,6 +335,7 @@ class Steps:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         store_executor_responses: bool = True,
     ) -> StepOutput:
         """Execute all steps in sequence asynchronously and return the final result"""
@@ -354,13 +359,14 @@ class Steps:
                 log_debug(f"Steps {self.name}: Executing async step {i + 1}/{len(self.steps)} - {step_name}")
 
                 # Execute step
-                step_output = await step.aexecute(
+                step_output = await step.aexecute(  # type: ignore
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_responses=store_executor_responses,
-                )  # type: ignore
+                    session_state=session_state,
+                )
 
                 # Handle both single StepOutput and List[StepOutput] (from Loop/Condition/Router steps)
                 if isinstance(step_output, list):
@@ -408,6 +414,7 @@ class Steps:
         self,
         step_input: StepInput,
         workflow_run_response: WorkflowRunOutput,
+        session_state: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
@@ -464,6 +471,7 @@ class Steps:
                     current_step_input,
                     session_id=session_id,
                     user_id=user_id,
+                    session_state=session_state,
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,

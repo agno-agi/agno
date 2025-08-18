@@ -277,7 +277,7 @@ class FirestoreDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-    ) -> Union[List[Session], List[Dict[str, Any]], Tuple[List[Dict[str, Any]], int]]:
+    ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions.
 
         Args:
@@ -351,14 +351,23 @@ class FirestoreDb(BaseDb):
             if not deserialize:
                 return sessions_raw, total_count
 
-            sessions = []
+            sessions: List[AgentSession | TeamSession | WorkflowSession] = []
             for session in sessions_raw:
                 if session["session_type"] == SessionType.AGENT.value:
-                    sessions.append(AgentSession.from_dict(session))
+                    agent_session = AgentSession.from_dict(session)
+                    if agent_session is not None:
+                        sessions.append(agent_session)
                 elif session["session_type"] == SessionType.TEAM.value:
-                    sessions.append(TeamSession.from_dict(session))
+                    team_session = TeamSession.from_dict(session)
+                    if team_session is not None:
+                        sessions.append(team_session)
                 elif session["session_type"] == SessionType.WORKFLOW.value:
-                    sessions.append(WorkflowSession.from_dict(session))
+                    workflow_session = WorkflowSession.from_dict(session)
+                    if workflow_session is not None:
+                        sessions.append(workflow_session)
+
+            if not sessions:
+                return [] if deserialize else ([], 0)
 
             return sessions
 
@@ -444,7 +453,6 @@ class FirestoreDb(BaseDb):
                     "session_id": serialized_session_dict.get("session_id"),
                     "session_type": SessionType.AGENT.value,
                     "agent_id": serialized_session_dict.get("agent_id"),
-                    "team_session_id": serialized_session_dict.get("team_session_id"),
                     "user_id": serialized_session_dict.get("user_id"),
                     "runs": serialized_session_dict.get("runs"),
                     "agent_data": serialized_session_dict.get("agent_data"),
@@ -460,7 +468,6 @@ class FirestoreDb(BaseDb):
                     "session_id": serialized_session_dict.get("session_id"),
                     "session_type": SessionType.TEAM.value,
                     "team_id": serialized_session_dict.get("team_id"),
-                    "team_session_id": serialized_session_dict.get("team_session_id"),
                     "user_id": serialized_session_dict.get("user_id"),
                     "runs": serialized_session_dict.get("runs"),
                     "team_data": serialized_session_dict.get("team_data"),
@@ -648,7 +655,6 @@ class FirestoreDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
         topics: Optional[List[str]] = None,
         search_content: Optional[str] = None,
         limit: Optional[int] = None,
@@ -663,7 +669,6 @@ class FirestoreDb(BaseDb):
             user_id (Optional[str]): The ID of the user to get the memories for.
             agent_id (Optional[str]): The ID of the agent to get the memories for.
             team_id (Optional[str]): The ID of the team to get the memories for.
-            workflow_id (Optional[str]): The ID of the workflow to get the memories for.
             topics (Optional[List[str]]): The topics to filter the memories by.
             search_content (Optional[str]): The content to filter the memories by.
             limit (Optional[int]): The limit of the memories to get.
@@ -688,8 +693,6 @@ class FirestoreDb(BaseDb):
                 query = query.where(filter=FieldFilter("agent_id", "==", agent_id))
             if team_id is not None:
                 query = query.where(filter=FieldFilter("team_id", "==", team_id))
-            if workflow_id is not None:
-                query = query.where(filter=FieldFilter("workflow_id", "==", workflow_id))
             if topics is not None and len(topics) > 0:
                 query = query.where(filter=FieldFilter("topics", "array_contains_any", topics))
             if search_content is not None:

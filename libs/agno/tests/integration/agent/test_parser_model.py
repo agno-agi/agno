@@ -93,27 +93,28 @@ def test_gemini_with_openai_parser_model():
     assert len(response.content.best_season_to_visit) > 0
 
 
-def test_parser_model_stream():
+def test_parser_model_stream(shared_db):
     park_agent = Agent(
         model=OpenAIChat(id="gpt-4o"),  # Main model to generate the content
         description="You are an expert on national parks and provide concise guides.",
         response_model=ParkGuide,
+        db=shared_db,
         parser_model=Claude(id="claude-sonnet-4-20250514"),  # Model to parse the output
     )
 
     response = park_agent.run("Tell me about Yosemite National Park.", stream=True)
 
     for event in response:
-        print(event)
+        pass
 
-    assert park_agent.run_response is not None
-    assert park_agent.run_response.content is not None
-    assert isinstance(park_agent.run_response.content, ParkGuide)
-    assert isinstance(park_agent.run_response.content.park_name, str)  # type: ignore
-    assert len(park_agent.run_response.content.park_name) > 0  # type: ignore
+    run_response = park_agent.get_last_run_response()
 
-    assert isinstance(park_agent.run_response.content.activities, list)
-    assert len(park_agent.run_response.content.activities) >= 2
-    for activity in park_agent.run_response.content.activities:
+    assert run_response.content is not None
+    assert isinstance(run_response.content.get("park_name"), str)
+    assert len(run_response.content.get("park_name")) > 0
+
+    assert isinstance(run_response.content.get("activities"), list)
+    assert len(run_response.content.get("activities")) >= 2
+    for activity in run_response.content.get("activities"):
         assert isinstance(activity, str)
         assert len(activity) > 0

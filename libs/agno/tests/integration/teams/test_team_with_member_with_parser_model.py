@@ -49,7 +49,9 @@ def test_team_with_parser_model_stream():
     for event in response:
         print(event.event)
 
-    assert team.run_response.content is not None
-    assert isinstance(team.run_response.content, ParkGuide)
-    assert isinstance(team.run_response.content.park_name, str)
-    assert len(team.run_response.content.park_name) > 0
+    run_response = team.get_last_run_response()
+
+    assert run_response.content is not None
+    assert isinstance(run_response.content, ParkGuide)
+    assert isinstance(run_response.content.park_name, str)
+    assert len(run_response.content.park_name) > 0

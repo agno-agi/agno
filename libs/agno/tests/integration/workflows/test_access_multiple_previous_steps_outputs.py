@@ -77,9 +77,9 @@ Available Steps: {list(step_input.previous_step_outputs.keys())}"""
     return StepOutput(step_name="report_step", content=report, success=True)
 
 
-def test_basic_access(workflow_db):
+def test_basic_access(shared_db):
     """Test basic access to previous steps."""
-    workflow = Workflow(name="Basic Access", db=workflow_db, steps=[research_step, analysis_step, report_step])
+    workflow = Workflow(name="Basic Access", db=shared_db, steps=[research_step, analysis_step, report_step])
 
     response = workflow.run(input="test topic")
     assert isinstance(response, WorkflowRunOutput)
@@ -93,9 +93,9 @@ def test_basic_access(workflow_db):
     assert "analysis_step" in report.content
 
 
-def test_streaming_access(workflow_db):
+def test_streaming_access(shared_db):
     """Test streaming with multiple step access."""
-    workflow = Workflow(name="Streaming Access", db=workflow_db, steps=[research_step, analysis_step, report_step])
+    workflow = Workflow(name="Streaming Access", db=shared_db, steps=[research_step, analysis_step, report_step])
 
     events = list(workflow.run(input="test topic", stream=True))
 
@@ -106,9 +106,9 @@ def test_streaming_access(workflow_db):
 
 
 @pytest.mark.asyncio
-async def test_async_access(workflow_db):
+async def test_async_access(shared_db):
     """Test async execution with multiple step access."""
-    workflow = Workflow(name="Async Access", db=workflow_db, steps=[research_step, analysis_step, report_step])
+    workflow = Workflow(name="Async Access", db=shared_db, steps=[research_step, analysis_step, report_step])
 
     response = await workflow.arun(input="test topic")
     assert isinstance(response, WorkflowRunOutput)
@@ -117,9 +117,9 @@ async def test_async_access(workflow_db):
 
 
 @pytest.mark.asyncio
-async def test_async_streaming_access(workflow_db):
+async def test_async_streaming_access(shared_db):
     """Test async streaming with multiple step access."""
-    workflow = Workflow(name="Async Streaming", db=workflow_db, steps=[research_step, analysis_step, report_step])
+    workflow = Workflow(name="Async Streaming", db=shared_db, steps=[research_step, analysis_step, report_step])
 
     events = []
     async for event in await workflow.arun(input="test topic", stream=True):
@@ -131,11 +131,11 @@ async def test_async_streaming_access(workflow_db):
 
 
 # Add this test function at the end
-def test_parallel_step_access(workflow_db):
+def test_parallel_step_access(shared_db):
     """Test accessing content from parallel steps."""
     workflow = Workflow(
         name="Parallel Step Access",
-        db=workflow_db,
+        db=shared_db,
         steps=[Parallel(step_a, step_b, step_c, name="Parallel Processing"), parallel_aggregator_step],
     )
 
@@ -155,11 +155,11 @@ def test_parallel_step_access(workflow_db):
 
 
 @pytest.mark.asyncio
-async def test_async_parallel_step_access(workflow_db):
+async def test_async_parallel_step_access(shared_db):
     """Test async accessing content from parallel steps."""
     workflow = Workflow(
         name="Async Parallel Step Access",
-        db=workflow_db,
+        db=shared_db,
         steps=[Parallel(step_a, step_b, step_c, name="Parallel Processing"), parallel_aggregator_step],
     )
 
@@ -176,11 +176,11 @@ async def test_async_parallel_step_access(workflow_db):
     assert "Step C: Step C reviewed: async test data" in aggregator_response.content
 
 
-def test_single_parallel_step_access(workflow_db):
+def test_single_parallel_step_access(shared_db):
     """Test accessing content from a single step in parallel (edge case)."""
     workflow = Workflow(
         name="Single Parallel Step Access",
-        db=workflow_db,
+        db=shared_db,
         steps=[Parallel(step_a, name="Parallel Processing"), parallel_aggregator_step],
     )
 

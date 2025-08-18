@@ -427,10 +427,6 @@ class OpenAIChat(Model):
             # Parse the response into an Agno ModelResponse object
             provider_response: ModelResponse = self._parse_provider_response(response, response_format=response_format)
 
-            # Add parsed data to model response
-            if provider_response.parsed is not None:
-                response.parsed = provider_response.parsed
-
             return provider_response
 
         except RateLimitError as e:

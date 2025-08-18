@@ -470,7 +470,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                     response = await self.agent.arun(input=eval_input)
                     output = response.content
                 elif self.team is not None:
-                    response = await self.team.arun(input=eval_input)
+                    response = await self.team.arun(input=eval_input)  # type: ignore
                     output = response.content
 
                 if not output:

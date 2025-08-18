@@ -133,14 +133,16 @@ class StepInput:
         # Regular step, return content directly
         return step_output.content  # type: ignore[return-value]
 
-    def _get_deepest_step_content(self, step_output: "StepOutput") -> Optional[str]:
+    def _get_deepest_step_content(
+        self, step_output: "StepOutput"
+    ) -> Optional[Union[str, Dict[str, str]]]:
         """Helper method to recursively extract deepest content from nested steps"""
         # If this step has nested steps, go deeper
         if step_output.steps and len(step_output.steps) > 0:
             return self._get_deepest_step_content(step_output.steps[-1])
 
         # Return the content of this step
-        return step_output.content
+        return step_output.content  # type: ignore[return-value]
 
     def get_all_previous_content(self) -> str:
         """Get concatenated content from all previous steps"""
@@ -164,7 +166,7 @@ class StepInput:
             return None
 
         # Use the helper method to get the deepest content
-        return self._get_deepest_step_content(last_output)
+        return self._get_deepest_step_content(last_output)  # type: ignore[return-value]
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -259,7 +261,7 @@ class StepOutput:
             "images": [img.to_dict() for img in self.images] if self.images else None,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,
             "audio": [aud.to_dict() for aud in self.audio] if self.audio else None,
-            "metrics": self.metrics.to_dict() if hasattr(self.metrics, "to_dict") else self.metrics,
+            "metrics": self.metrics.to_dict() if self.metrics else None,
             "success": self.success,
             "error": self.error,
             "stop": self.stop,
@@ -327,7 +329,7 @@ class StepMetrics:
             "step_name": self.step_name,
             "executor_type": self.executor_type,
             "executor_name": self.executor_name,
-            "metrics": self.metrics.to_dict() if hasattr(self.metrics, "to_dict") else self.metrics,
+            "metrics": self.metrics.to_dict() if self.metrics else None,
         }
 
     @classmethod
@@ -415,6 +417,7 @@ class WebSocketHandler:
 
 
 class StepType(str, Enum):
+    FUNCTION = "Function"
     STEP = "Step"
     STEPS = "Steps"
     LOOP = "Loop"

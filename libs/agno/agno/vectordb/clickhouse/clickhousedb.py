@@ -702,13 +702,17 @@ class Clickhouse(VectorDb):
         """
         Delete documents by content hash.
         """
-        parameters = self._get_base_parameters()
-        parameters["content_hash"] = content_hash
+        try:
+            parameters = self._get_base_parameters()
+            parameters["content_hash"] = content_hash
 
-        self.client.command(
-            "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE content_hash = {content_hash:String}",
-            parameters=parameters,
-        )
+            self.client.command(
+                "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE content_hash = {content_hash:String}",
+                parameters=parameters,
+            )
+            return True
+        except Exception:
+            return False
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
         """

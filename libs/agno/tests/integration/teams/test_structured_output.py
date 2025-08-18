@@ -51,6 +51,7 @@ def test_route_team_multiple_response_models():
         model=OpenAIChat("gpt-4o"),
         members=[stock_searcher, company_info_agent],
         markdown=True,
+        store_member_responses=True,
     )
 
     # This should route to the stock_searcher
@@ -102,6 +103,7 @@ def test_route_team_mixed_structured_output():
         mode="route",
         model=OpenAIChat("gpt-4o"),
         members=[stock_agent, news_agent],
+        store_member_responses=True,
     )
 
     # This should route to the stock_agent and return structured output
