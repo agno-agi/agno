@@ -14,7 +14,7 @@ try:
 except ImportError:
     raise ImportError("`aiofiles` not installed. Please install it with `pip install aiofiles`")
 
-from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyEnum
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.utils.log import logger
@@ -32,12 +32,12 @@ class CSVReader(Reader):
 
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyEnum]:
         """Get the list of supported chunking strategies for CSV readers."""
         return [
-            ChunkingStrategyType.AGENTIC_CHUNKING,
-            ChunkingStrategyType.DOCUMENT_CHUNKING,
-            ChunkingStrategyType.RECURSIVE_CHUNKING,
+            ChunkingStrategyEnum.AGENTIC_CHUNKING,
+            ChunkingStrategyEnum.DOCUMENT_CHUNKING,
+            ChunkingStrategyEnum.RECURSIVE_CHUNKING,
         ]
 
     def read(
@@ -180,12 +180,12 @@ class CSVUrlReader(Reader):
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
         self.proxy = proxy
 
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyEnum]:
         """Get the list of supported chunking strategies for CSV URL readers."""
         return [
-            ChunkingStrategyType.AGENTIC_CHUNKING,
-            ChunkingStrategyType.DOCUMENT_CHUNKING,
-            ChunkingStrategyType.ROW_CHUNKING,
+            ChunkingStrategyEnum.AGENTIC_CHUNKING,
+            ChunkingStrategyEnum.DOCUMENT_CHUNKING,
+            ChunkingStrategyEnum.ROW_CHUNKING,
         ]
 
     def read(self, url: str, name: Optional[str] = None) -> List[Document]:

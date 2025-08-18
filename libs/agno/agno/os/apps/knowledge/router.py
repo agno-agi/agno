@@ -286,12 +286,11 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
             for reader_id, reader in knowledge.readers.items():
                 # Get chunking strategies from the reader
                 chunking_strategies = []
-                if hasattr(reader, "get_supported_chunking_strategies"):
-                    try:
-                        strategies = reader.get_supported_chunking_strategies()
-                        chunking_strategies = [strategy.value for strategy in strategies]
-                    except Exception:
-                        chunking_strategies = []
+                try:
+                    strategies = reader.get_supported_chunking_strategies()
+                    chunking_strategies = [strategy.value for strategy in strategies]
+                except Exception:
+                    chunking_strategies = []
 
                 # Check if this reader ID already exists in factory readers
                 existing_ids = [schema.id for schema in reader_schemas]
@@ -342,11 +341,8 @@ async def process_content(
                 content.reader = reader
         if chunker and content.reader:
             # Set the chunker name on the reader - let the reader handle it internally
-            if hasattr(content.reader, "set_chunking_strategy_from_string"):
-                content.reader.set_chunking_strategy_from_string(chunker)
-                log_debug(f"Set chunking strategy: {chunker}")
-            else:
-                log_debug(f"Reader does not support chunking strategy: {chunker}")
+            content.reader.set_chunking_strategy_from_string(chunker)
+            log_debug(f"Set chunking strategy: {chunker}")
 
         log_debug(f"Using reader: {content.reader.__class__.__name__}")
         await knowledge._load_content(content, upsert=False, skip_if_exists=True)

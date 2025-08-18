@@ -1,7 +1,7 @@
 import asyncio
 from typing import List, Optional
 
-from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyEnum
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 
@@ -14,12 +14,12 @@ except ImportError:
 class ArxivReader(Reader):
     sort_by: arxiv.SortCriterion = arxiv.SortCriterion.Relevance
 
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyEnum]:
         """Get the list of supported chunking strategies for Arxiv readers."""
         return [
-            ChunkingStrategyType.AGENTIC_CHUNKING,
-            ChunkingStrategyType.DOCUMENT_CHUNKING,
-            ChunkingStrategyType.RECURSIVE_CHUNKING,
+            ChunkingStrategyEnum.AGENTIC_CHUNKING,
+            ChunkingStrategyEnum.DOCUMENT_CHUNKING,
+            ChunkingStrategyEnum.RECURSIVE_CHUNKING,
         ]
 
     def __init__(

@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
 from agno.knowledge.chunking.fixed import FixedSizeChunking
-from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyEnum, ChunkingStrategyFactory
 from agno.knowledge.document.base import Document
 
 
@@ -43,14 +43,14 @@ class Reader:
     def set_chunking_strategy_from_string(self, strategy_name: str, **kwargs) -> None:
         """Set the chunking strategy from a string name."""
         try:
-            strategy_type = ChunkingStrategyType.from_string(strategy_name)
-            self.chunking_strategy = strategy_type.create_strategy(**kwargs)
+            strategy_type = ChunkingStrategyEnum.from_string(strategy_name)
+            self.chunking_strategy = ChunkingStrategyFactory.create_strategy(strategy_type, **kwargs)
         except ValueError as e:
             raise ValueError(f"Failed to set chunking strategy: {e}")
 
-    def set_chunking_strategy(self, strategy_type: ChunkingStrategyType, **kwargs) -> None:
-        """Set the chunking strategy from a ChunkingStrategyType enum."""
-        self.chunking_strategy = strategy_type.create_strategy(**kwargs)
+    def set_chunking_strategy(self, strategy_type: ChunkingStrategyEnum, **kwargs) -> None:
+        """Set the chunking strategy from a ChunkingStrategyEnum."""
+        self.chunking_strategy = ChunkingStrategyFactory.create_strategy(strategy_type, **kwargs)
 
     def read(self, obj: Any, name: Optional[str] = None) -> List[Document]:
         raise NotImplementedError
@@ -58,7 +58,7 @@ class Reader:
     async def async_read(self, obj: Any, name: Optional[str] = None, password: Optional[str] = None) -> List[Document]:
         raise NotImplementedError
 
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyEnum]:
         """Get the list of supported chunking strategies for this reader.
 
         Returns:
@@ -66,9 +66,9 @@ class Reader:
         """
         # Default implementation returns common strategies
         return [
-            ChunkingStrategyType.FIXED_SIZE_CHUNKING,
-            ChunkingStrategyType.DOCUMENT_CHUNKING,
-            ChunkingStrategyType.RECURSIVE_CHUNKING,
+            ChunkingStrategyEnum.FIXED_SIZE_CHUNKING,
+            ChunkingStrategyEnum.DOCUMENT_CHUNKING,
+            ChunkingStrategyEnum.RECURSIVE_CHUNKING,
         ]
 
     def chunk_document(self, document: Document) -> List[Document]:
