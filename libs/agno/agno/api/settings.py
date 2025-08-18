@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from importlib import metadata
-from pathlib import Path
 
 from pydantic import field_validator
 from pydantic_core.core_schema import ValidationInfo
@@ -9,12 +8,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from agno.utils.log import logger
 
+
 class AgnoAPISettings(BaseSettings):
     app_name: str = "agno"
     app_version: str = metadata.version("agno")
 
     api_runtime: str = "prd"
-    api_enabled: bool = True
     alpha_features: bool = False
 
     model_config = SettingsConfigDict(env_prefix="AGNO_")

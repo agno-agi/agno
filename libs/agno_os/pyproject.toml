@@ -51,8 +51,8 @@ aws = ["boto3"]
 
 
 [project.scripts]
-ag = "agno.cli.entrypoint:agno_cli"
-agno = "agno.cli.entrypoint:agno_cli"
+ag = "agno_os.cli.entrypoint:agno_cli"
+agno = "agno_os.cli.entrypoint:agno_cli"
 
 
 [project.urls]
@@ -97,5 +97,7 @@ module = [
   "agno.*",
   "boto3.*",
   "botocore.*",
+  "docker.*",
+  "yaml.*",
 ]
 ignore_missing_imports = true

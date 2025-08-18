@@ -1,5 +1,6 @@
 from agno.models.base import Model
 
+
 # TODO: add all supported models
 def get_model(model_id: str, model_provider: str) -> Model:
     """Return the right Agno model instance given a pair of model provider and id"""

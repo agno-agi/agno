@@ -10,7 +10,6 @@ def isinstanceany(obj: Any, class_list: List[Type]) -> bool:
     return False
 
 
-
 def is_empty(val: Any) -> bool:
     """Returns True if val is None or empty"""
     if val is None or len(val) == 0 or val == "":
