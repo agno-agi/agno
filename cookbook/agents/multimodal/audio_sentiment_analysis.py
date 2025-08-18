@@ -16,7 +16,6 @@ response = requests.get(url)
 audio_content = response.content
 
 # Give a sentiment analysis of this audio conversation. Use speaker A, speaker B to identify speakers.
-
 agent.print_response(
     "Give a sentiment analysis of this audio conversation. Use speaker A, speaker B to identify speakers.",
     audio=[Audio(content=audio_content)],

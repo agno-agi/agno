@@ -43,7 +43,7 @@ def dataclass_to_dict(dataclass_object, exclude: Optional[set[str]] = None, excl
     final_dict = asdict(dataclass_object)
     if exclude:
         for key in exclude:
-            final_dict.pop(key)
+            final_dict.pop(key, None)
     if exclude_none:
         final_dict = {k: v for k, v in final_dict.items() if v is not None}
     return final_dict
