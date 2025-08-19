@@ -11,6 +11,7 @@ agent = Agent(
         audio={"voice": "sage", "format": "wav"},
     ),
     add_history_to_context=True,
+    cache_session=True,
 )
 
 run_response = agent.run("Is a golden retriever a good family dog?")

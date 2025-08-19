@@ -8,6 +8,7 @@ agent = Agent(
     model=Gemini(id="gemini-2.0-flash-exp"),
     add_history_to_context=True,
     markdown=True,
+    cache_session=True,
 )
 
 url = "https://agno-public.s3.amazonaws.com/demo_data/sample_conversation.wav"
