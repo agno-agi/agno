@@ -4,7 +4,7 @@ import tempfile
 import nest_asyncio
 import streamlit as st
 from agentic_rag import get_agentic_rag_agent
-from agno.utils.streamlit import (
+from streamlit_utils import (
     COMMON_CSS,
     add_message,
     display_chat_messages,
@@ -30,14 +30,21 @@ st.markdown(COMMON_CSS, unsafe_allow_html=True)
 
 
 def restart_agent():
-    """Reset the agent"""
+    """Start a new chat session"""
     current_model = st.session_state.get("current_model", "openai:gpt-4o")
-    new_agent = get_agentic_rag_agent(model_id=current_model, debug_mode=True)
-    new_agent.new_session()
+    # Explicitly pass session_id=None to ensure a new session is created
+    new_agent = get_agentic_rag_agent(model_id=current_model, session_id=None, debug_mode=True)
     
+    # Clear all session-related state to ensure fresh start
     st.session_state["agent"] = new_agent
     st.session_state["session_id"] = new_agent.session_id
     st.session_state["messages"] = []
+    st.session_state["current_model"] = current_model
+    st.session_state["is_new_session"] = True
+    
+    # Clear any cached session data
+    if hasattr(new_agent, '_agent_session') and new_agent._agent_session:
+        new_agent._agent_session = None
     
     st.rerun()
 
@@ -162,10 +169,9 @@ def main():
             session_id = st.session_state.get("session_id")
             if (
                 session_id
-                and hasattr(agentic_rag_agent, "session_name")
-                and agentic_rag_agent.session_name
+                and agentic_rag_agent.get_session_name()
             ):
-                filename = f"agentic_rag_chat_{agentic_rag_agent.session_name}.md"
+                filename = f"agentic_rag_chat_{agentic_rag_agent.get_session_name()}.md"
             elif session_id:
                 filename = f"agentic_rag_chat_{session_id}.md"
             else:

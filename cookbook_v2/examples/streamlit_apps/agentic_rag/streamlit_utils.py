@@ -139,16 +139,18 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
     current_session_id = st.session_state.get("session_id")
     current_selection = None
 
-    # New session
+    # New session - only add to list, don't load from database
     if current_session_id and current_session_id not in [s_id for s_id in session_dict.values()]:
         logger.info(f"New session: {current_session_id}")
-        if agent.session_name:
-            current_display_name = agent.session_name
+        if agent.get_session_name():
+            current_display_name = agent.get_session_name()
         else:
             current_display_name = f"{current_session_id[:8]}..."
         session_options.insert(0, current_display_name)
         session_dict[current_display_name] = current_session_id
         current_selection = current_display_name
+        # Mark this as a new session to avoid loading from database
+        st.session_state["is_new_session"] = True
 
     for display_name, session_id in session_dict.items():
         if session_id == current_session_id:
@@ -176,18 +178,23 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
         help="Select a session to continue",
     )
 
-    # Load session
+    # Load session - only if not a new session
     if selected and selected in session_dict:
         selected_session_id = session_dict[selected]
         if selected_session_id != current_session_id:
-            _load_session(selected_session_id, model_id, agent_creation_callback)
+            # Don't load from database if this is a new session
+            if not st.session_state.get("is_new_session", False):
+                _load_session(selected_session_id, model_id, agent_creation_callback)
+            else:
+                # Clear the new session flag since we're done with initialization
+                st.session_state["is_new_session"] = False
 
     # Rename session
     if agent.session_id:
         if "session_edit_mode" not in st.session_state:
             st.session_state.session_edit_mode = False
 
-        current_name = agent.session_name or agent.session_id
+        current_name = agent.get_session_name() or agent.session_id
 
         if not st.session_state.session_edit_mode:
             col1, col2 = st.sidebar.columns([3, 1])
@@ -214,10 +221,14 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
 
                             if result:
                                 logger.info(f"Session renamed to: {new_name.strip()}")
+                                # Clear any cached session data to ensure fresh reload
+                                if hasattr(agent, '_agent_session') and agent._agent_session:
+                                    agent._agent_session = None
                             st.session_state.session_edit_mode = False
                             st.sidebar.success("Session renamed!")
                             st.rerun()
                         except Exception as e:
+                            logger.error(f"Error renaming session: {e}")
                             st.sidebar.error(f"Error: {str(e)}")
                     else:
                         st.sidebar.error("Please enter a valid name")
@@ -353,8 +364,7 @@ def initialize_agent(model_id: str, agent_creation_callback: callable) -> Agent:
         if st.session_state.get("current_model") is not None and st.session_state.get("current_model") != model_id:
             agent = agent_creation_callback(model_id=model_id, session_id=None)
 
-            agent.new_session()
-
+            # Agent automatically creates a new session_id when initialized with session_id=None
             st.session_state["session_id"] = agent.session_id
             st.session_state["messages"] = []
         else:
@@ -369,9 +379,11 @@ def initialize_agent(model_id: str, agent_creation_callback: callable) -> Agent:
 
 def reset_session_state(agent: Agent) -> None:
     """Update session state."""
-    if agent.session_id:
+    # Only update session_id if it's not already set (avoid overwriting new chat sessions)
+    if agent.session_id and "session_id" not in st.session_state:
         st.session_state["session_id"] = agent.session_id
 
+    # Only initialize messages if they don't exist (preserve cleared state for new chats)
     if "messages" not in st.session_state:
         st.session_state["messages"] = []
 

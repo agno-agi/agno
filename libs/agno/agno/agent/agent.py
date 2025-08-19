@@ -2962,6 +2962,10 @@ class Agent:
                 if model_response_event.updated_session_state is not None and session.session_data is not None:
                     from agno.utils.merge_dict import merge_dictionaries
 
+                    # Ensure session_state exists before merging
+                    if "session_state" not in session.session_data:
+                        session.session_data["session_state"] = {}
+                    
                     merge_dictionaries(
                         session.session_data["session_state"], model_response_event.updated_session_state
                     )
@@ -3703,9 +3707,11 @@ class Agent:
             and self.workflow_id is None
             and session.session_data is not None
         ):
-            session.session_data["session_state"].pop("current_session_id", None)
-            session.session_data["session_state"].pop("current_user_id", None)
-            session.session_data["session_state"].pop("current_run_id", None)
+            # Ensure session_state exists before trying to access it
+            if "session_state" in session.session_data and isinstance(session.session_data["session_state"], dict):
+                session.session_data["session_state"].pop("current_session_id", None)
+                session.session_data["session_state"].pop("current_user_id", None)
+                session.session_data["session_state"].pop("current_run_id", None)
 
             # TODO: Add image/audio/video artifacts to the session correctly, from runs
             if self.images is not None:
