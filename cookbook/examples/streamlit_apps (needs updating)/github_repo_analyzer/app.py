@@ -5,7 +5,7 @@ import streamlit as st
 from agents import get_github_agent
 from agno.agent import Agent
 from agno.utils.log import logger
-from utilities import (
+from utils import (
     CUSTOM_CSS,
     about_widget,
     add_message,

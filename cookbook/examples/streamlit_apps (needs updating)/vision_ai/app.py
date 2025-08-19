@@ -11,7 +11,7 @@ from agno.models.openai import OpenAIChat
 from agno.utils.log import logger
 from dotenv import load_dotenv
 from prompt import extraction_prompt
-from utilities import about_widget, add_message, clear_chat
+from utils import about_widget, add_message, clear_chat
 
 load_dotenv()
 

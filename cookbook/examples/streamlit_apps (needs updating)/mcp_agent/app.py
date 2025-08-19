@@ -5,7 +5,7 @@ import streamlit as st
 from agents import get_mcp_agent
 from agno.utils.log import logger
 from mcp_client import MCPClient
-from utilities import (
+from utils import (
     about_widget,
     add_message,
     apply_theme,
