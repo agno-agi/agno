@@ -307,7 +307,6 @@ class AgentResponse(BaseModel):
             "stream": agent.stream,
             "stream_intermediate_steps": agent.stream_intermediate_steps,
         }
-        print(agent)
         return AgentResponse(
             id=agent.id,
             name=agent.name,
