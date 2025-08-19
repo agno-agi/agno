@@ -426,8 +426,13 @@ class RunOutput:
         response_audio = data.pop("response_audio", None)
         response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
 
+        metrics = data.pop("metrics", None)
+        if metrics:
+            metrics = Metrics(**metrics)
+
         return cls(
             messages=messages,
+            metrics=metrics,
             tools=tools,
             images=images,
             audio=audio,

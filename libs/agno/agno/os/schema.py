@@ -345,7 +345,7 @@ class TeamResponse(BaseModel):
     response_settings: Optional[Dict[str, Any]] = None
     streaming: Optional[Dict[str, Any]] = None
     members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = None
-    metadata: Optional[Dict[str, Any]] = None   
+    metadata: Optional[Dict[str, Any]] = None
 
     @classmethod
     def from_team(cls, team: Team, memory_app: Optional[MemoryApp] = None) -> "TeamResponse":
@@ -835,7 +835,7 @@ class WorkflowRunSchema(BaseModel):
             content=run_response.get("content", ""),
             content_type=run_response.get("content_type", ""),
             status=run_response.get("status", ""),
-            metrics=run_response.get("workflow_metrics", {}),
+            metrics=run_response.get("metrics", {}),
             step_results=run_response.get("step_results", []),
             step_executor_runs=run_response.get("step_executor_runs", []),
             created_at=run_response["created_at"],

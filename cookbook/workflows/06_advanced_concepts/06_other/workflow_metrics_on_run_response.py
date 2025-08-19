@@ -68,10 +68,10 @@ if __name__ == "__main__":
     )
 
     # Print workflow metrics
-    if workflow_run_response.workflow_metrics:
+    if workflow_run_response.metrics:
         print("\n" + "-" * 60)
         print("WORKFLOW METRICS")
         print("-" * 60)
-        print(json.dumps(workflow_run_response.workflow_metrics.to_dict(), indent=2))
+        print(json.dumps(workflow_run_response.metrics.to_dict(), indent=2))
     else:
         print("\nNo workflow metrics available")

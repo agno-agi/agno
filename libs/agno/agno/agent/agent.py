@@ -2220,15 +2220,17 @@ class Agent:
         if not run_response.content:
             run_response.content = get_paused_content(run_response)
 
-        # Save session to storage
-        self.save_session(session=session)
-
-        log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
-
         # Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
             run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
         )
+        
+        session.upsert_run(run=run_response)
+
+        # Save session to storage
+        self.save_session(session=session)
+
+        log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
         # We return and await confirmation/completion for the tools that require it
         return run_response
@@ -2247,7 +2249,7 @@ class Agent:
             run_response.content = get_paused_content(run_response)
 
         # We return and await confirmation/completion for the tools that require it
-        yield self._handle_event(
+        pause_event = self._handle_event(
             create_run_paused_event(
                 from_run_response=run_response,
                 tools=run_response.tools,
@@ -2255,13 +2257,15 @@ class Agent:
             run_response,
         )
 
-        # Save session to storage
-        self.save_session(session=session)
-
         # Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
             run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
         )
+        session.upsert_run(run=run_response)
+        # Save session to storage
+        self.save_session(session=session)
+
+        yield pause_event
 
         log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
@@ -3582,6 +3586,7 @@ class Agent:
         session_id: str,
         user_id: Optional[str] = None,
     ) -> AgentSession:
+        
         from time import time
 
         # Returning cached session if we have one
@@ -3594,6 +3599,7 @@ class Agent:
             log_debug(f"Reading AgentSession: {session_id}")
 
             agent_session = cast(AgentSession, self._read_session(session_id=session_id))
+            
         if agent_session is None:
             # Creating new session if none found
             log_debug(f"Creating new AgentSession: {session_id}")
