@@ -7455,6 +7455,7 @@ class Agent:
                         if citation.url  # Only include citations with valid URLs
                     )
                     if md_content:  # Only create panel if there are citations
+                        md_content = md_content.strip()
                         citations_panel = create_panel(
                             content=Markdown(md_content),
                             title="Citations",
