@@ -8,7 +8,7 @@ from agno.knowledge.reader.base import Reader
 from agno.utils.log import log_info
 
 try:
-    from google.cloud import storage
+    from google.cloud import storage  # type: ignore
 except ImportError:
     raise ImportError("`google-cloud-storage` not installed. Please install it via `pip install google-cloud-storage`.")
 

@@ -815,7 +815,7 @@ class Weaviate(VectorDb):
         search_results: List[Document] = []
         for obj in response.objects:
             properties = obj.properties
-            meta_data = json.loads(properties["meta_data"]) if properties.get("meta_data") else None
+            meta_data = json.loads(properties["meta_data"]) if properties.get("meta_data") else {}
             embedding = obj.vector["default"] if isinstance(obj.vector, dict) else obj.vector
 
             search_results.append(
@@ -835,7 +835,7 @@ class Weaviate(VectorDb):
         """Indicate that upsert functionality is available."""
         return True
 
-    def _build_filter_expression(self, filters: Optional[Dict[str, Any]]) -> Optional[Filter]:
+    def _build_filter_expression(self, filters: Optional[Dict[str, Any]]):
         """
         Build a filter expression for Weaviate queries.
 
@@ -897,4 +897,74 @@ class Weaviate(VectorDb):
             return False
         except Exception as e:
             logger.error(f"Error checking if ID '{id}' exists: {e}")
+            return False
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for documents with the given content_id.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        try:
+            weaviate_client = self.get_client()
+            collection = weaviate_client.collections.get(self.collection)
+
+            # Query for objects with the given content_id
+            query_result = collection.query.fetch_objects(  # type: ignore
+                where=Filter.by_property("content_id").equal(content_id),
+                limit=1000,  # Get all matching objects
+            )
+
+            if not query_result.objects:
+                logger.debug(f"No documents found with content_id: {content_id}")
+                return
+
+            # Update each matching object
+            updated_count = 0
+            for obj in query_result.objects:
+                # Get current properties
+                current_properties = obj.properties or {}
+
+                # Merge existing metadata with new metadata
+                updated_properties = current_properties.copy()
+
+                # Handle nested metadata updates
+                if "meta_data" in updated_properties and isinstance(updated_properties["meta_data"], dict):
+                    updated_properties["meta_data"].update(metadata)
+                else:
+                    # If no existing meta_data or it's not a dict, set it directly
+                    updated_properties["meta_data"] = metadata
+
+                if "filters" in updated_properties and isinstance(updated_properties["filters"], dict):
+                    updated_properties["filters"].update(metadata)
+                else:
+                    updated_properties["filters"] = metadata
+
+                # Update the object
+                collection.data.update(uuid=obj.uuid, properties=updated_properties)
+                updated_count += 1
+
+            logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
+
+        except Exception as e:
+            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+            raise
+
+    def _delete_by_content_hash(self, content_hash: str) -> bool:
+        """Delete documents by content hash using direct filter deletion."""
+        try:
+            collection = self.get_client().collections.get(self.collection)
+
+            # Build filter for content_hash search
+            filter_expr = Filter.by_property("content_hash").equal(content_hash)
+
+            collection.data.delete_many(where=filter_expr)
+
+            log_info(f"Deleted documents with content_hash '{content_hash}' from collection '{self.collection}'.")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error deleting documents by content_hash '{content_hash}': {e}")
             return False

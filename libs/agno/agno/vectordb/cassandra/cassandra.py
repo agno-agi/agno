@@ -95,7 +95,7 @@ class Cassandra(VectorDb):
             doc.embed(embedder=self.embedder)
             metadata = {key: str(value) for key, value in doc.meta_data.items()}
             metadata.update(filters or {})
-            metadata["content_id"] = doc.content_id
+            metadata["content_id"] = doc.content_id or ""
             metadata["content_hash"] = content_hash
             futures.append(
                 self.table.put_async(
@@ -130,7 +130,7 @@ class Cassandra(VectorDb):
         for doc in documents:
             metadata = {key: str(value) for key, value in doc.meta_data.items()}
             metadata.update(filters or {})
-            metadata["content_id"] = doc.content_id
+            metadata["content_id"] = doc.content_id or ""
             metadata["content_hash"] = content_hash
             futures.append(
                 self.table.put_async(
@@ -157,7 +157,7 @@ class Cassandra(VectorDb):
         """Upsert documents asynchronously by running in a thread."""
         if self.content_hash_exists(content_hash):
             self.delete_by_content_hash(content_hash)
-        self.async_insert(content_hash, documents, filters)
+        await self.async_insert(content_hash, documents, filters)
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """Keyword-based search on document metadata."""
@@ -399,3 +399,47 @@ class Cassandra(VectorDb):
             return True
         except Exception:
             return False
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for a document.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        try:
+            log_debug(f"Cassandra VectorDB : Updating metadata for content_id {content_id}")
+
+            # First, find all documents with the given content_id
+            query = f"SELECT row_id, metadata_s FROM {self.keyspace}.{self.table_name} ALLOW FILTERING"
+            result = self.session.execute(query)
+
+            updated_count = 0
+            for row in result:
+                row_metadata = getattr(row, "metadata_s", {})
+                if row_metadata.get("content_id") == content_id:
+                    # Merge existing metadata with new metadata
+                    updated_metadata = row_metadata.copy()
+                    # Convert new metadata values to strings (Cassandra requirement)
+                    string_metadata = {key: str(value) for key, value in metadata.items()}
+                    updated_metadata.update(string_metadata)
+
+                    # Update the document with merged metadata
+                    row_id = getattr(row, "row_id")
+                    update_query = f"""
+                        UPDATE {self.keyspace}.{self.table_name} 
+                        SET metadata_s = %s 
+                        WHERE row_id = %s
+                    """
+                    self.session.execute(update_query, (updated_metadata, row_id))
+                    updated_count += 1
+
+            if updated_count == 0:
+                log_debug(f"No documents found with content_id {content_id}")
+            else:
+                log_debug(f"Updated metadata for {updated_count} documents with content_id {content_id}")
+
+        except Exception as e:
+            log_error(f"Error updating metadata for content_id {content_id}: {e}")
+            raise

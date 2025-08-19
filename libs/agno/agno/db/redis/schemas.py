@@ -9,7 +9,6 @@ SESSION_SCHEMA = {
     "team_id": {"type": "string"},
     "workflow_id": {"type": "string"},
     "user_id": {"type": "string"},
-    "team_session_id": {"type": "string"},
     "session_data": {"type": "json"},
     "agent_data": {"type": "json"},
     "team_data": {"type": "json"},
@@ -27,7 +26,6 @@ USER_MEMORY_SCHEMA = {
     "memory": {"type": "json"},
     "agent_id": {"type": "string"},
     "team_id": {"type": "string"},
-    "workflow_id": {"type": "string"},
     "user_id": {"type": "string"},
     "topics": {"type": "json"},
     "updated_at": {"type": "integer"},
@@ -55,6 +53,7 @@ EVAL_SCHEMA = {
     "run_id": {"type": "string", "primary_key": True},
     "eval_type": {"type": "string"},
     "eval_data": {"type": "json"},
+    "eval_input": {"type": "json"},
     "name": {"type": "string"},
     "agent_id": {"type": "string"},
     "team_id": {"type": "string"},
@@ -79,6 +78,7 @@ KNOWLEDGE_SCHEMA = {
     "updated_at": {"type": "integer"},
     "status": {"type": "string"},
     "status_message": {"type": "string"},
+    "external_id": {"type": "string"},
 }
 
 
@@ -97,7 +97,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
     """
     schemas = {
         "sessions": SESSION_SCHEMA,
-        "user_memories": USER_MEMORY_SCHEMA,
+        "memories": USER_MEMORY_SCHEMA,
         "metrics": METRICS_SCHEMA,
         "evals": EVAL_SCHEMA,
         "knowledge": KNOWLEDGE_SCHEMA,

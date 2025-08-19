@@ -197,10 +197,10 @@ def get_workflow_input_schema_dict(workflow: Workflow) -> Optional[Dict[str, Any
     return None
 
 
-def _generate_schema_from_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+def _generate_schema_from_params(params: Dict[str, Any]) -> Dict[str, Any]:
     """Convert function parameters to JSON schema"""
-    properties = {}
-    required = []
+    properties: Dict[str, Any] = {}
+    required: List[str] = []
 
     for param_name, param_info in params.items():
         # Skip the default 'message' parameter for custom kwargs workflows

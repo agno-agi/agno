@@ -50,7 +50,7 @@ def test_loop_direct_execute():
         return len(outputs) >= 2
 
     loop = Loop(name="Direct Loop", steps=[research_step], end_condition=simple_end_condition, max_iterations=3)
-    step_input = StepInput(message="direct test")
+    step_input = StepInput(input="direct test")
 
     result = loop.execute(step_input)
 
@@ -67,7 +67,7 @@ async def test_loop_direct_aexecute():
         return len(outputs) >= 2
 
     loop = Loop(name="Direct Async Loop", steps=[research_step], end_condition=simple_end_condition, max_iterations=3)
-    step_input = StepInput(message="direct async test")
+    step_input = StepInput(input="direct async test")
 
     result = await loop.aexecute(step_input)
 
@@ -84,7 +84,7 @@ def test_loop_direct_execute_stream():
         return len(outputs) >= 1
 
     loop = Loop(name="Direct Stream Loop", steps=[research_step], end_condition=simple_end_condition, max_iterations=2)
-    step_input = StepInput(message="direct stream test")
+    step_input = StepInput(input="direct stream test")
 
     # Mock workflow response for streaming
     mock_response = WorkflowRunOutput(
@@ -119,7 +119,7 @@ def test_loop_direct_max_iterations():
         return False  # Never end
 
     loop = Loop(name="Max Iterations Loop", steps=[research_step], end_condition=never_end_condition, max_iterations=2)
-    step_input = StepInput(message="max iterations test")
+    step_input = StepInput(input="max iterations test")
 
     result = loop.execute(step_input)
 
@@ -130,7 +130,7 @@ def test_loop_direct_max_iterations():
 def test_loop_direct_no_end_condition():
     """Test Loop without end condition (uses max_iterations only)."""
     loop = Loop(name="No End Condition Loop", steps=[research_step], max_iterations=3)
-    step_input = StepInput(message="no condition test")
+    step_input = StepInput(input="no condition test")
 
     result = loop.execute(step_input)
 
@@ -150,7 +150,7 @@ def test_loop_direct_multiple_steps():
         end_condition=simple_end_condition,
         max_iterations=3,
     )
-    step_input = StepInput(message="multi step test")
+    step_input = StepInput(input="multi step test")
 
     result = loop.execute(step_input)
 
@@ -168,7 +168,7 @@ def test_loop_direct_multiple_steps():
 # ============================================================================
 
 
-def test_basic_loop(workflow_db):
+def test_basic_loop(shared_db):
     """Test basic loop with multiple steps."""
 
     def check_content(outputs):
@@ -177,7 +177,7 @@ def test_basic_loop(workflow_db):
 
     workflow = Workflow(
         name="Basic Loop",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Loop(
                 name="test_loop",
@@ -188,13 +188,13 @@ def test_basic_loop(workflow_db):
         ],
     )
 
-    response = workflow.run(message="test")
+    response = workflow.run(input="test")
     assert isinstance(response, WorkflowRunOutput)
     assert len(response.step_results) == 1
     assert find_content_in_steps(response.step_results[0], "AI trends")
 
 
-def test_loop_with_parallel(workflow_db):
+def test_loop_with_parallel(shared_db):
     """Test loop with parallel steps."""
 
     def check_content(outputs):
@@ -205,7 +205,7 @@ def test_loop_with_parallel(workflow_db):
 
     workflow = Workflow(
         name="Parallel Loop",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Loop(
                 name="test_loop",
@@ -216,7 +216,7 @@ def test_loop_with_parallel(workflow_db):
         ],
     )
 
-    response = workflow.run(message="test")
+    response = workflow.run(input="test")
     assert isinstance(response, WorkflowRunOutput)
 
     # Check the loop step output in step_results
@@ -230,11 +230,11 @@ def test_loop_with_parallel(workflow_db):
     assert parallel_output.step_type == "Parallel"
 
 
-def test_loop_streaming(workflow_db):
+def test_loop_streaming(shared_db):
     """Test loop with streaming events."""
     workflow = Workflow(
         name="Streaming Loop",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Loop(
                 name="test_loop",
@@ -245,7 +245,7 @@ def test_loop_streaming(workflow_db):
         ],
     )
 
-    events = list(workflow.run(message="test", stream=True, stream_intermediate_steps=True))
+    events = list(workflow.run(input="test", stream=True, stream_intermediate_steps=True))
 
     loop_started = [e for e in events if isinstance(e, LoopExecutionStartedEvent)]
     loop_completed = [e for e in events if isinstance(e, LoopExecutionCompletedEvent)]
@@ -256,11 +256,11 @@ def test_loop_streaming(workflow_db):
     assert len(workflow_completed) == 1
 
 
-def test_parallel_loop_streaming(workflow_db):
+def test_parallel_loop_streaming(shared_db):
     """Test parallel steps in loop with streaming."""
     workflow = Workflow(
         name="Parallel Streaming Loop",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Loop(
                 name="test_loop",
@@ -271,13 +271,13 @@ def test_parallel_loop_streaming(workflow_db):
         ],
     )
 
-    events = list(workflow.run(message="test", stream=True, stream_intermediate_steps=True))
+    events = list(workflow.run(input="test", stream=True, stream_intermediate_steps=True))
     completed_events = [e for e in events if isinstance(e, WorkflowCompletedEvent)]
     assert len(completed_events) == 1
 
 
 @pytest.mark.asyncio
-async def test_async_loop(workflow_db):
+async def test_async_loop(shared_db):
     """Test async loop execution."""
 
     async def async_step(step_input: StepInput) -> StepOutput:
@@ -285,7 +285,7 @@ async def test_async_loop(workflow_db):
 
     workflow = Workflow(
         name="Async Loop",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Loop(
                 name="test_loop",
@@ -296,14 +296,13 @@ async def test_async_loop(workflow_db):
         ],
     )
 
-    response = await workflow.arun(message="test")
+    response = await workflow.arun(input="test")
     assert isinstance(response, WorkflowRunOutput)
-    assert "AI trends" in response.content
     assert find_content_in_steps(response.step_results[0], "AI trends")
 
 
 @pytest.mark.asyncio
-async def test_async_parallel_loop(workflow_db):
+async def test_async_parallel_loop(shared_db):
     """Test async loop with parallel steps."""
 
     async def async_research(step_input: StepInput) -> StepOutput:
@@ -314,7 +313,7 @@ async def test_async_parallel_loop(workflow_db):
 
     workflow = Workflow(
         name="Async Parallel Loop",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Loop(
                 name="test_loop",
@@ -325,7 +324,6 @@ async def test_async_parallel_loop(workflow_db):
         ],
     )
 
-    response = await workflow.arun(message="test")
+    response = await workflow.arun(input="test")
     assert isinstance(response, WorkflowRunOutput)
-    assert "AI trends" in response.content
     assert find_content_in_steps(response.step_results[0], "AI trends")

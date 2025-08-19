@@ -47,13 +47,13 @@ class BaseAgentRunEvent(BaseRunOutputEvent):
     agent_name: str = ""
     run_id: Optional[str] = None
     session_id: Optional[str] = None
-    team_session_id: Optional[str] = None
 
     # Step context for workflow execution
     workflow_id: Optional[str] = None
     workflow_run_id: Optional[str] = None
     step_id: Optional[str] = None
     step_name: Optional[str] = None
+    step_index: Optional[int] = None
 
     # For backwards compatibility
     content: Optional[Any] = None
@@ -249,7 +249,6 @@ class RunOutput:
     agent_id: Optional[str] = None
     agent_name: Optional[str] = None
     session_id: Optional[str] = None
-    team_session_id: Optional[str] = None
     parent_run_id: Optional[str] = None
     workflow_id: Optional[str] = None
     user_id: Optional[str] = None
@@ -413,10 +412,6 @@ class RunOutput:
 
         response_audio = data.pop("response_audio", None)
         response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
-
-        # To make it backwards compatible
-        if "event" in data:
-            data.pop("event")
 
         return cls(
             messages=messages,

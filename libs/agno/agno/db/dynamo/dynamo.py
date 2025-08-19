@@ -295,7 +295,7 @@ class DynamoDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-    ) -> Union[List[Session], List[Dict[str, Any]], Tuple[List[Dict[str, Any]], int]]:
+    ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         try:
             table_name = self._get_table("sessions")
 
@@ -627,7 +627,6 @@ class DynamoDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
         topics: Optional[List[str]] = None,
         search_content: Optional[str] = None,
         limit: Optional[int] = None,
@@ -635,7 +634,7 @@ class DynamoDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-    ) -> Union[List[UserMemory], List[Dict[str, Any]], Tuple[List[Dict[str, Any]], int]]:
+    ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
         """
         Get user memories from the database as a list of UserMemory objects.
 
@@ -666,13 +665,7 @@ class DynamoDb(BaseDb):
                 filter_expression,
                 expression_attribute_names,
                 expression_attribute_values,
-            ) = build_query_filter_expression(
-                filters={
-                    "agent_id": agent_id,
-                    "team_id": team_id,
-                    "workflow_id": workflow_id,
-                }
-            )
+            ) = build_query_filter_expression(filters={"agent_id": agent_id, "team_id": team_id})
 
             # Build topic filter expression if topics provided
             if topics:

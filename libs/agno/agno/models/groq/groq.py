@@ -355,7 +355,7 @@ class Groq(Model):
                 stream=True,
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             ):
-                yield self._parse_provider_response_delta(chunk)
+                yield self._parse_provider_response_delta(chunk)  # type: ignore
 
             assistant_message.metrics.stop_timer()
 

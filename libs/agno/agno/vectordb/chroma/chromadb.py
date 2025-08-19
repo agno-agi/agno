@@ -1,6 +1,6 @@
 import asyncio
 from hashlib import md5
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional, Union, cast
 
 try:
     from chromadb import Client as ChromaDbClient
@@ -103,7 +103,7 @@ class ChromaDb(VectorDb):
 
         try:
             collection: Collection = self.client.get_collection(name=self.collection_name)
-            result = collection.get(where={"name": {"$eq": name}}, limit=1)
+            result = collection.get(where=cast(Any, {"name": {"$eq": name}}), limit=1)
             return len(result.get("ids", [])) > 0
         except Exception as e:
             logger.error(f"Error checking name existence: {e}")
@@ -374,29 +374,61 @@ class ChromaDb(VectorDb):
         # Build search results
         search_results: List[Document] = []
 
-        ids = result.get("ids", [[]])[0]
-        metadata = result.get("metadatas", [{}])[0]
-        documents = result.get("documents", [[]])[0]
-        embeddings = result.get("embeddings")[0]
-        embeddings = [e.tolist() if hasattr(e, "tolist") else e for e in embeddings]
-        distances = result.get("distances", [[]])[0]
+        ids_list = result.get("ids", [[]])
+        metadata_list = result.get("metadatas", [[{}]])
+        documents_list = result.get("documents", [[]])
+        embeddings_list = result.get("embeddings")
+        distances_list = result.get("distances", [[]])
+
+        if not ids_list or not metadata_list or not documents_list or embeddings_list is None or not distances_list:
+            return search_results
+
+        ids = ids_list[0]
+        metadata = [dict(m) if m else {} for m in metadata_list[0]]  # Convert to mutable dicts
+        documents = documents_list[0]
+        embeddings_raw = embeddings_list[0] if embeddings_list else []
+        embeddings = []
+        for e in embeddings_raw:
+            if hasattr(e, "tolist") and callable(getattr(e, "tolist", None)):
+                try:
+                    embeddings.append(list(cast(Any, e).tolist()))
+                except (AttributeError, TypeError):
+                    embeddings.append(list(e) if isinstance(e, (list, tuple)) else [])
+            elif isinstance(e, (list, tuple)):
+                embeddings.append([float(x) for x in e if isinstance(x, (int, float))])
+            elif isinstance(e, (int, float)):
+                embeddings.append([float(e)])
+            else:
+                embeddings.append([])
+        distances = distances_list[0]
 
         for idx, distance in enumerate(distances):
-            metadata[idx]["distances"] = distance
+            if idx < len(metadata):
+                metadata[idx]["distances"] = distance
 
         try:
             for idx, (id_, doc_metadata, document) in enumerate(zip(ids, metadata, documents)):
                 # Extract the fields we added to metadata
-                name = doc_metadata.pop("name", None)
-                content_id = doc_metadata.pop("content_id", None)
+                name_val = doc_metadata.pop("name", None)
+                content_id_val = doc_metadata.pop("content_id", None)
+
+                # Convert types to match Document constructor expectations
+                name = str(name_val) if name_val is not None and not isinstance(name_val, str) else name_val
+                content_id = (
+                    str(content_id_val)
+                    if content_id_val is not None and not isinstance(content_id_val, str)
+                    else content_id_val
+                )
+                content = str(document) if document is not None else ""
+                embedding = embeddings[idx] if idx < len(embeddings) else None
 
                 search_results.append(
                     Document(
                         id=id_,
                         name=name,
                         meta_data=doc_metadata,
-                        content=document,
-                        embedding=embeddings[idx],
+                        content=content,
+                        embedding=embedding,
                         content_id=content_id,
                     )
                 )
@@ -516,7 +548,7 @@ class ChromaDb(VectorDb):
             collection: Collection = self.client.get_collection(name=self.collection_name)
 
             # Find all documents with the given name
-            result = collection.get(where={"name": {"$eq": name}})
+            result = collection.get(where=cast(Any, {"name": {"$eq": name}}))
             ids_to_delete = result.get("ids", [])
 
             if not ids_to_delete:
@@ -546,7 +578,7 @@ class ChromaDb(VectorDb):
                 where_clause[key] = {"$eq": value}
 
             # Find all documents with the matching metadata
-            result = collection.get(where=where_clause)
+            result = collection.get(where=cast(Any, where_clause))
             ids_to_delete = result.get("ids", [])
 
             if not ids_to_delete:
@@ -571,7 +603,7 @@ class ChromaDb(VectorDb):
             collection: Collection = self.client.get_collection(name=self.collection_name)
 
             # Find all documents with the given content_id
-            result = collection.get(where={"content_id": {"$eq": content_id}})
+            result = collection.get(where=cast(Any, {"content_id": {"$eq": content_id}}))
             ids_to_delete = result.get("ids", [])
 
             if not ids_to_delete:
@@ -596,7 +628,7 @@ class ChromaDb(VectorDb):
             collection: Collection = self.client.get_collection(name=self.collection_name)
 
             # Find all documents with the given content_hash
-            result = collection.get(where={"content_hash": {"$eq": content_hash}})
+            result = collection.get(where=cast(Any, {"content_hash": {"$eq": content_hash}}))
             ids_to_delete = result.get("ids", [])
 
             if not ids_to_delete:
@@ -648,7 +680,7 @@ class ChromaDb(VectorDb):
 
             # Try to query for documents with the given content_hash
             try:
-                result = collection.get(where={"content_hash": {"$eq": content_hash}})
+                result = collection.get(where=cast(Any, {"content_hash": {"$eq": content_hash}}))
                 # Safely extract ids from result
                 if hasattr(result, "get") and callable(result.get):
                     found_ids = result.get("ids", [])
@@ -680,3 +712,74 @@ class ChromaDb(VectorDb):
         except Exception as e:
             logger.error(f"Error checking if content_hash '{content_hash}' exists: {e}")
             return False
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for documents with the given content_id.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        try:
+            if not self.client:
+                logger.error("Client not initialized")
+                return
+
+            collection: Collection = self.client.get_collection(name=self.collection_name)
+
+            # Find documents with the given content_id
+            try:
+                result = collection.get(where=cast(Any, {"content_id": {"$eq": content_id}}))
+
+                # Extract IDs and current metadata
+                if hasattr(result, "get") and callable(result.get):
+                    ids = result.get("ids", [])
+                    current_metadatas = result.get("metadatas", [])
+                elif hasattr(result, "__getitem__"):
+                    ids = result.get("ids", []) if "ids" in result else []
+                    current_metadatas = result.get("metadatas", []) if "metadatas" in result else []
+                else:
+                    ids = []
+                    current_metadatas = []
+
+                if not ids:
+                    logger.debug(f"No documents found with content_id: {content_id}")
+                    return
+
+                # Merge metadata for each document
+                updated_metadatas = []
+                for i, current_meta in enumerate(current_metadatas or []):
+                    if current_meta is None:
+                        meta_dict: Dict[str, Any] = {}
+                    else:
+                        meta_dict = dict(current_meta)  # Convert Mapping to dict
+                    updated_meta: Dict[str, Any] = meta_dict.copy()
+                    updated_meta.update(metadata)
+
+                    if "filters" not in updated_meta:
+                        updated_meta["filters"] = {}
+                    if isinstance(updated_meta["filters"], dict):
+                        updated_meta["filters"].update(metadata)
+                    else:
+                        updated_meta["filters"] = metadata
+                    updated_metadatas.append(updated_meta)
+
+                # Update the documents
+                # Convert to the expected type for ChromaDB
+                chroma_metadatas = cast(List[Mapping[str, Union[str, int, float, bool, None]]], updated_metadatas)
+                collection.update(ids=ids, metadatas=chroma_metadatas)
+                logger.debug(f"Updated metadata for {len(ids)} documents with content_id: {content_id}")
+
+            except TypeError as te:
+                if "object of type 'int' has no len()" in str(te):
+                    logger.warning(
+                        f"ChromaDB internal error (version 0.5.0 bug): {te}. Cannot update metadata for content_id '{content_id}'."
+                    )
+                    return
+                else:
+                    raise te
+
+        except Exception as e:
+            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+            raise

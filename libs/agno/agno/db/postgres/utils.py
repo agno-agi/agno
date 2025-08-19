@@ -138,7 +138,7 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
         if col.name not in ["id", "date", "created_at", "aggregation_period"]
     }
 
-    stmt = stmt.on_conflict_do_update(index_elements=["date", "aggregation_period"], set_=update_columns).returning(
+    stmt = stmt.on_conflict_do_update(index_elements=["date", "aggregation_period"], set_=update_columns).returning(  # type: ignore
         table
     )
     result = session.execute(stmt, metrics_records)

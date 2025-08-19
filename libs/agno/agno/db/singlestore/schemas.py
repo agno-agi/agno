@@ -37,7 +37,6 @@ USER_MEMORY_TABLE_SCHEMA = {
     "input": {"type": Text, "nullable": True},
     "agent_id": {"type": lambda: String(128), "nullable": True},
     "team_id": {"type": lambda: String(128), "nullable": True},
-    "workflow_id": {"type": lambda: String(128), "nullable": True},
     "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
     "topics": {"type": JSON, "nullable": True},
     "updated_at": {"type": BigInteger, "nullable": True, "index": True},
@@ -47,6 +46,7 @@ EVAL_TABLE_SCHEMA = {
     "run_id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
     "eval_type": {"type": lambda: String(50), "nullable": False},
     "eval_data": {"type": JSON, "nullable": False},
+    "eval_input": {"type": JSON, "nullable": False},
     "name": {"type": lambda: String(255), "nullable": True},
     "agent_id": {"type": lambda: String(128), "nullable": True},
     "team_id": {"type": lambda: String(128), "nullable": True},
@@ -71,6 +71,7 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "status_message": {"type": Text, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": True},
     "updated_at": {"type": BigInteger, "nullable": True},
+    "external_id": {"type": lambda: String(128), "nullable": True},
 }
 
 METRICS_TABLE_SCHEMA = {
@@ -104,7 +105,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "sessions": SESSION_TABLE_SCHEMA,
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
-        "user_memories": USER_MEMORY_TABLE_SCHEMA,
+        "memories": USER_MEMORY_TABLE_SCHEMA,
         "knowledge_contents": KNOWLEDGE_TABLE_SCHEMA,
     }
     schema = schemas.get(table_type, {})

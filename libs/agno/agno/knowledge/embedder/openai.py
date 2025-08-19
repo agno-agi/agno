@@ -91,7 +91,7 @@ class OpenAIEmbedder(Embedder):
         return embedding, None
 
     async def async_get_embedding(self, text: str) -> List[float]:
-        req = {
+        req: Dict[str, Any] = {
             "input": text,
             "model": self.id,
             "encoding_format": self.encoding_format,
@@ -111,7 +111,7 @@ class OpenAIEmbedder(Embedder):
             return []
 
     async def async_get_embedding_and_usage(self, text: str):
-        req = {
+        req: Dict[str, Any] = {
             "input": text,
             "model": self.id,
             "encoding_format": self.encoding_format,
@@ -144,7 +144,7 @@ class OpenAIEmbedder(Embedder):
         for i in range(0, len(texts), batch_size):
             batch_texts = texts[i : i + batch_size]
 
-            req = {
+            req: Dict[str, Any] = {
                 "input": batch_texts,
                 "model": self.id,
                 "encoding_format": self.encoding_format,
@@ -189,7 +189,7 @@ class OpenAIEmbedder(Embedder):
         for i in range(0, len(texts), batch_size):
             batch_texts = texts[i : i + batch_size]
 
-            req = {
+            req: Dict[str, Any] = {
                 "input": batch_texts,
                 "model": self.id,
                 "encoding_format": self.encoding_format,

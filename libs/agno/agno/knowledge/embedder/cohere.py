@@ -40,7 +40,7 @@ class CohereEmbedder(Embedder):
         """Lazy init for Cohere async client."""
         if self.async_client:
             return self.async_client
-        params = {}
+        params: Dict[str, Any] = {}
         if self.api_key:
             params["api_key"] = self.api_key
         if self.client_params:

@@ -17,7 +17,15 @@ def get_text_from_message(message: Optional[Union[List, Dict, str, Message, Base
         if len(message) == 0:
             return ""
 
-        if "type" in message[0]:
+        # Check if it's a list of Message objects
+        if isinstance(message[0], Message):
+            for m in message:
+                if isinstance(m, Message) and m.role == "user" and m.content is not None:
+                    # Recursively extract text from the message content
+                    content_text = get_text_from_message(m.content)
+                    if content_text:
+                        text_messages.append(content_text)
+        elif "type" in message[0]:
             for m in message:
                 m_type = m.get("type")
                 if m_type is not None and isinstance(m_type, str):

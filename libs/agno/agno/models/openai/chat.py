@@ -427,10 +427,6 @@ class OpenAIChat(Model):
             # Parse the response into an Agno ModelResponse object
             provider_response: ModelResponse = self._parse_provider_response(response, response_format=response_format)
 
-            # Add parsed data to model response
-            if provider_response.parsed is not None:
-                response.parsed = provider_response.parsed
-
             return provider_response
 
         except RateLimitError as e:
@@ -621,7 +617,6 @@ class OpenAIChat(Model):
             log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    # Override base method
     @staticmethod
     def parse_tool_calls(tool_calls_data: List[ChoiceDeltaToolCall]) -> List[Dict[str, Any]]:
         """

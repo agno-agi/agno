@@ -6,8 +6,8 @@ from agno.knowledge.embedder.base import Embedder
 from agno.utils.log import logger
 
 try:
-    from mistralai import Mistral
-    from mistralai.models.embeddingresponse import EmbeddingResponse
+    from mistralai import Mistral  # type: ignore
+    from mistralai.models.embeddingresponse import EmbeddingResponse  # type: ignore
 except ImportError:
     logger.error("`mistralai` not installed")
     raise
@@ -95,7 +95,7 @@ class MistralEmbedder(Embedder):
                 import asyncio
 
                 loop = asyncio.get_running_loop()
-                response: EmbeddingResponse = await loop.run_in_executor(
+                response: EmbeddingResponse = await loop.run_in_executor(  # type: ignore
                     None,
                     lambda: self.client.embeddings.create(
                         inputs=text, model=self.id, **self.request_params if self.request_params else {}
@@ -122,7 +122,7 @@ class MistralEmbedder(Embedder):
                 import asyncio
 
                 loop = asyncio.get_running_loop()
-                response: EmbeddingResponse = await loop.run_in_executor(
+                response: EmbeddingResponse = await loop.run_in_executor(  # type: ignore
                     None,
                     lambda: self.client.embeddings.create(
                         inputs=text, model=self.id, **self.request_params if self.request_params else {}

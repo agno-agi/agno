@@ -353,14 +353,14 @@ class ExaTools(Toolkit):
             else:
                 task_kwargs["output_infer_schema"] = True
 
-            task_result = self._execute_with_timeout(self.exa.research.create_task, **task_kwargs)
+            task_result = self._execute_with_timeout(self.exa.research.create_task, **task_kwargs)  # type: ignore
             task_id = task_result.id
 
             if self.show_results:
                 log_info(f"Research task created with ID: {task_id}")
 
             # Step 2: Poll until complete (using default polling settings)
-            task = self.exa.research.poll_task(task_id)
+            task = self.exa.research.poll_task(task_id)  # type: ignore
 
             # Step 3: Format and return results
             result: Dict[str, Any] = {"data": task.data, "citations": {}}

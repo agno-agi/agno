@@ -14,7 +14,6 @@ SESSION_TABLE_SCHEMA = {
     "team_id": {"type": String, "nullable": True},
     "workflow_id": {"type": String, "nullable": True},
     "user_id": {"type": String, "nullable": True},
-    "team_session_id": {"type": String, "nullable": True},  # TODO: remove this column
     "session_data": {"type": JSON, "nullable": True},
     "agent_data": {"type": JSON, "nullable": True},
     "team_data": {"type": JSON, "nullable": True},
@@ -38,7 +37,6 @@ USER_MEMORY_TABLE_SCHEMA = {
     "input": {"type": Text, "nullable": True},
     "agent_id": {"type": String, "nullable": True},
     "team_id": {"type": String, "nullable": True},
-    "workflow_id": {"type": String, "nullable": True},
     "user_id": {"type": String, "nullable": True, "index": True},
     "topics": {"type": JSON, "nullable": True},
     "updated_at": {"type": BigInteger, "nullable": True, "index": True},
@@ -48,6 +46,7 @@ EVAL_TABLE_SCHEMA = {
     "run_id": {"type": String, "primary_key": True, "nullable": False},
     "eval_type": {"type": String, "nullable": False},
     "eval_data": {"type": JSON, "nullable": False},
+    "eval_input": {"type": JSON, "nullable": False},
     "name": {"type": String, "nullable": True},
     "agent_id": {"type": String, "nullable": True},
     "team_id": {"type": String, "nullable": True},
@@ -72,6 +71,7 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "updated_at": {"type": BigInteger, "nullable": True},
     "status": {"type": String, "nullable": True},
     "status_message": {"type": Text, "nullable": True},
+    "external_id": {"type": String, "nullable": True},
 }
 
 METRICS_TABLE_SCHEMA = {
@@ -113,7 +113,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "sessions": SESSION_TABLE_SCHEMA,
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
-        "user_memories": USER_MEMORY_TABLE_SCHEMA,
+        "memories": USER_MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
     }
 
