@@ -144,7 +144,7 @@ async def test_csv_knowledge_async(setup_csv_files):
         chunk=False,
     )
 
-    await knowledge.async_add_content(
+    await knowledge.add_content(
         path=str(csv_dir),
         reader=reader,
     )
@@ -183,7 +183,7 @@ async def test_csv_knowledge_async_single_file():
             chunk=False,
         )
 
-        await knowledge.async_add_content(
+        await knowledge.add_content(
             path=temp_file.name,
             reader=reader,
         )

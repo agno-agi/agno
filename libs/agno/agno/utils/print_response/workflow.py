@@ -64,7 +64,9 @@ def print_response(
     from agno.utils.timer import Timer
 
     if console is None:
-        from agno.cli.console import console
+        from rich.console import Console
+
+        console = Console()
 
     # Show workflow info
     media_info = []
@@ -193,7 +195,9 @@ def print_response_stream(
 ) -> None:
     """Print workflow execution with clean streaming"""
     if console is None:
-        from agno.cli.console import console
+        from rich.console import Console
+
+        console = Console()
 
     stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
 
@@ -793,7 +797,9 @@ async def aprint_response(
     from agno.utils.timer import Timer
 
     if console is None:
-        from agno.cli.console import console
+        from rich.console import Console
+
+        console = Console()
 
     # Show workflow info
     media_info = []
@@ -944,7 +950,9 @@ async def aprint_response_stream(
 ) -> None:
     """Print workflow execution with clean streaming - orange step blocks displayed once"""
     if console is None:
-        from agno.cli.console import console
+        from rich.console import Console
+
+        console = Console()
 
     stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
 

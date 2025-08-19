@@ -65,7 +65,7 @@ async def test_csv_url_knowledge_async():
     )
 
     # Set chunk explicitly to False
-    await knowledge.async_add_contents(
+    await knowledge.add_content(
         urls=[
             "https://agno-public.s3.amazonaws.com/demo_data/IMDB-Movie-Data.csv",
             "https://agno-public.s3.amazonaws.com/csvs/employees.csv",

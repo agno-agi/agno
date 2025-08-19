@@ -97,7 +97,7 @@ def print_response_stream(
                     return
 
                 if (
-                    response_event.event == RunEvent.tool_call_started
+                    response_event.event == RunEvent.tool_call_started  # type: ignore
                     and hasattr(response_event, "tool")
                     and response_event.tool is not None
                 ):
@@ -272,7 +272,11 @@ async def aprint_response_stream(
                     live_log.update(Group(*panels))
                     break
 
-                if resp.event == RunEvent.tool_call_started and hasattr(resp, "tool") and resp.tool is not None:
+                if (
+                    resp.event == RunEvent.tool_call_started  # type: ignore
+                    and hasattr(resp, "tool")
+                    and resp.tool is not None
+                ):
                     accumulated_tool_calls.append(resp.tool)
 
                 if resp.event == RunEvent.run_content:  # type: ignore

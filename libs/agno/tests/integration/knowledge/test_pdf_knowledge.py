@@ -105,7 +105,7 @@ async def test_pdf_knowledge_async():
         vector_db=vector_db,
     )
 
-    await knowledge.async_add_content(path=str(Path(__file__).parent / "data/thai_recipes_short.pdf"))
+    await knowledge.add_content(path=str(Path(__file__).parent / "data/thai_recipes_short.pdf"))
 
     assert await vector_db.async_exists()
     assert await vector_db.async_get_count() == 146
