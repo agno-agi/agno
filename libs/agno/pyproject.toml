@@ -141,6 +141,7 @@ milvusdb = ["pymilvus>=2.5.10"]
 clickhouse = ["clickhouse-connect"]
 pinecone = ["pinecone==5.4.2"]
 surrealdb = ["surrealdb>=1.0.4"]
+meilisearch = ["meilisearch==0.34.1"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
@@ -250,7 +251,8 @@ vectordbs = [
   "agno[milvusdb]",
   "agno[clickhouse]",
   "agno[pinecone]",
-  "agno[surrealdb]"
+  "agno[surrealdb]",
+  "agno[meilisearch]"
 ]
 
 # All knowledge
@@ -320,7 +322,7 @@ no_implicit_optional = true
 warn_unused_configs = true
 disable_error_code = ["override"]
 plugins = ["pydantic.mypy"]
-exclude = ["tests*"]
+exclude = ["tests*", "build*", "*.egg-info*"]
 
 [[tool.mypy.overrides]]
 module = [
@@ -392,6 +394,7 @@ module = [
   "mcp.*",
   "memory_profiler.*",
   "mistralai.*",
+  "meilisearch.*",
   "mlx_whisper.*",
   "nest_asyncio.*",
   "newspaper.*",
