@@ -1515,10 +1515,10 @@ class Agent:
             knowledge_filters: The knowledge filters to use for the run.
             debug_mode: Whether to enable debug mode.
         """
-        if not run_response and not run_id:
+        if run_response is None and run_id is None:
             raise ValueError("Either run_response or run_id must be provided.")
 
-        if not run_response and (run_id is not None and (session_id is None and self.session_id is None)):
+        if run_response is None and (run_id is not None and (session_id is None and self.session_id is None)):
             raise ValueError("Session ID is required to continue a run from a run_id.")
 
         session_id = run_response.session_id if run_response else session_id
@@ -3690,11 +3690,11 @@ class Agent:
         # Try to load from database
         if self.db is not None:
             agent_session = cast(AgentSession, self._read_session(session_id=session_id_to_load))  # type: ignore
-            
+
             # Cache the session if caching is enabled and we found it
             if agent_session is not None and self.cache_session:
                 self._agent_session = agent_session
-            
+
             return agent_session
 
         log_warning(f"AgentSession {session_id_to_load} not found in db")

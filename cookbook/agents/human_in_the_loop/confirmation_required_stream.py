@@ -60,9 +60,9 @@ agent = Agent(
     markdown=True,
 )
 
-for run_response in agent.run("Fetch the top 2 hackernews stories", stream=True):
-    if run_response.is_paused:
-        for tool in run_response.tools_requiring_confirmation:  # type: ignore
+for run_event in agent.run("Fetch the top 2 hackernews stories", stream=True):
+    if run_event.is_paused:
+        for tool in run_event.tools_requiring_confirmation:  # type: ignore
             # Ask for confirmation
             console.print(
                 f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] requires confirmation."
@@ -78,7 +78,7 @@ for run_response in agent.run("Fetch the top 2 hackernews stories", stream=True)
             else:
                 # We update the tools in place
                 tool.confirmed = True
-        run_response = agent.continue_run(run_response=run_response, stream=True)  # type: ignore
+        run_response = agent.continue_run(run_id=run_event.run_id, updated_tools=run_event.tools, stream=True)  # type: ignore
         pprint.pprint_run_response(run_response)
 
 # Or for simple debug flow
