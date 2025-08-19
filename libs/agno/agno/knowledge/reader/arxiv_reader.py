@@ -31,7 +31,6 @@ class ArxivReader(Reader):
         sort_by: arxiv.SortCriterion = arxiv.SortCriterion.Relevance,
         **kwargs,
     ) -> None:
-
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
         # ArxivReader-specific attributes

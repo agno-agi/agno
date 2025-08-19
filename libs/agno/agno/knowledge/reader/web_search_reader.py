@@ -33,8 +33,6 @@ class WebSearchReader(Reader):
 
     search_timeout: int = 10
 
-  
-
     request_timeout: int = 30
     delay_between_requests: float = 2.0  # Increased default delay
     max_retries: int = 3
@@ -53,18 +51,16 @@ class WebSearchReader(Reader):
     _visited_urls: Set[str] = field(default_factory=set)
     _url_reader: Optional[URLReader] = None
     _last_search_time: float = field(default=0.0, init=False)
-    
+
     # Override default chunking strategy
     chunking_strategy: Optional[ChunkingStrategy] = SemanticChunking()
-
-
 
     def __post_init__(self):
         """Initialize the URL reader and chunking strategy after dataclass initialization"""
         # Call parent's __post_init__ if it exists
         super().__post_init__()
         self._url_reader = URLReader()
-        
+
     def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Web Search readers."""
         return [
@@ -74,6 +70,7 @@ class WebSearchReader(Reader):
             ChunkingStrategyType.SEMANTIC_CHUNKING,
             ChunkingStrategyType.FIXED_SIZE_CHUNKING,
         ]
+
     def _respect_rate_limits(self):
         """Ensure we don't exceed rate limits"""
         current_time = time.time()

@@ -119,6 +119,3 @@ class ChunkingStrategyFactory:
         from agno.knowledge.chunking.markdown import MarkdownChunking
 
         return MarkdownChunking(**kwargs)
-
-
-

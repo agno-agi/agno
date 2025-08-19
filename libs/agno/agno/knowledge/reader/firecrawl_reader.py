@@ -20,8 +20,6 @@ class FirecrawlReader(Reader):
     params: Optional[Dict] = None
     mode: Literal["scrape", "crawl"] = "scrape"
 
-   
-
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -33,7 +31,6 @@ class FirecrawlReader(Reader):
         name: Optional[str] = None,
         description: Optional[str] = None,
     ) -> None:
-
         # Initialise base Reader (handles chunk_size / strategy)
         super().__init__(
             chunk=chunk, chunk_size=chunk_size, chunking_strategy=chunking_strategy, name=name, description=description
@@ -43,6 +40,7 @@ class FirecrawlReader(Reader):
         self.api_key = api_key
         self.params = params
         self.mode = mode
+
     def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Firecrawl readers."""
         return [
@@ -52,6 +50,7 @@ class FirecrawlReader(Reader):
             ChunkingStrategyType.DOCUMENT_CHUNKING,
             ChunkingStrategyType.RECURSIVE_CHUNKING,
         ]
+
     def scrape(self, url: str, name: Optional[str] = None) -> List[Document]:
         """
         Scrapes a website and returns a list of documents.

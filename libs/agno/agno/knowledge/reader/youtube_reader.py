@@ -25,7 +25,7 @@ class YouTubeReader(Reader):
         """Get the list of supported chunking strategies for YouTube readers."""
         return [
             ChunkingStrategyType.RECURSIVE_CHUNKING,
-            ChunkingStrategyType.AGENTIC_CHUNKING,  
+            ChunkingStrategyType.AGENTIC_CHUNKING,
             ChunkingStrategyType.DOCUMENT_CHUNKING,
             ChunkingStrategyType.SEMANTIC_CHUNKING,
             ChunkingStrategyType.FIXED_SIZE_CHUNKING,

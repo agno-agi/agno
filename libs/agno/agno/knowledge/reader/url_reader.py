@@ -14,7 +14,9 @@ from agno.utils.log import log_debug
 class URLReader(Reader):
     """Reader for general URL content"""
 
-    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = FixedSizeChunking(), proxy: Optional[str] = None, **kwargs):
+    def __init__(
+        self, chunking_strategy: Optional[ChunkingStrategy] = FixedSizeChunking(), proxy: Optional[str] = None, **kwargs
+    ):
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
         self.proxy = proxy
 

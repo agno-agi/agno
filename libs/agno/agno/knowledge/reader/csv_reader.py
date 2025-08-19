@@ -167,7 +167,9 @@ class CSVReader(Reader):
 class CSVUrlReader(Reader):
     """Reader for CSV files"""
 
-    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = RowChunking(), proxy: Optional[str] = None, **kwargs):
+    def __init__(
+        self, chunking_strategy: Optional[ChunkingStrategy] = RowChunking(), proxy: Optional[str] = None, **kwargs
+    ):
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
         self.proxy = proxy
 

@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
 from agno.knowledge.chunking.fixed import FixedSizeChunking
-from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType, ChunkingStrategyFactory
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyFactory, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 
 
