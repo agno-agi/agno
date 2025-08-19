@@ -1,8 +1,8 @@
+import os
 import tempfile
 import uuid
 from unittest.mock import Mock
 
-import os
 import pytest
 from sqlalchemy import Engine, create_engine, text
 

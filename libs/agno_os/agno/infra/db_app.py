@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional
 
-from agno.cloud.app import InfraApp
+from agno.infra.app import InfraApp
 
 
 @dataclass

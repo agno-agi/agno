@@ -1,7 +1,7 @@
+import os
 import tempfile
 from datetime import datetime
 
-import os
 import pytest
 
 from agno.db.sqlite import SqliteDb

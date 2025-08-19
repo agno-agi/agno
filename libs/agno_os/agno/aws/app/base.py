@@ -5,8 +5,8 @@ from pydantic import Field, field_validator
 from pydantic_core.core_schema import ValidationInfo
 
 from agno.aws.context import AwsBuildContext
-from agno.cloud.app import InfraApp
-from agno.cloud.context import ContainerContext
+from agno.infra.app import InfraApp
+from agno.infra.context import ContainerContext
 from agno.utilities.logging import logger
 
 if TYPE_CHECKING:

@@ -13,7 +13,7 @@ from agno.cli.console import (
     print_info,
     print_subheading,
 )
-from agno.cloud.resources import InfraResources
+from agno.infra.resources import InfraResources
 from agno.utilities.logging import logger
 
 TEMPLATE_TO_NAME_MAP: Dict[OSStarterTemplate, str] = {

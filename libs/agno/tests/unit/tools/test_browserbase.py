@@ -1,9 +1,9 @@
 """Unit tests for BrowserbaseTools class."""
 
 import json
+import os
 from unittest.mock import MagicMock, Mock, patch
 
-import os
 import pytest
 from playwright.sync_api import Browser, BrowserContext, Page
 

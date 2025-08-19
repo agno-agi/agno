@@ -1,7 +1,7 @@
+import os
 import shutil
 from typing import List
 
-import os
 import pytest
 
 from agno.knowledge.document import Document

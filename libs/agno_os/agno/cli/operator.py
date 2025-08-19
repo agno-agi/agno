@@ -4,7 +4,7 @@ from typing import List, Optional
 from agno.cli.config import AgnoCliConfig
 from agno.cli.console import print_heading, print_info
 from agno.cli.settings import AGNO_CLI_CONFIG_DIR
-from agno.cloud.resources import InfraResources
+from agno.infra.resources import InfraResources
 from agno.utilities.logging import logger
 
 

@@ -1,8 +1,8 @@
 from typing import Any, Dict, Optional
 
 from agno.cli.console import print_info
-from agno.cloud.resource import InfraResource
 from agno.docker.api_client import DockerApiClient
+from agno.infra.resource import InfraResource
 from agno.utilities.logging import logger
 
 

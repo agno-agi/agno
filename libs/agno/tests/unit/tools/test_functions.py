@@ -251,7 +251,6 @@ def test_function_cache_file_path():
 def test_function_cache_operations(tmp_path):
     """Test caching operations (save and retrieve)."""
     import json
-
     import os
 
     func = Function(name="test_func", cache_results=True, cache_dir=str(tmp_path))
@@ -278,9 +277,8 @@ def test_function_cache_operations(tmp_path):
 
 def test_function_cache_ttl(tmp_path):
     """Test cache TTL functionality."""
-    import time
-
     import os
+    import time
 
     func = Function(
         name="test_func",

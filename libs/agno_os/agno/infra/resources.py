@@ -1,6 +1,6 @@
 from typing import Any, List, Optional, Tuple
 
-from agno.cloud.base import InfraBase
+from agno.infra.base import InfraBase
 
 
 class InfraResources(InfraBase):

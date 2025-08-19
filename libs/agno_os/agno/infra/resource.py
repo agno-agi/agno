@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from agno.cloud.base import InfraBase
+from agno.infra.base import InfraBase
 from agno.utilities.logging import logger
 
 

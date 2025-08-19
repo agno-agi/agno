@@ -1,9 +1,9 @@
 import base64
+import os
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-import os
 import pytest
 
 from agno.utils.audio import write_audio_to_file

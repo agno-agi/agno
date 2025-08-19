@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "A lightweight framework and CLI for managing Agent Operating Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
-license = { file = "LICENSE" }
+license-files = ["LICENSE"]
 authors = [
   {name = "Ashpreet Bedi", email = "ashpreet@agno.com"}
 ]

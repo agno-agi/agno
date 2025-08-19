@@ -1,7 +1,7 @@
 from typing import Dict, Optional
 
-from agno.cloud.db_app import DbApp
 from agno.docker.app.base import ContainerContext, DockerApp  # noqa: F401
+from agno.infra.db_app import DbApp
 
 
 class PostgresDb(DockerApp, DbApp):

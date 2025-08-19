@@ -1,8 +1,8 @@
 """Unit tests for E2BTools class."""
 
+import os
 from unittest.mock import Mock, patch
 
-import os
 import pytest
 
 # Mock the e2b_code_interpreter module

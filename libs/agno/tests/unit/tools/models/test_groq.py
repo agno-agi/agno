@@ -1,8 +1,8 @@
 # aac
 
+import os
 from unittest.mock import MagicMock, mock_open, patch
 
-import os
 import pytest
 
 from agno.agent import Agent

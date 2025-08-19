@@ -1,9 +1,9 @@
 """Unit tests for FirecrawlTools class."""
 
 import json
+import os
 from unittest.mock import Mock, patch
 
-import os
 import pytest
 from firecrawl import FirecrawlApp
 

@@ -2,7 +2,7 @@ from typing import Any, Optional
 
 from agno.aws.api_client import AwsApiClient
 from agno.cli.console import print_info
-from agno.cloud.resource import InfraResource
+from agno.infra.resource import InfraResource
 from agno.utilities.logging import logger
 
 

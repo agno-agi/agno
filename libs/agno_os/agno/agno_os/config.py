@@ -4,8 +4,8 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 
 from agno.agno_os.settings import OSSettings
-from agno.cloud.base import InfraBase
-from agno.cloud.resources import InfraResources
+from agno.infra.base import InfraBase
+from agno.infra.resources import InfraResources
 from agno.utilities.logging import logger
 
 # List of directories to ignore when loading the OS

@@ -1,10 +1,10 @@
 """Unit tests for VisualizationTools class."""
 
 import json
+import os
 import tempfile
 from unittest.mock import patch
 
-import os
 import pytest
 
 from agno.tools.visualization import VisualizationTools

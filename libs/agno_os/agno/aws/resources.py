@@ -5,7 +5,7 @@ from agno.aws.api_client import AwsApiClient
 from agno.aws.app.base import AwsApp
 from agno.aws.context import AwsBuildContext
 from agno.aws.resource.base import AwsResource
-from agno.cloud.resources import InfraResources
+from agno.infra.resources import InfraResources
 from agno.utilities.logging import logger
 
 
