@@ -11,11 +11,11 @@
 """
 
 import asyncio
+from os import getenv
 
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.singlestore import SingleStore
-from os import getenv
 from sqlalchemy.engine import create_engine
 
 USERNAME = getenv("SINGLESTORE_USERNAME")

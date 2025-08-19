@@ -14,12 +14,12 @@ environment variables set.
 """
 
 import sys
+from os import getenv
 
 from agno.agent import Agent
 from agno.models.azure import AzureOpenAI
 from agno.models.openai import OpenAIChat
 from agno.tools.models.azure_openai import AzureOpenAITools
-from os import getenv
 
 # Check for base requirements first - needed for all examples
 # Exit early if base requirements aren't met

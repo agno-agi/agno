@@ -1,9 +1,10 @@
+from os import getenv
+
 import nest_asyncio
 import streamlit as st
 from agents import get_github_agent
 from agno.agent import Agent
 from agno.utils.log import logger
-from os import getenv
 from utilities import (
     CUSTOM_CSS,
     about_widget,

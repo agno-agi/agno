@@ -11,8 +11,8 @@ This example shows how to use Pipedream MCP servers (in this case the Slack one)
 """
 
 import asyncio
-
 import os
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools

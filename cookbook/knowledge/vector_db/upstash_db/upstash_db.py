@@ -2,6 +2,7 @@
 # Add OPENAI_API_KEY to your environment variables for the agent response
 
 import os
+
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.upstashdb import UpstashVectorDb

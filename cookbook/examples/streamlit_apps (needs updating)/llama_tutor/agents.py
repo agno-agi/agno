@@ -5,12 +5,12 @@ Llama tutor integrates:
   - FileTools for saving the output upon user confirmation.
 """
 
+import os
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-import os
 from dotenv import load_dotenv
 
 # Load environment variables from .env file

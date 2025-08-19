@@ -42,6 +42,7 @@ Install couchbase-sdk:
 """
 
 import os
+
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge

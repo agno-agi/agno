@@ -1,6 +1,6 @@
 import datetime
-
 import os
+
 from agno.agent import Agent
 from agno.models.mistral import MistralChat
 from agno.tools.googlecalendar import GoogleCalendarTools

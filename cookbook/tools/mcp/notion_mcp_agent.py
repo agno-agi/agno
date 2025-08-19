@@ -15,9 +15,9 @@ Usage:
 
 import asyncio
 import json
+import os
 from textwrap import dedent
 
-import os
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools

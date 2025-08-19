@@ -1,3 +1,5 @@
+from os import getenv
+
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.eval.accuracy import AccuracyEval
@@ -5,7 +7,6 @@ from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team.team import Team
-from os import getenv
 
 SUPABASE_PROJECT = getenv("SUPABASE_PROJECT")
 SUPABASE_PASSWORD = getenv("SUPABASE_PASSWORD")

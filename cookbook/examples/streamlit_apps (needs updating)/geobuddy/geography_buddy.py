@@ -1,7 +1,7 @@
+import os
 from pathlib import Path
 from typing import Optional
 
-import os
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.google import Gemini

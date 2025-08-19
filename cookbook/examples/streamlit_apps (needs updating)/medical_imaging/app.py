@@ -1,4 +1,5 @@
 import os
+
 import streamlit as st
 from agno.media import Image as AgnoImage
 from medical_agent import agent

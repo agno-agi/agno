@@ -1,10 +1,10 @@
 import asyncio
+from os import getenv
 
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.wikipedia_reader import WikipediaReader
 from agno.vectordb.lightrag import LightRag
-from os import getenv
 
 vector_db = LightRag(
     api_key=getenv("LIGHTRAG_API_KEY"),

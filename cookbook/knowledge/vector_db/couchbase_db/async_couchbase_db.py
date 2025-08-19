@@ -42,9 +42,9 @@ Install couchbase-sdk:
 """
 
 import asyncio
+import os
 import time
 
-import os
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge

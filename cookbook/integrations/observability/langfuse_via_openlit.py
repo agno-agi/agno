@@ -8,8 +8,8 @@ This example shows how to use langfuse via OpenLIT to trace model calls.
 """
 
 import base64
-
 import os
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools

@@ -1,6 +1,6 @@
+import os
 from pathlib import Path
 
-import os
 import streamlit as st
 from geography_buddy import analyze_image
 from PIL import Image

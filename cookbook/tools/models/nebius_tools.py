@@ -3,10 +3,10 @@
 This example demonstrates how to use NebiusTools for text-to-image generation with Nebius AI Studio.
 """
 
+import os
 from pathlib import Path
 from uuid import uuid4
 
-import os
 from agno.agent import Agent
 from agno.tools.models.nebius import NebiusTools
 from agno.utils.media import save_base64_data

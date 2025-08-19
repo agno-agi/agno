@@ -14,9 +14,9 @@ Stripe MCP Docs: https://github.com/stripe/agent-toolkit
 """
 
 import asyncio
+import os
 from textwrap import dedent
 
-import os
 from agno.agent import Agent
 from agno.tools.mcp import MCPTools
 from agno.utils.log import log_error, log_exception, log_info

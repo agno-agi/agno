@@ -1,7 +1,7 @@
+import os
 import time
 from pathlib import Path
 
-import os
 import streamlit as st
 from agents import chat_followup_agent, image_processing_agent
 from agno.media import Image

@@ -13,10 +13,10 @@ Prerequisites:
 """
 
 import asyncio
+import os
 from textwrap import dedent
 from typing import List, Optional
 
-import os
 from agno.agent import Agent
 from agno.models.openai.chat import OpenAIChat
 from agno.team import Team

@@ -2,10 +2,10 @@ import base64
 import json
 import time
 from datetime import datetime
+from os import getenv
 
 import streamlit as st
 from agents import DeepResearcherAgent
-from os import getenv
 
 st.set_page_config(
     page_title="Deep Research Agent",

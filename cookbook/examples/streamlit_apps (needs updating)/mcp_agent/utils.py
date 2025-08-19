@@ -1,7 +1,7 @@
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import os
 import streamlit as st
 from agents import get_mcp_agent
 from agno.agent import Agent

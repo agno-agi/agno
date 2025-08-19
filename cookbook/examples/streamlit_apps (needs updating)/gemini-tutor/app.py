@@ -3,6 +3,7 @@ Gemini Tutor: Advanced Educational AI Assistant with Multimodal Learning
 """
 
 import os
+
 import nest_asyncio
 import streamlit as st
 from agents import TutorAppAgent

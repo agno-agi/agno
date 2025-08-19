@@ -1,5 +1,7 @@
 """Example showing how to use AgentOS with Neon as database"""
 
+from os import getenv
+
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.eval.accuracy import AccuracyEval
@@ -7,7 +9,6 @@ from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team.team import Team
-from os import getenv
 
 NEON_DB_URL = getenv("NEON_DB_URL")
 

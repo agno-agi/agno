@@ -7,9 +7,10 @@ To run this example:
 - Run `pip install openai agno` to install dependencies.
 """
 
+from os import getenv
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from os import getenv
 
 # Using these Mistral model and url as an example.
 model_id = "mistral-medium-2505"
