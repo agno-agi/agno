@@ -22,7 +22,7 @@ knowledge = Knowledge(
 
 knowledge.add_content_sync(
     name="CV",
-    path="cookbook_v2/knowledge/data/filters/cv_1.pdf",
+    path="cookbook/knowledge/data/filters/cv_1.pdf",
     metadata={"user_tag": "Engineering Candidates"},
 )
 

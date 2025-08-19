@@ -19,7 +19,7 @@ knowledge = Knowledge(
 
 knowledge.add_content(
     name="Recipes",
-    path="cookbook_v2/knowledge/data/filters/cv_4.pdf",
+    path="cookbook/knowledge/data/filters/cv_4.pdf",
     metadata={"doc_type": "recipe_book"},
 )
 
