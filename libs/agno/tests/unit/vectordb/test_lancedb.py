@@ -1,7 +1,7 @@
 import shutil
 from typing import List
 
-import agno_os
+import os
 import pytest
 
 from agno.knowledge.document import Document
@@ -15,10 +15,10 @@ TEST_PATH = "tmp/test_lancedb"
 @pytest.fixture
 def lance_db(mock_embedder):
     """Fixture to create and clean up a LanceDb instance"""
-    agno_os.makedirs(TEST_PATH, exist_ok=True)
-    if agno_os.path.exists(TEST_PATH):
+    os.makedirs(TEST_PATH, exist_ok=True)
+    if os.path.exists(TEST_PATH):
         shutil.rmtree(TEST_PATH)
-        agno_os.makedirs(TEST_PATH)
+        os.makedirs(TEST_PATH)
 
     db = LanceDb(uri=TEST_PATH, table_name=TEST_TABLE, embedder=mock_embedder)
     db.create()
@@ -29,7 +29,7 @@ def lance_db(mock_embedder):
     except Exception:
         pass
 
-    if agno_os.path.exists(TEST_PATH):
+    if os.path.exists(TEST_PATH):
         shutil.rmtree(TEST_PATH)
 
 
@@ -328,5 +328,5 @@ def test_bad_vectors_handling(mock_embedder):
         assert db.get_count() == 1
     finally:
         db.drop()
-        if agno_os.path.exists(TEST_PATH):
+        if os.path.exists(TEST_PATH):
             shutil.rmtree(TEST_PATH)

@@ -3,7 +3,7 @@
 import base64
 from pathlib import Path
 
-import agno_os
+import os
 import pytest
 
 from agno.media import Audio, File, Image
@@ -23,7 +23,7 @@ def dummy_audio_bytes() -> bytes:
     # Create simple dummy WAV-like bytes (not a real WAV header)
     return (
         b"RIFF\x00\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x44\xac\x00\x00\x88X\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00"
-        + agno_os.urandom(100)
+        + os.urandom(100)
     )
 
 
@@ -62,7 +62,7 @@ def dummy_image_bytes() -> bytes:
     # Create simple dummy PNG-like bytes (not a real PNG)
     return (
         b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
-        + agno_os.urandom(20)
+        + os.urandom(20)
     )
 
 

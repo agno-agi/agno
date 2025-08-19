@@ -3,7 +3,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-import agno_os
+import os
 import pytest
 
 from agno.utils.audio import write_audio_to_file
@@ -23,14 +23,14 @@ def test_write_audio_to_file_basic():
         write_audio_to_file(base64_audio, filename)
 
         # Verify the file was created and contains the correct data
-        assert agno_os.path.exists(filename)
+        assert os.path.exists(filename)
         with open(filename, "rb") as f:
             written_data = f.read()
         assert written_data == test_audio_data
     finally:
         # Cleanup
-        if agno_os.path.exists(filename):
-            agno_os.unlink(filename)
+        if os.path.exists(filename):
+            os.unlink(filename)
 
 
 def test_write_audio_to_file_with_directory_creation():
@@ -41,15 +41,15 @@ def test_write_audio_to_file_with_directory_creation():
 
     # Create a temporary directory path that doesn't exist
     with tempfile.TemporaryDirectory() as temp_dir:
-        subdir = agno_os.path.join(temp_dir, "audio", "subdir")
-        filename = agno_os.path.join(subdir, "test_audio.wav")
+        subdir = os.path.join(temp_dir, "audio", "subdir")
+        filename = os.path.join(subdir, "test_audio.wav")
 
         # Call the function
         write_audio_to_file(base64_audio, filename)
 
         # Verify the directory was created and file was written
-        assert agno_os.path.exists(subdir)
-        assert agno_os.path.exists(filename)
+        assert os.path.exists(subdir)
+        assert os.path.exists(filename)
         with open(filename, "rb") as f:
             written_data = f.read()
         assert written_data == test_audio_data
@@ -62,13 +62,13 @@ def test_write_audio_to_file_existing_directory():
     base64_audio = base64.b64encode(test_audio_data).decode("utf-8")
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        filename = agno_os.path.join(temp_dir, "test_audio.wav")
+        filename = os.path.join(temp_dir, "test_audio.wav")
 
         # Call the function
         write_audio_to_file(base64_audio, filename)
 
         # Verify the file was created and contains the correct data
-        assert agno_os.path.exists(filename)
+        assert os.path.exists(filename)
         with open(filename, "rb") as f:
             written_data = f.read()
         assert written_data == test_audio_data
@@ -88,14 +88,14 @@ def test_write_audio_to_file_empty_audio():
         write_audio_to_file(base64_audio, filename)
 
         # Verify the file was created and is empty
-        assert agno_os.path.exists(filename)
+        assert os.path.exists(filename)
         with open(filename, "rb") as f:
             written_data = f.read()
         assert written_data == b""
     finally:
         # Cleanup
-        if agno_os.path.exists(filename):
-            agno_os.unlink(filename)
+        if os.path.exists(filename):
+            os.unlink(filename)
 
 
 def test_write_audio_to_file_large_audio():
@@ -112,15 +112,15 @@ def test_write_audio_to_file_large_audio():
         write_audio_to_file(base64_audio, filename)
 
         # Verify the file was created and contains the correct data
-        assert agno_os.path.exists(filename)
+        assert os.path.exists(filename)
         with open(filename, "rb") as f:
             written_data = f.read()
         assert written_data == test_audio_data
         assert len(written_data) == 1024 * 1024
     finally:
         # Cleanup
-        if agno_os.path.exists(filename):
-            agno_os.unlink(filename)
+        if os.path.exists(filename):
+            os.unlink(filename)
 
 
 def test_write_audio_to_file_special_characters_in_filename():
@@ -131,13 +131,13 @@ def test_write_audio_to_file_special_characters_in_filename():
 
     with tempfile.TemporaryDirectory() as temp_dir:
         # Create filename with special characters
-        filename = agno_os.path.join(temp_dir, "test-audio_123.wav")
+        filename = os.path.join(temp_dir, "test-audio_123.wav")
 
         # Call the function
         write_audio_to_file(base64_audio, filename)
 
         # Verify the file was created and contains the correct data
-        assert agno_os.path.exists(filename)
+        assert os.path.exists(filename)
         with open(filename, "rb") as f:
             written_data = f.read()
         assert written_data == test_audio_data
@@ -151,13 +151,13 @@ def test_write_audio_to_file_unicode_filename():
 
     with tempfile.TemporaryDirectory() as temp_dir:
         # Create filename with unicode characters
-        filename = agno_os.path.join(temp_dir, "test_audio_🎵.wav")
+        filename = os.path.join(temp_dir, "test_audio_🎵.wav")
 
         # Call the function
         write_audio_to_file(base64_audio, filename)
 
         # Verify the file was created and contains the correct data
-        assert agno_os.path.exists(filename)
+        assert os.path.exists(filename)
         with open(filename, "rb") as f:
             written_data = f.read()
         assert written_data == test_audio_data
@@ -181,8 +181,8 @@ def test_write_audio_to_file_logging(mock_log_info):
         mock_log_info.assert_called_once_with(f"Audio file saved to {filename}")
     finally:
         # Cleanup
-        if agno_os.path.exists(filename):
-            agno_os.unlink(filename)
+        if os.path.exists(filename):
+            os.unlink(filename)
 
 
 def test_write_audio_to_file_overwrite_existing():
@@ -201,15 +201,15 @@ def test_write_audio_to_file_overwrite_existing():
         write_audio_to_file(base64_audio, filename)
 
         # Verify the file was overwritten with new content
-        assert agno_os.path.exists(filename)
+        assert os.path.exists(filename)
         with open(filename, "rb") as f:
             written_data = f.read()
         assert written_data == test_audio_data
         assert written_data != b"old content"
     finally:
         # Cleanup
-        if agno_os.path.exists(filename):
-            agno_os.unlink(filename)
+        if os.path.exists(filename):
+            os.unlink(filename)
 
 
 def test_write_audio_to_file_pathlib_path():
@@ -245,14 +245,14 @@ def test_write_audio_to_file_relative_path():
         write_audio_to_file(base64_audio, filename)
 
         # Verify the file was created and contains the correct data
-        assert agno_os.path.exists(filename)
+        assert os.path.exists(filename)
         with open(filename, "rb") as f:
             written_data = f.read()
         assert written_data == test_audio_data
     finally:
         # Cleanup
-        if agno_os.path.exists(filename):
-            agno_os.unlink(filename)
+        if os.path.exists(filename):
+            os.unlink(filename)
 
 
 def test_write_audio_to_file_invalid_base64():
@@ -269,8 +269,8 @@ def test_write_audio_to_file_invalid_base64():
             write_audio_to_file(invalid_base64, filename)
     finally:
         # Cleanup
-        if agno_os.path.exists(filename):
-            agno_os.unlink(filename)
+        if os.path.exists(filename):
+            os.unlink(filename)
 
 
 def test_write_audio_to_file_none_audio():
@@ -284,8 +284,8 @@ def test_write_audio_to_file_none_audio():
             write_audio_to_file(None, filename)
     finally:
         # Cleanup
-        if agno_os.path.exists(filename):
-            agno_os.unlink(filename)
+        if os.path.exists(filename):
+            os.unlink(filename)
 
 
 def test_write_audio_to_file_empty_string_audio():
@@ -302,11 +302,11 @@ def test_write_audio_to_file_empty_string_audio():
         write_audio_to_file(base64_audio, filename)
 
         # Verify the file was created and is empty
-        assert agno_os.path.exists(filename)
+        assert os.path.exists(filename)
         with open(filename, "rb") as f:
             written_data = f.read()
         assert written_data == b""
     finally:
         # Cleanup
-        if agno_os.path.exists(filename):
-            agno_os.unlink(filename)
+        if os.path.exists(filename):
+            os.unlink(filename)

@@ -2,7 +2,7 @@ import tempfile
 from pathlib import Path
 from typing import Generator
 
-import agno_os
+import os
 import pytest
 
 from agno.db.sqlite import SqliteStorage
@@ -15,7 +15,7 @@ def temp_db_path() -> Generator[Path, None, None]:
         db_path = Path(f.name)
     yield db_path
     if db_path.exists():
-        agno_os.unlink(db_path)
+        os.unlink(db_path)
 
 
 @pytest.fixture

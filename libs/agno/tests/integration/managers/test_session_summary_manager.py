@@ -2,7 +2,7 @@ import tempfile
 from datetime import datetime
 from unittest.mock import Mock, patch
 
-import agno_os
+import os
 import pytest
 
 from agno.db.sqlite import SqliteDb
@@ -21,8 +21,8 @@ def temp_db_file():
     yield db_path
 
     # Clean up the temporary file after the test
-    if agno_os.path.exists(db_path):
-        agno_os.unlink(db_path)
+    if os.path.exists(db_path):
+        os.unlink(db_path)
 
 
 @pytest.fixture

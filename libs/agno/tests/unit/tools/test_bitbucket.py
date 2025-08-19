@@ -1,7 +1,7 @@
 import json
 from unittest.mock import MagicMock, patch
 
-import agno_os
+import os
 import pytest
 import requests
 
@@ -15,7 +15,7 @@ class TestBitbucketTools:
     def mock_env_vars(self):
         """Mock environment variables for testing."""
         with patch.dict(
-            agno_os.environ,
+            os.environ,
             {
                 "BITBUCKET_USERNAME": "test_user",
                 "BITBUCKET_PASSWORD": "test_password",
@@ -31,7 +31,7 @@ class TestBitbucketTools:
     @pytest.fixture
     def bitbucket_tools_with_token(self, mock_env_vars):
         """Create BitbucketTools instance with token for testing."""
-        with patch.dict(agno_os.environ, {"BITBUCKET_TOKEN": "test_token"}):
+        with patch.dict(os.environ, {"BITBUCKET_TOKEN": "test_token"}):
             return BitbucketTools(workspace="test_workspace", repo_slug="test_repo")
 
     def test_init_with_required_params(self, mock_env_vars):
@@ -76,7 +76,7 @@ class TestBitbucketTools:
 
     def test_init_missing_credentials(self):
         """Test initialization fails without credentials."""
-        with patch.dict(agno_os.environ, {}, clear=True):  # Clear all environment variables
+        with patch.dict(os.environ, {}, clear=True):  # Clear all environment variables
             with pytest.raises(ValueError, match="Username and password or token are required"):
                 BitbucketTools(workspace="test_workspace", repo_slug="test_repo")
 
@@ -398,7 +398,7 @@ class TestBitbucketTools:
     def test_env_var_fallbacks(self):
         """Test environment variable fallbacks work correctly."""
         with patch.dict(
-            agno_os.environ,
+            os.environ,
             {"BITBUCKET_USERNAME": "env_user", "BITBUCKET_PASSWORD": "env_password", "BITBUCKET_TOKEN": "env_token"},
         ):
             tools = BitbucketTools(workspace="test_workspace", repo_slug="test_repo")

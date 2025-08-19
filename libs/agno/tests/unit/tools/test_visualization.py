@@ -4,7 +4,7 @@ import json
 import tempfile
 from unittest.mock import patch
 
-import agno_os
+import os
 import pytest
 
 from agno.tools.visualization import VisualizationTools
@@ -62,12 +62,12 @@ def test_initialization_with_all_charts(viz_tools):
 
 def test_output_directory_creation(temp_output_dir):
     """Test that output directory is created if it doesn't exist."""
-    non_existent_dir = agno_os.path.join(temp_output_dir, "charts")
-    assert not agno_os.path.exists(non_existent_dir)
+    non_existent_dir = os.path.join(temp_output_dir, "charts")
+    assert not os.path.exists(non_existent_dir)
 
     VisualizationTools(output_dir=non_existent_dir)
 
-    assert agno_os.path.exists(non_existent_dir)
+    assert os.path.exists(non_existent_dir)
 
 
 @patch("matplotlib.pyplot.savefig")

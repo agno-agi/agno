@@ -2,7 +2,7 @@
 
 from unittest.mock import Mock, patch
 
-import agno_os
+import os
 import pytest
 
 # Mock the e2b_code_interpreter module
@@ -14,7 +14,7 @@ with patch.dict("sys.modules", {"e2b_code_interpreter": Mock()}):
     # Now import the module that uses e2b_code_interpreter
     from agno.tools.e2b import E2BTools
 
-TEST_API_KEY = agno_os.environ.get("E2B_API_KEY", "test_api_key")
+TEST_API_KEY = os.environ.get("E2B_API_KEY", "test_api_key")
 
 
 @pytest.fixture
