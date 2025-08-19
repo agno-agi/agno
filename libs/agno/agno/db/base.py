@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from datetime import date
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, Union
+from uuid import uuid4
 
 from agno.db.schemas import UserMemory
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
@@ -18,6 +19,7 @@ class SessionType(str, Enum):
 class BaseDb(ABC):
     def __init__(
         self,
+        id: Optional[str] = None,
         session_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
@@ -29,6 +31,7 @@ class BaseDb(ABC):
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
+        self.id = id or str(uuid4())
 
     # --- Sessions ---
     @abstractmethod

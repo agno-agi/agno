@@ -31,6 +31,7 @@ except ImportError:
 class FirestoreDb(BaseDb):
     def __init__(
         self,
+        id: Optional[str] = None,
         db_client: Optional[Client] = None,
         project_id: Optional[str] = None,
         session_collection: Optional[str] = None,
@@ -43,6 +44,7 @@ class FirestoreDb(BaseDb):
         Interface for interacting with a Firestore database.
 
         Args:
+            id (Optional[str]): The ID of the database.
             db_client (Optional[Client]): The Firestore client to use.
             project_id (Optional[str]): The GCP project ID for Firestore.
             session_collection (Optional[str]): Name of the collection to store sessions.
@@ -55,6 +57,7 @@ class FirestoreDb(BaseDb):
             ValueError: If neither project_id nor db_client is provided.
         """
         super().__init__(
+            id=id,
             session_table=session_collection,
             memory_table=memory_collection,
             metrics_table=metrics_collection,

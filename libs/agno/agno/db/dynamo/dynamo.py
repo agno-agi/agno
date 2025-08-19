@@ -46,6 +46,7 @@ DYNAMO_BATCH_SIZE_LIMIT = 25
 class DynamoDb(BaseDb):
     def __init__(
         self,
+        id: Optional[str] = None,
         db_client=None,
         region_name: Optional[str] = None,
         aws_access_key_id: Optional[str] = None,
@@ -60,6 +61,7 @@ class DynamoDb(BaseDb):
         Interface for interacting with a DynamoDB database.
 
         Args:
+            id: The ID of the database.
             db_client: The DynamoDB client to use.
             region_name: AWS region name.
             aws_access_key_id: AWS access key ID.
@@ -71,6 +73,7 @@ class DynamoDb(BaseDb):
             knowledge_table: The name of the knowledge table.
         """
         super().__init__(
+            id=id,
             session_table=session_table,
             memory_table=memory_table,
             metrics_table=metrics_table,

@@ -24,6 +24,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 class JsonDb(BaseDb):
     def __init__(
         self,
+        id: Optional[str] = None,
         db_path: Optional[str] = None,
         session_table: Optional[str] = None,
         memory_table: Optional[str] = None,
@@ -35,6 +36,7 @@ class JsonDb(BaseDb):
         Interface for interacting with JSON files as database.
 
         Args:
+            id (Optional[str]): The ID of the database.
             db_path (Optional[str]): Path to the directory where JSON files will be stored.
             session_table (Optional[str]): Name of the JSON file to store sessions (without .json extension).
             memory_table (Optional[str]): Name of the JSON file to store memories.
@@ -43,6 +45,7 @@ class JsonDb(BaseDb):
             knowledge_table (Optional[str]): Name of the JSON file to store knowledge content.
         """
         super().__init__(
+            id=id,
             session_table=session_table,
             memory_table=memory_table,
             metrics_table=metrics_table,

@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Union
+from enum import Enum
+from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -7,7 +8,6 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.models.message import Message
-from agno.os.apps.memory import MemoryApp
 from agno.os.utils import (
     format_team_tools,
     format_tools,
@@ -22,6 +22,26 @@ from agno.team.team import Team
 from agno.workflow.workflow import Workflow
 
 
+class ChatConfig(BaseModel):
+    """Configuration for the Chat page of the AgentOS"""
+
+    quick_prompts: dict[str, list[str]]
+
+
+class DatabaseConfig(BaseModel):
+    """Configuration for the databases of the AgentOS"""
+
+    id: str
+    display_names: Optional[dict[str, str]] = None
+
+
+class AgentOSConfig(BaseModel):
+    """General configuration for an AgentOS instance"""
+
+    dbs: Optional[List[DatabaseConfig]] = None
+    chat: Optional[ChatConfig] = None
+
+
 class InterfaceResponse(BaseModel):
     type: str
     version: str
@@ -33,14 +53,6 @@ class ManagerResponse(BaseModel):
     name: str
     version: str
     route: str
-
-
-class AppsResponse(BaseModel):
-    session: Optional[List[ManagerResponse]] = None
-    knowledge: Optional[List[ManagerResponse]] = None
-    memory: Optional[List[ManagerResponse]] = None
-    eval: Optional[List[ManagerResponse]] = None
-    metrics: Optional[List[ManagerResponse]] = None
 
 
 class AgentSummaryResponse(BaseModel):
@@ -77,8 +89,8 @@ class ConfigResponse(BaseModel):
     os_id: str
     name: Optional[str] = None
     description: Optional[str] = None
+    databases: List[DatabaseConfig]
     interfaces: List[InterfaceResponse]
-    apps: AppsResponse
     agents: List[AgentSummaryResponse]
     teams: List[TeamSummaryResponse]
     workflows: List[WorkflowSummaryResponse]
@@ -112,7 +124,7 @@ class AgentResponse(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
 
     @classmethod
-    def from_agent(cls, agent: Agent, memory_app: Optional[MemoryApp] = None) -> "AgentResponse":
+    def from_agent(cls, agent: Agent) -> "AgentResponse":
         def filter_meaningful_config(d: Dict[str, Any], defaults: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             """Filter out fields that match their default values, keeping only meaningful user configurations"""
             filtered = {}
@@ -223,10 +235,7 @@ class AgentResponse(BaseModel):
 
         memory_info: Optional[Dict[str, Any]] = None
         if agent.memory_manager is not None:
-            memory_app_name = memory_app.display_name if memory_app else "Memory"
             memory_info = {
-                "app_name": memory_app_name,
-                "app_url": memory_app.router_prefix if memory_app else None,
                 "enable_agentic_memory": agent.enable_agentic_memory,
                 "enable_user_memories": agent.enable_user_memories,
                 "metadata": agent.metadata,
@@ -325,7 +334,7 @@ class AgentResponse(BaseModel):
             extra_messages=filter_meaningful_config(extra_messages_info, agent_defaults),
             response_settings=filter_meaningful_config(response_settings_info, agent_defaults),
             streaming=filter_meaningful_config(streaming_info, agent_defaults),
-            metadata=agent.metadata
+            metadata=agent.metadata,
         )
 
 
@@ -345,9 +354,10 @@ class TeamResponse(BaseModel):
     response_settings: Optional[Dict[str, Any]] = None
     streaming: Optional[Dict[str, Any]] = None
     members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = None
+    metadata: Optional[Dict[str, Any]] = None
 
     @classmethod
-    def from_team(cls, team: Team, memory_app: Optional[MemoryApp] = None) -> "TeamResponse":
+    def from_team(cls, team: Team) -> "TeamResponse":
         def filter_meaningful_config(d: Dict[str, Any], defaults: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             """Filter out fields that match their default values, keeping only meaningful user configurations"""
             filtered = {}
@@ -450,10 +460,7 @@ class TeamResponse(BaseModel):
 
         memory_info: Optional[Dict[str, Any]] = None
         if team.memory_manager is not None:
-            memory_app_name = memory_app.display_name if memory_app else "Memory"
             memory_info = {
-                "app_name": memory_app_name,
-                "app_url": memory_app.router_prefix if memory_app else None,
                 "enable_agentic_memory": team.enable_agentic_memory,
                 "enable_user_memories": team.enable_user_memories,
                 "metadata": team.metadata,
@@ -543,9 +550,9 @@ class TeamResponse(BaseModel):
             response_settings=filter_meaningful_config(response_settings_info, team_defaults),
             streaming=filter_meaningful_config(streaming_info, team_defaults),
             members=[  # type: ignore
-                AgentResponse.from_agent(member, memory_app)
+                AgentResponse.from_agent(member)
                 if isinstance(member, Agent)
-                else TeamResponse.from_team(member, memory_app)
+                else TeamResponse.from_team(member)
                 if isinstance(member, Team)
                 else None
                 for member in team.members
@@ -839,3 +846,25 @@ class WorkflowRunSchema(BaseModel):
             step_executor_runs=run_response.get("step_executor_runs", []),
             created_at=run_response["created_at"],
         )
+
+
+T = TypeVar("T")
+
+
+class SortOrder(str, Enum):
+    ASC = "asc"
+    DESC = "desc"
+
+
+class PaginationInfo(BaseModel):
+    page: Optional[int] = 0
+    limit: Optional[int] = 20
+    total_pages: Optional[int] = 0
+    total_count: Optional[int] = 0
+
+
+class PaginatedResponse(BaseModel, Generic[T]):
+    """Wrapper to add pagination info to classes used as response models"""
+
+    data: List[T]
+    meta: PaginationInfo

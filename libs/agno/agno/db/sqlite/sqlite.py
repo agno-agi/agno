@@ -35,6 +35,7 @@ except ImportError:
 class SqliteDb(BaseDb):
     def __init__(
         self,
+        id: Optional[str] = None,
         db_engine: Optional[Engine] = None,
         db_url: Optional[str] = None,
         db_file: Optional[str] = None,
@@ -67,6 +68,7 @@ class SqliteDb(BaseDb):
             ValueError: If none of the tables are provided.
         """
         super().__init__(
+            id=id,
             session_table=session_table,
             memory_table=memory_table,
             metrics_table=metrics_table,

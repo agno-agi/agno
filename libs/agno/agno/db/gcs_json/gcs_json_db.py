@@ -26,6 +26,7 @@ except ImportError:
 class GcsJsonDb(BaseDb):
     def __init__(
         self,
+        id: Optional[str] = None,
         bucket_name: str,
         prefix: Optional[str] = None,
         session_table: Optional[str] = None,
@@ -40,6 +41,7 @@ class GcsJsonDb(BaseDb):
         Interface for interacting with JSON files stored in Google Cloud Storage as database.
 
         Args:
+            id (Optional[str]): The ID of the database.
             bucket_name (str): Name of the GCS bucket where JSON files will be stored.
             prefix (Optional[str]): Path prefix for organizing files in the bucket. Defaults to "agno/".
             session_table (Optional[str]): Name of the JSON file to store sessions (without .json extension).
@@ -52,6 +54,7 @@ class GcsJsonDb(BaseDb):
             credentials (Optional[Any]): GCP credentials. If None, uses default credentials.
         """
         super().__init__(
+            id=id,
             session_table=session_table,
             memory_table=memory_table,
             metrics_table=metrics_table,

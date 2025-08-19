@@ -4,15 +4,51 @@ from uuid import uuid4
 from fastapi import HTTPException, UploadFile
 
 from agno.agent.agent import Agent
+from agno.db.base import BaseDb
+from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.os.apps.base import BaseApp
-from agno.os.apps.memory import MemoryApp
 from agno.team.team import Team
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
+
+
+def get_db(dbs: dict[str, BaseDb], db_id: Optional[str] = None) -> BaseDb:
+    """Return the database with the given ID, or the first database if no ID is provided."""
+
+    # Raise if multiple databases are provided but no db_id is provided
+    if not db_id and len(dbs) > 1:
+        raise HTTPException(
+            status_code=400, detail="The db_id query parameter is required when using multiple databases"
+        )
+
+    # Get and return the database with the given ID, or raise if not found
+    if db_id:
+        db = dbs.get(db_id)
+        if not db:
+            raise HTTPException(status_code=400, detail=f"Database with id '{db_id}' not found")
+    else:
+        db = next(iter(dbs.values()))
+    return db
+
+
+def get_knowledge_instance_by_db_id(knowledge_instances: List[Knowledge], db_id: Optional[str] = None) -> Knowledge:
+    """Return the knowledge instance with the given ID, or the first knowledge instance if no ID is provided."""
+    if not db_id and len(knowledge_instances) == 1:
+        return next(iter(knowledge_instances))
+
+    if not db_id:
+        raise HTTPException(
+            status_code=400, detail="The db_id query parameter is required when using multiple databases"
+        )
+
+    for knowledge in knowledge_instances:
+        if knowledge.contents_db and knowledge.contents_db.id == db_id:
+            return knowledge
+
+    raise HTTPException(status_code=400, detail=f"Knowledge instance with id '{db_id}' not found")
 
 
 def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> str:
@@ -159,21 +195,6 @@ def get_workflow_by_id(workflow_id: str, workflows: Optional[List[Workflow]] = N
     for workflow in workflows:
         if workflow.id == workflow_id:
             return workflow
-    return None
-
-
-def get_component_memory_app(
-    component: Union[Agent, Team], os_apps: Optional[List[BaseApp]] = None
-) -> Optional[MemoryApp]:
-    """Given an Agent or Team and a list of OS apps, return the memory app used by the component"""
-    if not os_apps or not component.enable_user_memories:
-        return None
-
-    # Find the memory app that has the same database as the component
-    for os_app in os_apps:
-        if isinstance(os_app, MemoryApp) and os_app.db == component.db:
-            return os_app
-
     return None
 
 

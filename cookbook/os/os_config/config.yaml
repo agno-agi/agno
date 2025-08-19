@@ -1,0 +1,16 @@
+dbs:
+  - id: basic-db
+    display_names:
+      session: Session
+      memory: Memory
+      eval: Eval
+      metrics: Metrics
+      knowledge: Knowledge
+chat:
+  quick_prompts:
+    basic-agent:
+      - "What can you do?"
+    basic-team:
+      - "Which members are in the team?"
+    basic-workflow:
+      - "What are the steps in the workflow?"

@@ -36,6 +36,7 @@ except ImportError:
 class SingleStoreDb(BaseDb):
     def __init__(
         self,
+        id: Optional[str] = None,
         db_engine: Optional[Engine] = None,
         db_schema: Optional[str] = None,
         db_url: Optional[str] = None,
@@ -54,6 +55,7 @@ class SingleStoreDb(BaseDb):
             3. Raise an error if neither is provided
 
         Args:
+            id (Optional[str]): The ID of the database.
             db_engine (Optional[Engine]): The SQLAlchemy database engine to use.
             db_schema (Optional[str]): The database schema to use.
             db_url (Optional[str]): The database URL to connect to.
@@ -68,6 +70,7 @@ class SingleStoreDb(BaseDb):
             ValueError: If none of the tables are provided.
         """
         super().__init__(
+            id=id,
             session_table=session_table,
             memory_table=memory_table,
             metrics_table=metrics_table,

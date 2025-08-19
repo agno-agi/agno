@@ -33,6 +33,7 @@ except ImportError:
 class RedisDb(BaseDb):
     def __init__(
         self,
+        id: Optional[str] = None,
         redis_client: Optional[Redis] = None,
         db_url: Optional[str] = None,
         db_prefix: str = "agno",
@@ -52,6 +53,7 @@ class RedisDb(BaseDb):
             3. Raise an error if neither is provided
 
         Args:
+            id (Optional[str]): The ID of the database.
             redis_client (Optional[Redis]): Redis client instance to use. If not provided a new client will be created.
             db_url (Optional[str]): Redis connection URL (e.g., "redis://localhost:6379/0" or "rediss://user:pass@host:port/db")
             db_prefix (str): Prefix for all Redis keys
@@ -66,6 +68,7 @@ class RedisDb(BaseDb):
             ValueError: If neither redis_client nor db_url is provided.
         """
         super().__init__(
+            id=id,
             session_table=session_table,
             memory_table=memory_table,
             metrics_table=metrics_table,

@@ -1,14 +1,16 @@
 import json
+import logging
 import math
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Path, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Path, Query, UploadFile
 
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.base import Reader
-from agno.os.apps.knowledge.schemas import (
+from agno.os.auth import get_authentication_dependency
+from agno.os.routers.knowledge.schemas import (
     ConfigResponseSchema,
     ContentResponseSchema,
     ContentStatus,
@@ -16,11 +18,22 @@ from agno.os.apps.knowledge.schemas import (
     ContentUpdateSchema,
     ReaderSchema,
 )
-from agno.os.apps.utils import PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.schema import PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.settings import AgnoAPISettings
+from agno.os.utils import get_knowledge_instance_by_db_id
 from agno.utils.log import log_debug, log_info
 
+logger = logging.getLogger(__name__)
 
-def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
+
+def get_knowledge_router(
+    knowledge_instances: List[Knowledge], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs
+) -> APIRouter:
+    router = APIRouter(dependencies=[Depends(get_authentication_dependency(settings))])
+    return attach_routes(router=router, knowledge_instances=knowledge_instances)
+
+
+def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> APIRouter:
     @router.post("/content", response_model=ContentResponseSchema, status_code=202)
     async def upload_content(
         background_tasks: BackgroundTasks,
@@ -31,7 +44,9 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         file: Optional[UploadFile] = File(None),
         text_content: Optional[str] = Form(None),
         reader_id: Optional[str] = Form(None),
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ):
+        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
         content_id = str(uuid4())
         log_info(f"Adding content: {name}, {description}, {url}, {metadata} with ID: {content_id}")
 
@@ -118,7 +133,10 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         description: Optional[str] = Form(None, description="Content description"),
         metadata: Optional[str] = Form(None, description="Content metadata as JSON string"),
         reader_id: Optional[str] = Form(None, description="ID of the reader to use for processing"),
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> Optional[ContentResponseSchema]:
+        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
+
         # Parse metadata JSON string if provided
         parsed_metadata = None
         if metadata and metadata.strip():
@@ -160,7 +178,9 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         page: Optional[int] = Query(default=1, description="Page number"),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> PaginatedResponse[ContentResponseSchema]:
+        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
         contents, count = knowledge.get_content(limit=limit, page=page, sort_by=sort_by, sort_order=sort_order)
 
         return PaginatedResponse(
@@ -190,9 +210,12 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         )
 
     @router.get("/content/{content_id}", response_model=ContentResponseSchema, status_code=200)
-    def get_content_by_id(content_id: str) -> ContentResponseSchema:
+    def get_content_by_id(
+        content_id: str,
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ) -> ContentResponseSchema:
         log_info(f"Getting content by id: {content_id}")
-
+        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
         content = knowledge.get_content_by_id(content_id=content_id)
         if not content:
             raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
@@ -219,7 +242,11 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         status_code=200,
         response_model_exclude_none=True,
     )
-    def delete_content_by_id(content_id: str) -> ContentResponseSchema:
+    def delete_content_by_id(
+        content_id: str,
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ) -> ContentResponseSchema:
+        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
         knowledge.remove_content_by_id(content_id=content_id)
         log_info(f"Deleting content by id: {content_id}")
 
@@ -228,14 +255,21 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         )
 
     @router.delete("/content", status_code=200)
-    def delete_all_content():
+    def delete_all_content(
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ):
+        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
         log_info("Deleting all content")
         knowledge.remove_all_content()
         return "success"
 
     @router.get("/content/{content_id}/status", status_code=200, response_model=ContentStatusResponse)
-    def get_content_status(content_id: str) -> ContentStatusResponse:
+    def get_content_status(
+        content_id: str,
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ) -> ContentStatusResponse:
         log_info(f"Getting content status: {content_id}")
+        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
         knowledge_status, status_message = knowledge.get_content_status(content_id=content_id)
 
         # Handle the case where content is not found
@@ -268,7 +302,10 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         return ContentStatusResponse(status=status, status_message=status_message or "")
 
     @router.get("/config", status_code=200)
-    def get_config() -> ConfigResponseSchema:
+    def get_config(
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ) -> ConfigResponseSchema:
+        knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
         readers_dict: Dict[str, Reader] = knowledge.get_readers() or {}
         return ConfigResponseSchema(
             readers=[ReaderSchema(id=k, name=v.name, description=v.description) for k, v in readers_dict.items()],

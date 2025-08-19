@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Dict, List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
@@ -11,20 +11,16 @@ from starlette.requests import Request
 
 from agno.agent.agent import Agent
 from agno.cli.console import console
-from agno.os.apps import (
-    EvalApp,
-    KnowledgeApp,
-    MemoryApp,
-    MetricsApp,
-    SessionApp,
-)
-from agno.os.apps.base import BaseApp
 from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router
+from agno.os.routers.evals import get_eval_router
+from agno.os.routers.memory import get_memory_router
+from agno.os.routers.metrics import get_metrics_router
+from agno.os.routers.session import get_session_router
+from agno.os.schema import AgentOSConfig
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import generate_id
 from agno.team.team import Team
-from agno.utils.log import log_debug, log_warning
 from agno.workflow.workflow import Workflow
 
 
@@ -39,12 +35,18 @@ class AgentOS:
         teams: Optional[List[Team]] = None,
         workflows: Optional[List[Workflow]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
-        apps: Optional[List[BaseApp]] = None,
+        config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
         fastapi_app: Optional[FastAPI] = None,
     ):
         if not agents and not workflows and not teams:
             raise ValueError("Either agents, teams or workflows must be provided.")
+
+        if config:
+            if isinstance(config, str):
+                self.config = self._load_yaml_config(config)
+            else:
+                self.config = config
 
         self.agents: Optional[List[Agent]] = agents
         self.workflows: Optional[List[Workflow]] = workflows
@@ -54,13 +56,11 @@ class AgentOS:
         self.fastapi_app: Optional[FastAPI] = fastapi_app
 
         self.interfaces = interfaces or []
-        self.apps = apps or []
 
         self.os_id: Optional[str] = os_id
         self.description = description
 
         self.interfaces_loaded: List[Tuple[str, str]] = []
-        self.apps_loaded: List[Tuple[str, str]] = []
 
         self.set_os_id()
 
@@ -92,80 +92,55 @@ class AgentOS:
                 if not workflow.id:
                     workflow.id = generate_id(workflow.name)
 
-    def _auto_discover_apps(self) -> List[BaseApp]:
-        """Auto-discover apps from agents, teams, and workflows."""
-        discovered_apps: List[BaseApp] = []
+    def _load_yaml_config(self, config_file_path: str) -> AgentOSConfig:
+        """Load a YAML config file and return the configuration as an AgentOSConfig instance."""
+        from pathlib import Path
 
-        seen_components: Dict[str, set] = {
-            "session": set(),
-            "knowledge": set(),
-            "memory": set(),
-            "metrics": set(),
-            "eval": set(),
-        }
+        import yaml
 
-        # Helper function to add unique components
-        def _add_unique_component(component_type: str, component_id: str):
-            if component_id not in seen_components[component_type]:
-                seen_components[component_type].add(component_id)
-                return True
-            return False
+        # Validate that the path points to a YAML file
+        path = Path(config_file_path)
+        if path.suffix.lower() not in [".yaml", ".yml"]:
+            raise ValueError(f"Config file must have a .yaml or .yml extension, got: {config_file_path}")
 
-        def _auto_discover_entity_apps(entity: Union[Agent, Team]) -> List[BaseApp]:
-            if entity.db:
-                # Memory app
-                if _add_unique_component("memory", f"{entity.db.memory_table_name}"):
-                    discovered_apps.append(MemoryApp(db=entity.db, display_name=entity.db.memory_table_name))
+        # Load the YAML file
+        with open(config_file_path, "r") as f:
+            return AgentOSConfig.model_validate(yaml.safe_load(f))
 
-                # Session app
-                if entity.db.session_table_name:
-                    if _add_unique_component("session", f"{entity.db.session_table_name}"):
-                        discovered_apps.append(SessionApp(db=entity.db, display_name=entity.db.session_table_name))
+    def _auto_discover_databases(self) -> None:
+        """Auto-discover the databases used by all contextual agents, teams and workflows."""
+        dbs = {}
 
-                # Metrics app
-                if entity.db.metrics_table_name:
-                    if _add_unique_component("metrics", f"{entity.db.metrics_table_name}"):
-                        discovered_apps.append(MetricsApp(db=entity.db, display_name=entity.db.metrics_table_name))
+        for agent in self.agents or []:
+            if agent.db:
+                dbs[agent.db.id] = agent.db
 
-                # Eval app
-                if entity.db.eval_table_name:
-                    if _add_unique_component("eval", f"{entity.db.eval_table_name}"):
-                        discovered_apps.append(EvalApp(db=entity.db, display_name=entity.db.eval_table_name))
+        for team in self.teams or []:
+            if team.db:
+                dbs[team.db.id] = team.db
 
-            # Knowledge app
-            if entity.knowledge:
-                if not entity.knowledge.contents_db:
-                    log_warning("Knowledge contents_db is required to use knowledge inside AgentOS.")
-                    return []
+        for workflow in self.workflows or []:
+            if workflow.db:
+                dbs[workflow.db.id] = workflow.db
 
-                db = entity.knowledge.contents_db
-                if _add_unique_component("knowledge", f"{db.knowledge_table_name}") and entity.knowledge:
-                    discovered_apps.append(
-                        KnowledgeApp(knowledge=entity.knowledge, display_name=db.knowledge_table_name)
-                    )
+        self.dbs = dbs
 
-            return discovered_apps
+    def _setup_routers(self) -> None:
+        """Add all routers to the FastAPI app."""
+        if not self.dbs or not self.fastapi_app:
+            return
 
-        # Process agents
-        if self.agents:
-            for agent in self.agents:
-                _auto_discover_entity_apps(agent)
+        routers = [
+            get_session_router(dbs=self.dbs),
+            get_memory_router(dbs=self.dbs),
+            get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
+            get_metrics_router(dbs=self.dbs),
+            # TODO
+            # get_knowledge_router(knowledge_instances=self.knowledge_instances),
+        ]
 
-        # Process teams
-        if self.teams:
-            for team in self.teams:
-                _auto_discover_entity_apps(team)
-                for member in team.members:
-                    _auto_discover_entity_apps(member)
-
-        # Process workflows
-        # TODO: Implement workflow app discovery
-
-        # Log discovered apps
-        if discovered_apps:
-            log_debug(f"Apps added to AgentOS: {[app.display_name for app in discovered_apps]}")
-
-        return discovered_apps
+        for router in routers:
+            self.fastapi_app.include_router(router)
 
     def set_os_id(self) -> str:
         # If os_id is already set, keep it instead of overriding with UUID
@@ -211,27 +186,8 @@ class AgentOS:
             self.fastapi_app.include_router(interface_router)
             self.interfaces_loaded.append((interface.type, interface.router_prefix))
 
-        # Auto-discover apps if none are provided
-        if not self.apps:
-            self.apps = self._auto_discover_apps()
-
-        app_index_map: Dict[str, int] = {}
-        for app in self.apps:
-            app_index_map[app.type] = app_index_map.get(app.type, 0) + 1
-
-            # Passing contextual agents and teams to the eval app, so it can use them to run evals.
-            if app.type == "eval":
-                app_router = app.get_router(
-                    index=app_index_map[app.type],
-                    agents=self.agents,
-                    teams=self.teams,
-                    settings=self.settings,
-                )
-            else:
-                app_router = app.get_router(index=app_index_map[app.type], settings=self.settings)
-
-            self.fastapi_app.include_router(app_router)
-            self.apps_loaded.append((app.type, app.router_prefix))
+        self._auto_discover_databases()
+        self._setup_routers()
 
         self.fastapi_app.add_middleware(
             CORSMiddleware,

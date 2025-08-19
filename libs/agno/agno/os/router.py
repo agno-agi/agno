@@ -20,19 +20,19 @@ from agno.agent.agent import Agent
 from agno.db.base import SessionType
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
-from agno.os.apps.utils import PaginatedResponse, PaginationInfo, SortOrder
 from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     AgentResponse,
     AgentSessionDetailSchema,
     AgentSummaryResponse,
-    AppsResponse,
     ConfigResponse,
     InterfaceResponse,
-    ManagerResponse,
     Model,
+    PaginatedResponse,
+    PaginationInfo,
     RunSchema,
     SessionSchema,
+    SortOrder,
     TeamResponse,
     TeamRunSchema,
     TeamSessionDetailSchema,
@@ -62,9 +62,6 @@ from agno.workflow.workflow import Workflow
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
-
-
-from agno.os.utils import get_component_memory_app
 
 
 class WebSocketManager:
@@ -304,73 +301,14 @@ def get_base_router(
         response_model_exclude_none=True,
     )
     async def config() -> ConfigResponse:
-        apps_response = AppsResponse(
-            session=[
-                ManagerResponse(
-                    type=app.type,
-                    name=app.display_name or "Sessions app",
-                    version=app.version,
-                    route=app.router_prefix,
-                )
-                for app in os.apps
-                if app.type == "session"
-            ],
-            knowledge=[
-                ManagerResponse(
-                    type=app.type,
-                    name=app.display_name or "Knowledge app",
-                    version=app.version,
-                    route=app.router_prefix,
-                )
-                for app in os.apps
-                if app.type == "knowledge"
-            ],
-            memory=[
-                ManagerResponse(
-                    type=app.type,
-                    name=app.display_name or "Memory app",
-                    version=app.version,
-                    route=app.router_prefix,
-                )
-                for app in os.apps
-                if app.type == "memory"
-            ],
-            eval=[
-                ManagerResponse(
-                    type=app.type,
-                    name=app.display_name or "Evals app",
-                    version=app.version,
-                    route=app.router_prefix,
-                )
-                for app in os.apps
-                if app.type == "eval"
-            ],
-            metrics=[
-                ManagerResponse(
-                    type=app.type,
-                    name=app.display_name or "Metrics app",
-                    version=app.version,
-                    route=app.router_prefix,
-                )
-                for app in os.apps
-                if app.type == "metrics"
-            ],
-        )
-
-        apps_response.session = apps_response.session or None
-        apps_response.knowledge = apps_response.knowledge or None
-        apps_response.memory = apps_response.memory or None
-        apps_response.eval = apps_response.eval or None
-        apps_response.metrics = apps_response.metrics or None
-
         return ConfigResponse(
             os_id=os.os_id or "Unnamed OS",
             description=os.description,
+            databases=os.config.dbs or [],
             interfaces=[
                 InterfaceResponse(type=interface.type, version=interface.version, route=interface.router_prefix)
                 for interface in os.interfaces
             ],
-            apps=apps_response,
             agents=[AgentSummaryResponse.from_agent(agent) for agent in os.agents] if os.agents else [],
             teams=[TeamSummaryResponse.from_team(team) for team in os.teams] if os.teams else [],
             workflows=[WorkflowSummaryResponse.from_workflow(w) for w in os.workflows] if os.workflows else [],
@@ -590,8 +528,7 @@ def get_base_router(
 
         agents = []
         for agent in os.agents:
-            agent_memory_app = get_component_memory_app(component=agent, os_apps=os.apps)
-            agents.append(AgentResponse.from_agent(agent=agent, memory_app=agent_memory_app))
+            agents.append(AgentResponse.from_agent(agent=agent))
 
         return agents
 
@@ -839,8 +776,7 @@ def get_base_router(
 
         teams = []
         for team in os.teams:
-            team_memory_app = get_component_memory_app(component=team, os_apps=os.apps)
-            teams.append(TeamResponse.from_team(team=team, memory_app=team_memory_app))
+            teams.append(TeamResponse.from_team(team=team))
 
         return teams
 
