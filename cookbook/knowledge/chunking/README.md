@@ -86,6 +86,15 @@ chunking_strategy = FixedSizeChunking(
 
 **How it works**: Attempts to split on natural boundaries (paragraphs, sentences) before falling back to character limits.
 
+```python
+from agno.knowledge.chunking.recursive import RecursiveChunking
+from agno.knowledge.reader.pdf_reader import PDFUrlReader
+
+reader = PDFUrlReader(
+    chunking_strategy=RecursiveChunking(),
+)
+```
+
 **Best practices**:
 - Ideal for structured documents (reports, documentation)
 - Preserves document hierarchy and formatting
@@ -93,6 +102,15 @@ chunking_strategy = FixedSizeChunking(
 ### 5. Document Chunking (`document_chunking.py`)
 
 **How it works**: Treats each document as a single chunk, maintaining full context and document-level metadata.
+
+```python
+from agno.knowledge.chunking.document import DocumentChunking
+from agno.knowledge.reader.pdf_reader import PDFUrlReader
+
+reader = PDFUrlReader(
+    chunking_strategy=DocumentChunking(),
+)
+```
 
 **Best practices**:
 - Use for short documents (< 2000 tokens)
@@ -102,6 +120,15 @@ chunking_strategy = FixedSizeChunking(
 ### 6. CSV Row Chunking (`csv_row_chunking.py`)
 
 **How it works**: Each CSV row becomes a separate chunk with preserved column structure.
+
+```python
+from agno.knowledge.chunking.row import RowChunking
+from agno.knowledge.reader.csv_reader import CSVReader
+
+reader = CSVReader(
+    chunking_strategy=RowChunking(),
+)
+```
 
 **Best practices**:
 - Perfect for product catalogs, customer data, inventory
