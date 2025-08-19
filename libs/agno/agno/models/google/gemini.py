@@ -115,19 +115,10 @@ class Gemini(Model):
         Returns:
             GeminiClient: The GeminiClient client.
         """
-        client_params: Dict[str, Any] = {}
-        vertexai = self.vertexai or getenv("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
-
-        # URL context is not supported in Vertex AI, so disable Vertex AI if URL context is enabled
-        if self.url_context and vertexai:
-            log_warning("URL context is not supported in Vertex AI. Switching to direct Gemini API.")
-            vertexai = False
-            # Clear cached client if it was created with Vertex AI
-            if self.client:
-                self.client = None
-
         if self.client:
             return self.client
+        client_params: Dict[str, Any] = {}
+        vertexai = self.vertexai or getenv("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
 
         if not vertexai:
             self.api_key = self.api_key or getenv("GOOGLE_API_KEY")
