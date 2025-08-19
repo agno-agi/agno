@@ -88,7 +88,9 @@ def parse_agent_sessions(v1_content: List[Dict[str, Any]]) -> List[AgentSession]
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
         }
-        sessions_v2.append(AgentSession.from_dict(session))
+        agent_session = AgentSession.from_dict(session)
+        if agent_session is not None:
+            sessions_v2.append(agent_session)
 
     return sessions_v2
 
@@ -109,7 +111,9 @@ def parse_team_sessions(v1_content: List[Dict[str, Any]]) -> List[TeamSession]:
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
         }
-        sessions_v2.append(TeamSession.from_dict(session))
+        team_session = TeamSession.from_dict(session)
+        if team_session is not None:
+            sessions_v2.append(team_session)
 
     return sessions_v2
 
@@ -132,7 +136,9 @@ def parse_workflow_sessions(v1_content: List[Dict[str, Any]]) -> List[WorkflowSe
             "workflow_name": item.get("workflow_name"),
             "runs": item.get("runs"),
         }
-        sessions_v2.append(WorkflowSession.from_dict(session))
+        workflow_session = WorkflowSession.from_dict(session)
+        if workflow_session is not None:
+            sessions_v2.append(workflow_session)
 
     return sessions_v2
 

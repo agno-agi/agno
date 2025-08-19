@@ -168,7 +168,7 @@ def test_loop_direct_multiple_steps():
 # ============================================================================
 
 
-def test_basic_loop(workflow_db):
+def test_basic_loop(shared_db):
     """Test basic loop with multiple steps."""
 
     def check_content(outputs):
@@ -177,7 +177,7 @@ def test_basic_loop(workflow_db):
 
     workflow = Workflow(
         name="Basic Loop",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Loop(
                 name="test_loop",
@@ -194,7 +194,7 @@ def test_basic_loop(workflow_db):
     assert find_content_in_steps(response.step_results[0], "AI trends")
 
 
-def test_loop_with_parallel(workflow_db):
+def test_loop_with_parallel(shared_db):
     """Test loop with parallel steps."""
 
     def check_content(outputs):
@@ -205,7 +205,7 @@ def test_loop_with_parallel(workflow_db):
 
     workflow = Workflow(
         name="Parallel Loop",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Loop(
                 name="test_loop",
@@ -230,11 +230,11 @@ def test_loop_with_parallel(workflow_db):
     assert parallel_output.step_type == "Parallel"
 
 
-def test_loop_streaming(workflow_db):
+def test_loop_streaming(shared_db):
     """Test loop with streaming events."""
     workflow = Workflow(
         name="Streaming Loop",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Loop(
                 name="test_loop",
@@ -256,11 +256,11 @@ def test_loop_streaming(workflow_db):
     assert len(workflow_completed) == 1
 
 
-def test_parallel_loop_streaming(workflow_db):
+def test_parallel_loop_streaming(shared_db):
     """Test parallel steps in loop with streaming."""
     workflow = Workflow(
         name="Parallel Streaming Loop",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Loop(
                 name="test_loop",
@@ -277,7 +277,7 @@ def test_parallel_loop_streaming(workflow_db):
 
 
 @pytest.mark.asyncio
-async def test_async_loop(workflow_db):
+async def test_async_loop(shared_db):
     """Test async loop execution."""
 
     async def async_step(step_input: StepInput) -> StepOutput:
@@ -285,7 +285,7 @@ async def test_async_loop(workflow_db):
 
     workflow = Workflow(
         name="Async Loop",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Loop(
                 name="test_loop",
@@ -302,7 +302,7 @@ async def test_async_loop(workflow_db):
 
 
 @pytest.mark.asyncio
-async def test_async_parallel_loop(workflow_db):
+async def test_async_parallel_loop(shared_db):
     """Test async loop with parallel steps."""
 
     async def async_research(step_input: StepInput) -> StepOutput:
@@ -313,7 +313,7 @@ async def test_async_parallel_loop(workflow_db):
 
     workflow = Workflow(
         name="Async Parallel Loop",
-        db=workflow_db,
+        db=shared_db,
         steps=[
             Loop(
                 name="test_loop",

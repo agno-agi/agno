@@ -44,8 +44,6 @@ def test_basic_stream():
     for response in responses:
         assert response.content is not None
 
-    _assert_metrics(agent.run_response)
-
 
 @pytest.mark.asyncio
 async def test_async_basic():
@@ -63,16 +61,13 @@ async def test_async_basic():
 async def test_async_basic_stream():
     agent = Agent(model=Cohere(id="command-light"), markdown=True, telemetry=False)
 
-    response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
-
-    async for response in response_stream:
+    async for response in agent.arun("Share a 2 sentence horror story", stream=True):
         assert response.content is not None
-
-    _assert_metrics(agent.run_response)
 
 
 def test_with_memory():
     agent = Agent(
+        db=SqliteDb(db_file="tmp/test_with_memory.db"),
         model=Cohere(id="command-r-08-2024"),
         add_history_to_context=True,
         num_history_runs=5,
@@ -86,7 +81,9 @@ def test_with_memory():
 
     # Second interaction should remember the name
     response2 = agent.run("What's my name and surname?")
-    assert "John" in response2.content and "Smith" in response2.content
+    assert response2.content is not None
+    assert "John" in response2.content
+    assert "Smith" in response2.content
 
     # Verify memories were created
     messages = agent.get_messages_for_session()
@@ -147,11 +144,15 @@ def test_history():
         add_history_to_context=True,
         telemetry=False,
     )
-    agent.run("Hello")
-    assert len(agent.run_response.messages) == 2
-    agent.run("Hello 2")
-    assert len(agent.run_response.messages) == 4
-    agent.run("Hello 3")
-    assert len(agent.run_response.messages) == 6
-    agent.run("Hello 4")
-    assert len(agent.run_response.messages) == 8
+    run_output = agent.run("Hello")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 2
+    run_output = agent.run("Hello 2")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 4
+    run_output = agent.run("Hello 3")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 6
+    run_output = agent.run("Hello 4")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 8

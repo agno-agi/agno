@@ -1,5 +1,5 @@
 import os
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from agno.knowledge.reader.base import Reader
 
@@ -15,7 +15,7 @@ class ReaderFactory:
         """Get PDF reader instance."""
         from agno.knowledge.reader.pdf_reader import PDFReader
 
-        config = {"chunk": True, "chunk_size": 100}
+        config: Dict[str, Any] = {"chunk": True, "chunk_size": 100}
         config.update(kwargs)
         return PDFReader(**config)
 
@@ -24,7 +24,7 @@ class ReaderFactory:
         """Get CSV reader instance."""
         from agno.knowledge.reader.csv_reader import CSVReader
 
-        config = {"name": "CSV Reader", "description": "Reads CSV files"}
+        config: Dict[str, Any] = {"name": "CSV Reader", "description": "Reads CSV files"}
         config.update(kwargs)
         return CSVReader(**config)
 
@@ -33,7 +33,7 @@ class ReaderFactory:
         """Get Docx reader instance."""
         from agno.knowledge.reader.docx_reader import DocxReader
 
-        config = {"name": "Docx Reader", "description": "Reads Docx files"}
+        config: Dict[str, Any] = {"name": "Docx Reader", "description": "Reads Docx files"}
         config.update(kwargs)
         return DocxReader(**config)
 
@@ -42,7 +42,7 @@ class ReaderFactory:
         """Get JSON reader instance."""
         from agno.knowledge.reader.json_reader import JSONReader
 
-        config = {"name": "JSON Reader", "description": "Reads JSON files"}
+        config: Dict[str, Any] = {"name": "JSON Reader", "description": "Reads JSON files"}
         config.update(kwargs)
         return JSONReader(**config)
 
@@ -51,7 +51,7 @@ class ReaderFactory:
         """Get Markdown reader instance."""
         from agno.knowledge.reader.markdown_reader import MarkdownReader
 
-        config = {"name": "Markdown Reader", "description": "Reads Markdown files"}
+        config: Dict[str, Any] = {"name": "Markdown Reader", "description": "Reads Markdown files"}
         config.update(kwargs)
         return MarkdownReader(**config)
 
@@ -60,7 +60,7 @@ class ReaderFactory:
         """Get Text reader instance."""
         from agno.knowledge.reader.text_reader import TextReader
 
-        config = {"name": "Text Reader", "description": "Reads Text files"}
+        config: Dict[str, Any] = {"name": "Text Reader", "description": "Reads Text files"}
         config.update(kwargs)
         return TextReader(**config)
 
@@ -69,7 +69,7 @@ class ReaderFactory:
         """Get URL reader instance."""
         from agno.knowledge.reader.url_reader import URLReader
 
-        config = {"name": "URL Reader", "description": "Reads URLs"}
+        config: Dict[str, Any] = {"name": "URL Reader", "description": "Reads URLs"}
         config.update(kwargs)
         return URLReader(**config)
 
@@ -78,7 +78,7 @@ class ReaderFactory:
         """Get Website reader instance."""
         from agno.knowledge.reader.website_reader import WebsiteReader
 
-        config = {"name": "Website Reader", "description": "Reads Website files"}
+        config: Dict[str, Any] = {"name": "Website Reader", "description": "Reads Website files"}
         config.update(kwargs)
         return WebsiteReader(**config)
 
@@ -87,7 +87,7 @@ class ReaderFactory:
         """Get Firecrawl reader instance."""
         from agno.knowledge.reader.firecrawl_reader import FirecrawlReader
 
-        config = {
+        config: Dict[str, Any] = {
             "api_key": kwargs.get("api_key") or os.getenv("FIRECRAWL_API_KEY"),
             "mode": "crawl",
             "name": "Firecrawl Reader",
@@ -101,7 +101,7 @@ class ReaderFactory:
         """Get YouTube reader instance."""
         from agno.knowledge.reader.youtube_reader import YouTubeReader
 
-        config = {"name": "YouTube Reader", "description": "Reads YouTube videos"}
+        config: Dict[str, Any] = {"name": "YouTube Reader", "description": "Reads YouTube videos"}
         config.update(kwargs)
         return YouTubeReader(**config)
 
@@ -110,7 +110,7 @@ class ReaderFactory:
         """Get PDF URL reader instance."""
         from agno.knowledge.reader.pdf_reader import PDFUrlReader
 
-        config = {"name": "PDF URL Reader", "description": "Reads PDF URLs"}
+        config: Dict[str, Any] = {"name": "PDF URL Reader", "description": "Reads PDF URLs"}
         config.update(kwargs)
         return PDFUrlReader(**config)
 
@@ -119,7 +119,7 @@ class ReaderFactory:
         """Get CSV URL reader instance."""
         from agno.knowledge.reader.csv_reader import CSVUrlReader
 
-        config = {"name": "CSV URL Reader", "description": "Reads CSV URLs"}
+        config: Dict[str, Any] = {"name": "CSV URL Reader", "description": "Reads CSV URLs"}
         config.update(kwargs)
         return CSVUrlReader(**config)
 
@@ -128,7 +128,7 @@ class ReaderFactory:
         """Get S3 reader instance."""
         from agno.knowledge.reader.s3_reader import S3Reader
 
-        config = {"name": "S3 Reader", "description": "Reads S3 files"}
+        config: Dict[str, Any] = {"name": "S3 Reader", "description": "Reads S3 files"}
         config.update(kwargs)
         return S3Reader(**config)
 
@@ -137,7 +137,7 @@ class ReaderFactory:
         """Get GCS reader instance."""
         from agno.knowledge.reader.gcs_reader import GCSReader
 
-        config = {"name": "GCS Reader", "description": "Reads GCS files"}
+        config: Dict[str, Any] = {"name": "GCS Reader", "description": "Reads GCS files"}
         config.update(kwargs)
         return GCSReader(**config)
 

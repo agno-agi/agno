@@ -1,8 +1,6 @@
 from pathlib import Path
 from typing import Any, Optional
 
-from pydantic import Field
-
 from agno.infra.aws.base import AwsResource
 from agno.infra.aws.s3.api_client import AwsApiClient
 from agno.utils.log import logger
@@ -19,8 +17,6 @@ class S3Object(AwsResource):
 
     # The Object’s bucket_name identifier. This must be set.
     bucket_name: str
-    # The Object’s key identifier. This must be set.
-    name: str = Field(..., alias="key")
 
     @property
     def uri(self) -> str:

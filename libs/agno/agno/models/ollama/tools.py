@@ -66,7 +66,7 @@ class OllamaTools(Ollama):
             request_params.update(self.request_params)
         return request_params
 
-    def _parse_provider_response(self, response: ChatResponse, **kwargs) -> ModelResponse:
+    def _parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
         """
         Parse the provider response.
 
@@ -122,7 +122,11 @@ class OllamaTools(Ollama):
         return model_response
 
     def create_function_call_result(
-        self, function_call: FunctionCall, success: bool, output: Optional[Union[List[Any], str]], timer: Timer
+        self,
+        function_call: FunctionCall,
+        success: bool,
+        output: Optional[Union[List[Any], str]] = None,
+        timer: Optional[Timer] = None,
     ) -> Message:
         """Create a function call result message."""
         content = (
@@ -139,10 +143,12 @@ class OllamaTools(Ollama):
             tool_args=function_call.arguments,
             tool_call_error=not success,
             stop_after_tool_call=function_call.function.stop_after_tool_call,
-            metrics=Metrics(duration=timer.elapsed),
+            metrics=Metrics(duration=timer.elapsed) if timer is not None else Metrics(),
         )
 
-    def format_function_call_results(self, function_call_results: List[Message], messages: List[Message]) -> None:
+    def format_function_call_results(
+        self, messages: List[Message], function_call_results: List[Message], **kwargs
+    ) -> None:
         """
         Format the function call results and append them to the messages.
 

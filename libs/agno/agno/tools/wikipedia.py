@@ -1,3 +1,4 @@
+import asyncio
 import json
 from typing import List, Optional
 
@@ -33,9 +34,11 @@ class WikipediaTools(Toolkit):
             return "Knowledge not provided"
 
         log_debug(f"Adding to knowledge: {topic}")
-        self.knowledge.add_content(
-            topic=topic,
-            reader=WikipediaReader(),
+        asyncio.run(
+            self.knowledge.add_content(
+                topics=[topic],
+                reader=WikipediaReader(),
+            )
         )
         log_debug(f"Searching knowledge: {topic}")
         relevant_docs: List[Document] = self.knowledge.search(query=topic)

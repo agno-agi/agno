@@ -162,7 +162,7 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
         if result:
             results.append(result._mapping)
 
-    return results
+    return results  # type: ignore
 
 
 def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:

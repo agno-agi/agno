@@ -1186,7 +1186,7 @@ class CouchbaseSearch(VectorDb):
 
             # Build WHERE clause for metadata matching
             where_conditions = []
-            named_parameters = {}
+            named_parameters: Dict[str, Any] = {}
 
             for key, value in metadata.items():
                 if isinstance(value, (list, tuple)):

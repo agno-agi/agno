@@ -56,6 +56,12 @@ class WorkflowSession:
         if self.updated_at is None:
             self.updated_at = current_time
 
+    def get_run(self, run_id: str) -> Optional[WorkflowRunOutput]:
+        for run in self.runs or []:
+            if run.run_id == run_id:
+                return run
+        return None
+
     def upsert_run(self, run: WorkflowRunOutput) -> None:
         """Add or update a workflow run (upsert behavior)"""
         if self.runs is None:
@@ -64,12 +70,10 @@ class WorkflowSession:
         # Find existing run and update it, or append new one
         for i, existing_run in enumerate(self.runs):
             if existing_run.run_id == run.run_id:
-                # Update existing run
                 self.runs[i] = run
-                return
-
-        # Run not found, append new one
-        self.runs.append(run)
+                break
+        else:
+            self.runs.append(run)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for storage, serializing runs to dicts"""
@@ -81,14 +85,7 @@ class WorkflowSession:
                 try:
                     runs_data.append(run.to_dict())
                 except Exception as e:
-                    # If run serialization fails, create a minimal representation
-                    runs_data.append(
-                        {
-                            "run_id": getattr(run, "run_id", "unknown"),
-                            "status": str(getattr(run, "status", "unknown")),
-                            "error": f"Serialization failed: {str(e)}",
-                        }
-                    )
+                    raise ValueError(f"Serialization failed: {str(e)}")
         return {
             "session_id": self.session_id,
             "user_id": self.user_id,

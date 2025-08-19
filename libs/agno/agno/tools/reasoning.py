@@ -1,9 +1,7 @@
 from textwrap import dedent
-from typing import Any, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
-from agno.agent import Agent
 from agno.reasoning.step import NextAction, ReasoningStep
-from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
 
@@ -48,7 +46,12 @@ class ReasoningTools(Toolkit):
         )
 
     def think(
-        self, agent: Union[Agent, Team], title: str, thought: str, action: Optional[str] = None, confidence: float = 0.8
+        self,
+        session_state: Dict[str, Any],
+        title: str,
+        thought: str,
+        action: Optional[str] = None,
+        confidence: float = 0.8,
     ) -> str:
         """Use this tool as a scratchpad to reason about the question and work through it step-by-step.
         This tool will help you break down complex problems into logical steps and track the reasoning process.
@@ -75,19 +78,21 @@ class ReasoningTools(Toolkit):
                 confidence=confidence,
             )
 
+            current_run_id = session_state.get("current_run_id", None)
+
             # Add this step to the Agent's session state
-            if agent.session_state is None:
-                agent.session_state = {}
-            if "reasoning_steps" not in agent.session_state:
-                agent.session_state["reasoning_steps"] = {}
-            if agent.run_id not in agent.session_state["reasoning_steps"]:
-                agent.session_state["reasoning_steps"][agent.run_id] = []
-            agent.session_state["reasoning_steps"][agent.run_id].append(reasoning_step.model_dump_json())
+            if session_state is None:
+                session_state = {}
+            if "reasoning_steps" not in session_state:
+                session_state["reasoning_steps"] = {}
+            if current_run_id not in session_state["reasoning_steps"]:
+                session_state["reasoning_steps"][current_run_id] = []
+            session_state["reasoning_steps"][current_run_id].append(reasoning_step.model_dump_json())
 
             # Return all previous reasoning_steps and the new reasoning_step
-            if "reasoning_steps" in agent.session_state and agent.run_id in agent.session_state["reasoning_steps"]:
+            if "reasoning_steps" in session_state and current_run_id in session_state["reasoning_steps"]:
                 formatted_reasoning_steps = ""
-                for i, step in enumerate(agent.session_state["reasoning_steps"][agent.run_id], 1):
+                for i, step in enumerate(session_state["reasoning_steps"][current_run_id], 1):
                     step_parsed = ReasoningStep.model_validate_json(step)
                     step_str = dedent(f"""\
 Step {i}:
@@ -105,7 +110,7 @@ Confidence: {step_parsed.confidence}
 
     def analyze(
         self,
-        agent: Union[Agent, Team],
+        session_state: Dict[str, Any],
         title: str,
         result: str,
         analysis: str,
@@ -143,19 +148,20 @@ Confidence: {step_parsed.confidence}
                 confidence=confidence,
             )
 
+            current_run_id = session_state.get("current_run_id", None)
             # Add this step to the Agent's session state
-            if agent.session_state is None:
-                agent.session_state = {}
-            if "reasoning_steps" not in agent.session_state:
-                agent.session_state["reasoning_steps"] = {}
-            if agent.run_id not in agent.session_state["reasoning_steps"]:
-                agent.session_state["reasoning_steps"][agent.run_id] = []
-            agent.session_state["reasoning_steps"][agent.run_id].append(reasoning_step.model_dump_json())
+            if session_state is None:
+                session_state = {}
+            if "reasoning_steps" not in session_state:
+                session_state["reasoning_steps"] = {}
+            if current_run_id not in session_state["reasoning_steps"]:
+                session_state["reasoning_steps"][current_run_id] = []
+            session_state["reasoning_steps"][current_run_id].append(reasoning_step.model_dump_json())
 
             # Return all previous reasoning_steps and the new reasoning_step
-            if "reasoning_steps" in agent.session_state and agent.run_id in agent.session_state["reasoning_steps"]:
+            if "reasoning_steps" in session_state and current_run_id in session_state["reasoning_steps"]:
                 formatted_reasoning_steps = ""
-                for i, step in enumerate(agent.session_state["reasoning_steps"][agent.run_id], 1):
+                for i, step in enumerate(session_state["reasoning_steps"][current_run_id], 1):
                     step_parsed = ReasoningStep.model_validate_json(step)
                     step_str = dedent(f"""\
 Step {i}:

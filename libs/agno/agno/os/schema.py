@@ -15,6 +15,8 @@ from agno.os.utils import (
     get_session_name,
     get_workflow_input_schema_dict,
 )
+from agno.run.response import RunOutput
+from agno.run.team import TeamRunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
 from agno.workflow.workflow import Workflow
@@ -107,6 +109,7 @@ class AgentResponse(BaseModel):
     extra_messages: Optional[Dict[str, Any]] = None
     response_settings: Optional[Dict[str, Any]] = None
     streaming: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
 
     @classmethod
     def from_agent(cls, agent: Agent, memory_app: Optional[MemoryApp] = None) -> "AgentResponse":
@@ -168,7 +171,11 @@ class AgentResponse(BaseModel):
             "stream_intermediate_steps": False,
         }
 
-        agent_tools = agent.get_tools(session_id=str(uuid4()), async_mode=True)
+        agent_tools = agent.get_tools(
+            session=AgentSession(session_id=str(uuid4()), session_data={}),
+            run_response=RunOutput(run_id=str(uuid4())),
+            async_mode=True,
+        )
         formatted_tools = format_tools(agent_tools) if agent_tools else None
 
         additional_input = agent.additional_input
@@ -233,9 +240,9 @@ class AgentResponse(BaseModel):
                     provider=agent.memory_manager.model.provider,
                 ).model_dump()
 
-        reasoning_info = {
+        reasoning_info: Dict[str, Any] = {
             "reasoning": agent.reasoning,
-            "reasoning_agent_id": agent.reasoning_agent.agent_id if agent.reasoning_agent else None,
+            "reasoning_agent_id": agent.reasoning_agent.id if agent.reasoning_agent else None,
             "reasoning_min_steps": agent.reasoning_min_steps,
             "reasoning_max_steps": agent.reasoning_max_steps,
         }
@@ -277,7 +284,7 @@ class AgentResponse(BaseModel):
             "build_user_context": agent.build_user_context,
         }
 
-        response_settings_info = {
+        response_settings_info: Dict[str, Any] = {
             "retries": agent.retries,
             "delay_between_retries": agent.delay_between_retries,
             "exponential_backoff": agent.exponential_backoff,
@@ -300,7 +307,6 @@ class AgentResponse(BaseModel):
             "stream": agent.stream,
             "stream_intermediate_steps": agent.stream_intermediate_steps,
         }
-
         return AgentResponse(
             id=agent.id,
             name=agent.name,
@@ -319,6 +325,7 @@ class AgentResponse(BaseModel):
             extra_messages=filter_meaningful_config(extra_messages_info, agent_defaults),
             response_settings=filter_meaningful_config(response_settings_info, agent_defaults),
             streaming=filter_meaningful_config(streaming_info, agent_defaults),
+            metadata=agent.metadata
         )
 
 
@@ -338,6 +345,7 @@ class TeamResponse(BaseModel):
     response_settings: Optional[Dict[str, Any]] = None
     streaming: Optional[Dict[str, Any]] = None
     members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = None
+    metadata: Optional[Dict[str, Any]] = None   
 
     @classmethod
     def from_team(cls, team: Team, memory_app: Optional[MemoryApp] = None) -> "TeamResponse":
@@ -395,8 +403,11 @@ class TeamResponse(BaseModel):
 
         team.determine_tools_for_model(
             model=team.model,
-            session_id=str(uuid4()),
+            session=TeamSession(session_id=str(uuid4()), session_data={}),
+            run_response=TeamRunOutput(run_id=str(uuid4())),
             async_mode=True,
+            session_state={},
+            team_run_context={},
         )
         team_tools = list(team._functions_for_model.values()) if team._functions_for_model else []
         formatted_tools = format_team_tools(team_tools) if team_tools else None
@@ -457,9 +468,9 @@ class TeamResponse(BaseModel):
                     provider=team.memory_manager.model.provider,
                 ).model_dump()
 
-        reasoning_info = {
+        reasoning_info: Dict[str, Any] = {
             "reasoning": team.reasoning,
-            "reasoning_agent_id": team.reasoning_agent.agent_id if team.reasoning_agent else None,
+            "reasoning_agent_id": team.reasoning_agent.id if team.reasoning_agent else None,
             "reasoning_min_steps": team.reasoning_min_steps,
             "reasoning_max_steps": team.reasoning_max_steps,
         }
@@ -494,7 +505,7 @@ class TeamResponse(BaseModel):
             "add_state_in_messages": team.add_state_in_messages,
         }
 
-        response_settings_info = {
+        response_settings_info: Dict[str, Any] = {
             "response_model_name": team.response_model.__name__ if team.response_model else None,
             "parser_model_prompt": team.parser_model_prompt,
             "parse_response": team.parse_response,
@@ -540,6 +551,7 @@ class TeamResponse(BaseModel):
                 else None
                 for member in team.members
             ],
+            metadata=team.metadata,
         )
 
 
@@ -551,6 +563,26 @@ class WorkflowResponse(BaseModel):
     steps: Optional[List[Dict[str, Any]]] = None
     agent: Optional[AgentResponse] = None
     team: Optional[TeamResponse] = None
+    metadata: Optional[Dict[str, Any]] = None
+    @classmethod
+    def _resolve_agents_and_teams_recursively(cls, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Parse Agents and Teams into AgentResponse and TeamResponse objects.
+
+        If the given steps have nested steps, recursively work on those."""
+        if not steps:
+            return steps
+
+        for step in steps:
+            if step.get("agent"):
+                step["agent"] = AgentResponse.from_agent(step["agent"])
+
+            if step.get("team"):
+                step["team"] = TeamResponse.from_team(step["team"])
+
+            if step.get("steps"):
+                step["steps"] = cls._resolve_agents_and_teams_recursively(step["steps"])
+
+        return steps
 
     @classmethod
     def from_workflow(cls, workflow: Workflow) -> "WorkflowResponse":
@@ -558,11 +590,7 @@ class WorkflowResponse(BaseModel):
         steps = workflow_dict.get("steps")
 
         if steps:
-            for step in steps:
-                if step.get("agent"):
-                    step["agent"] = AgentResponse.from_agent(step["agent"])
-                if step.get("team"):
-                    step["team"] = TeamResponse.from_team(step["team"])
+            steps = cls._resolve_agents_and_teams_recursively(steps)
 
         return cls(
             id=workflow.id,
@@ -570,6 +598,7 @@ class WorkflowResponse(BaseModel):
             description=workflow.description,
             steps=steps,
             input_schema=get_workflow_input_schema_dict(workflow),
+            metadata=workflow.metadata,
         )
 
 

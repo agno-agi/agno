@@ -126,7 +126,7 @@ def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Option
                     audio=[Audio(content=await get_media_async(message_audio))] if message_audio else None,
                 )
             elif team:
-                response = await team.arun(
+                response = await team.arun(  # type: ignore
                     message_text,
                     user_id=phone_number,
                     files=[File(content=await get_media_async(message_doc))] if message_doc else None,
@@ -165,9 +165,8 @@ def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Option
                         log_warning(
                             f"Could not process image content for user {phone_number}. Type: {type(image_content)}"
                         )
-                        await _send_whatsapp_message(phone_number, response.content)  # Send text part if image fails
-            else:
-                await _send_whatsapp_message(phone_number, response.content)
+                        await _send_whatsapp_message(phone_number, response.content)  # type: ignore
+                await _send_whatsapp_message(phone_number, response.content)  # type: ignore
 
         except Exception as e:
             log_error(f"Error processing message: {str(e)}")

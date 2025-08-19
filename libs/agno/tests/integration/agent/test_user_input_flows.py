@@ -65,7 +65,7 @@ def test_tool_call_requires_user_input_specific_fields():
     assert response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
 
 
-def test_tool_call_requires_user_input_stream():
+def test_tool_call_requires_user_input_stream(shared_db):
     @tool(requires_user_input=True)
     def get_the_weather(city: str):
         return f"It is currently 70 degrees and cloudy in {city}"
@@ -73,6 +73,7 @@ def test_tool_call_requires_user_input_stream():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather],
+        db=shared_db,
         markdown=True,
         telemetry=False,
     )
@@ -98,7 +99,7 @@ def test_tool_call_requires_user_input_stream():
 
 @pytest.mark.asyncio
 @pytest.mark.skip(reason="Async makes this test flaky")
-async def test_tool_call_requires_user_input_async():
+async def test_tool_call_requires_user_input_async(shared_db):
     @tool(requires_user_input=True)
     async def get_the_weather(city: str):
         return f"It is currently 70 degrees and cloudy in {city}"
@@ -106,6 +107,7 @@ async def test_tool_call_requires_user_input_async():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather],
+        db=shared_db,
         markdown=True,
         telemetry=False,
     )
@@ -129,7 +131,7 @@ async def test_tool_call_requires_user_input_async():
 
 
 @pytest.mark.asyncio
-async def test_tool_call_requires_user_input_stream_async():
+async def test_tool_call_requires_user_input_stream_async(shared_db):
     @tool(requires_user_input=True)
     async def get_the_weather(city: str):
         return f"It is currently 70 degrees and cloudy in {city}"
@@ -137,6 +139,7 @@ async def test_tool_call_requires_user_input_stream_async():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather],
+        db=shared_db,
         markdown=True,
         telemetry=False,
     )
@@ -161,7 +164,7 @@ async def test_tool_call_requires_user_input_stream_async():
     assert found_user_input is False, "Some tools still require user input"
 
 
-def test_tool_call_requires_user_input_continue_with_run_id(agent_db, memory):
+def test_tool_call_requires_user_input_continue_with_run_id(shared_db):
     @tool(requires_user_input=True)
     def get_the_weather(city: str):
         return f"It is currently 70 degrees and cloudy in {city}"
@@ -170,8 +173,7 @@ def test_tool_call_requires_user_input_continue_with_run_id(agent_db, memory):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather],
-        db=agent_db,
-        memory=memory,
+        db=shared_db,
         telemetry=False,
     )
 
@@ -189,8 +191,7 @@ def test_tool_call_requires_user_input_continue_with_run_id(agent_db, memory):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[get_the_weather],
-        db=agent_db,
-        memory=memory,
+        db=shared_db,
         telemetry=False,
     )
 

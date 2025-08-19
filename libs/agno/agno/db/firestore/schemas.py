@@ -66,7 +66,6 @@ USER_MEMORY_COLLECTION_SCHEMA = [
     {"key": "user_id"},
     {"key": "agent_id"},
     {"key": "team_id"},
-    {"key": "workflow_id"},
     {"key": "topics"},
     {"key": "updated_at"},
     # Composite indexes for memory queries
@@ -118,7 +117,7 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
     """Get the index definitions for a specific collection type."""
     index_definitions = {
         "sessions": SESSION_COLLECTION_SCHEMA,
-        "user_memories": USER_MEMORY_COLLECTION_SCHEMA,
+        "memories": USER_MEMORY_COLLECTION_SCHEMA,
         "metrics": METRICS_COLLECTION_SCHEMA,
         "evals": EVAL_COLLECTION_SCHEMA,
         "knowledge": KNOWLEDGE_COLLECTION_SCHEMA,

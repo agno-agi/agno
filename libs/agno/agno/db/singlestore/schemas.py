@@ -37,7 +37,6 @@ USER_MEMORY_TABLE_SCHEMA = {
     "input": {"type": Text, "nullable": True},
     "agent_id": {"type": lambda: String(128), "nullable": True},
     "team_id": {"type": lambda: String(128), "nullable": True},
-    "workflow_id": {"type": lambda: String(128), "nullable": True},
     "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
     "topics": {"type": JSON, "nullable": True},
     "updated_at": {"type": BigInteger, "nullable": True, "index": True},
@@ -106,7 +105,7 @@ def get_table_schema_definition(table_type: str) -> dict[str, Any]:
         "sessions": SESSION_TABLE_SCHEMA,
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
-        "user_memories": USER_MEMORY_TABLE_SCHEMA,
+        "memories": USER_MEMORY_TABLE_SCHEMA,
         "knowledge_contents": KNOWLEDGE_TABLE_SCHEMA,
     }
     schema = schemas.get(table_type, {})

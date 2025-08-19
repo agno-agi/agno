@@ -136,11 +136,11 @@ def test_parallel_direct_single_step():
 # ============================================================================
 
 
-def test_basic_parallel(workflow_db):
+def test_basic_parallel(shared_db):
     """Test basic parallel execution."""
     workflow = Workflow(
         name="Basic Parallel",
-        db=workflow_db,
+        db=shared_db,
         steps=[Parallel(step_a, step_b, name="Parallel Phase"), final_step],
     )
 
@@ -160,11 +160,11 @@ def test_basic_parallel(workflow_db):
     assert find_content_in_steps(parallel_output, "Output B")
 
 
-def test_parallel_streaming(workflow_db):
+def test_parallel_streaming(shared_db):
     """Test parallel execution with streaming."""
     workflow = Workflow(
         name="Streaming Parallel",
-        db=workflow_db,
+        db=shared_db,
         steps=[Parallel(step_a, step_b, name="Parallel Phase"), final_step],
     )
 
@@ -180,13 +180,13 @@ def test_parallel_streaming(workflow_db):
     assert len(parallel_output.steps) == 2
 
 
-def test_parallel_with_agent(workflow_db, test_agent):
+def test_parallel_with_agent(shared_db, test_agent):
     """Test parallel execution with agent step."""
     agent_step = Step(name="agent_step", agent=test_agent)
 
     workflow = Workflow(
         name="Agent Parallel",
-        db=workflow_db,
+        db=shared_db,
         steps=[Parallel(step_a, agent_step, name="Mixed Parallel"), final_step],
     )
 
@@ -204,11 +204,11 @@ def test_parallel_with_agent(workflow_db, test_agent):
 
 
 @pytest.mark.asyncio
-async def test_async_parallel(workflow_db):
+async def test_async_parallel(shared_db):
     """Test async parallel execution."""
     workflow = Workflow(
         name="Async Parallel",
-        db=workflow_db,
+        db=shared_db,
         steps=[Parallel(step_a, step_b, name="Parallel Phase"), final_step],
     )
 
@@ -223,11 +223,11 @@ async def test_async_parallel(workflow_db):
 
 
 @pytest.mark.asyncio
-async def test_async_parallel_streaming(workflow_db):
+async def test_async_parallel_streaming(shared_db):
     """Test async parallel execution with streaming."""
     workflow = Workflow(
         name="Async Streaming Parallel",
-        db=workflow_db,
+        db=shared_db,
         steps=[Parallel(step_a, step_b, name="Parallel Phase"), final_step],
     )
 
