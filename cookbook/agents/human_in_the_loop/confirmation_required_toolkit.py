@@ -49,5 +49,5 @@ if run_response.is_paused:  # Or agent.run_response.is_paused
             # We update the tools in place
             tool.confirmed = True
 
-    run_response = agent.continue_run()
+    run_response = agent.continue_run(run_response=run_response)
     pprint.pprint_run_response(run_response)
