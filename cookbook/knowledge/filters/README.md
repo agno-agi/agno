@@ -50,7 +50,7 @@ knowledge.add_contents(
 # Apply filters during search
 results = knowledge.search(
     query="your query",
-    metadata_filters={
+    filters={
         "file_name": "specific_file.csv"
     }
 )
@@ -179,7 +179,7 @@ def robust_filtering_example():
         # Search with filters, handling missing keys gracefully
         results = knowledge.search(
             query="recipe query",
-            metadata_filters={
+            filters={
                 "category": "desserts",
                 "difficulty": "easy"  # May not exist in all documents
             }
