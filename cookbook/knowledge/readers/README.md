@@ -54,7 +54,7 @@ for doc in documents:
 import asyncio
 
 # Add PDFs asynchronously
-await knowledge.async_add_content(path="data/pdf")
+await knowledge.add_content(path="data/pdf")
 ```
 
 ### 4. ArXiv Reader
@@ -106,7 +106,7 @@ async def process_pdf_documents():
     )
     
     # Process PDF from URL
-    await knowledge.async_add_content(
+    await knowledge.add_content(
         url="https://example.com/document.pdf",
         reader=PDFUrlReader(
             extract_images=True,
@@ -115,7 +115,7 @@ async def process_pdf_documents():
     )
     
     # Process local PDF files
-    await knowledge.async_add_content(
+    await knowledge.add_content(
         path="documents/",
         reader=PDFReader(
             extract_metadata=True,
@@ -242,7 +242,7 @@ async def process_csv_files():
     )
     
     # Process large CSV files efficiently
-    await knowledge.async_add_content(
+    await knowledge.add_content(
         path="data/large_dataset.csv",
         reader=csv_reader
     )
@@ -253,7 +253,7 @@ asyncio.run(process_csv_files())
 **CSV from URL** (`csv_reader_url_async.py`):
 ```python
 # Process CSV files directly from URLs
-await knowledge.async_add_content(
+await knowledge.add_content(
     url="https://data.example.com/dataset.csv",
     reader=AsyncCSVReader(
         download_timeout=60,
@@ -308,7 +308,7 @@ async def process_markdown_docs():
     )
     
     # Process documentation repository
-    await knowledge.async_add_content(
+    await knowledge.add_content(
         path="docs/",
         reader=md_reader,
         metadata={"source": "documentation", "format": "markdown"}
@@ -371,7 +371,7 @@ async def build_research_knowledge_base():
     # Process multiple topics concurrently
     tasks = []
     for topic in research_topics:
-        task = knowledge.async_add_content(
+        task = knowledge.add_content(
             query=topic,
             reader=arxiv_reader,
             metadata={"source": "arxiv", "topic": topic.replace(" ", "_")}
@@ -422,13 +422,13 @@ async def create_comprehensive_knowledge_base():
     tasks = []
     for source in document_sources:
         if "path" in source:
-            task = knowledge.async_add_content(
+            task = knowledge.add_content(
                 path=source["path"],
                 reader=source["reader"],
                 metadata=source["metadata"]
             )
         else:
-            task = knowledge.async_add_content(
+            task = knowledge.add_content(
                 url=source["url"],
                 reader=source["reader"],
                 metadata=source["metadata"]

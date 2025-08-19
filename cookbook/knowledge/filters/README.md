@@ -118,7 +118,7 @@ async def async_filtering_example():
     )
     
     # Async content loading
-    await knowledge.async_add_content(
+    await knowledge.add_content(
         path="data/documents",
     )
     

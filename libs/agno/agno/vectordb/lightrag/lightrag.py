@@ -79,6 +79,10 @@ class LightRag(VectorDb):
         """Upsert documents into the vector database"""
         pass
 
+    def delete_by_content_id(self, content_id: str) -> None:
+        """Delete documents by content ID"""
+        pass
+
     async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Async upsert documents into the vector database"""
         pass

@@ -10,7 +10,7 @@ class LangChainVectorDb(VectorDb):
         self,
         vectorstore: Optional[Any] = None,
         search_kwargs: Optional[dict] = None,
-        **kwargs
+        knowledge_retriever: Optional[Any] = None
     ):
         """
         Initialize LangChainVectorDb.
@@ -18,12 +18,11 @@ class LangChainVectorDb(VectorDb):
         Args:
             vectorstore: The LangChain vectorstore instance
             search_kwargs: Additional search parameters for the retriever
-            **kwargs: Additional arguments passed to parent class
+            knowledge_retriever: An optional LangChain retriever instance
         """
-        super().__init__(**kwargs)
         self.vectorstore = vectorstore
         self.search_kwargs = search_kwargs
-        self.knowledge_retriever: Optional[Any] = None
+        self.knowledge_retriever = knowledge_retriever
 
     def create(self) -> None:
         raise NotImplementedError
@@ -41,6 +40,9 @@ class LangChainVectorDb(VectorDb):
         raise NotImplementedError
 
     def content_hash_exists(self, content_hash: str) -> bool:
+        raise NotImplementedError
+
+    def delete_by_content_id(self, content_id: str) -> None:
         raise NotImplementedError
 
     def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:

@@ -17,7 +17,7 @@ agent = Agent(knowledge=knowledge_base)
 if __name__ == "__main__":
     # Comment out after first run
     asyncio.run(
-        knowledge_base.async_add_content(
+        knowledge_base.add_content(
             url="https://docs.agno.com/introduction/agents.md"
         )
     )
