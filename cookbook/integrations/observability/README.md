@@ -55,23 +55,39 @@ response = agent.run("Your query here")
 
 ## Available Platforms
 
-### AgentOps (`agent_ops.py`)
-Simple agent monitoring with automatic session tracking.
+### OpenTelemetry via OpenInference
 
-### Langfuse (`langfuse_via_openinference.py`)
-Comprehensive tracing and analytics via OpenInference instrumentation.
+OpenTelemetry provides standardized observability that works across multiple platforms. Install the base requirements:
 
-### Weave (`weave_op.py`) 
-Weights & Biases integration for experiment tracking and monitoring.
+```bash
+pip install opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrumentation-agno
+```
 
-### Arize Phoenix (`arize_phoenix_via_openinference.py`)
-Open-source observability platform with real-time monitoring.
+| Platform | Description | Additional Dependencies |
+|----------|-------------|------------------------|
+| **Langfuse** | Comprehensive tracing and analytics | `pip install langfuse` |
+| **Arize Phoenix** | Open-source observability with real-time monitoring | `pip install arize-phoenix` |
+| **LangSmith** | LangChain's monitoring and debugging platform | `pip install langsmith` |
 
-### LangSmith (`langsmith_via_openinference.py`)
-LangChain's monitoring and debugging platform integration.
+**Files:**
+- `langfuse_via_openinference.py` - Langfuse integration
+- `arize_phoenix_via_openinference.py` - Phoenix integration  
+- `langsmith_via_openinference.py` - LangSmith integration
 
-### Teams (`teams/`)
-Observability examples for multi-agent teams and coordination.
+### Platform-Specific Integrations
+
+Direct integrations with platform-specific SDKs:
+
+| Platform | Description | Installation | File |
+|----------|-------------|--------------|------|
+| **AgentOps** | Simple agent monitoring with automatic session tracking | `pip install agentops` | `agent_ops.py` |
+| **Weave** | Weights & Biases experiment tracking and monitoring | `pip install weave` | `weave_op.py` |
+
+### Teams Examples
+
+|  | Description | Files |
+|----------|-------------|-------|
+| **Teams** | Multi-agent observability examples | `teams/langfuse_via_openinference_team.py`<br>`teams/langfuse_via_openinference_async_team.py` |
 
 ## Setup Instructions
 

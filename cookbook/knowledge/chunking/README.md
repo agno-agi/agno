@@ -19,9 +19,7 @@ Set your OpenAI API key:
 export OPENAI_API_KEY=your_api_key
 ```
 
-## Core Concepts
-
-### Chunking Strategy Selection
+## Chunking Strategy Selection
 
 | Strategy | Best For | Chunk Size |
 |----------|----------|------------|
@@ -35,8 +33,6 @@ export OPENAI_API_KEY=your_api_key
 ## Chunking Strategies
 
 ### 1. Agentic Chunking (`agentic_chunking.py`)
-
-**When to use**: Complex documents where AI understanding improves chunk boundaries.
 
 **How it works**: Uses AI to determine optimal chunk boundaries based on content understanding, context, and semantic flow.
 
@@ -56,8 +52,6 @@ reader = PDFUrlReader(
 
 ### 2. Semantic Chunking (`semantic_chunking.py`)
 
-**When to use**: Maintaining topic coherence within chunks.
-
 **How it works**: Groups sentences based on semantic similarity, ensuring related content stays together.
 
 ```python
@@ -73,8 +67,6 @@ chunking_strategy = SemanticChunking(similarity_threshold=0.5)
 
 ### 3. Fixed Size Chunking (`fixed_size_chunking.py`)
 
-**When to use**: Predictable chunk sizes for consistent processing.
-
 **How it works**: Splits text into chunks of specified character or token length with optional overlap.
 
 ```python
@@ -89,22 +81,16 @@ chunking_strategy = FixedSizeChunking(
 **Best practices**:
 - Start with 500-1500 characters for most use cases
 - Use 10-20% overlap to preserve context at boundaries
-- Fastest processing, predictable memory usage
 
 ### 4. Recursive Chunking (`recursive_chunking.py`)
-
-**When to use**: Documents with hierarchical structure (sections, subsections).
 
 **How it works**: Attempts to split on natural boundaries (paragraphs, sentences) before falling back to character limits.
 
 **Best practices**:
 - Ideal for structured documents (reports, documentation)
 - Preserves document hierarchy and formatting
-- Good balance between speed and context preservation
 
 ### 5. Document Chunking (`document_chunking.py`)
-
-**When to use**: Preserving complete document boundaries and metadata.
 
 **How it works**: Treats each document as a single chunk, maintaining full context and document-level metadata.
 
@@ -114,8 +100,6 @@ chunking_strategy = FixedSizeChunking(
 - Ideal for emails, articles, short reports
 
 ### 6. CSV Row Chunking (`csv_row_chunking.py`)
-
-**When to use**: Structured data where each row represents a distinct entity.
 
 **How it works**: Each CSV row becomes a separate chunk with preserved column structure.
 
@@ -162,17 +146,3 @@ for name, strategy in strategies:
     knowledge.add_content(url="test_document.pdf", reader=PDFUrlReader(chunking_strategy=strategy))
     # Test retrieval quality with your typical queries
 ```
-
-## Common Issues and Solutions
-
-**Problem**: Chunks too small, losing context
-**Solution**: Increase chunk size or overlap, consider semantic chunking
-
-**Problem**: Chunks too large, poor retrieval precision
-**Solution**: Decrease chunk size, use more aggressive splitting
-
-**Problem**: Important information split across chunks
-**Solution**: Use semantic or agentic chunking, increase overlap
-
-**Problem**: Slow processing with large documents
-**Solution**: Use fixed size chunking, reduce chunk overlap

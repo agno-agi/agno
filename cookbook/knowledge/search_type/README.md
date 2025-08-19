@@ -2,64 +2,28 @@
 
 Search strategies determine how your agents find relevant information in knowledge bases. The right approach balances semantic understanding, keyword precision, and performance for optimal retrieval quality.
 
-## Core Concepts
+## Agent Integration
 
-| Concept | Description |
-|---------|-------------|
-| **Vector Search** | Semantic similarity-based search using embeddings |
-| **Keyword Search** | Traditional text-based search using exact matches |
-| **Hybrid Search** | Combines vector and keyword search for better results |
-| **Search Type** | Configurable search algorithm in vector databases |
-
-## Getting Started
-
-### 1. Vector Search
+All search types work seamlessly with Agno agents. The search strategy determines how your agent finds relevant information:
 
 ```python
-from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.pgvector import PgVector, SearchType
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
 
-vector_db = PgVector(
-    table_name="recipes", 
-    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", 
-    search_type=SearchType.vector
-)
-knowledge = Knowledge(vector_db=vector_db)
-
-# Add content and search
-knowledge.add_content(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf")
-results = vector_db.search("chicken coconut soup", limit=5)
-```
-
-### 2. Keyword Search
-
-```python
-keyword_db = PgVector(
-    table_name="recipes", 
-    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", 
-    search_type=SearchType.keyword
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    knowledge=knowledge,  # Your knowledge base with chosen search type
+    search_knowledge=True,
 )
 
-results = keyword_db.search("chicken coconut soup", limit=5)
+agent.print_response("Ask anything - the search type determines how I find answers")
 ```
 
-### 3. Hybrid Search
-
-```python
-hybrid_db = PgVector(
-    table_name="recipes", 
-    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", 
-    search_type=SearchType.hybrid
-)
-
-results = hybrid_db.search("chicken coconut soup", limit=5)
-```
+This pattern works with all search types shown below - just replace `knowledge` with your configured knowledge base.
 
 ## Search Implementations
 
 ### 1. Vector Search (`vector_search.py`)
-
-**When to use**: Questions requiring semantic understanding, concept-based queries, and contextual retrieval.
 
 **How it works**: Converts queries and documents into vector embeddings, then finds semantically similar content using cosine similarity or other distance metrics.
 
@@ -103,15 +67,13 @@ for query in queries:
     # Results will include semantically related content even if exact words don't match
 ```
 
-**Best use cases**:
+**Use cases**:
 - **Conceptual queries**: "How to improve team productivity?" 
 - **Synonym matching**: "automobile" matches "car" content
 - **Cross-lingual understanding**: English query finds content in other languages
 - **Contextual search**: Understanding query intent beyond keywords
 
 ### 2. Keyword Search (`keyword_search.py`)
-
-**When to use**: Exact term matching, specific entity searches, and when precision is critical.
 
 **How it works**: Traditional text-based search using inverted indexes, TF-IDF scoring, and boolean operators.
 
@@ -170,15 +132,13 @@ field_queries = [
 ]
 ```
 
-**Best use cases**:
-- **Exact entity matching**: Product codes, names, IDs
+**Use cases**:
+- **Entity matching**: Product codes, names, IDs
 - **Technical documentation**: API endpoints, function names
 - **Legal and compliance**: Specific terms, regulations, codes
 - **Precise phrase searches**: Quotes, specific instructions
 
 ### 3. Hybrid Search (`hybrid_search.py`)
-
-**When to use**: Most production applications requiring balanced semantic understanding and keyword precision.
 
 **How it works**: Combines vector and keyword search results using weighted scoring, reciprocal rank fusion, or learned ranking models.
 
@@ -235,20 +195,3 @@ optimized_hybrid_db = PgVector(
     reciprocal_rank_k=60,       # RRF parameter for score fusion
 )
 ```
-
-## Common Issues and Solutions
-
-**Problem**: Vector search missing exact product names
-**Solution**: Use hybrid search or boost keyword components
-
-**Problem**: Keyword search too rigid for natural language queries
-**Solution**: Implement query expansion and synonym handling
-
-**Problem**: Slow search performance with large knowledge bases
-**Solution**: Implement caching, use appropriate indexes, consider search result pagination
-
-**Problem**: Poor relevance ranking
-**Solution**: Fine-tune hybrid weights, implement learning-to-rank, collect user feedback
-
-**Problem**: Inconsistent results across search strategies
-**Solution**: Implement result fusion, standardize scoring, use ensemble methods

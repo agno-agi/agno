@@ -1,103 +1,34 @@
 # Vector Databases
 
-Vector databases are the backbone of modern AI knowledge systems, storing high-dimensional embeddings that enable semantic search and similarity matching. Choosing the right vector database impacts performance, scalability, and cost.
+Vector databases store embeddings and enable similarity search for knowledge retrieval. This guide covers the vector databases supported by Agno.
 
-## Core Concepts
+## Agent Integration
 
-| Concept | Description |
-|---------|-------------|
-| **Vector Database** | Storage system optimized for embedding vectors and similarity search |
-| **PgVector** | PostgreSQL extension for vector operations |
-| **Qdrant** | Specialized vector database with high performance |
-| **ChromaDB** | Open-source embedding database |
-| **Collection** | Named container for storing vectors in a database |
-
-## Getting Started
-
-### 1. PgVector (PostgreSQL)
+All vector databases work seamlessly with Agno agents. Simply add the knowledge base to your agent for enhanced responses:
 
 ```python
-from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.pgvector import PgVector
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
 
-vector_db = PgVector(
-    table_name="vectors", 
-    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    knowledge=knowledge,  # Your knowledge base
+    search_knowledge=True,
 )
 
-knowledge = Knowledge(
-    name="My PG Vector Knowledge Base",
-    vector_db=vector_db,
-)
-
-knowledge.add_content(
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-    metadata={"doc_type": "recipe_book"},
-)
+agent.print_response("Ask anything about your knowledge base")
 ```
 
-### 2. Qdrant
-
-```python
-from agno.vectordb.qdrant import Qdrant
-from agno.db.postgres.postgres import PostgresDb
-
-vector_db = Qdrant(
-    collection="thai-recipes", 
-    url="http://localhost:6333"
-)
-
-contents_db = PostgresDb(
-    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-    knowledge_table="knowledge_contents",
-)
-
-knowledge = Knowledge(
-    vector_db=vector_db,
-    contents_db=contents_db,
-)
-```
-
-### 3. ChromaDB
-
-```python
-from agno.vectordb.chroma import ChromaDb
-
-knowledge = Knowledge(
-    vector_db=ChromaDb(
-        collection="vectors", 
-        path="tmp/chromadb", 
-        persistent_client=True
-    ),
-)
-
-await knowledge.add_content(
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-    metadata={"doc_type": "recipe_book"},
-)
-```
-
-### Performance & Features Matrix
-
-| Database | Vector Dims | Metadata Filtering | Hybrid Search | Multi-Tenancy | Open Source |
-|----------|-------------|-------------------|---------------|---------------|-------------|
-| **PgVector** | 16,000 | ✅ Excellent | ✅ | ✅ | ✅ |
-| **Pinecone** | 40,000 | ✅ Good | ✅ | ✅ | ❌ |
-| **Qdrant** | 65,536 | ✅ Excellent | ✅ | ✅ | ✅ |
-| **Weaviate** | 65,536 | ✅ Excellent | ✅ | ✅ | ✅ |
-| **Chroma** | Unlimited | ✅ Good | ❌ | ✅ | ✅ |
-| **Milvus** | 32,768 | ✅ Excellent | ✅ | ✅ | ✅ |
+This pattern works with all vector databases shown below - just replace `knowledge` with your configured knowledge base.
 
 ## Database Implementations
 
 ### 1. PgVector - PostgreSQL Extension (`pgvector/`)
 
-**When to use**: Best overall choice for most applications, especially when you already use PostgreSQL.
-
 **Strengths**:
-- Mature, battle-tested PostgreSQL foundation
-- Excellent SQL ecosystem integration
-- Strong consistency and ACID transactions
+- Uses PostgreSQL database you may already have
+- Good SQL ecosystem integration
+- ACID transactions
 - Cost-effective for small to medium scale
 
 ```python
@@ -134,9 +65,8 @@ advanced_vector_db = PgVector(
     # Performance optimizations
     connection_pool_size=20,
     max_overflow=10,
-    # Index configuration
     index_type="ivfflat",  # or "hnsw" for larger datasets
-    lists=100,  # Number of clusters for ivfflat
+    lists=100,
     # Metadata indexing
     metadata_indexes=["department", "document_type", "created_at"]
 )
@@ -157,13 +87,10 @@ advanced_vector_db = PgVector(
 
 #### Pinecone (`pinecone_db/`)
 
-**When to use**: Fully managed service with minimal operational overhead.
-
 **Strengths**:
-- Zero infrastructure management
-- Automatic scaling and optimization
-- High availability and durability
-- Great developer experience
+- Fully managed service
+- Automatic scaling
+- High availability
 
 ```python
 from agno.vectordb.pinecone import PineconeDB
@@ -184,13 +111,10 @@ knowledge = Knowledge(
 
 #### Qdrant (`qdrant_db/`)
 
-**When to use**: High-performance vector search with excellent filtering capabilities.
-
 **Strengths**:
-- Outstanding filtering and payload support
-- High performance and efficiency
-- Flexible deployment options (cloud or self-hosted)
-- Advanced vector operations
+- Good filtering and payload support
+- High performance
+- Cloud or self-hosted options
 
 ```python
 from agno.vectordb.qdrant import Qdrant
@@ -219,13 +143,10 @@ qdrant_local = Qdrant(
 
 #### Weaviate (`weaviate_db/`)
 
-**When to use**: Complex multi-modal applications with advanced AI capabilities.
-
 **Strengths**:
-- Multi-modal vector search (text, images, audio)
-- Built-in ML models and transformers
+- Multi-modal search (text, images, audio)
+- Built-in ML models
 - GraphQL API
-- Advanced schema and data modeling
 
 ```python
 from agno.vectordb.weaviate import Weaviate
@@ -252,13 +173,11 @@ weaviate_db = Weaviate(
 
 #### Milvus (`milvus_db/`)
 
-**When to use**: Large-scale applications requiring horizontal scaling and high throughput.
-
 **Strengths**:
-- Massive scale (billions of vectors)
-- Excellent performance optimization
-- Multiple index types and metrics
-- Kubernetes-native deployment
+- Large scale (billions of vectors)
+- Good performance optimization
+- Multiple index types
+- Kubernetes deployment
 
 ```python
 from agno.vectordb.milvus import Milvus
@@ -286,13 +205,10 @@ milvus_db = Milvus(
 
 #### ChromaDB (`chroma_db/`)
 
-**When to use**: Development, prototyping, and small-scale applications.
-
 **Strengths**:
-- Easy setup and deployment
-- Good developer experience
-- Suitable for experimentation
-- Local file-based storage
+- Easy setup
+- Good for development and prototyping
+- Local file storage
 
 ```python
 from agno.vectordb.chroma import ChromaDB
@@ -314,12 +230,9 @@ chroma_memory = ChromaDB(
 
 #### LanceDB (`lance_db/`)
 
-**When to use**: Fast local development and applications requiring columnar analytics.
-
 **Strengths**:
 - Fast local storage
 - Columnar format for analytics
-- TypeScript/Rust performance
 - Good for time-series data
 
 ```python
@@ -338,8 +251,6 @@ lance_db = LanceDb(
 ## Framework Integrations
 
 ### LangChain Integration (`langchain/`)
-
-**When to use**: Existing LangChain applications or preference for LangChain ecosystem.
 
 ```python
 from agno.vectordb.langchain import LangChainVectorDB
@@ -361,8 +272,6 @@ knowledge = Knowledge(vector_db=agno_langchain_db)
 
 ### LlamaIndex Integration (`llamaindex_db/`)
 
-**When to use**: Leveraging LlamaIndex's advanced indexing and retrieval strategies.
-
 ```python
 from agno.vectordb.llamaindex import LlamaIndexVectorDB
 from llama_index.vector_stores.chroma import ChromaVectorStore
@@ -378,19 +287,23 @@ agno_llama_db = LlamaIndexVectorDB(
 )
 ```
 
-## Common Issues and Solutions
+### LightRAG Integration (`lightrag/`)
 
-**Problem**: Slow vector search performance
-**Solutions**: Optimize indexes, increase resources, use approximate search, implement caching
+```python
+from agno.knowledge.knowledge import Knowledge
+from agno.vectordb.lightrag import LightRag
 
-**Problem**: High memory usage with large embeddings
-**Solutions**: Use disk-based storage, implement compression, consider lower-dimensional embeddings
+vector_db = LightRag(
+    api_key="your_lightrag_api_key",
+)
 
-**Problem**: Inconsistent search results
-**Solutions**: Ensure consistent embedding models, validate data integrity, check index configuration
+knowledge = Knowledge(
+    name="LightRAG Knowledge Base",
+    vector_db=vector_db,
+)
 
-**Problem**: Database connection issues in production
-**Solutions**: Implement connection pooling, retry logic, health checks, and monitoring
-
-**Problem**: Scaling challenges with growing data
-**Solutions**: Implement sharding, use distributed databases, optimize data partitioning strategies
+knowledge.add_content(
+    path="your_document.pdf",
+    metadata={"doc_type": "manual"}
+)
+```

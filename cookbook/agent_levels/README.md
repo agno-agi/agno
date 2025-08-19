@@ -34,6 +34,8 @@ export OPENAI_API_KEY=your_openai_key
 export ANTHROPIC_API_KEY=your_anthropic_key
 ```
 
+**Note:** These examples use both OpenAI and Claude models, but feel free to use any model you want.
+
 ## Run Examples
 
 ```bash

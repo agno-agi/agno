@@ -45,6 +45,8 @@ embedder_comparison = {
 
 ### 1. OpenAI Embedders (`openai_embedder.py`)
 
+**Default embedder**: Used automatically if no embedder is specified.
+
 **When to use**: Best overall choice for most applications.
 
 **Models available**:
@@ -108,7 +110,7 @@ st_embedder = SentenceTransformerEmbedder(
 - `all-mpnet-base-v2`: Better quality, slower
 - `multilingual-e5-base`: Multilingual support
 
-### 3. Cloud Providers
+### 3. Other model Providers
 
 #### Cohere (`cohere_embedder.py`)
 **Strengths**: Excellent multilingual support, enterprise features
@@ -147,8 +149,6 @@ gemini_embedder = GeminiEmbedder(
 )
 ```
 
-### 4. Specialized Providers
-
 #### VoyageAI (`voyageai_embedder.py`)
 **Strengths**: Domain-specific models, high performance
 
@@ -183,7 +183,7 @@ bedrock_embedder = AWSBedrockEmbedder(
 **Solutions**: Try higher-quality models, domain-specific embedders, better chunking
 
 **Problem**: Slow embedding speed
-**Solutions**: Use local models, batch processing, async processing
+**Solutions**: Use async processing, local models, batch processing
 
 **Problem**: Multilingual support needed
 **Solutions**: Use Cohere multilingual, mBERT variants, or Google models

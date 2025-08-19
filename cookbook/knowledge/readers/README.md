@@ -9,16 +9,6 @@ Document readers enable your agents to learn from:
 - **Research sources** (ArXiv papers, academic databases)
 - **Real-time feeds** (news, social media, RSS)
 
-## Core Concepts
-
-| Concept | Description |
-|---------|-------------|
-| **Document Reader** | Components that read and process different file formats |
-| **PDF Reader** | Reads PDF documents and extracts text content |
-| **CSV Reader** | Processes CSV files and converts rows to documents |
-| **ArXiv Reader** | Fetches research papers from ArXiv by topic |
-| **Async Processing** | Non-blocking document processing for large datasets |
-
 ## Getting Started
 
 ### 1. Setup Knowledge Base

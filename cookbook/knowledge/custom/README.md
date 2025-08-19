@@ -1,12 +1,6 @@
 # Custom Retrievers
 
-Build specialized knowledge retrieval systems that go beyond standard vector search. Custom retrievers enable domain-specific logic, multi-source integration, and advanced filtering for precise information access.
-
-Custom retrievers provide complete control over how your agents find and process information. They're essential when:
-- **Standard retrieval** doesn't match your domain requirements
-- **Multiple knowledge sources** need integration
-- **Complex filtering logic** is required
-- **Custom ranking algorithms** improve relevance
+Custom retrievers provide complete control over how your agents find and process information. 
 
 ## Setup
 
@@ -23,18 +17,6 @@ Set your API key:
 ```bash
 export OPENAI_API_KEY=your_api_key
 ```
-
-## Core Concepts
-
-### When to Build Custom Retrievers
-
-| Use Case | Standard Retrieval | Custom Retriever |
-|----------|-------------------|------------------|
-| Simple Q&A | ✅ | ❌ |
-| Domain-specific search | ❌ | ✅ |
-| Multi-modal retrieval | ❌ | ✅ |
-| Complex business logic | ❌ | ✅ |
-| External API integration | ❌ | ✅ |
 
 ### Retriever Components
 
@@ -53,7 +35,6 @@ def custom_retriever(
 
 ### 1. Basic Custom Retriever (`retriever.py`)
 
-**When to use**: Replace standard vector search with custom logic.
 
 **How it works**: Defines a custom function that agents call instead of built-in retrieval.
 
@@ -92,9 +73,7 @@ agent = Agent(
 
 ### 2. Async Custom Retriever (`async_retriever.py`)
 
-**When to use**: High-performance applications requiring concurrent operations.
-
-**How it works**: Asynchronous retrieval for parallel processing and better scalability.
+**How it works**: Asynchronous retrieval for concurrent processing and better scalability.
 
 ```python
 import asyncio
@@ -105,7 +84,7 @@ async def async_custom_retriever(
     num_documents: int = 5,
     filters: Dict[str, Any] = {}
 ) -> str:
-    """Asynchronous retrieval with parallel processing"""
+    """Asynchronous retrieval with concurrent processing"""
     
     # Parallel search across multiple sources
     tasks = [
@@ -122,6 +101,6 @@ async def async_custom_retriever(
 ```
 
 **Performance benefits**:
-- 3-5x faster retrieval with parallel processing
+- Faster retrieval with parallel processing
 - Better resource utilization
 - Scalable for high-traffic applications

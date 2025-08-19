@@ -23,8 +23,6 @@ export OPENAI_API_KEY=your_api_key
 
 ### 1. Basic Metadata Filtering (`filtering.py`)
 
-**When to use**: Fast, deterministic filtering based on document attributes.
-
 **How it works**: Filters documents based on structured metadata after they're loaded into the knowledge base.
 
 ```python
@@ -58,85 +56,77 @@ results = knowledge.search(
 )
 ```
 
-### 2. Filtering on Load (`filtering_on_load.py`)
+### 2. Metadata on Load (`filtering_on_load.py`)
 
-**When to use**: Apply filters during document ingestion to preprocess and clean data.
-
-**How it works**: Filters are considered during the loading process to control what content enters the knowledge base.
+**How it works**: Sets metadata attributes when loading content into the knowledge base, enabling filtering during search.
 
 ```python
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.lancedb import LanceDb
-from agno.db.postgres.postgres import PostgresDb
 
-# Initialize vector and contents databases
-vector_db = LanceDb(
-    table_name="recipes",
-    uri="tmp/lancedb",
+knowledge = Knowledge(vector_db=LanceDb(table_name="recipes", uri="tmp/lancedb"))
+
+# Add content with metadata for filtering
+knowledge.add_content(
+    path="sales_q1.csv",
+    metadata={
+        "data_type": "sales",
+        "quarter": "Q1", 
+        "year": 2024,
+        "region": "north_america"
+    }
 )
 
-knowledge = Knowledge(
-    vector_db=vector_db,
-    max_results=5,
-    contents_db=PostgresDb(
-        table_name="content_store",
-        host="localhost",
-        port=5432,
-        username="ai",
-        password="ai",
-        database="ai",
-    ),
-)
-
-# Load content with specific criteria
-knowledge.add_contents(
-    documents_to_add,
-    metadata_key="file_name"
+# filter by metadata during search
+results = knowledge.search(
+    query="revenue trends",
+    filters={"quarter": "Q1", "region": "north_america"}
 )
 ```
 
 ### 3. Async Filtering (`async_filtering.py`)
 
-**When to use**: High-performance applications requiring concurrent filtering operations.
-
-**How it works**: Asynchronous processing enables parallel filtering across multiple data sources.
+**How it works**: Creates an agent that uses filtered knowledge base for targeted information retrieval.
 
 ```python
 import asyncio
+from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.lancedb import LanceDb
+from agno.models.openai import OpenAIChat
 
 async def async_filtering_example():
-    vector_db = LanceDb(
-        table_name="async_recipes",
-        uri="tmp/lancedb",
-    )
-    
     knowledge = Knowledge(
-        name="Async Knowledge Base",
-        vector_db=vector_db,
+        name="CV Knowledge Base",
+        vector_db=LanceDb(table_name="cvs", uri="tmp/lancedb")
     )
     
-    # Async content loading
-    await knowledge.add_content(
-        path="data/documents",
+    # Add CVs with user metadata
+    knowledge.add_content(
+        path="jordan_cv.docx",
+        metadata={"user_id": "jordan_mitchell", "document_type": "cv"}
     )
     
-    # Async search with filters
-    results = await knowledge.async_search(
-        query="your query",
-        metadata_filters={"category": "recipes"}
+    # Create agent with filtered knowledge
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o"),
+        knowledge=knowledge,
+        instructions="Search knowledge before answering questions about specific users."
     )
     
-    return results
+    # Agent automatically filters knowledge based on context
+    response = await agent.arun(
+        "What are Jordan's technical skills?",
+        knowledge_filters={"user_id": "jordan_mitchell"}
+    )
+    
+    return response
 
-# Run async example
-results = asyncio.run(async_filtering_example())
+# Run example
+result = asyncio.run(async_filtering_example())
 ```
 
 ### 4. Agentic Filtering (`agentic_filtering.py`)
-
-**When to use**: Complex filtering logic requiring AI understanding and decision-making.
 
 **How it works**: Uses AI agents to intelligently filter content based on semantic understanding and context.
 
@@ -160,6 +150,7 @@ filter_agent = Agent(
     ],
     knowledge=knowledge,
     search_knowledge=True,
+    enable_agentic_knowledge_filters=True,
 )
 
 # Load content and let agent filter intelligently
@@ -171,9 +162,7 @@ response = filter_agent.run("Find high-quality technical documentation")
 
 ### 5. Invalid Keys Handling (`filtering_with_invalid_keys.py`)
 
-**When to use**: Robust filtering in environments with inconsistent or missing metadata.
-
-**How it works**: Graceful handling of missing, malformed, or inconsistent metadata keys during filtering operations.
+**How it works**: Handling of missing, malformed, or inconsistent metadata keys during filtering operations.
 
 ```python
 from agno.knowledge.knowledge import Knowledge
