@@ -1165,8 +1165,6 @@ class Agent:
                     return response
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-                if isinstance(e, StopAgentRun):
-                    raise e
                 last_exception = e
                 if attempt < num_attempts - 1:  # Don't sleep on the last attempt
                     if self.exponential_backoff:
@@ -1176,6 +1174,19 @@ class Agent:
                     import time
 
                     time.sleep(delay)
+            except StopAgentRun:
+                # Do not retry on a deliberate stop
+                self.run_response = self.create_run_response(
+                    run_state=RunStatus.cancelled,
+                    content="Agent run stopped",
+                    run_response=run_response,
+                )
+                if stream and self.is_streamable:
+                    return self._generator_wrapper(
+                        create_run_response_cancelled_event(run_response, "Agent run stopped")
+                    )
+                else:
+                    return self.run_response
             except KeyboardInterrupt:
                 self.run_response = self.create_run_response(
                     run_state=RunStatus.cancelled, content="Operation cancelled by user", run_response=run_response
@@ -1570,17 +1581,24 @@ class Agent:
                     return response
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-                if isinstance(e, StopAgentRun):
-                    raise e
                 last_exception = e
                 if attempt < num_attempts - 1:  # Don't sleep on the last attempt
                     if self.exponential_backoff:
                         delay = 2**attempt * self.delay_between_retries
                     else:
                         delay = self.delay_between_retries
-                    import time
-
-                    time.sleep(delay)
+                    await asyncio.sleep(delay)
+            except StopAgentRun:
+                if stream and self.is_streamable:
+                    return self._async_generator_wrapper(
+                        create_run_response_cancelled_event(run_response, "Agent run stopped")
+                    )
+                else:
+                    return self.create_run_response(
+                        run_state=RunStatus.cancelled,
+                        content="Agent run stopped",
+                        run_response=run_response,
+                    )
             except KeyboardInterrupt:
                 self.run_response = self.create_run_response(
                     run_state=RunStatus.cancelled, content="Operation cancelled by user", run_response=run_response
@@ -1826,8 +1844,6 @@ class Agent:
                     return response
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-                if isinstance(e, StopAgentRun):
-                    raise e
                 last_exception = e
                 if attempt < num_attempts - 1:  # Don't sleep on the last attempt
                     if self.exponential_backoff:
@@ -1837,6 +1853,19 @@ class Agent:
                     import time
 
                     time.sleep(delay)
+            except StopAgentRun:
+                # Do not retry on a deliberate stop
+                self.run_response = self.create_run_response(
+                    run_state=RunStatus.cancelled,
+                    content="Agent run stopped",
+                    run_response=run_response,
+                )
+                if stream and self.is_streamable:
+                    return self._generator_wrapper(
+                        create_run_response_cancelled_event(run_response, "Agent run stopped")
+                    )
+                else:
+                    return self.run_response
             except KeyboardInterrupt:
                 if stream:
                     return generator_wrapper(  # type: ignore
@@ -2223,17 +2252,24 @@ class Agent:
                     return response
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
-                if isinstance(e, StopAgentRun):
-                    raise e
                 last_exception = e
                 if attempt < num_attempts - 1:  # Don't sleep on the last attempt
                     if self.exponential_backoff:
                         delay = 2**attempt * self.delay_between_retries
                     else:
                         delay = self.delay_between_retries
-                    import time
-
-                    time.sleep(delay)
+                    await asyncio.sleep(delay)
+            except StopAgentRun:
+                if stream and self.is_streamable:
+                    return self._async_generator_wrapper(
+                        create_run_response_cancelled_event(run_response, "Agent run stopped")
+                    )
+                else:
+                    return self.create_run_response(
+                        run_state=RunStatus.cancelled,
+                        content="Agent run stopped",
+                        run_response=run_response,
+                    )
             except KeyboardInterrupt:
                 if stream:
                     return async_generator_wrapper(
