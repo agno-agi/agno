@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional
 from pydantic import BaseModel
 
 
-class WorkflowRunCreate(BaseModel):
+class WorkflowCreate(BaseModel):
     """Data sent to API to create a Workflow Run"""
 
     session_id: str
