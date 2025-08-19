@@ -4,7 +4,8 @@ from pathlib import Path
 from typing import IO, Any, List, Optional, Tuple, Union
 from uuid import uuid4
 
-from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyEnum
+from agno.knowledge.chunking.document import DocumentChunking
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.utils.http import async_fetch_with_retry, fetch_with_retry
@@ -197,13 +198,14 @@ class BasePDFReader(Reader):
             self.chunking_strategy = DocumentChunking(chunk_size=5000)
         super().__init__(**kwargs)
 
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyEnum]:
+    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for PDF readers."""
         return [
-            ChunkingStrategyEnum.FIXED_SIZE_CHUNKING,
-            ChunkingStrategyEnum.AGENTIC_CHUNKING,
-            ChunkingStrategyEnum.DOCUMENT_CHUNKING,
-            ChunkingStrategyEnum.RECURSIVE_CHUNKING,
+            ChunkingStrategyType.DOCUMENT_CHUNKING,
+            ChunkingStrategyType.FIXED_SIZE_CHUNKING,
+            ChunkingStrategyType.AGENTIC_CHUNKING,
+            ChunkingStrategyType.SEMANTIC_CHUNKING,
+            ChunkingStrategyType.RECURSIVE_CHUNKING,
         ]
 
     def _build_chunked_documents(self, documents: List[Document]) -> List[Document]:
@@ -393,16 +395,6 @@ class PDFUrlReader(BasePDFReader):
     def __init__(self, proxy: Optional[str] = None, password: Optional[str] = None, **kwargs):
         super().__init__(password=password, **kwargs)
         self.proxy = proxy
-
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyEnum]:
-        """Get the list of supported chunking strategies for PDF URL readers."""
-        return [
-            ChunkingStrategyEnum.AGENTIC_CHUNKING,
-            ChunkingStrategyEnum.DOCUMENT_CHUNKING,
-            ChunkingStrategyEnum.RECURSIVE_CHUNKING,
-            ChunkingStrategyEnum.ROW_CHUNKING,
-            ChunkingStrategyEnum.SEMANTIC_CHUNKING,
-        ]
 
     def read(self, url: str, name: Optional[str] = None) -> List[Document]:
         if not url:

@@ -32,7 +32,7 @@ class ChunkingStrategy(ABC):
         return cleaned_text
 
 
-class ChunkingStrategyEnum(Enum):
+class ChunkingStrategyType(str, Enum):
     """Enumeration of available chunking strategies."""
 
     AGENTIC_CHUNKING = "AgenticChunking"
@@ -44,8 +44,8 @@ class ChunkingStrategyEnum(Enum):
     MARKDOWN_CHUNKING = "MarkdownChunking"
 
     @classmethod
-    def from_string(cls, strategy_name: str) -> "ChunkingStrategyEnum":
-        """Convert a string to a ChunkingStrategyEnum."""
+    def from_string(cls, strategy_name: str) -> "ChunkingStrategyType":
+        """Convert a string to a ChunkingStrategyType."""
         strategy_name_clean = strategy_name.strip()
 
         # Try exact enum value match first
@@ -55,24 +55,21 @@ class ChunkingStrategyEnum(Enum):
 
         raise ValueError(f"Unsupported chunking strategy: {strategy_name}. Valid options: {[e.value for e in cls]}")
 
-    def __str__(self) -> str:
-        return self.value
-
 
 class ChunkingStrategyFactory:
     """Factory for creating chunking strategy instances."""
 
     @classmethod
-    def create_strategy(cls, strategy_type: ChunkingStrategyEnum, **kwargs) -> ChunkingStrategy:
+    def create_strategy(cls, strategy_type: ChunkingStrategyType, **kwargs) -> ChunkingStrategy:
         """Create an instance of the chunking strategy with the given parameters."""
         strategy_map = {
-            ChunkingStrategyEnum.AGENTIC_CHUNKING: cls._create_agentic_chunking,
-            ChunkingStrategyEnum.DOCUMENT_CHUNKING: cls._create_document_chunking,
-            ChunkingStrategyEnum.RECURSIVE_CHUNKING: cls._create_recursive_chunking,
-            ChunkingStrategyEnum.SEMANTIC_CHUNKING: cls._create_semantic_chunking,
-            ChunkingStrategyEnum.FIXED_SIZE_CHUNKING: cls._create_fixed_chunking,
-            ChunkingStrategyEnum.ROW_CHUNKING: cls._create_row_chunking,
-            ChunkingStrategyEnum.MARKDOWN_CHUNKING: cls._create_markdown_chunking,
+            ChunkingStrategyType.AGENTIC_CHUNKING: cls._create_agentic_chunking,
+            ChunkingStrategyType.DOCUMENT_CHUNKING: cls._create_document_chunking,
+            ChunkingStrategyType.RECURSIVE_CHUNKING: cls._create_recursive_chunking,
+            ChunkingStrategyType.SEMANTIC_CHUNKING: cls._create_semantic_chunking,
+            ChunkingStrategyType.FIXED_SIZE_CHUNKING: cls._create_fixed_chunking,
+            ChunkingStrategyType.ROW_CHUNKING: cls._create_row_chunking,
+            ChunkingStrategyType.MARKDOWN_CHUNKING: cls._create_markdown_chunking,
         }
         return strategy_map[strategy_type](**kwargs)
 
@@ -124,5 +121,4 @@ class ChunkingStrategyFactory:
         return MarkdownChunking(**kwargs)
 
 
-# For backward compatibility, keep the old name as an alias
-ChunkingStrategyType = ChunkingStrategyEnum
+

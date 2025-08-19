@@ -1,7 +1,8 @@
 import asyncio
 from typing import List, Optional
 
-from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyEnum
+from agno.knowledge.chunking.recursive import RecursiveChunking
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.utils.log import log_debug, log_info, logger
@@ -17,21 +18,17 @@ except ImportError:
 class YouTubeReader(Reader):
     """Reader for YouTube video transcripts"""
 
-    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = None, **kwargs):
-        # Set RecursiveChunking as default strategy if none provided
-        if chunking_strategy is None:
-            from agno.knowledge.chunking.recursive import RecursiveChunking
-
-            chunking_strategy = RecursiveChunking()
-
+    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = RecursiveChunking(), **kwargs):
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyEnum]:
+    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for YouTube readers."""
         return [
-            ChunkingStrategyEnum.AGENTIC_CHUNKING,
-            ChunkingStrategyEnum.DOCUMENT_CHUNKING,
-            ChunkingStrategyEnum.RECURSIVE_CHUNKING,
+            ChunkingStrategyType.RECURSIVE_CHUNKING,
+            ChunkingStrategyType.AGENTIC_CHUNKING,  
+            ChunkingStrategyType.DOCUMENT_CHUNKING,
+            ChunkingStrategyType.SEMANTIC_CHUNKING,
+            ChunkingStrategyType.FIXED_SIZE_CHUNKING,
         ]
 
     def read(self, video_url: str, name: Optional[str] = None) -> List[Document]:
