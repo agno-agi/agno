@@ -4,19 +4,19 @@ Progressive agent complexity examples showing how to build Agno agents from basi
 
 ## Examples
 
-### Level 1: Basic Agent (`level_1_agent.py`)
+### Level 1: [Basic Agent](./level_1_agent.py)
 Simple agent with tools - demonstrates basic agent creation with YFinance tools for stock price queries.
 
-### Level 2: Agent with Knowledge (`level_2_agent.py`) 
+### Level 2: [Agent with Knowledge](./level_2_agent.py) 
 Agent with knowledge base and storage - adds LanceDB vector database and knowledge search capabilities.
 
-### Level 3: Agent with Memory (`level_3_agent.py`)
+### Level 3: [Agent with Memory](./level_3_agent.py)
 Agent with reasoning and user memories - incorporates ReasoningTools and persistent user memory storage.
 
-### Level 4: Agent Team (`level_4_team.py`)
+### Level 4: [Agent Team](./level_4_team.py)
 Coordinated team of specialized agents - combines web search and finance agents working together.
 
-### Level 5: Workflow (`level_5_workflow.py`)
+### Level 5: [Workflow](./level_5_workflow.py)
 Complete workflow orchestration - demonstrates complex multi-step workflows with research teams and content planning.
 
 ## Setup

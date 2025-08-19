@@ -5,13 +5,13 @@ Integration examples showing how to connect Agno agents with external platforms 
 
 ## Available Integrations
 
-### Discord (`discord/`)
-Complete Discord bot implementation with media support and user memory capabilities.
+### [Discord](./discord/)
+Discord bot implementation with media support and user memory capabilities.
 
-### A2A - Agent to Agent (`a2a/`)
+### [A2A - Agent to Agent](./a2a/)
 Agent-to-agent communication using Google's A2A protocol for distributed agent systems.
 
-### Observability (`observability/`)
+### [Observability](./observability/)
 Monitoring and observability integrations for agent performance tracking.
 
 ## Setup

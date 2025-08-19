@@ -2,13 +2,6 @@
 
 **Observability** enables monitoring, tracking, and analyzing your Agno agents in production. This directory contains cookbooks that demonstrate how to integrate various observability platforms with your agents.
 
-## Features
-
-- **Metrics**: Measure agent performance, response times, and usage
-- **Logging**: Capture detailed logs of agent conversations and tool usage
-- **Monitoring**: Real-time visibility into agent health and behavior 
-- **Analytics**: Analyze patterns and optimize agent performance 
-
 ## Getting Started
 
 ### 1. Setup Environment
@@ -70,9 +63,9 @@ pip install opentelemetry-sdk opentelemetry-exporter-otlp openinference-instrume
 | **LangSmith** | LangChain's monitoring and debugging platform | `pip install langsmith` |
 
 **Files:**
-- `langfuse_via_openinference.py` - Langfuse integration
-- `arize_phoenix_via_openinference.py` - Phoenix integration  
-- `langsmith_via_openinference.py` - LangSmith integration
+- **[Langfuse via OpenInference](./langfuse_via_openinference.py)** - Langfuse integration
+- **[Arize Phoenix via OpenInference](./arize_phoenix_via_openinference.py)** - Phoenix integration  
+- **[LangSmith via OpenInference](./langsmith_via_openinference.py)** - LangSmith integration
 
 ### Platform-Specific Integrations
 
@@ -80,14 +73,14 @@ Direct integrations with platform-specific SDKs:
 
 | Platform | Description | Installation | File |
 |----------|-------------|--------------|------|
-| **AgentOps** | Simple agent monitoring with automatic session tracking | `pip install agentops` | `agent_ops.py` |
-| **Weave** | Weights & Biases experiment tracking and monitoring | `pip install weave` | `weave_op.py` |
+| **AgentOps** | Simple agent monitoring with automatic session tracking | `pip install agentops` | **[AgentOps](./agent_ops.py)** |
+| **Weave** | Weights & Biases experiment tracking and monitoring | `pip install weave` | **[Weave](./weave_op.py)** |
 
 ### Teams Examples
 
 |  | Description | Files |
 |----------|-------------|-------|
-| **Teams** | Multi-agent observability examples | `teams/langfuse_via_openinference_team.py`<br>`teams/langfuse_via_openinference_async_team.py` |
+| **Teams** | Multi-agent observability examples | **[Langfuse Team](./teams/langfuse_via_openinference_team.py)**<br>**[Langfuse Async Team](./teams/langfuse_via_openinference_async_team.py)** |
 
 ## Setup Instructions
 
