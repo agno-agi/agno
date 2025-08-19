@@ -7,16 +7,16 @@ This example shows how to instrument your agno agent with OpenInference and send
   - export ARIZE_PHOENIX_API_KEY=<your-key>
 """
 
-import agno_os
+import os
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.yfinance import YFinanceTools
 from phoenix.otel import register
 
-agno_os.environ["PHOENIX_CLIENT_HEADERS"] = (
-    f"api_key={agno_os.getenv('ARIZE_PHOENIX_API_KEY')}"
+os.environ["PHOENIX_CLIENT_HEADERS"] = (
+    f"api_key={os.getenv('ARIZE_PHOENIX_API_KEY')}"
 )
-agno_os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = "https://app.phoenix.arize.com"
+os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = "https://app.phoenix.arize.com"
 # configure the Phoenix tracer
 tracer_provider = register(
     project_name="agno-stock-price-agent",  # Default is 'default'

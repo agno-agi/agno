@@ -20,7 +20,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools, StreamableHTTPClientParams
 from agno.utils.log import log_exception
-from agno_os import getenv
+from os import getenv
 
 mcp_server_url = getenv("MCP_SERVER_URL")
 mcp_access_token = getenv("MCP_ACCESS_TOKEN")

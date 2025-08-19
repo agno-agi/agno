@@ -9,7 +9,7 @@ To run this example:
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno_os import getenv
+from os import getenv
 
 # Using these Mistral model and url as an example.
 model_id = "mistral-medium-2505"

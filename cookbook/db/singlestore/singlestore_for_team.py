@@ -11,7 +11,7 @@ from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
-from agno_os import getenv
+from os import getenv
 from pydantic import BaseModel
 
 # Configure SingleStore DB connection

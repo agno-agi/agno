@@ -15,7 +15,7 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.mcp import MCPTools
-from agno_os import getenv
+from os import getenv
 from fastapi import FastAPI
 from mcp import StdioServerParameters
 

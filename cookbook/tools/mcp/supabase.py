@@ -15,7 +15,7 @@ pip install agno mcp
 import asyncio
 from textwrap import dedent
 
-import agno_os
+import os
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools
@@ -24,12 +24,12 @@ from agno.utils.log import log_error, log_exception, log_info
 
 
 async def run_agent(task: str) -> None:
-    token = agno_os.getenv("SUPABASE_ACCESS_TOKEN")
+    token = os.getenv("SUPABASE_ACCESS_TOKEN")
     if not token:
         log_error("SUPABASE_ACCESS_TOKEN environment variable not set.")
         return
 
-    npx_cmd = "npx.cmd" if agno_os.name == "nt" else "npx"
+    npx_cmd = "npx.cmd" if os.name == "nt" else "npx"
 
     try:
         async with MCPTools(

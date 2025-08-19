@@ -1,10 +1,10 @@
 # Remove the tmp db file before running the script
-import agno_os
+import os
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 
-agno_os.remove("tmp/data.db")
+os.remove("tmp/data.db")
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),

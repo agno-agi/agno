@@ -1,6 +1,6 @@
 from pathlib import Path
 
-import agno_os
+import os
 import streamlit as st
 from geography_buddy import analyze_image
 from PIL import Image
@@ -66,7 +66,7 @@ def main() -> None:
 
                 # Cleanup after analysis
                 if image_path.exists():
-                    agno_os.remove(image_path)
+                    os.remove(image_path)
             else:
                 st.info("Click the **Analyze** button to get started!")
     else:

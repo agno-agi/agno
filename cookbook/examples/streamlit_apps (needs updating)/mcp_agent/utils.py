@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import agno_os
+import os
 import streamlit as st
 from agents import get_mcp_agent
 from agno.agent import Agent
@@ -74,7 +74,7 @@ def get_mcp_server_config() -> Optional[MCPServerConfig]:
         )
 
         if selected_tool == "GitHub":
-            github_token_from_env = agno_os.getenv("GITHUB_TOKEN")
+            github_token_from_env = os.getenv("GITHUB_TOKEN")
             github_token = st.text_input(
                 "GitHub Token",
                 type="password",
@@ -82,7 +82,7 @@ def get_mcp_server_config() -> Optional[MCPServerConfig]:
                 value=github_token_from_env,
             )
             if github_token:
-                agno_os.environ["GITHUB_TOKEN"] = github_token
+                os.environ["GITHUB_TOKEN"] = github_token
                 return MCPServerConfig(
                     id="github",
                     command="npx",

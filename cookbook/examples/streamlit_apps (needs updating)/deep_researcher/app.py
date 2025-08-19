@@ -5,7 +5,7 @@ from datetime import datetime
 
 import streamlit as st
 from agents import DeepResearcherAgent
-from agno_os import getenv
+from os import getenv
 
 st.set_page_config(
     page_title="Deep Research Agent",

@@ -9,22 +9,22 @@ This example shows how to use langfuse via OpenLIT to trace model calls.
 
 import base64
 
-import agno_os
+import os
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 LANGFUSE_AUTH = base64.b64encode(
-    f"{agno_os.getenv('LANGFUSE_PUBLIC_KEY')}:{agno_os.getenv('LANGFUSE_SECRET_KEY')}".encode()
+    f"{os.getenv('LANGFUSE_PUBLIC_KEY')}:{os.getenv('LANGFUSE_SECRET_KEY')}".encode()
 ).decode()
 
-agno_os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = (
+os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = (
     "https://us.cloud.langfuse.com/api/public/otel"  # 🇺🇸 US data region
 )
 # os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"]="https://cloud.langfuse.com/api/public/otel" # 🇪🇺 EU data region
 # os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"]="http://localhost:3000/api/public/otel" # 🏠 Local deployment (>= v3.22.0)
 
-agno_os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = f"Authorization=Basic {LANGFUSE_AUTH}"
+os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = f"Authorization=Basic {LANGFUSE_AUTH}"
 
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace import TracerProvider

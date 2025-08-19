@@ -3,7 +3,7 @@ import streamlit as st
 from agents import get_github_agent
 from agno.agent import Agent
 from agno.utils.log import logger
-from agno_os import getenv
+from os import getenv
 from utilities import (
     CUSTOM_CSS,
     about_widget,

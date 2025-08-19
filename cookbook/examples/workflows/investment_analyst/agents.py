@@ -1,4 +1,4 @@
-import agno_os
+import os
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools
@@ -8,11 +8,11 @@ from agno.tools.reasoning import ReasoningTools
 # MCP Tool configuration - Only Supabase
 def get_supabase_mcp_tools():
     """Get Supabase MCP tools for database operations"""
-    token = agno_os.getenv("SUPABASE_ACCESS_TOKEN")
+    token = os.getenv("SUPABASE_ACCESS_TOKEN")
     if not token:
         raise ValueError("SUPABASE_ACCESS_TOKEN environment variable is required")
 
-    npx_cmd = "npx.cmd" if agno_os.name == "nt" else "npx"
+    npx_cmd = "npx.cmd" if os.name == "nt" else "npx"
     return MCPTools(
         f"{npx_cmd} -y @supabase/mcp-server-supabase@latest --access-token {token}"
     )

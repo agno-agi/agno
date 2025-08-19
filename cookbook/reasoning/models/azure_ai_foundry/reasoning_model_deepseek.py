@@ -1,4 +1,4 @@
-import agno_os
+import os
 from agno.agent import Agent
 from agno.models.azure import AzureAIFoundry
 
@@ -7,8 +7,8 @@ agent = Agent(
     reasoning=True,
     reasoning_model=AzureAIFoundry(
         id="DeepSeek-R1",
-        azure_endpoint=agno_os.getenv("AZURE_ENDPOINT"),
-        api_key=agno_os.getenv("AZURE_API_KEY"),
+        azure_endpoint=os.getenv("AZURE_ENDPOINT"),
+        api_key=os.getenv("AZURE_API_KEY"),
     ),
 )
 

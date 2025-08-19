@@ -1,7 +1,7 @@
 import time
 from pathlib import Path
 
-import agno_os
+import os
 import streamlit as st
 from agents import chat_followup_agent, image_processing_agent
 from agno.media import Image
@@ -15,9 +15,9 @@ from utilities import about_widget, add_message, clear_chat
 
 load_dotenv()
 
-OPENAI_API_KEY = agno_os.getenv("OPENAI_API_KEY")
-GOOGLE_API_KEY = agno_os.getenv("GOOGLE_API_KEY")
-MISTRAL_API_KEY = agno_os.getenv("MISTRAL_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 
 # Streamlit App Configuration
 st.set_page_config(

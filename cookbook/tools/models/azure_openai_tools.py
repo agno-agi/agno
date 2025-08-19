@@ -19,7 +19,7 @@ from agno.agent import Agent
 from agno.models.azure import AzureOpenAI
 from agno.models.openai import OpenAIChat
 from agno.tools.models.azure_openai import AzureOpenAITools
-from agno_os import getenv
+from os import getenv
 
 # Check for base requirements first - needed for all examples
 # Exit early if base requirements aren't met

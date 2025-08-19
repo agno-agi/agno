@@ -11,13 +11,13 @@ This example shows how to use Pipedream MCP servers (in this case the Google Cal
 
 import asyncio
 
-import agno_os
+import os
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools
 from agno.utils.log import log_exception
 
-mcp_server_url = agno_os.getenv("MCP_SERVER_URL")
+mcp_server_url = os.getenv("MCP_SERVER_URL")
 
 
 async def run_agent(task: str) -> None:

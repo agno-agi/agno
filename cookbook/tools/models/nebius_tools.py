@@ -6,7 +6,7 @@ This example demonstrates how to use NebiusTools for text-to-image generation wi
 from pathlib import Path
 from uuid import uuid4
 
-import agno_os
+import os
 from agno.agent import Agent
 from agno.tools.models.nebius import NebiusTools
 from agno.utils.media import save_base64_data
@@ -16,7 +16,7 @@ agent = Agent(
     tools=[
         NebiusTools(
             # You can provide your API key here or set the NEBIUS_API_KEY environment variable
-            api_key=agno_os.getenv("NEBIUS_API_KEY"),
+            api_key=os.getenv("NEBIUS_API_KEY"),
             image_model="black-forest-labs/flux-schnell",  # Fastest model
             image_size="1024x1024",
             image_quality="standard",
@@ -44,7 +44,7 @@ if response.images:
 high_quality_agent = Agent(
     tools=[
         NebiusTools(
-            api_key=agno_os.getenv("NEBIUS_API_KEY"),
+            api_key=os.getenv("NEBIUS_API_KEY"),
             image_model="black-forest-labs/flux-dev",  # Better quality model
             image_size="1024x1024",
             image_quality="hd",  # Higher quality setting
@@ -72,7 +72,7 @@ if response.images:
 sdxl_agent = Agent(
     tools=[
         NebiusTools(
-            api_key=agno_os.getenv("NEBIUS_API_KEY"),
+            api_key=os.getenv("NEBIUS_API_KEY"),
             image_model="stability-ai/sdxl",  # Stability Diffusion XL model
             image_size="1024x1024",
         )

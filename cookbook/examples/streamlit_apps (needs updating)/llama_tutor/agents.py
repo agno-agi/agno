@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-import agno_os
+import os
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -89,7 +89,7 @@ def tutor_agent(
     provider, model_name = model_id.split(":")
 
     # Always use Groq with Llama model
-    groq_api_key = agno_os.environ.get("GROQ_API_KEY")
+    groq_api_key = os.environ.get("GROQ_API_KEY")
 
     # Default to llama-3.3-70b-versatile if the model name doesn't contain "llama"
     if "llama" not in model_name.lower():
@@ -98,7 +98,7 @@ def tutor_agent(
     model = Groq(id=model_name, api_key=groq_api_key)
 
     # Get Exa API key from environment variable
-    exa_api_key = agno_os.environ.get("EXA_API_KEY")
+    exa_api_key = os.environ.get("EXA_API_KEY")
 
     # Tools for Llama Tutor
     tools = [

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from textwrap import dedent
 
-import agno_os
+import os
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.cartesia import CartesiaTools

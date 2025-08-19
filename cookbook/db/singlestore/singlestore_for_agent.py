@@ -5,7 +5,7 @@ Run `pip install duckduckgo-search sqlalchemy openai` to install dependencies.""
 from agno.agent import Agent
 from agno.db.singlestore.singlestore import SingleStoreDb
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno_os import getenv
+from os import getenv
 
 # Configure SingleStore DB connection
 USERNAME = getenv("SINGLESTORE_USERNAME")

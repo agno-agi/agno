@@ -4,7 +4,7 @@ from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.tools.mcp import MCPTools
 from agno.utils.pprint import apprint_run_response
-from agno_os import getenv
+from os import getenv
 
 QDRANT_URL = getenv("QDRANT_URL")
 QDRANT_API_KEY = getenv("QDRANT_API_KEY")

@@ -1,6 +1,6 @@
 import datetime
 
-import agno_os
+import os
 from agno.agent import Agent
 from agno.models.mistral import MistralChat
 from agno.tools.googlecalendar import GoogleCalendarTools
@@ -67,7 +67,7 @@ You should help users to perform these actions in their Google calendar :
     - create events based on provided details
 """
     ],
-    model=MistralChat(api_key=agno_os.getenv("MISTRAL_API_KEY")),
+    model=MistralChat(api_key=os.getenv("MISTRAL_API_KEY")),
     add_datetime_to_context=True,
 )
 

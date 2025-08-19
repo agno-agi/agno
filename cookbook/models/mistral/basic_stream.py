@@ -1,4 +1,4 @@
-import agno_os
+import os
 from agno.agent import Agent, RunOutputEvent  # noqa
 from agno.models.mistral import MistralChat
 

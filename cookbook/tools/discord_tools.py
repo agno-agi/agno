@@ -1,9 +1,9 @@
-import agno_os
+import os
 from agno.agent import Agent
 from agno.tools.discord import DiscordTools
 
 # Get Discord token from environment
-discord_token = agno_os.getenv("DISCORD_BOT_TOKEN")
+discord_token = os.getenv("DISCORD_BOT_TOKEN")
 if not discord_token:
     raise ValueError("DISCORD_BOT_TOKEN not set")
 

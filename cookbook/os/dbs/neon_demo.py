@@ -7,7 +7,7 @@ from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team.team import Team
-from agno_os import getenv
+from os import getenv
 
 NEON_DB_URL = getenv("NEON_DB_URL")
 
