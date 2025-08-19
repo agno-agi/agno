@@ -21,6 +21,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
 from agno.tools.wikipedia import WikipediaTools
+from agno.utils import pprint
 from rich.console import Console
 from rich.prompt import Prompt
 
@@ -61,7 +62,6 @@ agent = Agent(
         WikipediaTools(requires_confirmation_tools=["search_wikipedia"]),
     ],
     markdown=True,
-    debug_mode=True,
 )
 
 run_response = agent.run(
@@ -88,4 +88,5 @@ while run_response.is_paused:
             # We update the tools in place
             tool.confirmed = True
 
-    run_response = agent.continue_run()
+    run_response = agent.continue_run(run_response=run_response)
+    pprint.pprint_run_response(run_response)
