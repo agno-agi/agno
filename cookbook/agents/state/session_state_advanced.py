@@ -8,7 +8,7 @@ from agno.models.openai import OpenAIChat
 def add_item(session_state, item: str) -> str:
     """Add an item to the shopping list and return confirmation."""
     # Add the item if it's not already in the list
-    if item.lower() not in [i.lower() for i in agent.session_state["shopping_list"]]:
+    if item.lower() not in [i.lower() for i in session_state["shopping_list"]]:
         session_state["shopping_list"].append(item)  # type: ignore
         return f"Added '{item}' to the shopping list"
     else:
@@ -18,9 +18,9 @@ def add_item(session_state, item: str) -> str:
 def remove_item(session_state, item: str) -> str:
     """Remove an item from the shopping list by name."""
     # Case-insensitive search
-    for i, list_item in enumerate(agent.session_state["shopping_list"]):
+    for i, list_item in enumerate(session_state["shopping_list"]):
         if list_item.lower() == item.lower():
-            agent.session_state["shopping_list"].pop(i)
+            session_state["shopping_list"].pop(i)
             return f"Removed '{list_item}' from the shopping list"
 
     return f"'{item}' was not found in the shopping list"
