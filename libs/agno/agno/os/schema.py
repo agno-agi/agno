@@ -345,6 +345,7 @@ class TeamResponse(BaseModel):
     response_settings: Optional[Dict[str, Any]] = None
     streaming: Optional[Dict[str, Any]] = None
     members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = None
+    metadata: Optional[Dict[str, Any]] = None   
 
     @classmethod
     def from_team(cls, team: Team, memory_app: Optional[MemoryApp] = None) -> "TeamResponse":
@@ -562,7 +563,7 @@ class WorkflowResponse(BaseModel):
     steps: Optional[List[Dict[str, Any]]] = None
     agent: Optional[AgentResponse] = None
     team: Optional[TeamResponse] = None
-
+    metadata: Optional[Dict[str, Any]] = None
     @classmethod
     def _resolve_agents_and_teams_recursively(cls, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Parse Agents and Teams into AgentResponse and TeamResponse objects.
