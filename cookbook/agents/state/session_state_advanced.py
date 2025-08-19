@@ -5,25 +5,19 @@ from agno.models.openai import OpenAIChat
 
 
 # Define tools to manage our shopping list
-def add_item(agent: Agent, item: str) -> str:
+def add_item(session_state, item: str) -> str:
     """Add an item to the shopping list and return confirmation."""
     # Add the item if it's not already in the list
-    if not agent.session_state:
-        return ""
-
     if item.lower() not in [i.lower() for i in agent.session_state["shopping_list"]]:
-        agent.session_state["shopping_list"].append(item)  # type: ignore
+        session_state["shopping_list"].append(item)  # type: ignore
         return f"Added '{item}' to the shopping list"
     else:
         return f"'{item}' is already in the shopping list"
 
 
-def remove_item(agent: Agent, item: str) -> str:
+def remove_item(session_state, item: str) -> str:
     """Remove an item from the shopping list by name."""
     # Case-insensitive search
-    if not agent.session_state:
-        return ""
-
     for i, list_item in enumerate(agent.session_state["shopping_list"]):
         if list_item.lower() == item.lower():
             agent.session_state["shopping_list"].pop(i)
@@ -32,12 +26,9 @@ def remove_item(agent: Agent, item: str) -> str:
     return f"'{item}' was not found in the shopping list"
 
 
-def list_items(agent: Agent) -> str:
+def list_items(session_state) -> str:
     """List all items in the shopping list."""
-    if not agent.session_state:
-        return ""
-
-    shopping_list = agent.session_state["shopping_list"]
+    shopping_list = session_state["shopping_list"]
 
     if not shopping_list:
         return "The shopping list is empty."
@@ -49,7 +40,7 @@ def list_items(agent: Agent) -> str:
 # Create a Shopping List Manager Agent that maintains state
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    # Initialize the session state with an empty shopping list
+    # Initialize the session state with an empty shopping list (default session state for all sessions)
     session_state={"shopping_list": []},
     tools=[add_item, remove_item, list_items],
     # You can use variables from the session state in the instructions

@@ -642,7 +642,7 @@ class Agent:
         # Determine the session_state
         if session_state is None:
             session_state = self.session_state or {}
-
+        
         if user_id is not None:
             session_state["current_user_id"] = user_id
         if session_id is not None:
@@ -3325,6 +3325,7 @@ class Agent:
         knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> None:
         if self._rebuild_tools:
+                
             self._rebuild_tools = False
 
             agent_tools = self.get_tools(
@@ -3365,7 +3366,6 @@ class Agent:
                             # If the function does not exist in self.functions
                             if name not in self._functions_for_model:
                                 func._agent = self
-                                func._session_state = session_state
                                 func.process_entrypoint(strict=strict)
                                 if strict and func.strict is None:
                                     func.strict = True
@@ -3382,7 +3382,6 @@ class Agent:
                     elif isinstance(tool, Function):
                         if tool.name not in self._functions_for_model:
                             tool._agent = self
-                            tool._session_state = session_state
                             tool.process_entrypoint(strict=strict)
                             if strict and tool.strict is None:
                                 tool.strict = True
@@ -3402,7 +3401,6 @@ class Agent:
                             if function_name not in self._functions_for_model:
                                 func = Function.from_callable(tool, strict=strict)
                                 func._agent = self
-                                func._session_state = session_state
                                 if strict:
                                     func.strict = True
                                 if self.tool_hooks is not None:
@@ -3412,6 +3410,10 @@ class Agent:
                                 log_debug(f"Added tool {func.name}")
                         except Exception as e:
                             log_warning(f"Could not add tool {tool}: {e}")
+        
+        # Update the session state for the functions
+        for func in self._functions_for_model.values():
+            func._session_state = session_state
 
     def _model_should_return_structured_output(self):
         self.model = cast(Model, self.model)

@@ -12,32 +12,30 @@ import json
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.db.sqlite import SqliteDb
 
 # In-memory database to store user shopping lists
 # Organized by user ID and session ID
 shopping_list = {}
 
 
-def add_item(agent: Agent, item: str) -> str:
+def add_item(session_state, item: str) -> str:
     """Add an item to the current user's shopping list."""
-    if not agent.session_state:
-        return ""
 
-    current_user_id = agent.session_state["current_user_id"]
-    current_session_id = agent.session_state["current_session_id"]
+    current_user_id = session_state["current_user_id"]
+    current_session_id = session_state["current_session_id"]
     shopping_list.setdefault(current_user_id, {}).setdefault(
         current_session_id, []
     ).append(item)
+    
     return f"Item {item} added to the shopping list"
 
 
-def remove_item(agent: Agent, item: str) -> str:
+def remove_item(session_state, item: str) -> str:
     """Remove an item from the current user's shopping list."""
-    if not agent.session_state:
-        return ""
 
-    current_user_id = agent.session_state["current_user_id"]
-    current_session_id = agent.session_state["current_session_id"]
+    current_user_id = session_state["current_user_id"]
+    current_session_id = session_state["current_session_id"]
 
     if (
         current_user_id not in shopping_list
@@ -52,19 +50,18 @@ def remove_item(agent: Agent, item: str) -> str:
     return f"Item {item} removed from the shopping list"
 
 
-def get_shopping_list(agent: Agent) -> str:
+def get_shopping_list(session_state) -> str:
     """Get the current user's shopping list."""
-    if not agent.session_state:
-        return ""
 
-    current_user_id = agent.session_state["current_user_id"]
-    current_session_id = agent.session_state["current_session_id"]
+    current_user_id = session_state["current_user_id"]
+    current_session_id = session_state["current_session_id"]
     return f"Shopping list for user {current_user_id} and session {current_session_id}: \n{json.dumps(shopping_list[current_user_id][current_session_id], indent=2)}"
 
 
 # Create an Agent that maintains state
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
+    db=SqliteDb(db_file="tmp/data.db"),
     tools=[add_item, remove_item, get_shopping_list],
     # Reference the in-memory database
     instructions=[
