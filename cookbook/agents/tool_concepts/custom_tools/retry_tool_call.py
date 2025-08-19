@@ -4,22 +4,22 @@ from agno.models.openai import OpenAIChat
 from agno.utils.log import logger
 
 
-def add_item(agent: Agent, item: str) -> str:
+def add_item(session_state: dict, item: str) -> str:
     """Add an item to the shopping list."""
-    if agent.session_state:
-        agent.session_state["shopping_list"].append(item)
-        len_shopping_list = len(agent.session_state["shopping_list"])
+    if session_state:
+        session_state["shopping_list"].append(item)
+        len_shopping_list = len(session_state["shopping_list"])
     if len_shopping_list < 3:
         logger.info(
             f"Asking the model to add {3 - len_shopping_list} more items to the shopping list."
         )
         raise RetryAgentRun(
-            f"Shopping list is: {agent.session_state['shopping_list']}. Minimum 3 items in the shopping list. "  # type: ignore
+            f"Shopping list is: {session_state['shopping_list']}. Minimum 3 items in the shopping list. "  # type: ignore
             + f"Add {3 - len_shopping_list} more items.",
         )
 
-    logger.info(f"The shopping list is now: {agent.session_state.get('shopping_list')}")  # type: ignore
-    return f"The shopping list is now: {agent.session_state.get('shopping_list')}"  # type: ignore
+    logger.info(f"The shopping list is now: {session_state.get('shopping_list')}")  # type: ignore
+    return f"The shopping list is now: {session_state.get('shopping_list')}"  # type: ignore
 
 
 agent = Agent(
