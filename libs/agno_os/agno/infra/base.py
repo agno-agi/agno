@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
-from agno.os.settings import OSSettings
+from agno.agno_os.settings import OSSettings
 
 
 class InfraBase(BaseModel):
@@ -92,7 +92,7 @@ class InfraBase(BaseModel):
             return self.cached_os_dir
 
         if self.os_root is not None:
-            from agno.os.helpers import get_os_infra_dir_path
+            from agno.agno_os.helpers import get_os_infra_dir_path
 
             os_dir = get_os_infra_dir_path(self.os_root)
             if os_dir is not None:
@@ -106,14 +106,14 @@ class InfraBase(BaseModel):
 
     def get_env_file_data(self) -> Optional[Dict[str, Any]]:
         if self.cached_env_file_data is None:
-            from agno.utils.yaml_io import read_yaml_file
+            from agno.utilities.yaml_io import read_yaml_file
 
             self.cached_env_file_data = read_yaml_file(file_path=self.env_file)
         return self.cached_env_file_data
 
     def get_secret_file_data(self) -> Optional[Dict[str, Any]]:
         if self.cached_secret_file_data is None:
-            from agno.utils.yaml_io import read_yaml_file
+            from agno.utilities.yaml_io import read_yaml_file
 
             self.cached_secret_file_data = read_yaml_file(file_path=self.secrets_file)
         return self.cached_secret_file_data

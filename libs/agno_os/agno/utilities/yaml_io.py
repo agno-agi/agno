@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from agno.utils.logging import logger
+from agno.utilities.logging import logger
 
 
 def read_yaml_file(file_path: Optional[Path]) -> Optional[Dict[str, Any]]:

@@ -8,7 +8,7 @@ from typing import Optional
 import typer
 
 from agno.cli.os_cli import os_cli as os_subcommands
-from agno.utils.logging import set_log_level_to_debug
+from agno.utilities.logging import set_log_level_to_debug
 
 agno_cli = typer.Typer(
     help="""\b
@@ -123,7 +123,7 @@ def set(
     $ `ag os set`           -> Set the current directory as the active Agno OS
     $ `ag os set -os idata` -> Set the OS named "idata" as the active Agno OS
     """
-    from agno.os.operator import set_os_as_active
+    from agno.agno_os.operator import set_os_as_active
 
     if print_debug_log:
         set_log_level_to_debug()

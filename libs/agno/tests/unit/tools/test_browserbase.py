@@ -1,17 +1,17 @@
 """Unit tests for BrowserbaseTools class."""
 
 import json
-import os
 from unittest.mock import MagicMock, Mock, patch
 
+import agno_os
 import pytest
 from playwright.sync_api import Browser, BrowserContext, Page
 
 from agno.tools.browserbase import BrowserbaseTools
 
-TEST_API_KEY = os.environ.get("BROWSERBASE_API_KEY", "test_api_key")
-TEST_PROJECT_ID = os.environ.get("BROWSERBASE_PROJECT_ID", "test_project_id")
-TEST_BASE_URL = os.environ.get("BROWSERBASE_BASE_URL")
+TEST_API_KEY = agno_os.environ.get("BROWSERBASE_API_KEY", "test_api_key")
+TEST_PROJECT_ID = agno_os.environ.get("BROWSERBASE_PROJECT_ID", "test_project_id")
+TEST_BASE_URL = agno_os.environ.get("BROWSERBASE_BASE_URL")
 
 
 @pytest.fixture

@@ -6,7 +6,7 @@ from agno.aws.resource.base import AwsResource
 from agno.aws.resource.elb.load_balancer import LoadBalancer
 from agno.aws.resource.elb.target_group import TargetGroup
 from agno.cli.console import print_info
-from agno.utils.logging import logger
+from agno.utilities.logging import logger
 
 
 class Listener(AwsResource):

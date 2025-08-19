@@ -7,7 +7,7 @@ from typing_extensions import Literal
 from agno.aws.api_client import AwsApiClient
 from agno.aws.resource.base import AwsResource
 from agno.cli.console import print_info, print_subheading
-from agno.utils.logging import logger
+from agno.utilities.logging import logger
 
 
 class CertificateSummary(BaseModel):

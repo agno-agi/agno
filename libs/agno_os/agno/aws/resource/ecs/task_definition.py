@@ -10,7 +10,7 @@ from agno.aws.resource.ecs.volume import EcsVolume
 from agno.aws.resource.iam.policy import IamPolicy
 from agno.aws.resource.iam.role import IamRole
 from agno.cli.console import print_info
-from agno.utils.logging import logger
+from agno.utilities.logging import logger
 
 
 class EcsTaskDefinition(AwsResource):

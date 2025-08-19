@@ -1,7 +1,7 @@
 import json
-import os
 from unittest.mock import MagicMock, patch
 
+import agno_os
 import pytest
 
 from agno.tools.bravesearch import BraveSearchTools
@@ -31,7 +31,7 @@ def mock_brave_client():
 
 @pytest.fixture
 def brave_search_tools(mock_brave_client):
-    os.environ["BRAVE_API_KEY"] = "test_api_key"
+    agno_os.environ["BRAVE_API_KEY"] = "test_api_key"
     return BraveSearchTools()
 
 
@@ -44,15 +44,15 @@ def test_init_with_api_key():
 
 
 def test_init_with_env_var():
-    os.environ["BRAVE_API_KEY"] = "env_test_key"
+    agno_os.environ["BRAVE_API_KEY"] = "env_test_key"
     with patch("agno.tools.bravesearch.Brave"):
         tools = BraveSearchTools()
         assert tools.api_key == "env_test_key"
 
 
 def test_init_without_api_key():
-    if "BRAVE_API_KEY" in os.environ:
-        del os.environ["BRAVE_API_KEY"]
+    if "BRAVE_API_KEY" in agno_os.environ:
+        del agno_os.environ["BRAVE_API_KEY"]
     with pytest.raises(ValueError, match="BRAVE_API_KEY is required"):
         BraveSearchTools()
 

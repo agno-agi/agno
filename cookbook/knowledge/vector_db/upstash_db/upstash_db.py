@@ -1,8 +1,7 @@
 # install upstash-vector - `uv pip install upstash-vector`
 # Add OPENAI_API_KEY to your environment variables for the agent response
 
-import os
-
+import agno_os
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.upstashdb import UpstashVectorDb
@@ -13,8 +12,8 @@ from agno.vectordb.upstashdb import UpstashVectorDb
 # - Replace the values below or use environment variables
 
 vector_db = UpstashVectorDb(
-    url=os.getenv("UPSTASH_VECTOR_REST_URL"),
-    token=os.getenv("UPSTASH_VECTOR_REST_TOKEN"),
+    url=agno_os.getenv("UPSTASH_VECTOR_REST_URL"),
+    token=agno_os.getenv("UPSTASH_VECTOR_REST_TOKEN"),
 )
 
 # Initialize Upstash DB

@@ -41,8 +41,7 @@ Install couchbase-sdk:
     pip install couchbase
 """
 
-import os
-
+import agno_os
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
@@ -52,9 +51,9 @@ from couchbase.management.search import SearchIndex
 from couchbase.options import ClusterOptions, KnownConfigProfiles
 
 # Couchbase connection settings
-username = os.getenv("COUCHBASE_USER")
-password = os.getenv("COUCHBASE_PASSWORD")
-connection_string = os.getenv("COUCHBASE_CONNECTION_STRING")
+username = agno_os.getenv("COUCHBASE_USER")
+password = agno_os.getenv("COUCHBASE_PASSWORD")
+connection_string = agno_os.getenv("COUCHBASE_CONNECTION_STRING")
 
 # Create cluster options with authentication
 auth = PasswordAuthenticator(username, password)

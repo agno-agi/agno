@@ -7,7 +7,7 @@ from agno.team import Team
 from agno.utils.log import logger
 from css import CUSTOM_CSS
 from uagi import UAgIConfig, create_uagi, uagi_memory
-from utils import (
+from utilities import (
     about_agno,
     add_message,
     display_tool_calls,

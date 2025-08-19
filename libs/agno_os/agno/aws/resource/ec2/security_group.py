@@ -5,7 +5,7 @@ from agno.aws.resource.base import AwsResource
 from agno.aws.resource.ec2.subnet import Subnet
 from agno.aws.resource.reference import AwsReference
 from agno.cli.console import print_info
-from agno.utils.logging import logger
+from agno.utilities.logging import logger
 
 
 def get_my_ip() -> str:

@@ -1,6 +1,6 @@
 import asyncio
-import os
 
+import agno_os
 import streamlit as st
 from agents import run_github_agent
 
@@ -23,7 +23,7 @@ with st.sidebar:
     )
 
     if github_token:
-        os.environ["GITHUB_TOKEN"] = github_token
+        agno_os.environ["GITHUB_TOKEN"] = github_token
 
     st.markdown("---")
     st.markdown("### Example Queries")

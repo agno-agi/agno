@@ -1,6 +1,6 @@
 import asyncio
-import os
 
+import agno_os
 from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.tools.mcp import MCPTools
@@ -10,12 +10,12 @@ async def run_agent_prompt():
     async with MCPTools(
         command="uvx oxylabs-mcp",
         env={
-            "OXYLABS_USERNAME": os.getenv("OXYLABS_USERNAME"),
-            "OXYLABS_PASSWORD": os.getenv("OXYLABS_PASSWORD"),
+            "OXYLABS_USERNAME": agno_os.getenv("OXYLABS_USERNAME"),
+            "OXYLABS_PASSWORD": agno_os.getenv("OXYLABS_PASSWORD"),
         },
     ) as server:
         agent = Agent(
-            model=Gemini(api_key=os.getenv("GEMINI_API_KEY")),
+            model=Gemini(api_key=agno_os.getenv("GEMINI_API_KEY")),
             tools=[server],
             instructions=["Use MCP tools to fulfill the requests"],
             markdown=True,

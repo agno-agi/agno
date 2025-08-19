@@ -1,8 +1,8 @@
 import asyncio
 import base64
-import os
 from uuid import uuid4
 
+import agno_os
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team import Team
@@ -15,15 +15,15 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
 LANGFUSE_AUTH = base64.b64encode(
-    f"{os.getenv('LANGFUSE_PUBLIC_KEY')}:{os.getenv('LANGFUSE_SECRET_KEY')}".encode()
+    f"{agno_os.getenv('LANGFUSE_PUBLIC_KEY')}:{agno_os.getenv('LANGFUSE_SECRET_KEY')}".encode()
 ).decode()
-os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = (
+agno_os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = (
     "https://us.cloud.langfuse.com/api/public/otel"  # 🇺🇸 US data region
 )
 # os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"]="https://cloud.langfuse.com/api/public/otel" # 🇪🇺 EU data region
 # os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"]="http://localhost:3000/api/public/otel" # 🏠 Local deployment (>= v3.22.0)
 
-os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = f"Authorization=Basic {LANGFUSE_AUTH}"
+agno_os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = f"Authorization=Basic {LANGFUSE_AUTH}"
 
 
 tracer_provider = TracerProvider()

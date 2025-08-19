@@ -1,7 +1,7 @@
-import os
 from pathlib import Path
 from typing import Optional
 
+import agno_os
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.google import Gemini
@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GOOGLE_API_KEY = agno_os.getenv("GOOGLE_API_KEY")
 
 # Define the query for geography identification
 geo_query = """

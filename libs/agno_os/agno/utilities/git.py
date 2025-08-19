@@ -3,7 +3,7 @@ from typing import Optional
 
 import git
 
-from agno.utils.logging import log_debug
+from agno.utilities.logging import log_debug
 
 
 def get_remote_origin_for_dir(

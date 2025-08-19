@@ -38,16 +38,15 @@ Run this script with proper environment variables set to interact with
 the Zoom API through natural language commands.
 """
 
-import os
-
+import agno_os
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.zoom import ZoomTools
 
 # Get environment variables
-ACCOUNT_ID = os.getenv("ZOOM_ACCOUNT_ID")
-CLIENT_ID = os.getenv("ZOOM_CLIENT_ID")
-CLIENT_SECRET = os.getenv("ZOOM_CLIENT_SECRET")
+ACCOUNT_ID = agno_os.getenv("ZOOM_ACCOUNT_ID")
+CLIENT_ID = agno_os.getenv("ZOOM_CLIENT_ID")
+CLIENT_SECRET = agno_os.getenv("ZOOM_CLIENT_SECRET")
 
 # Initialize Zoom tools with credentials
 zoom_tools = ZoomTools(

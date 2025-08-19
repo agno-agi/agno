@@ -8,12 +8,12 @@ Run: `pip install anthropic mcp agno` to install the dependencies
 """
 
 import asyncio
-from os import getenv
 
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.tools.mcp import MCPTools
 from agno.utils.pprint import apprint_run_response
+from agno_os import getenv
 
 
 async def run_agent(message: str) -> None:

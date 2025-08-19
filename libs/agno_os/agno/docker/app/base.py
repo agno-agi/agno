@@ -1,10 +1,10 @@
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
+from agno.cloud.app import InfraApp
+from agno.cloud.context import ContainerContext
 from agno.docker.context import DockerBuildContext
-from agno.infra.app import InfraApp
-from agno.infra.context import ContainerContext
-from agno.utils.logging import logger
+from agno.utilities.logging import logger
 
 if TYPE_CHECKING:
     from agno.docker.resource.base import DockerResource
@@ -130,10 +130,10 @@ class DockerApp(InfraApp):
 
     def get_container_env(self, container_context: ContainerContext) -> Dict[str, str]:
         from agno.constants import (
+            AGNO_OS_ROOT,
             AGNO_RUNTIME_ENV_VAR,
             PYTHONPATH_ENV_VAR,
             REQUIREMENTS_FILE_PATH_ENV_VAR,
-            AGNO_OS_ROOT,
         )
 
         # Container Environment
@@ -181,7 +181,7 @@ class DockerApp(InfraApp):
         return container_env
 
     def get_container_volumes(self, container_context: ContainerContext) -> Dict[str, dict]:
-        from agno.utils.defaults import get_default_volume_name
+        from agno.utilities.defaults import get_default_volume_name
 
         if self.os_root is None:
             logger.error("Invalid os_root")

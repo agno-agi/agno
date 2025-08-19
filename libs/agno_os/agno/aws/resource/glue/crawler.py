@@ -5,7 +5,7 @@ from agno.aws.resource.base import AwsResource
 from agno.aws.resource.iam.role import IamRole
 from agno.aws.resource.s3.bucket import S3Bucket
 from agno.cli.console import print_info
-from agno.utils.logging import logger
+from agno.utilities.logging import logger
 
 
 class GlueS3Target(AwsResource):

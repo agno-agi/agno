@@ -6,7 +6,7 @@ from agno.aws.api_client import AwsApiClient
 from agno.aws.resource.base import AwsResource
 from agno.aws.resource.s3.object import S3Object
 from agno.cli.console import print_info
-from agno.utils.logging import logger
+from agno.utilities.logging import logger
 
 
 class S3Bucket(AwsResource):

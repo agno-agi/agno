@@ -42,9 +42,9 @@ Install couchbase-sdk:
 """
 
 import asyncio
-import os
 import time
 
+import agno_os
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
@@ -54,9 +54,9 @@ from couchbase.management.search import SearchIndex
 from couchbase.options import ClusterOptions, KnownConfigProfiles
 
 # Couchbase connection settings
-username = os.getenv("COUCHBASE_USER")  # Replace with your username
-password = os.getenv("COUCHBASE_PASSWORD")  # Replace with your password
-connection_string = os.getenv("COUCHBASE_CONNECTION_STRING")
+username = agno_os.getenv("COUCHBASE_USER")  # Replace with your username
+password = agno_os.getenv("COUCHBASE_PASSWORD")  # Replace with your password
+connection_string = agno_os.getenv("COUCHBASE_CONNECTION_STRING")
 
 # Create cluster options with authentication
 auth = PasswordAuthenticator(username, password)
@@ -159,7 +159,7 @@ knowledge_base = Knowledge(
         embedder=OpenAIEmbedder(
             id="text-embedding-3-large",
             dimensions=3072,
-            api_key=os.getenv("OPENAI_API_KEY"),
+            api_key=agno_os.getenv("OPENAI_API_KEY"),
         ),
         wait_until_index_ready=60,
         overwrite=True,

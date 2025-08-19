@@ -3,6 +3,8 @@ from typing import Dict, List, Optional, cast
 
 from rich.prompt import Prompt
 
+from agno.agno_os.config import OSConfig
+from agno.agno_os.enums import OSStarterTemplate
 from agno.cli.config import AgnoCliConfig
 from agno.cli.console import (
     console,
@@ -11,10 +13,8 @@ from agno.cli.console import (
     print_info,
     print_subheading,
 )
-from agno.os.enums import OSStarterTemplate
-from agno.infra.resources import InfraResources
-from agno.os.config import OSConfig
-from agno.utils.logging import logger
+from agno.cloud.resources import InfraResources
+from agno.utilities.logging import logger
 
 TEMPLATE_TO_NAME_MAP: Dict[OSStarterTemplate, str] = {
     OSStarterTemplate.agent_os_docker: "agent-os-docker",
@@ -36,10 +36,10 @@ def create_os_from_template(
 
     import git
 
+    from agno.agno_os.helpers import get_os_infra_dir_path
     from agno.cli.operator import initialize_agno_cli
-    from agno.os.helpers import get_os_infra_dir_path
-    from agno.utils.filesystem import rmdir_recursive
-    from agno.utils.git import GitCloneProgress
+    from agno.utilities.filesystem import rmdir_recursive
+    from agno.utilities.git import GitCloneProgress
 
     current_dir: Path = Path("").resolve()
 
@@ -160,9 +160,9 @@ def setup_os(os_root_path: Path) -> Optional[OSConfig]:
     1.4 Get the OS name
     1.5 Create or update OSConfig
     """
+    from agno.agno_os.helpers import get_os_infra_dir_path
     from agno.cli.operator import initialize_agno_cli
-    from agno.os.helpers import get_os_infra_dir_path
-    from agno.utils.git import get_remote_origin_for_dir
+    from agno.utilities.git import get_remote_origin_for_dir
 
     print_heading("Setting up os\n")
 

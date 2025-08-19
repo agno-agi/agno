@@ -13,10 +13,10 @@ Prerequisites:
 """
 
 import asyncio
-import os
 from textwrap import dedent
 from typing import List, Optional
 
+import agno_os
 from agno.agent import Agent
 from agno.models.openai.chat import OpenAIChat
 from agno.team import Team
@@ -60,8 +60,8 @@ class TravelPlan(BaseModel):
 
 async def run_team():
     env = {
-        **os.environ,
-        "GOOGLE_MAPS_API_KEY": os.getenv("GOOGLE_MAPS_API_KEY"),
+        **agno_os.environ,
+        "GOOGLE_MAPS_API_KEY": agno_os.getenv("GOOGLE_MAPS_API_KEY"),
     }
     # Define server parameters
     airbnb_server_params = StdioServerParameters(

@@ -1,8 +1,7 @@
-from os import getenv
-
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pineconedb import PineconeDb
+from agno_os import getenv
 
 api_key = getenv("PINECONE_API_KEY")
 index_name = "thai-recipe-index"

@@ -10,7 +10,7 @@ from agno.aws.resource.ecs.cluster import EcsCluster
 from agno.aws.resource.ecs.task_definition import EcsTaskDefinition
 from agno.aws.resource.elb.target_group import TargetGroup
 from agno.cli.console import print_info
-from agno.utils.logging import logger
+from agno.utilities.logging import logger
 
 
 class EcsService(AwsResource):

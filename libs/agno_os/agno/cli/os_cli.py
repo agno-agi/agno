@@ -14,7 +14,7 @@ from agno.cli.console import (
     print_available_os,
     print_info,
 )
-from agno.utils.logging import logger, set_log_level_to_debug
+from agno.utilities.logging import logger, set_log_level_to_debug
 
 os_cli = typer.Typer(
     name="os",
@@ -71,7 +71,7 @@ def create(
     if print_debug_log:
         set_log_level_to_debug()
 
-    from agno.os.operator import create_os_from_template
+    from agno.agno_os.operator import create_os_from_template
 
     create_os_from_template(name=name, template=template, url=url)
 
@@ -147,12 +147,12 @@ def up(
     if print_debug_log:
         set_log_level_to_debug()
 
+    from agno.agno_os.config import OSConfig
+    from agno.agno_os.helpers import get_os_infra_dir_path
+    from agno.agno_os.operator import setup_os, start_os
     from agno.cli.config import AgnoCliConfig
     from agno.cli.operator import initialize_agno_cli
-    from agno.os.config import OSConfig
-    from agno.os.helpers import get_os_infra_dir_path
-    from agno.os.operator import setup_os, start_os
-    from agno.utils.resource_filter import parse_resource_filter
+    from agno.utilities.resource_filter import parse_resource_filter
 
     agno_config: Optional[AgnoCliConfig] = AgnoCliConfig.from_saved_config()
     if not agno_config:
@@ -313,12 +313,12 @@ def down(
     if print_debug_log:
         set_log_level_to_debug()
 
+    from agno.agno_os.config import OSConfig
+    from agno.agno_os.helpers import get_os_infra_dir_path
+    from agno.agno_os.operator import setup_os, stop_os
     from agno.cli.config import AgnoCliConfig
     from agno.cli.operator import initialize_agno_cli
-    from agno.os.config import OSConfig
-    from agno.os.helpers import get_os_infra_dir_path
-    from agno.os.operator import setup_os, stop_os
-    from agno.utils.resource_filter import parse_resource_filter
+    from agno.utilities.resource_filter import parse_resource_filter
 
     agno_config: Optional[AgnoCliConfig] = AgnoCliConfig.from_saved_config()
     if not agno_config:
@@ -481,12 +481,12 @@ def patch(
     if print_debug_log:
         set_log_level_to_debug()
 
+    from agno.agno_os.config import OSConfig
+    from agno.agno_os.helpers import get_os_infra_dir_path
+    from agno.agno_os.operator import setup_os, update_os
     from agno.cli.config import AgnoCliConfig
     from agno.cli.operator import initialize_agno_cli
-    from agno.os.config import OSConfig
-    from agno.os.helpers import get_os_infra_dir_path
-    from agno.os.operator import setup_os, update_os
-    from agno.utils.resource_filter import parse_resource_filter
+    from agno.utilities.resource_filter import parse_resource_filter
 
     agno_config: Optional[AgnoCliConfig] = AgnoCliConfig.from_saved_config()
     if not agno_config:
@@ -693,10 +693,10 @@ def config(
     if print_debug_log:
         set_log_level_to_debug()
 
+    from agno.agno_os.config import OSConfig
     from agno.cli.config import AgnoCliConfig
     from agno.cli.operator import initialize_agno_cli
-    from agno.os.config import OSConfig
-    from agno.utils.load_env import load_env
+    from agno.utilities.load_env import load_env
 
     agno_config: Optional[AgnoCliConfig] = AgnoCliConfig.from_saved_config()
     if not agno_config:
@@ -741,9 +741,9 @@ def delete(
     if print_debug_log:
         set_log_level_to_debug()
 
+    from agno.agno_os.operator import delete_os
     from agno.cli.config import AgnoCliConfig
     from agno.cli.operator import initialize_agno_cli
-    from agno.os.operator import delete_os
 
     agno_config: Optional[AgnoCliConfig] = AgnoCliConfig.from_saved_config()
     if not agno_config:

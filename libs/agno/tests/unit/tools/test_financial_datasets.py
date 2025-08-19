@@ -1,6 +1,6 @@
-import os
 from unittest.mock import MagicMock, patch
 
+import agno_os
 import pytest
 
 from agno.tools.financial_datasets import FinancialDatasetsTools
@@ -36,7 +36,7 @@ def test_init_with_provided_key():
     assert tools.api_key == "explicit_key"
 
 
-@patch.dict(os.environ, {"FINANCIAL_DATASETS_API_KEY": "env_key"})
+@patch.dict(agno_os.environ, {"FINANCIAL_DATASETS_API_KEY": "env_key"})
 def test_init_with_env_key():
     """Test initialization with API key from environment variable."""
     tools = FinancialDatasetsTools()
@@ -47,7 +47,7 @@ def test_init_with_env_key():
 def test_init_without_key(mock_log_error):
     """Test initialization without API key."""
     # Clear environment variable if it exists
-    with patch.dict(os.environ, {}, clear=True):
+    with patch.dict(agno_os.environ, {}, clear=True):
         tools = FinancialDatasetsTools()
         assert tools.api_key is None
         mock_log_error.assert_called_once()

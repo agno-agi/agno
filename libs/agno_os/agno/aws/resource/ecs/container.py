@@ -4,7 +4,7 @@ from agno.aws.api_client import AwsApiClient
 from agno.aws.resource.base import AwsResource
 from agno.aws.resource.secret.manager import SecretsManager
 from agno.aws.resource.secret.reader import read_secrets
-from agno.utils.logging import logger
+from agno.utilities.logging import logger
 
 
 class EcsContainer(AwsResource):

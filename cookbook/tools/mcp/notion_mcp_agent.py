@@ -15,9 +15,9 @@ Usage:
 
 import asyncio
 import json
-import os
 from textwrap import dedent
 
+import agno_os
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools
@@ -25,7 +25,7 @@ from mcp import StdioServerParameters
 
 
 async def run_agent():
-    token = os.getenv("NOTION_API_KEY")
+    token = agno_os.getenv("NOTION_API_KEY")
     if not token:
         raise ValueError(
             "Missing Notion API key: provide --NOTION_API_KEY or set NOTION_API_KEY environment variable"

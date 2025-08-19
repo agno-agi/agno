@@ -2,13 +2,12 @@
 Gemini Tutor: Advanced Educational AI Assistant with Multimodal Learning
 """
 
-import os
-
+import agno_os
 import nest_asyncio
 import streamlit as st
 from agents import TutorAppAgent
 from agno.utils.log import logger
-from utils import display_grounding_metadata, display_tool_calls
+from utilities import display_grounding_metadata, display_tool_calls
 
 # Initialize asyncio support
 nest_asyncio.apply()

@@ -5,14 +5,13 @@ This example shows how to instrument your agno agent with OpenInference and send
 2. Run `phoenix serve` to start the local collector.
 """
 
-import os
-
+import agno_os
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.yfinance import YFinanceTools
 from phoenix.otel import register
 
-os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = "http://localhost:6006"
+agno_os.environ["PHOENIX_COLLECTOR_ENDPOINT"] = "http://localhost:6006"
 # configure the Phoenix tracer
 tracer_provider = register(
     project_name="agno-stock-price-agent",  # Default is 'default'

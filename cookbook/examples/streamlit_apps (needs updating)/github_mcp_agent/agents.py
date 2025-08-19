@@ -1,6 +1,6 @@
-import os
 from textwrap import dedent
 
+import agno_os
 from agno.agent import Agent
 from agno.tools.mcp import MCPTools
 from mcp import ClientSession, StdioServerParameters
@@ -8,7 +8,7 @@ from mcp.client.stdio import stdio_client
 
 
 async def run_github_agent(message):
-    if not os.getenv("GITHUB_TOKEN"):
+    if not agno_os.getenv("GITHUB_TOKEN"):
         return "Error: GitHub token not provided"
 
     try:

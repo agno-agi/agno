@@ -6,7 +6,7 @@ from agno.utils.log import log_debug
 
 def create_team_run(run: TeamRunCreate) -> None:
     log_debug("--**-- Logging Team Run")
-    with api.AuthenticatedClient() as api_client:
+    with api.Client() as api_client:
         try:
             response = api_client.post(
                 ApiRoutes.TEAM_TELEMETRY_RUN_CREATE,
@@ -20,7 +20,7 @@ def create_team_run(run: TeamRunCreate) -> None:
 
 async def acreate_team_run(run: TeamRunCreate) -> None:
     log_debug("--**-- Logging Team Run")
-    async with api.AuthenticatedAsyncClient() as api_client:
+    async with api.AsyncClient() as api_client:
         try:
             response = await api_client.post(
                 ApiRoutes.TEAM_TELEMETRY_RUN_CREATE,

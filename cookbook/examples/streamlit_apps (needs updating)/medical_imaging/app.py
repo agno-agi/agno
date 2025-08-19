@@ -1,5 +1,4 @@
-import os
-
+import agno_os
 import streamlit as st
 from agno.media import Image as AgnoImage
 from medical_agent import agent
@@ -110,8 +109,8 @@ def main():
                         )
                         print(f"Detailed error: {e}")
                     finally:
-                        if os.path.exists(image_path):
-                            os.remove(image_path)
+                        if agno_os.path.exists(image_path):
+                            agno_os.remove(image_path)
 
     else:
         st.info("👆 Please upload a medical image to begin analysis")

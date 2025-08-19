@@ -3,10 +3,10 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
-from agno.infra.base import InfraBase
-from agno.infra.resources import InfraResources
-from agno.os.settings import OSSettings
-from agno.utils.logging import logger
+from agno.agno_os.settings import OSSettings
+from agno.cloud.base import InfraBase
+from agno.cloud.resources import InfraResources
+from agno.utilities.logging import logger
 
 # List of directories to ignore when loading the OS
 ignored_dirs = ["ignore", "test", "tests", "config"]
@@ -19,9 +19,9 @@ class OSConfig(BaseModel):
     os_root_path: Path
 
     # Path to the "infra" directory inside the OS root
-    os_infra_dir_path: Optional[Path] = None
+    internal_os_infra_dir_path: Optional[Path] = None
     # OSSettings
-    os_settings: Optional[OSSettings] = None
+    internal_os_settings: Optional[OSSettings] = None
 
     def to_dict(self) -> dict:
         return {
@@ -30,12 +30,12 @@ class OSConfig(BaseModel):
 
     @property
     def os_infra_dir_path(self) -> Optional[Path]:
-        if self.os_infra_dir_path is None:
+        if self.internal_os_infra_dir_path is None:
             if self.os_root_path is not None:
-                from agno.os.helpers import get_os_infra_dir_path
+                from agno.agno_os.helpers import get_os_infra_dir_path
 
-                self.os_infra_dir_path = get_os_infra_dir_path(self.os_root_path)
-        return self.os_infra_dir_path
+                self.internal_os_infra_dir_path = get_os_infra_dir_path(self.os_root_path)
+        return self.internal_os_infra_dir_path
 
     def validate_os_settings(self, obj: Any) -> bool:
         if not isinstance(obj, OSSettings):
@@ -48,8 +48,8 @@ class OSConfig(BaseModel):
 
     @property
     def os_settings(self) -> Optional[OSSettings]:
-        if self.os_settings is not None:
-            return self.os_settings
+        if self.internal_os_settings is not None:
+            return self.internal_os_settings
 
         os_settings_file: Optional[Path] = None
         if self.os_infra_dir_path is not None:
@@ -62,17 +62,17 @@ class OSConfig(BaseModel):
 
         logger.debug(f"Loading os_settings from {os_settings_file}")
         try:
-            from agno.utils.py_io import get_python_objects_from_module
+            from agno.utilities.py_io import get_python_objects_from_module
 
             python_objects = get_python_objects_from_module(os_settings_file)
             for obj_name, obj in python_objects.items():
                 if isinstance(obj, OSSettings):
                     if self.validate_os_settings(obj):
-                        self.os_settings = obj
+                        self.internal_os_settings = obj
         except Exception:
             logger.warning(f"Error in {os_settings_file}")
             raise
-        return self.os_settings
+        return self.internal_os_settings
 
     def set_local_env(self) -> None:
         from os import environ
@@ -113,8 +113,8 @@ class OSConfig(BaseModel):
 
         from sys import path as sys_path
 
-        from agno.utils.load_env import load_env
-        from agno.utils.py_io import get_python_objects_from_module
+        from agno.utilities.load_env import load_env
+        from agno.utilities.py_io import get_python_objects_from_module
 
         logger.debug("**--> Loading OSConfig")
         logger.debug(f"Loading .env from {self.os_root_path}")
@@ -152,7 +152,7 @@ class OSConfig(BaseModel):
                         if isinstance(obj, OSSettings):
                             logger.debug(f"Found: {obj.__class__.__module__}: {obj_name}")
                             if self.validate_os_settings(obj):
-                                self.os_settings = obj
+                                self.internal_os_settings = obj
                         elif isinstance(obj, InfraResources):
                             logger.debug(f"Found: {obj.__class__.__module__}: {obj_name}")
                             if not obj.enabled:
@@ -189,7 +189,7 @@ class OSConfig(BaseModel):
         # Updated resources with the os settings
         # Create a temporary os settings object if it does not exist
         if self.os_settings is None:
-            self.os_settings = OSSettings(
+            self.internal_os_settings = OSSettings(
                 os_root=self.os_root_path,
                 os_name=self.os_root_path.stem,
             )
@@ -225,8 +225,8 @@ class OSConfig(BaseModel):
 
         from sys import path as sys_path
 
-        from agno.utils.load_env import load_env
-        from agno.utils.py_io import get_python_objects_from_module
+        from agno.utilities.load_env import load_env
+        from agno.utilities.py_io import get_python_objects_from_module
 
         resource_file_parent_dir = resource_file.parent.resolve()
         logger.debug(f"Loading .env from {resource_file_parent_dir}")
@@ -279,7 +279,7 @@ class OSConfig(BaseModel):
         # Updated resources with the os settings
         # Create a temporary os settings object if it does not exist
         if temporary_os_config.os_settings is None:
-            temporary_os_config.os_settings = OSSettings(
+            temporary_os_config.internal_os_settings = OSSettings(
                 os_root=temporary_os_config.os_root_path,
                 os_name=temporary_os_config.os_root_path.stem,
             )

@@ -1,6 +1,6 @@
-import os
 from pathlib import Path
 
+import agno_os
 import pytest
 
 from agno.agent import Agent
@@ -11,7 +11,7 @@ from agno.vectordb.lancedb import LanceDb
 @pytest.fixture
 def setup_vector_db():
     """Setup a temporary vector DB for testing."""
-    table_name = f"text_test_{os.urandom(4).hex()}"
+    table_name = f"text_test_{agno_os.urandom(4).hex()}"
     vector_db = LanceDb(table_name=table_name, uri="tmp/lancedb")
     yield vector_db
     # Clean up after test

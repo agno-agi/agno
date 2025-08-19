@@ -16,6 +16,8 @@ class AgnoAPISettings(BaseSettings):
     api_runtime: str = "prd"
     alpha_features: bool = False
 
+    api_url: str = "https://api.agno.com"
+
     model_config = SettingsConfigDict(env_prefix="AGNO_")
 
     @field_validator("api_runtime", mode="before")

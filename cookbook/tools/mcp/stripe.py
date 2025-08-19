@@ -14,9 +14,9 @@ Stripe MCP Docs: https://github.com/stripe/agent-toolkit
 """
 
 import asyncio
-import os
 from textwrap import dedent
 
+import agno_os
 from agno.agent import Agent
 from agno.tools.mcp import MCPTools
 from agno.utils.log import log_error, log_exception, log_info
@@ -27,7 +27,7 @@ async def run_agent(message: str) -> None:
     Sets up the Stripe MCP server and initialize the Agno agent
     """
     # Verify Stripe API Key is available
-    stripe_api_key = os.getenv("STRIPE_SECRET_KEY")
+    stripe_api_key = agno_os.getenv("STRIPE_SECRET_KEY")
     if not stripe_api_key:
         log_error("STRIPE_SECRET_KEY environment variable not set.")
         return
@@ -35,7 +35,7 @@ async def run_agent(message: str) -> None:
     enabled_tools = "paymentLinks.create,products.create,prices.create,customers.create,customers.read"
 
     # handle different Operating Systems
-    npx_command = "npx.cmd" if os.name == "nt" else "npx"
+    npx_command = "npx.cmd" if agno_os.name == "nt" else "npx"
 
     try:
         # Initialize MCP toolkit with Stripe server

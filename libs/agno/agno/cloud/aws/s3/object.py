@@ -1,8 +1,8 @@
 from pathlib import Path
 from typing import Any, Optional
 
-from agno.infra.aws.base import AwsResource
-from agno.infra.aws.s3.api_client import AwsApiClient
+from agno.cloud.aws.base import AwsResource
+from agno.cloud.aws.s3.api_client import AwsApiClient
 from agno.utils.log import logger
 
 

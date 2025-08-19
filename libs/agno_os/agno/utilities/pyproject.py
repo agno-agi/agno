@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Dict, Optional
 
-from agno.utils.logging import log_debug, logger
+from agno.utilities.logging import log_debug, logger
 
 
 def read_pyproject_agno(pyproject_file: Path) -> Optional[Dict]:

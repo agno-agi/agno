@@ -1,7 +1,7 @@
-import os
 from pathlib import Path
 from typing import List
 
+import agno_os
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.arxiv import ArxivTools
@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 load_dotenv()
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = agno_os.getenv("OPENAI_API_KEY")
 
 
 # Define data models

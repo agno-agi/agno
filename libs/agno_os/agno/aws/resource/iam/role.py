@@ -4,7 +4,7 @@ from agno.aws.api_client import AwsApiClient
 from agno.aws.resource.base import AwsResource
 from agno.aws.resource.iam.policy import IamPolicy
 from agno.cli.console import print_info
-from agno.utils.logging import logger
+from agno.utilities.logging import logger
 
 
 class IamRole(AwsResource):

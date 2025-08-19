@@ -1,8 +1,8 @@
 # aac
 
-import os
 from unittest.mock import MagicMock, mock_open, patch
 
+import agno_os
 import pytest
 
 from agno.agent import Agent
@@ -111,7 +111,7 @@ def test_transcribe_audio_local_file(mock_exists, mock_toolkit_init, mock_groq_c
 
     assert result == expected_transcript
     mock_groq_client.audio.transcriptions.create.assert_called_once_with(
-        file=(os.path.basename(mock_file_path), b"dummy audio data"),
+        file=(agno_os.path.basename(mock_file_path), b"dummy audio data"),
         model=tools.transcription_model,
         response_format="text",
     )
@@ -185,7 +185,7 @@ def test_translate_audio_local_file(mock_exists, mock_toolkit_init, mock_groq_cl
 
     assert result == expected_translation
     mock_groq_client.audio.translations.create.assert_called_once_with(
-        file=(os.path.basename(mock_file_path), b"dummy audio data"),
+        file=(agno_os.path.basename(mock_file_path), b"dummy audio data"),
         model=tools.translation_model,
         response_format="text",
     )

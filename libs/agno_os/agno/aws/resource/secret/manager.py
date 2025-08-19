@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 from agno.aws.api_client import AwsApiClient
 from agno.aws.resource.base import AwsResource
 from agno.cli.console import print_info
-from agno.utils.logging import logger
+from agno.utilities.logging import logger
 
 
 class SecretsManager(AwsResource):
@@ -53,7 +53,7 @@ class SecretsManager(AwsResource):
 
     def read_secrets_from_files(self) -> Dict[str, Any]:
         """Reads secrets from files"""
-        from agno.utils.yaml_io import read_yaml_file
+        from agno.utilities.yaml_io import read_yaml_file
 
         secret_dict: Dict[str, Any] = {}
         if self.secret_files:

@@ -5,7 +5,7 @@ from agno.utils.log import log_debug
 
 
 def create_workflow(workflow: WorkflowCreate) -> None:
-    with api.AuthenticatedClient() as api_client:
+    with api.Client() as api_client:
         try:
             api_client.post(
                 ApiRoutes.WORKFLOW_CREATE,
@@ -16,7 +16,7 @@ def create_workflow(workflow: WorkflowCreate) -> None:
 
 
 async def acreate_workflow(workflow: WorkflowCreate) -> None:
-    async with api.AuthenticatedAsyncClient() as api_client:
+    async with api.AsyncClient() as api_client:
         try:
             await api_client.post(
                 ApiRoutes.WORKFLOW_CREATE,

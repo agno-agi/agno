@@ -1,5 +1,4 @@
-import os
-
+import agno_os
 import pytest
 
 from agno.agent import Agent
@@ -11,7 +10,7 @@ from agno.vectordb.lancedb.lance_db import LanceDb
 def setup_vector_db():
     """Setup a vector database for testing."""
     # Generate a unique table name to avoid conflicts between tests
-    table_name = f"pdf-url-filter-test-{os.urandom(4).hex()}"
+    table_name = f"pdf-url-filter-test-{agno_os.urandom(4).hex()}"
     vector_db = LanceDb(
         table_name=table_name,
         uri="tmp/lancedb",

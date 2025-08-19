@@ -1,7 +1,7 @@
-import os
 from typing import List
 from unittest.mock import MagicMock, Mock, patch
 
+import agno_os
 import pytest
 
 from agno.knowledge.document import Document
@@ -55,7 +55,7 @@ def mock_upstash_index():
 def upstash_db(mock_upstash_index):
     """Fixture to create an UpstashVectorDb instance with mocked dependencies"""
     with patch.dict(
-        os.environ,
+        agno_os.environ,
         {"UPSTASH_VECTOR_REST_URL": "https://test-url.upstash.io", "UPSTASH_VECTOR_REST_TOKEN": "test-token"},
     ):
         db = UpstashVectorDb(
@@ -71,7 +71,7 @@ def upstash_db(mock_upstash_index):
 def upstash_db_with_custom_embedder(mock_upstash_index, mock_embedder):
     """Fixture to create an UpstashVectorDb instance with custom embedder"""
     with patch.dict(
-        os.environ,
+        agno_os.environ,
         {"UPSTASH_VECTOR_REST_URL": "https://test-url.upstash.io", "UPSTASH_VECTOR_REST_TOKEN": "test-token"},
     ):
         db = UpstashVectorDb(url="https://test-url.upstash.io", token="test-token", embedder=mock_embedder)

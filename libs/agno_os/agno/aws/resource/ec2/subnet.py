@@ -2,7 +2,7 @@ from typing import List, Optional
 
 from agno.aws.api_client import AwsApiClient
 from agno.aws.resource.base import AwsResource
-from agno.utils.logging import logger
+from agno.utilities.logging import logger
 
 
 class Subnet(AwsResource):

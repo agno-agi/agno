@@ -3,7 +3,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
-from agno.utils.logging import log_debug
+from agno.utilities.logging import log_debug
 
 
 class CustomJSONEncoder(json.JSONEncoder):

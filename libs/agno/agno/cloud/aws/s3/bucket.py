@@ -2,10 +2,9 @@ from typing import Any, Dict, List, Optional
 
 from typing_extensions import Literal
 
-from agno.cli.console import print_info
-from agno.infra.aws.base import AwsResource
-from agno.infra.aws.s3.api_client import AwsApiClient
-from agno.infra.aws.s3.object import S3Object
+from agno.cloud.aws.base import AwsResource
+from agno.cloud.aws.s3.api_client import AwsApiClient
+from agno.cloud.aws.s3.object import S3Object
 from agno.utils.log import logger
 
 
@@ -55,7 +54,7 @@ class S3Bucket(AwsResource):
         Args:
             aws_client: The AwsApiClient for the current cluster
         """
-        print_info(f"Creating {self.get_resource_type()}: {self.get_resource_name()}")
+        print(f"Creating {self.get_resource_type()}: {self.get_resource_name()}")
 
         # Step 1: Build bucket configuration
         # Bucket names are GLOBALLY unique!
@@ -110,7 +109,7 @@ class S3Bucket(AwsResource):
         # Wait for Bucket to be created
         if self.wait_for_create:
             try:
-                print_info(f"Waiting for {self.get_resource_type()} to be created.")
+                print(f"Waiting for {self.get_resource_type()} to be created.")
                 waiter = self.get_service_client(aws_client).get_waiter("bucket_exists")
                 waiter.wait(
                     Bucket=self.name,
@@ -159,7 +158,7 @@ class S3Bucket(AwsResource):
         Args:
             aws_client: The AwsApiClient for the current cluster
         """
-        print_info(f"Deleting {self.get_resource_type()}: {self.get_resource_name()}")
+        print(f"Deleting {self.get_resource_type()}: {self.get_resource_name()}")
 
         service_client = self.get_service_client(aws_client)
         self.active_resource = None

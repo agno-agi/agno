@@ -1,8 +1,8 @@
-import os
 import tempfile
 import uuid
 from unittest.mock import Mock
 
+import agno_os
 import pytest
 from sqlalchemy import Engine, create_engine, text
 
@@ -20,8 +20,8 @@ def temp_storage_db_file():
     yield db_path
 
     # Clean up the temporary file after the test
-    if os.path.exists(db_path):
-        os.unlink(db_path)
+    if agno_os.path.exists(db_path):
+        agno_os.unlink(db_path)
 
 
 @pytest.fixture
@@ -33,8 +33,8 @@ def temp_memory_db_file():
     yield db_path
 
     # Clean up the temporary file after the test
-    if os.path.exists(db_path):
-        os.unlink(db_path)
+    if agno_os.path.exists(db_path):
+        agno_os.unlink(db_path)
 
 
 @pytest.fixture

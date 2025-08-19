@@ -1,9 +1,8 @@
-
 from typing import Any, Dict, List, Optional
 
 from agno.docker.api_client import DockerApiClient
 from agno.docker.resource.base import DockerResource
-from agno.utils.logging import logger
+from agno.utilities.logging import logger
 
 
 class DockerNetwork(DockerResource):

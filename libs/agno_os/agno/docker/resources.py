@@ -1,12 +1,12 @@
 from typing import List, Optional, Tuple
 
+from agno.agno_os.settings import OSSettings
+from agno.cloud.resources import InfraResources
 from agno.docker.api_client import DockerApiClient
 from agno.docker.app.base import DockerApp
 from agno.docker.context import DockerBuildContext
 from agno.docker.resource.base import DockerResource
-from agno.infra.resources import InfraResources
-from agno.os.settings import OSSettings
-from agno.utils.logging import logger
+from agno.utilities.logging import logger
 
 
 class DockerResources(InfraResources):

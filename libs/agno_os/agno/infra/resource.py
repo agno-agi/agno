@@ -1,8 +1,8 @@
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from agno.infra.base import InfraBase
-from agno.utils.logging import logger
+from agno.cloud.base import InfraBase
+from agno.utilities.logging import logger
 
 
 class InfraResource(InfraBase):
@@ -97,7 +97,7 @@ class InfraResource(InfraBase):
         output_file_path: Optional[Path] = self.get_output_file_path()
         if output_file_path is not None:
             try:
-                from agno.utils.yaml_io import write_yaml_file
+                from agno.utilities.yaml_io import write_yaml_file
 
                 if not output_file_path.exists():
                     output_file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -113,7 +113,7 @@ class InfraResource(InfraBase):
         output_file_path: Optional[Path] = self.get_output_file_path()
         if output_file_path is not None:
             try:
-                from agno.utils.yaml_io import read_yaml_file
+                from agno.utilities.yaml_io import read_yaml_file
 
                 if output_file_path.exists() and output_file_path.is_file():
                     data_from_file = read_yaml_file(output_file_path)

@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Optional
 
-from agno.utils.logging import logger
+from agno.utilities.logging import logger
 
 
 def get_os_infra_dir_from_env() -> Optional[Path]:
@@ -23,7 +23,7 @@ def get_os_infra_dir_path(os_root_path: Path) -> Path:
         1. subdirectory: infra
         2. In a folder defined by the pyproject.toml file
     """
-    from agno.utils.pyproject import read_pyproject_agno
+    from agno.utilities.pyproject import read_pyproject_agno
 
     logger.debug(f"Searching for a os directory in {os_root_path}")
 

@@ -1,5 +1,4 @@
-import os
-
+import agno_os
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -10,9 +9,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # OpenAI API Key
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = agno_os.getenv("OPENAI_API_KEY")
 
-os.makedirs("tmp", exist_ok=True)
+agno_os.makedirs("tmp", exist_ok=True)
 
 
 def generate_podcast(topic, voice="alloy"):

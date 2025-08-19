@@ -19,12 +19,12 @@ Prerequisites:
 """
 
 import asyncio
-from os import environ
 from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.mcp import MCPTools
+from agno_os import environ
 from mcp import StdioServerParameters
 
 

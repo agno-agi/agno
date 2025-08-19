@@ -4,12 +4,12 @@ from typing import List, Optional
 from agno.cli.config import AgnoCliConfig
 from agno.cli.console import print_heading, print_info
 from agno.cli.settings import AGNO_CLI_CONFIG_DIR
-from agno.infra.resources import InfraResources
-from agno.utils.logging import logger
+from agno.cloud.resources import InfraResources
+from agno.utilities.logging import logger
 
 
 def delete_agno_config() -> None:
-    from agno.utils.filesystem import delete_from_fs
+    from agno.utilities.filesystem import delete_from_fs
 
     logger.debug("Removing existing Agno configuration")
     delete_from_fs(AGNO_CLI_CONFIG_DIR)
@@ -22,7 +22,7 @@ def initialize_agno_cli(reset: bool = False) -> Optional[AgnoCliConfig]:
     1. Check if AGNO_CLI_CONFIG_DIR exists, if not, create it. If reset == True, recreate AGNO_CLI_CONFIG_DIR.
     2. If AgnoCliConfig exists and auth is valid, returns AgnoCliConfig.
     """
-    from agno.utils.filesystem import delete_from_fs
+    from agno.utilities.filesystem import delete_from_fs
 
     print_heading("Welcome to Agno!")
     if reset:
@@ -83,7 +83,7 @@ def start_resources(
     logger.debug(f"\tforce        : {force}")
     logger.debug(f"\tpull         : {pull}")
 
-    from agno.os.config import OSConfig
+    from agno.agno_os.config import OSConfig
 
     if not resources_file_path.exists():
         logger.error(f"File does not exist: {resources_file_path}")
@@ -157,7 +157,7 @@ def stop_resources(
     logger.debug(f"\tauto_confirm : {auto_confirm}")
     logger.debug(f"\tforce        : {force}")
 
-    from agno.os.config import OSConfig
+    from agno.agno_os.config import OSConfig
 
     if not resources_file_path.exists():
         logger.error(f"File does not exist: {resources_file_path}")
@@ -230,7 +230,7 @@ def patch_resources(
     logger.debug(f"\tauto_confirm : {auto_confirm}")
     logger.debug(f"\tforce        : {force}")
 
-    from agno.os.config import OSConfig
+    from agno.agno_os.config import OSConfig
 
     if not resources_file_path.exists():
         logger.error(f"File does not exist: {resources_file_path}")

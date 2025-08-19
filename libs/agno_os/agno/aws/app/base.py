@@ -5,9 +5,9 @@ from pydantic import Field, field_validator
 from pydantic_core.core_schema import ValidationInfo
 
 from agno.aws.context import AwsBuildContext
-from agno.infra.app import InfraApp
-from agno.infra.context import ContainerContext
-from agno.utils.logging import logger
+from agno.cloud.app import InfraApp
+from agno.cloud.context import ContainerContext
+from agno.utilities.logging import logger
 
 if TYPE_CHECKING:
     from agno.aws.resource.base import AwsResource
@@ -610,7 +610,7 @@ class AwsApp(InfraApp):
         from agno.aws.resource.elb.load_balancer import LoadBalancer
         from agno.aws.resource.elb.target_group import TargetGroup
         from agno.docker.resource.image import DockerImage
-        from agno.utils.defaults import get_default_volume_name
+        from agno.utilities.defaults import get_default_volume_name
 
         logger.debug(f"------------ Building {self.get_app_name()} ------------")
         # -*- Get Container Context

@@ -1,6 +1,6 @@
 from typing import Any, Optional
 
-from agno.utils.logging import logger
+from agno.utilities.logging import logger
 
 
 class DockerApiClient:

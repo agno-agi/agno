@@ -251,17 +251,18 @@ def test_function_cache_file_path():
 def test_function_cache_operations(tmp_path):
     """Test caching operations (save and retrieve)."""
     import json
-    import os
+
+    import agno_os
 
     func = Function(name="test_func", cache_results=True, cache_dir=str(tmp_path))
 
     # Test saving to cache
     test_result = {"result": "test_data"}
-    cache_file = os.path.join(str(tmp_path), "test_cache.json")
+    cache_file = agno_os.path.join(str(tmp_path), "test_cache.json")
     func._save_to_cache(cache_file, test_result)
 
     # Verify cache file exists and contains correct data
-    assert os.path.exists(cache_file)
+    assert agno_os.path.exists(cache_file)
     with open(cache_file, "r") as f:
         cached_data = json.load(f)
     assert cached_data["result"] == {"result": "test_data"}
@@ -271,14 +272,15 @@ def test_function_cache_operations(tmp_path):
     assert retrieved_result == test_result
 
     # Test retrieving non-existent cache
-    non_existent_file = os.path.join(str(tmp_path), "non_existent.json")
+    non_existent_file = agno_os.path.join(str(tmp_path), "non_existent.json")
     assert func._get_cached_result(non_existent_file) is None
 
 
 def test_function_cache_ttl(tmp_path):
     """Test cache TTL functionality."""
-    import os
     import time
+
+    import agno_os
 
     func = Function(
         name="test_func",
@@ -289,7 +291,7 @@ def test_function_cache_ttl(tmp_path):
 
     # Save test data to cache
     test_result = {"result": "test_data"}
-    cache_file = os.path.join(str(tmp_path), "test_cache.json")
+    cache_file = agno_os.path.join(str(tmp_path), "test_cache.json")
     func._save_to_cache(cache_file, test_result)
 
     # Verify cache is valid immediately

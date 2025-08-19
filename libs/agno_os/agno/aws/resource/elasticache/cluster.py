@@ -8,7 +8,7 @@ from agno.aws.resource.base import AwsResource
 from agno.aws.resource.ec2.security_group import SecurityGroup
 from agno.aws.resource.elasticache.subnet_group import CacheSubnetGroup
 from agno.cli.console import print_info
-from agno.utils.logging import logger
+from agno.utilities.logging import logger
 
 
 class CacheCluster(AwsResource):

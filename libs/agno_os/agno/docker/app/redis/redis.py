@@ -1,7 +1,7 @@
 from typing import Optional
 
+from agno.cloud.db_app import DbApp
 from agno.docker.app.base import DockerApp  # noqa: F401
-from agno.infra.db_app import DbApp
 
 
 class Redis(DockerApp, DbApp):

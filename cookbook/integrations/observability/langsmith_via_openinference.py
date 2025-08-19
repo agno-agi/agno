@@ -10,8 +10,7 @@ This example shows how to instrument your agno agent with OpenInference and send
 3. Install dependencies: pip install openai openinference-instrumentation-agno opentelemetry-sdk opentelemetry-exporter-otlp
 """
 
-import os
-
+import agno_os
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -23,8 +22,8 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
 endpoint = "https://eu.api.smith.langchain.com/otel/v1/traces"
 headers = {
-    "x-api-key": os.getenv("LANGSMITH_API_KEY"),
-    "Langsmith-Project": os.getenv("LANGSMITH_PROJECT"),
+    "x-api-key": agno_os.getenv("LANGSMITH_API_KEY"),
+    "Langsmith-Project": agno_os.getenv("LANGSMITH_PROJECT"),
 }
 
 

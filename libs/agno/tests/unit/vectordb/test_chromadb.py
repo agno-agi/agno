@@ -1,7 +1,7 @@
-import os
 import shutil
 from typing import List
 
+import agno_os
 import pytest
 
 from agno.knowledge.document import Document
@@ -16,12 +16,12 @@ TEST_PATH = "tmp/test_chromadb"
 def chroma_db(mock_embedder):
     """Fixture to create and clean up a ChromaDb instance"""
     # Ensure the test directory exists with proper permissions
-    os.makedirs(TEST_PATH, exist_ok=True)
+    agno_os.makedirs(TEST_PATH, exist_ok=True)
 
     # Clean up any existing data before the test
-    if os.path.exists(TEST_PATH):
+    if agno_os.path.exists(TEST_PATH):
         shutil.rmtree(TEST_PATH)
-        os.makedirs(TEST_PATH)
+        agno_os.makedirs(TEST_PATH)
 
     db = ChromaDb(collection=TEST_COLLECTION, path=TEST_PATH, persistent_client=False, embedder=mock_embedder)
     db.create()
@@ -33,7 +33,7 @@ def chroma_db(mock_embedder):
     except Exception:
         pass
 
-    if os.path.exists(TEST_PATH):
+    if agno_os.path.exists(TEST_PATH):
         shutil.rmtree(TEST_PATH)
 
 
@@ -289,7 +289,7 @@ def test_delete_collection(chroma_db, sample_documents):
 def test_distance_metrics():
     """Test different distance metrics"""
     # Ensure the test directory exists
-    os.makedirs(TEST_PATH, exist_ok=True)
+    agno_os.makedirs(TEST_PATH, exist_ok=True)
 
     db_cosine = ChromaDb(collection="test_cosine", path=TEST_PATH, distance=Distance.cosine)
     db_cosine.create()
@@ -305,7 +305,7 @@ def test_distance_metrics():
         db_cosine.drop()
         db_euclidean.drop()
     finally:
-        if os.path.exists(TEST_PATH):
+        if agno_os.path.exists(TEST_PATH):
             shutil.rmtree(TEST_PATH)
 
 
@@ -330,7 +330,7 @@ def test_error_handling(chroma_db):
 def test_custom_embedder(mock_embedder):
     """Test using a custom embedder"""
     # Ensure the test directory exists
-    os.makedirs(TEST_PATH, exist_ok=True)
+    agno_os.makedirs(TEST_PATH, exist_ok=True)
 
     db = ChromaDb(collection=TEST_COLLECTION, path=TEST_PATH, embedder=mock_embedder)
     db.create()
@@ -340,7 +340,7 @@ def test_custom_embedder(mock_embedder):
     try:
         db.drop()
     finally:
-        if os.path.exists(TEST_PATH):
+        if agno_os.path.exists(TEST_PATH):
             shutil.rmtree(TEST_PATH)
 
 

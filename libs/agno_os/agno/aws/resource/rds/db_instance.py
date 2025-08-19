@@ -10,7 +10,7 @@ from agno.aws.resource.ec2.security_group import SecurityGroup
 from agno.aws.resource.rds.db_subnet_group import DbSubnetGroup
 from agno.aws.resource.secret.manager import SecretsManager
 from agno.cli.console import print_info
-from agno.utils.logging import logger
+from agno.utilities.logging import logger
 
 
 class DbInstance(AwsResource):

@@ -1,13 +1,33 @@
 from typing import Any, Optional
 
-from agno.cli.console import print_info
-from agno.infra.aws.s3.api_client import AwsApiClient
-from agno.infra.resource import InfraResource
+from pydantic import BaseModel
+
+from agno.cloud.aws.s3.api_client import AwsApiClient
 from agno.utils.log import logger
 
 
-class AwsResource(InfraResource):
+class AwsResource(BaseModel):
     """Base class for AWS Resources."""
+
+    # Resource name (required)
+    name: str
+
+    # Resource type
+    resource_type: Optional[str] = None
+    active_resource: Optional[Any] = None
+
+    skip_delete: bool = False
+    skip_create: bool = False
+    skip_read: bool = False
+    skip_update: bool = False
+
+    wait_for_create: bool = True
+    wait_for_update: bool = True
+    wait_for_delete: bool = True
+    waiter_delay: int = 30
+    waiter_max_attempts: int = 50
+    save_output: bool = False
+    use_cache: bool = True
 
     service_name: str
     service_client: Optional[Any] = None
@@ -18,47 +38,13 @@ class AwsResource(InfraResource):
 
     aws_client: Optional[AwsApiClient] = None
 
-    def get_aws_region(self) -> Optional[str]:
-        # Priority 1: Use aws_region from resource
-        if self.aws_region:
-            return self.aws_region
+    def get_resource_name(self) -> str:
+        return self.name or self.__class__.__name__
 
-        # Priority 2: Get aws_region from workspace settings
-        if self.workspace_settings is not None and self.workspace_settings.aws_region is not None:
-            self.aws_region = self.workspace_settings.aws_region
-            return self.aws_region
-
-        # Priority 3: Get aws_region from env
-        from os import getenv
-
-        from agno.constants import AWS_REGION_ENV_VAR
-
-        aws_region_env = getenv(AWS_REGION_ENV_VAR)
-        if aws_region_env is not None:
-            logger.debug(f"{AWS_REGION_ENV_VAR}: {aws_region_env}")
-            self.aws_region = aws_region_env
-        return self.aws_region
-
-    def get_aws_profile(self) -> Optional[str]:
-        # Priority 1: Use aws_region from resource
-        if self.aws_profile:
-            return self.aws_profile
-
-        # Priority 2: Get aws_profile from workspace settings
-        if self.workspace_settings is not None and self.workspace_settings.aws_profile is not None:
-            self.aws_profile = self.workspace_settings.aws_profile
-            return self.aws_profile
-
-        # Priority 3: Get aws_profile from env
-        from os import getenv
-
-        from agno.constants import AWS_PROFILE_ENV_VAR
-
-        aws_profile_env = getenv(AWS_PROFILE_ENV_VAR)
-        if aws_profile_env is not None:
-            logger.debug(f"{AWS_PROFILE_ENV_VAR}: {aws_profile_env}")
-            self.aws_profile = aws_profile_env
-        return self.aws_profile
+    def get_resource_type(self) -> str:
+        if self.resource_type is None:
+            return self.__class__.__name__
+        return self.resource_type
 
     def get_service_client(self, aws_client: AwsApiClient):
         from boto3 import session
@@ -75,6 +61,30 @@ class AwsResource(InfraResource):
             boto3_session: session = aws_client.boto3_session
             self.service_resource = boto3_session.resource(service_name=self.service_name)
         return self.service_resource
+
+    def get_aws_region(self) -> Optional[str]:
+        if self.aws_region:
+            return self.aws_region
+
+        from os import getenv
+
+        aws_region_env = getenv("AWS_REGION")
+        if aws_region_env is not None:
+            logger.debug(f"{'AWS_REGION'}: {aws_region_env}")
+            self.aws_region = aws_region_env
+        return self.aws_region
+
+    def get_aws_profile(self) -> Optional[str]:
+        if self.aws_profile:
+            return self.aws_profile
+
+        from os import getenv
+
+        aws_profile_env = getenv("AWS_PROFILE")
+        if aws_profile_env is not None:
+            logger.debug(f"{'AWS_PROFILE'}: {aws_profile_env}")
+            self.aws_profile = aws_profile_env
+        return self.aws_profile
 
     def get_aws_client(self) -> AwsApiClient:
         if self.aws_client is not None:
@@ -94,7 +104,7 @@ class AwsResource(InfraResource):
 
         # Step 2: Skip resource creation if skip_read = True
         if self.skip_read:
-            print_info(f"Skipping read: {self.get_resource_name()}")
+            print(f"Skipping read: {self.get_resource_name()}")
             return True
 
         # Step 3: Read resource
@@ -115,24 +125,22 @@ class AwsResource(InfraResource):
 
         # Step 1: Skip resource creation if skip_create = True
         if self.skip_create:
-            print_info(f"Skipping create: {self.get_resource_name()}")
+            print(f"Skipping create: {self.get_resource_name()}")
             return True
 
         # Step 2: Check if resource is active and use_cache = True
         client: AwsApiClient = aws_client or self.get_aws_client()
         if self.use_cache and self.is_active(client):
             self.resource_created = True
-            print_info(f"{self.get_resource_type()}: {self.get_resource_name()} already exists")
+            print(f"{self.get_resource_type()}: {self.get_resource_name()} already exists")
         # Step 3: Create the resource
         else:
             self.resource_created = self._create(client)
             if self.resource_created:
-                print_info(f"{self.get_resource_type()}: {self.get_resource_name()} created")
+                print(f"{self.get_resource_type()}: {self.get_resource_name()} created")
 
         # Step 4: Run post create steps
         if self.resource_created:
-            if self.save_output:
-                self.save_output_file()
             logger.debug(f"Running post-create for {self.get_resource_type()}: {self.get_resource_name()}")
             return self.post_create(client)
         logger.error(f"Failed to create {self.get_resource_type()}: {self.get_resource_name()}")
@@ -150,7 +158,7 @@ class AwsResource(InfraResource):
 
         # Step 1: Skip resource update if skip_update = True
         if self.skip_update:
-            print_info(f"Skipping update: {self.get_resource_name()}")
+            print(f"Skipping update: {self.get_resource_name()}")
             return True
 
         # Step 2: Update the resource
@@ -158,14 +166,12 @@ class AwsResource(InfraResource):
         if self.is_active(client):
             self.resource_updated = self._update(client)
         else:
-            print_info(f"{self.get_resource_type()}: {self.get_resource_name()} does not exist")
+            print(f"{self.get_resource_type()}: {self.get_resource_name()} does not exist")
             return True
 
         # Step 3: Run post update steps
         if self.resource_updated:
-            print_info(f"{self.get_resource_type()}: {self.get_resource_name()} updated")
-            if self.save_output:
-                self.save_output_file()
+            print(f"{self.get_resource_type()}: {self.get_resource_name()} updated")
             logger.debug(f"Running post-update for {self.get_resource_type()}: {self.get_resource_name()}")
             return self.post_update(client)
         logger.error(f"Failed to update {self.get_resource_type()}: {self.get_resource_name()}")
@@ -183,7 +189,7 @@ class AwsResource(InfraResource):
 
         # Step 1: Skip resource deletion if skip_delete = True
         if self.skip_delete:
-            print_info(f"Skipping delete: {self.get_resource_name()}")
+            print(f"Skipping delete: {self.get_resource_name()}")
             return True
 
         # Step 2: Delete the resource
@@ -191,14 +197,12 @@ class AwsResource(InfraResource):
         if self.is_active(client):
             self.resource_deleted = self._delete(client)
         else:
-            print_info(f"{self.get_resource_type()}: {self.get_resource_name()} does not exist")
+            print(f"{self.get_resource_type()}: {self.get_resource_name()} does not exist")
             return True
 
         # Step 3: Run post delete steps
         if self.resource_deleted:
-            print_info(f"{self.get_resource_type()}: {self.get_resource_name()} deleted")
-            if self.save_output:
-                self.delete_output_file()
+            print(f"{self.get_resource_type()}: {self.get_resource_name()} deleted")
             logger.debug(f"Running post-delete for {self.get_resource_type()}: {self.get_resource_name()}.")
             return self.post_delete(client)
         logger.error(f"Failed to delete {self.get_resource_type()}: {self.get_resource_name()}")
