@@ -66,7 +66,6 @@ USER_MEMORY_COLLECTION_SCHEMA = [
     {"key": "user_id"},
     {"key": "agent_id"},
     {"key": "team_id"},
-    {"key": "workflow_id"},
     {"key": "topics"},
     {"key": "updated_at"},
     # Composite indexes for memory queries

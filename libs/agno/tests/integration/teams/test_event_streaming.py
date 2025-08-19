@@ -98,6 +98,7 @@ def test_basic_intermediate_steps_events_persisted(shared_db):
 
     run_response_from_storage = team.get_last_run_response()
 
+    assert run_response_from_storage is not None
     assert run_response_from_storage.events is not None
     assert len(run_response_from_storage.events) == 2, "We should only have the run started and run completed events"
     assert run_response_from_storage.events[0].event == TeamRunEvent.run_started
@@ -112,10 +113,10 @@ def test_intermediate_steps_with_tools():
         telemetry=False,
     )
 
-    response_generator = team.run("What is the stock price of Apple?", stream=True, stream_intermediate_steps=True)
-
     events = {}
-    for run_response_delta in response_generator:
+    for run_response_delta in team.run(
+        "What is the stock price of Apple?", stream=True, stream_intermediate_steps=True
+    ):
         if run_response_delta.event not in events:
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
@@ -148,10 +149,10 @@ def test_intermediate_steps_with_tools_events_persisted(shared_db):
         telemetry=False,
     )
 
-    response_generator = team.run("What is the stock price of Apple?", stream=True, stream_intermediate_steps=True)
-
     events = {}
-    for run_response_delta in response_generator:
+    for run_response_delta in team.run(
+        "What is the stock price of Apple?", stream=True, stream_intermediate_steps=True
+    ):
         if run_response_delta.event not in events:
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
@@ -166,6 +167,7 @@ def test_intermediate_steps_with_tools_events_persisted(shared_db):
 
     run_response_from_storage = team.get_last_run_response()
 
+    assert run_response_from_storage is not None
     assert run_response_from_storage.events is not None
     assert len(run_response_from_storage.events) == 4
     assert run_response_from_storage.events[0].event == TeamRunEvent.run_started

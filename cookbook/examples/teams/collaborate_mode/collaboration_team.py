@@ -1,3 +1,10 @@
+"""Example of a Team using the `collaborate` mode.
+
+In Collaborate Mode, all team members are given the same task and the team leader synthesizes their outputs into a cohesive response.
+
+Run `pip install agno arxiv pypdf pycountry` to install the dependencies.
+"""
+
 import asyncio
 from pathlib import Path
 from textwrap import dedent

@@ -13,12 +13,11 @@ SESSION_COLLECTION_SCHEMA = [
     {"key": "updated_at"},
 ]
 
-USER_MEMORY_COLLECTION_SCHEMA = [
+MEMORY_COLLECTION_SCHEMA = [
     {"key": "memory_id", "unique": True},
     {"key": "user_id"},
     {"key": "agent_id"},
     {"key": "team_id"},
-    {"key": "workflow_id"},
     {"key": "topics"},
     {"key": "updated_at"},
 ]
@@ -64,7 +63,7 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
     """Get the index definitions for a specific collection type."""
     index_definitions = {
         "sessions": SESSION_COLLECTION_SCHEMA,
-        "memories": USER_MEMORY_COLLECTION_SCHEMA,
+        "memories": MEMORY_COLLECTION_SCHEMA,
         "metrics": METRICS_COLLECTION_SCHEMA,
         "evals": EVAL_COLLECTION_SCHEMA,
         "knowledge": KNOWLEDGE_COLLECTION_SCHEMA,

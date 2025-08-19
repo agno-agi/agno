@@ -84,7 +84,6 @@ werewolf_team = Team(
         "- Don't stop the game until the end! Continue corresponding with the players until the game is over.",
     ],
     enable_agentic_context=True,
-    enable_team_history=True,
     markdown=True,
     show_members_responses=True,
     debug_mode=True,

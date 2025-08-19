@@ -1,3 +1,11 @@
+"""Example of a Team using the `coordinate` mode to play the role of a CEO of a Startup.
+
+1. Run: `pip install agno exa_py slack_sdk pgvector psycopg` to install the dependencies
+2. Add the following environment variables:
+- `EXA_API_KEY`
+- `SLACK_TOKEN`
+"""
+
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.pdf_reader import PDFReader
@@ -16,10 +24,10 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_content(
-    path="cookbook/teams/coordinate/data",
-    reader=PDFReader(chunk=True),
+knowledge.add_content_sync(
+    path="cookbook/teams/coordinate/data", reader=PDFReader(chunk=True)
 )
+
 
 support_channel = "testing"
 sales_channel = "sales"
@@ -210,7 +218,6 @@ autonomous_startup_team = Team(
     markdown=True,
     debug_mode=True,
     show_members_responses=True,
-    enable_team_history=True,
 )
 
 autonomous_startup_team.print_response(

@@ -33,7 +33,6 @@ USER_MEMORY_TABLE_SCHEMA = {
     "input": {"type": String, "nullable": True},
     "agent_id": {"type": String, "nullable": True},
     "team_id": {"type": String, "nullable": True},
-    "workflow_id": {"type": String, "nullable": True},
     "user_id": {"type": String, "nullable": True, "index": True},
     "topics": {"type": JSON, "nullable": True},
     "updated_at": {"type": BigInteger, "nullable": True, "index": True},

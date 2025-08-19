@@ -26,7 +26,6 @@ USER_MEMORY_SCHEMA = {
     "memory": {"type": "json"},
     "agent_id": {"type": "string"},
     "team_id": {"type": "string"},
-    "workflow_id": {"type": "string"},
     "user_id": {"type": "string"},
     "topics": {"type": "json"},
     "updated_at": {"type": "integer"},
