@@ -682,6 +682,7 @@ def get_base_router(
     @router.get(
         "/agents/{agent_id}",
         response_model=AgentResponse,
+        response_model_exclude_none=True,
     )
     async def get_agent(agent_id: str):
         agent = get_agent_by_id(agent_id, os.agents)
@@ -938,6 +939,7 @@ def get_base_router(
     @router.get(
         "/teams/{team_id}",
         response_model=TeamResponse,
+        response_model_exclude_none=True,
     )
     async def get_team(team_id: str):
         team = get_team_by_id(team_id, os.teams)
@@ -1016,6 +1018,7 @@ def get_base_router(
     @router.get(
         "/workflows/{workflow_id}/",
         response_model=WorkflowResponse,
+        response_model_exclude_none=True,
     )
     async def get_workflow(workflow_id: str):
         workflow = get_workflow_by_id(workflow_id, os.workflows)
