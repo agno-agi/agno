@@ -32,20 +32,13 @@ st.markdown(COMMON_CSS, unsafe_allow_html=True)
 def restart_agent():
     """Start a new chat session"""
     current_model = st.session_state.get("current_model", "openai:gpt-4o")
-    # Explicitly pass session_id=None to ensure a new session is created
-    new_agent = get_agentic_rag_agent(model_id=current_model, session_id=None, debug_mode=True)
+    new_agent = get_agentic_rag_agent(model_id=current_model, session_id=None)
     
-    # Clear all session-related state to ensure fresh start
     st.session_state["agent"] = new_agent
     st.session_state["session_id"] = new_agent.session_id
     st.session_state["messages"] = []
     st.session_state["current_model"] = current_model
     st.session_state["is_new_session"] = True
-    
-    # Clear any cached session data
-    if hasattr(new_agent, '_agent_session') and new_agent._agent_session:
-        new_agent._agent_session = None
-    
     st.rerun()
 
 

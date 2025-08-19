@@ -44,7 +44,6 @@ def get_agentic_rag_agent(
     model_id: str = "openai:gpt-4o",
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
-    debug_mode: bool = True,
 ) -> Agent:
     """Get an Agentic RAG Agent with Memory"""
     contents_db = PostgresDb(
@@ -112,7 +111,7 @@ def get_agentic_rag_agent(
             "   - Be transparent about limitations in available information",
         ],
         markdown=True,
-        debug_mode=debug_mode,
+        debug_mode=True,
     )
 
     return agent

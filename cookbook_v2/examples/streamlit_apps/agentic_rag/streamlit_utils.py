@@ -184,7 +184,10 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
         if selected_session_id != current_session_id:
             # Don't load from database if this is a new session
             if not st.session_state.get("is_new_session", False):
+                # Set flag to prevent model change detection during session loading
+                st.session_state["is_loading_session"] = True
                 _load_session(selected_session_id, model_id, agent_creation_callback)
+                st.session_state["is_loading_session"] = False
             else:
                 # Clear the new session flag since we're done with initialization
                 st.session_state["is_new_session"] = False
@@ -247,6 +250,7 @@ def _load_session(session_id: str, model_id: str, agent_creation_callback: calla
         st.session_state["agent"] = new_agent
         st.session_state["session_id"] = session_id
         st.session_state["messages"] = []
+        st.session_state["current_model"] = model_id  # Keep current_model in sync
 
         try:
             selected_session = new_agent.db.get_session(session_id=session_id, session_type="agent", deserialize=True)
@@ -361,17 +365,32 @@ def initialize_agent(model_id: str, agent_creation_callback: callable) -> Agent:
         or st.session_state["agent"] is None
         or st.session_state.get("current_model") != model_id
     ):
-        if st.session_state.get("current_model") is not None and st.session_state.get("current_model") != model_id:
+        # Check if user switched models - if so, start a new chat
+        if (st.session_state.get("current_model") is not None and 
+            st.session_state.get("current_model") != model_id and
+            not st.session_state.get("is_loading_session", False)):  # Don't trigger during session loading
+            
+            # Create fresh agent with new session (like New Chat)
             agent = agent_creation_callback(model_id=model_id, session_id=None)
 
-            # Agent automatically creates a new session_id when initialized with session_id=None
+            # Clear all session-related state for fresh start
+            st.session_state["agent"] = agent
             st.session_state["session_id"] = agent.session_id
             st.session_state["messages"] = []
+            st.session_state["current_model"] = model_id
+            st.session_state["is_new_session"] = True
+            
+            # Clear any cached session data
+            if hasattr(agent, '_agent_session') and agent._agent_session:
+                agent._agent_session = None
+                
         else:
+            # First time initialization or no model change
             session_id = st.session_state.get("session_id")
             agent = agent_creation_callback(model_id=model_id, session_id=session_id)
-        st.session_state["agent"] = agent
-        st.session_state["current_model"] = model_id
+            st.session_state["agent"] = agent
+            st.session_state["current_model"] = model_id
+            
         return agent
     else:
         return st.session_state["agent"]
