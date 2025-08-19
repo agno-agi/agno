@@ -6,10 +6,24 @@ from agno.vectordb.base import VectorDb
 
 
 class LangChainVectorDb(VectorDb):
-    vectorstore: Optional[Any] = None
-    search_kwargs: Optional[dict] = None
-
-    knowledge_retriever: Optional[Any] = None
+    def __init__(
+        self,
+        vectorstore: Optional[Any] = None,
+        search_kwargs: Optional[dict] = None,
+        **kwargs
+    ):
+        """
+        Initialize LangChainVectorDb.
+        
+        Args:
+            vectorstore: The LangChain vectorstore instance
+            search_kwargs: Additional search parameters for the retriever
+            **kwargs: Additional arguments passed to parent class
+        """
+        super().__init__(**kwargs)
+        self.vectorstore = vectorstore
+        self.search_kwargs = search_kwargs
+        self.knowledge_retriever: Optional[Any] = None
 
     def create(self) -> None:
         raise NotImplementedError
