@@ -8,6 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Path,
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader import ReaderFactory
+from agno.knowledge.utils import get_all_readers_info
 from agno.os.apps.knowledge.schemas import (
     ConfigResponseSchema,
     ContentResponseSchema,
@@ -267,7 +268,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
     @router.get("/config", status_code=200)
     def get_config() -> ConfigResponseSchema:
         # Get factory readers info
-        readers_info = ReaderFactory.get_all_readers_info()
+        readers_info = get_all_readers_info()
         reader_schemas = []
 
         # Add factory readers
