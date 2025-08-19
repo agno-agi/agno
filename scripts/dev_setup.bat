@@ -12,7 +12,7 @@ REM Get current directory
 SET "CURR_DIR=%~dp0"
 SET "REPO_ROOT=%CURR_DIR%\.."
 SET "AGNO_DIR=%REPO_ROOT%\libs\agno"
-SET "AGNO_OS_DIR=%REPO_ROOT%\libs\agno_os"
+SET "AGNO_INFRA_DIR=%REPO_ROOT%\libs\agno_infra"
 SET "VENV_DIR=%REPO_ROOT%\.venv"
 
 REM Function to print headings
@@ -37,11 +37,11 @@ CALL :print_heading "Installing agno in editable mode with tests dependencies"
 pip install -e "%AGNO_DIR%[tests]"
 
 CALL :print_heading "Installing agno-os"
-ECHO [INFO] Installing dependencies from %AGNO_OS_DIR%\requirements.txt
-pip install -r "%AGNO_OS_DIR%\requirements.txt"
+ECHO [INFO] Installing dependencies from %AGNO_INFRA_DIR%\requirements.txt
+pip install -r "%AGNO_INFRA_DIR%\requirements.txt"
 
 CALL :print_heading "Installing agno-os in editable mode with dev dependencies"
-pip install -e "%AGNO_OS_DIR%[dev]"
+pip install -e "%AGNO_INFRA_DIR%[dev]"
 
 CALL :print_heading "pip list"
 pip list

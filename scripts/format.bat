@@ -10,7 +10,7 @@ REM Get current directory
 SET "CURR_DIR=%~dp0"
 SET "REPO_ROOT=%CURR_DIR%\.."
 SET "AGNO_DIR=%REPO_ROOT%\libs\agno"
-SET "AGNO_OS_DIR=%REPO_ROOT%\libs\agno_os"
+SET "AGNO_INFRA_DIR=%REPO_ROOT%\libs\agno_infra"
 SET "COOKBOOK_DIR=%REPO_ROOT%\cookbook"
 
 REM Function to print headings
@@ -22,8 +22,8 @@ IF NOT EXIST "%AGNO_DIR%" (
     EXIT /B 1
 )
 
-IF NOT EXIST "%AGNO_OS_DIR%" (
-    ECHO [ERROR] AGNO_OS_DIR: %AGNO_OS_DIR% does not exist
+IF NOT EXIST "%AGNO_INFRA_DIR%" (
+    ECHO [ERROR] AGNO_INFRA_DIR: %AGNO_INFRA_DIR% does not exist
     EXIT /B 1
 )
 
@@ -41,12 +41,12 @@ IF EXIST %AGNO_FORMAT% (
     ECHO [WARNING] %AGNO_FORMAT% does not exist, skipping
 )
 
-SET AGNO_OS_FORMAT="%AGNO_OS_DIR%\scripts\format.bat"
-IF EXIST %AGNO_OS_FORMAT% (
-    ECHO [INFO] Running %AGNO_OS_FORMAT%
-    CALL %AGNO_OS_FORMAT%
+SET AGNO_INFRA_FORMAT="%AGNO_INFRA_DIR%\scripts\format.bat"
+IF EXIST %AGNO_INFRA_FORMAT% (
+    ECHO [INFO] Running %AGNO_INFRA_FORMAT%
+    CALL %AGNO_INFRA_FORMAT%
 ) ELSE (
-    ECHO [WARNING] %AGNO_OS_FORMAT% does not exist, skipping
+    ECHO [WARNING] %AGNO_INFRA_FORMAT% does not exist, skipping
 )
 
 REM Format all cookbook examples
@@ -68,4 +68,4 @@ ECHO ##################################################
 ECHO # %1
 ECHO ##################################################
 ECHO.
-EXIT /B 
+EXIT /B

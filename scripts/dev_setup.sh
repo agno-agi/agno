@@ -11,7 +11,7 @@
 CURR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "${CURR_DIR}")"
 AGNO_DIR="${REPO_ROOT}/libs/agno"
-AGNO_OS_DIR="${REPO_ROOT}/libs/agno_os"
+AGNO_INFRA_DIR="${REPO_ROOT}/libs/agno_infra"
 source "${CURR_DIR}/_utils.sh"
 
 VENV_DIR="${REPO_ROOT}/.venv"
@@ -40,11 +40,11 @@ VIRTUAL_ENV=${VENV_DIR} uv pip install mcp==1.9.2
 VIRTUAL_ENV=${VENV_DIR} uv pip install crawl4ai==0.6.3
 
 print_heading "Installing agno-os"
-print_info "VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_OS_DIR}/requirements.txt"
-VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_OS_DIR}/requirements.txt
+print_info "VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_INFRA_DIR}/requirements.txt"
+VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_INFRA_DIR}/requirements.txt
 
 print_heading "Installing agno-os in editable mode with dev dependencies"
-VIRTUAL_ENV=${VENV_DIR} uv pip install -e ${AGNO_OS_DIR}[dev]
+VIRTUAL_ENV=${VENV_DIR} uv pip install -e ${AGNO_INFRA_DIR}[dev]
 
 print_heading "uv pip list"
 VIRTUAL_ENV=${VENV_DIR} uv pip list

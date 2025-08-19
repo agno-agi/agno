@@ -10,7 +10,7 @@ REM Get current directory
 SET "CURR_DIR=%~dp0"
 SET "REPO_ROOT=%CURR_DIR%\.."
 SET "AGNO_DIR=%REPO_ROOT%\libs\agno"
-SET "AGNO_OS_DIR=%REPO_ROOT%\libs\agno_os"
+SET "AGNO_INFRA_DIR=%REPO_ROOT%\libs\agno_infra"
 
 REM Function to print headings
 CALL :print_heading "Validating all libraries"
@@ -21,8 +21,8 @@ IF NOT EXIST "%AGNO_DIR%" (
     EXIT /B 1
 )
 
-IF NOT EXIST "%AGNO_OS_DIR%" (
-    ECHO [ERROR] AGNO_OS_DIR: %AGNO_OS_DIR% does not exist
+IF NOT EXIST "%AGNO_INFRA_DIR%" (
+    ECHO [ERROR] AGNO_INFRA_DIR: %AGNO_INFRA_DIR% does not exist
     EXIT /B 1
 )
 
@@ -39,16 +39,16 @@ IF EXIST %AGNO_VALIDATE% (
     ECHO [WARNING] %AGNO_VALIDATE% does not exist, skipping
 )
 
-SET AGNO_OS_VALIDATE="%AGNO_OS_DIR%\scripts\validate.bat"
-IF EXIST %AGNO_OS_VALIDATE% (
-    ECHO [INFO] Running %AGNO_OS_VALIDATE%
-    CALL %AGNO_OS_VALIDATE%
+SET AGNO_INFRA_VALIDATE="%AGNO_INFRA_DIR%\scripts\validate.bat"
+IF EXIST %AGNO_INFRA_VALIDATE% (
+    ECHO [INFO] Running %AGNO_INFRA_VALIDATE%
+    CALL %AGNO_INFRA_VALIDATE%
     IF %ERRORLEVEL% NEQ 0 (
-        ECHO [ERROR] %AGNO_OS_VALIDATE% failed with exit code %ERRORLEVEL%
+        ECHO [ERROR] %AGNO_INFRA_VALIDATE% failed with exit code %ERRORLEVEL%
         EXIT /B %ERRORLEVEL%
     )
 ) ELSE (
-    ECHO [WARNING] %AGNO_OS_VALIDATE% does not exist, skipping
+    ECHO [WARNING] %AGNO_INFRA_VALIDATE% does not exist, skipping
 )
 
 SET AGNO_AWS_VALIDATE="%AGNO_AWS_DIR%\scripts\validate.bat"
@@ -73,4 +73,4 @@ ECHO ##################################################
 ECHO # %1
 ECHO ##################################################
 ECHO.
-EXIT /B 
+EXIT /B
