@@ -1,10 +1,17 @@
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.db.postgres import PostgresDb
+
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+
+db = PostgresDb(db_url=db_url, session_table="sessions")    
+
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     add_state_in_messages=True,
     instructions="Users name is {user_name} and age is {age}",
+    db=db,
 )
 
 # Sets the session state for the session with the id "user_1_session_1"
