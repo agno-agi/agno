@@ -22,7 +22,7 @@ knowledge = Knowledge(
 asyncio.run(
     knowledge.add_content(
         name="CV",
-        path="cookbook_v2/knowledge/data/filters",
+        path="cookbook/knowledge/data/filters",
         metadata={"user_tag": "Engineering Candidates"},
         # Only include PDF files
         include=["*.pdf"],
