@@ -11,9 +11,11 @@ knowledge = Knowledge(
     vector_db=PgVector(table_name="legal_docs", db_url=db_url),
 )
 
-asyncio.run(knowledge.add_content(
-    url="https://www.justice.gov/d9/criminal-ccips/legacy/2015/01/14/ccmanual_0.pdf",
-))
+asyncio.run(
+    knowledge.add_content(
+        url="https://www.justice.gov/d9/criminal-ccips/legacy/2015/01/14/ccmanual_0.pdf",
+    )
+)
 
 legal_agent = Agent(
     name="LegalAdvisor",

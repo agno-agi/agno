@@ -82,15 +82,19 @@ for event in streaming_agent.run(
     stream_intermediate_steps=True,
 ):
     # Print content as it streams (optional)
-    if hasattr(event, 'content') and event.content:
-        print(event.content, end='', flush=True)
-    
+    if hasattr(event, "content") and event.content:
+        print(event.content, end="", flush=True)
+
     # The final event in the stream should be a RunOutput object
-    if hasattr(event, 'reasoning_content'):
+    if hasattr(event, "reasoning_content"):
         final_response = event
 
 print("\n\n--- reasoning_content from final stream event ---")
-if final_response and hasattr(final_response, "reasoning_content") and final_response.reasoning_content:
+if (
+    final_response
+    and hasattr(final_response, "reasoning_content")
+    and final_response.reasoning_content
+):
     print("✅ reasoning_content FOUND in final stream event")
     print(f"   Length: {len(final_response.reasoning_content)} characters")
     print("\n=== reasoning_content preview (streaming) ===")
@@ -120,15 +124,19 @@ for event in streaming_agent_with_model.run(
     stream_intermediate_steps=True,
 ):
     # Print content as it streams (optional)
-    if hasattr(event, 'content') and event.content:
-        print(event.content, end='', flush=True)
-    
+    if hasattr(event, "content") and event.content:
+        print(event.content, end="", flush=True)
+
     # The final event in the stream should be a RunOutput object
-    if hasattr(event, 'reasoning_content'):
+    if hasattr(event, "reasoning_content"):
         final_response_with_model = event
 
 print("\n\n--- reasoning_content from final stream event (reasoning_model) ---")
-if final_response_with_model and hasattr(final_response_with_model, "reasoning_content") and final_response_with_model.reasoning_content:
+if (
+    final_response_with_model
+    and hasattr(final_response_with_model, "reasoning_content")
+    and final_response_with_model.reasoning_content
+):
     print("✅ reasoning_content FOUND in final stream event")
     print(f"   Length: {len(final_response_with_model.reasoning_content)} characters")
     print("\n=== reasoning_content preview (streaming with reasoning_model) ===")

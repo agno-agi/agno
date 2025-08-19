@@ -56,5 +56,5 @@ if run_response.is_paused:
             # We have to set the result on the tool execution object so that the agent can continue
             tool.result = result
 
-    run_response = agent.continue_run()
+    run_response = agent.continue_run(run_response=run_response)
     pprint.pprint_run_response(run_response)

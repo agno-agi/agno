@@ -29,7 +29,10 @@ class CustomerDBTools(Toolkit):
 
 # When used as a tool hook, this function will receive the contextual Agent, function_name, etc as parameters
 def grab_customer_profile_hook(
-    session_state: dict, function_name: str, function_call: Callable, arguments: Dict[str, Any]
+    session_state: dict,
+    function_name: str,
+    function_call: Callable,
+    arguments: Dict[str, Any],
 ):
     cust_id = arguments.get("customer")
     if cust_id not in session_state["customer_profiles"]:  # type: ignore

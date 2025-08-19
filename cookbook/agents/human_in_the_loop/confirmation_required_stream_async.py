@@ -19,6 +19,7 @@ import json
 
 import httpx
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
 from rich.console import Console
@@ -57,16 +58,17 @@ def get_top_hackernews_stories(num_stories: int) -> str:
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[get_top_hackernews_stories],
+    db=SqliteDb(session_table="test_session", db_file="tmp/example.db"),
     markdown=True,
 )
 
 
 async def main():
-    async for run_response in agent.arun(
+    async for run_event in agent.arun(
         "Fetch the top 2 hackernews stories", stream=True
     ):
-        if run_response.is_paused:
-            for tool in run_response.tools_requiring_confirmation:  # type: ignore
+        if run_event.is_paused:
+            for tool in run_event.tools_requiring_confirmation:  # type: ignore
                 # Ask for confirmation
                 console.print(
                     f"Tool name [bold blue]{tool.tool_name}({tool.tool_args})[/] requires confirmation."
@@ -86,8 +88,7 @@ async def main():
                     tool.confirmed = True
 
             async for resp in agent.acontinue_run(  # type: ignore
-                run_response=run_response,  # type: ignore
-                stream=True,
+                run_id=run_event.run_id, updated_tools=run_event.tools, stream=True
             ):
                 print(resp.content, end="")
 

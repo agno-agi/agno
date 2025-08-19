@@ -325,7 +325,7 @@ class AgentResponse(BaseModel):
             extra_messages=filter_meaningful_config(extra_messages_info, agent_defaults),
             response_settings=filter_meaningful_config(response_settings_info, agent_defaults),
             streaming=filter_meaningful_config(streaming_info, agent_defaults),
-            metadata=agent.metadata
+            metadata=agent.metadata,
         )
 
 
@@ -564,6 +564,7 @@ class WorkflowResponse(BaseModel):
     agent: Optional[AgentResponse] = None
     team: Optional[TeamResponse] = None
     metadata: Optional[Dict[str, Any]] = None
+
     @classmethod
     def _resolve_agents_and_teams_recursively(cls, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Parse Agents and Teams into AgentResponse and TeamResponse objects.

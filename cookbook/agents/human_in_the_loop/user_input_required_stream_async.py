@@ -7,6 +7,7 @@ import asyncio
 from typing import List
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
 from agno.tools.function import UserInputField
@@ -30,16 +31,17 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[send_email],
     markdown=True,
+    db=SqliteDb(session_table="test_session", db_file="tmp/example.db"),
 )
 
 
 async def main():
-    async for run_response in agent.arun(
+    async for run_event in agent.arun(
         "Send an email with the subject 'Hello' and the body 'Hello, world!'",
         stream=True,
     ):
-        if run_response.is_paused:  # Or agent.run_response.is_paused
-            for tool in run_response.tools_requiring_user_input:  # type: ignore
+        if run_event.is_paused:  # Or agent.run_response.is_paused
+            for tool in run_event.tools_requiring_user_input:  # type: ignore
                 input_schema: List[UserInputField] = tool.user_input_schema  # type: ignore
 
                 for field in input_schema:
@@ -63,7 +65,8 @@ async def main():
                     field.value = user_value
 
             async for resp in agent.acontinue_run(  # type: ignore
-                run_response=run_response,  # type: ignore
+                run_id=run_event.run_id,
+                updated_tools=run_event.tools,
                 stream=True,
             ):
                 print(resp.content, end="")

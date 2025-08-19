@@ -27,10 +27,7 @@ agent = Agent(
 
 # Run the agent (non-streaming) using agent.run() to get the response
 print("Running with ThinkingTools (non-streaming)...")
-response = agent.run(
-    "What is the sum of the first 10 natural numbers?", 
-    stream=False
-)
+response = agent.run("What is the sum of the first 10 natural numbers?", stream=False)
 
 # Check reasoning_content from the response
 print("\n--- reasoning_content from response ---")
@@ -69,15 +66,19 @@ for event in streaming_agent.run(
     stream_intermediate_steps=True,
 ):
     # Print content as it streams (optional)
-    if hasattr(event, 'content') and event.content:
-        print(event.content, end='', flush=True)
-    
+    if hasattr(event, "content") and event.content:
+        print(event.content, end="", flush=True)
+
     # The final event in the stream should be a RunOutput object
-    if hasattr(event, 'reasoning_content'):
+    if hasattr(event, "reasoning_content"):
         final_response = event
 
 print("\n\n--- reasoning_content from final stream event ---")
-if final_response and hasattr(final_response, "reasoning_content") and final_response.reasoning_content:
+if (
+    final_response
+    and hasattr(final_response, "reasoning_content")
+    and final_response.reasoning_content
+):
     print("✅ reasoning_content FOUND in final stream event")
     print(f"   Length: {len(final_response.reasoning_content)} characters")
     print("\n=== reasoning_content preview (streaming) ===")

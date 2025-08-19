@@ -62,11 +62,15 @@ for event in streaming_agent_alt.run(
     stream_intermediate_steps=True,
 ):
     # The final event in the stream should be a RunOutput object
-    if hasattr(event, 'reasoning_content'):
+    if hasattr(event, "reasoning_content"):
         final_response = event
 
 print("--- Checking reasoning_content from final stream event ---")
-if final_response and hasattr(final_response, "reasoning_content") and final_response.reasoning_content:
+if (
+    final_response
+    and hasattr(final_response, "reasoning_content")
+    and final_response.reasoning_content
+):
     print("✅ reasoning_content FOUND in final stream event")
     print(f"   Length: {len(final_response.reasoning_content)} characters")
     print("\n=== reasoning_content preview (final stream event) ===")

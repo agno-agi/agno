@@ -1,11 +1,11 @@
 from typing import Iterator
 
 from agno.agent import Agent, RunOutputEvent
+from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.pprint import pprint_run_response
 from rich.pretty import pprint
-from agno.db.postgres import PostgresDb
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
@@ -24,7 +24,9 @@ if run_response and run_response.messages:
     for message in run_response.messages:
         if message.role == "assistant":
             if message.content:
-                print(f"Message: {message.content[:100]}...")  # Truncate for readability
+                print(
+                    f"Message: {message.content[:100]}..."
+                )  # Truncate for readability
             elif message.tool_calls:
                 print(f"Tool calls: {len(message.tool_calls)} tool call(s)")
             print("---" * 5, "Message Metrics", "---" * 5)

@@ -11,8 +11,8 @@ You can access these variables in your functions using the `agent.session_state`
 import json
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
 from agno.db.sqlite import SqliteDb
+from agno.models.openai import OpenAIChat
 
 # In-memory database to store user shopping lists
 # Organized by user ID and session ID
@@ -27,7 +27,7 @@ def add_item(session_state, item: str) -> str:
     shopping_list.setdefault(current_user_id, {}).setdefault(
         current_session_id, []
     ).append(item)
-    
+
     return f"Item {item} added to the shopping list"
 
 

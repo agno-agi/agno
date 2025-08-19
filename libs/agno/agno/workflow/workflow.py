@@ -2227,9 +2227,7 @@ class Workflow:
 
         # If workflow has metrics, convert and add them to session metrics
         if workflow_run_response.metrics:
-            run_session_metrics = self._calculate_session_metrics_from_workflow_metrics(
-                workflow_run_response.metrics
-            )
+            run_session_metrics = self._calculate_session_metrics_from_workflow_metrics(workflow_run_response.metrics)
 
             session_metrics += run_session_metrics
 

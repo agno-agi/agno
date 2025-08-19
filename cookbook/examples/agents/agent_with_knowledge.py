@@ -18,9 +18,11 @@ knowledge = Knowledge(
     ),
 )
 
-asyncio.run(knowledge.add_content(
-    name="Agno Docs", url="https://docs.agno.com/introduction/agents.md"
-))
+asyncio.run(
+    knowledge.add_content(
+        name="Agno Docs", url="https://docs.agno.com/introduction/agents.md"
+    )
+)
 
 agent = Agent(
     name="Agno Assist",

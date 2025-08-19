@@ -10,6 +10,7 @@ Run `pip install openai agno` to install dependencies.
 import subprocess
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
 from agno.utils import pprint
@@ -36,13 +37,14 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[execute_shell_command],
     markdown=True,
+    db=SqliteDb(session_table="test_session", db_file="tmp/example.db"),
 )
 
-for run_response in agent.run(
+for run_event in agent.run(
     "What files do I have in my current directory?", stream=True
 ):
-    if run_response.is_paused:
-        for tool in run_response.tools_awaiting_external_execution:  # type: ignore
+    if run_event.is_paused:
+        for tool in run_event.tools_awaiting_external_execution:  # type: ignore
             if tool.tool_name == execute_shell_command.name:
                 print(
                     f"Executing {tool.tool_name} with args {tool.tool_args} externally"
@@ -52,7 +54,9 @@ for run_response in agent.run(
                 # We have to set the result on the tool execution object so that the agent can continue
                 tool.result = result
 
-        run_response = agent.continue_run(run_response=run_response, stream=True)  # type: ignore
+        run_response = agent.continue_run(
+            run_id=run_event.run_id, updated_tools=run_event.tools, stream=True
+        )  # type: ignore
         pprint.pprint_run_response(run_response)
 
 

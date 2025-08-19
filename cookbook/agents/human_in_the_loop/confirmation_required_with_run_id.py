@@ -18,6 +18,7 @@ import json
 
 import httpx
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
 from agno.utils import pprint
@@ -58,6 +59,7 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[get_top_hackernews_stories],
     markdown=True,
+    db=SqliteDb(session_table="test_session", db_file="tmp/example.db"),
 )
 
 run_response = agent.run("Fetch the top 2 hackernews stories.")

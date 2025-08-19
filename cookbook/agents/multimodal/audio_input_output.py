@@ -1,10 +1,9 @@
 import requests
-from rich.pretty import pprint
-
 from agno.agent import Agent
 from agno.media import Audio
 from agno.models.openai import OpenAIChat
 from agno.utils.audio import write_audio_to_file
+from rich.pretty import pprint
 
 # Fetch the audio file and convert it to a base64 encoded string
 url = "https://openaiassets.blob.core.windows.net/$web/API/docs/audio/alloy.wav"

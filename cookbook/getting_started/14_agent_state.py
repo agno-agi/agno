@@ -9,10 +9,10 @@ def increment_counter(session_state) -> str:
     # Initialize counter if it doesn't exist
     if "count" not in session_state:
         session_state["count"] = 0
-    
+
     # Increment the counter
     session_state["count"] += 1
-    
+
     return f"Counter incremented! Current count: {session_state['count']}"
 
 
@@ -37,5 +37,7 @@ agent = Agent(
 
 # Test the counter functionality
 print("Testing counter functionality...")
-agent.print_response("Let's increment the counter 3 times and observe the state changes!", stream=True)
+agent.print_response(
+    "Let's increment the counter 3 times and observe the state changes!", stream=True
+)
 print(f"Final session state: {agent.session_state}")

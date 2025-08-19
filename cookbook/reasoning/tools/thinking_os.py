@@ -1,13 +1,12 @@
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
-from agno.tools.reasoning import ReasoningTools
-from agno.tools.yfinance import YFinanceTools
-from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.reasoning import ReasoningTools
 from agno.tools.thinking import ThinkingTools
+from agno.tools.yfinance import YFinanceTools
 
 reasoning_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),

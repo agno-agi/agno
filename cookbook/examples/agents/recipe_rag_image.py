@@ -5,12 +5,13 @@ An agent that uses Llama 4 for multi-modal RAG and OpenAITools to create a visua
 Run: `pip install openai agno groq cohere` to install the dependencies
 """
 
-from pathlib import Path
 import asyncio
+from pathlib import Path
 
 from agno.agent import Agent
 from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.knowledge import Knowledge
+
 # from agno.models.groq import Groq
 from agno.tools.openai import OpenAITools
 from agno.utils.media import download_image
@@ -26,9 +27,10 @@ knowledge = Knowledge(
     ),
 )
 
-asyncio.run(knowledge.add_content(
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
-)
+asyncio.run(
+    knowledge.add_content(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+    )
 )
 
 agent = Agent(

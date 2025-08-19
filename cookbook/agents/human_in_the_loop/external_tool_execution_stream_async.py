@@ -11,6 +11,7 @@ import asyncio
 import subprocess
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools import tool
 
@@ -36,15 +37,16 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[execute_shell_command],
     markdown=True,
+    db=SqliteDb(session_table="test_session", db_file="tmp/example.db"),
 )
 
 
 async def main():
-    async for run_response in agent.arun(
+    async for run_event in agent.arun(
         "What files do I have in my current directory?", stream=True
     ):
-        if run_response.is_paused:
-            for tool in run_response.tools_awaiting_external_execution:  # type: ignore
+        if run_event.is_paused:
+            for tool in run_event.tools_awaiting_external_execution:  # type: ignore
                 if tool.tool_name == execute_shell_command.name:
                     print(
                         f"Executing {tool.tool_name} with args {tool.tool_args} externally"
@@ -55,12 +57,13 @@ async def main():
                     tool.result = result
 
             async for resp in agent.acontinue_run(  # type: ignore
-                run_response=run_response,  # type: ignore
+                run_id=run_event.run_id,
+                updated_tools=run_event.tools,
                 stream=True,
             ):
                 print(resp.content, end="")
         else:
-            print(run_response.content, end="")
+            print(run_event.content, end="")
 
     # Or for simple debug flow
     # agent.print_response("What files do I have in my current directory?", stream=True)

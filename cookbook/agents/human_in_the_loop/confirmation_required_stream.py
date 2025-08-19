@@ -82,7 +82,9 @@ for run_event in agent.run("Fetch the top 2 hackernews stories", stream=True):
             else:
                 # We update the tools in place
                 tool.confirmed = True
-        run_response = agent.continue_run(run_id=run_event.run_id, updated_tools=run_event.tools, stream=True)  # type: ignore
+        run_response = agent.continue_run(
+            run_id=run_event.run_id, updated_tools=run_event.tools, stream=True
+        )  # type: ignore
         pprint.pprint_run_response(run_response)
 
 # Or for simple debug flow

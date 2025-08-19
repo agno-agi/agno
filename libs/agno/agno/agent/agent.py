@@ -642,7 +642,7 @@ class Agent:
         # Determine the session_state
         if session_state is None:
             session_state = self.session_state or {}
-        
+
         if user_id is not None:
             session_state["current_user_id"] = user_id
         if session_id is not None:
@@ -1889,10 +1889,10 @@ class Agent:
             knowledge_filters: The knowledge filters to use for the run.
             debug_mode: Whether to enable debug mode.
         """
-        if not run_response and not run_id:
+        if run_response is None and run_id is None:
             raise ValueError("Either run_response or run_id must be provided.")
 
-        if not run_response and (run_id is not None and (session_id is None and self.session_id is None)):
+        if run_response is None and (run_id is not None and (session_id is None and self.session_id is None)):
             raise ValueError("Session ID is required to continue a run from a run_id.")
 
         session_id, user_id, session_state = self._initialize_session(
@@ -2224,7 +2224,7 @@ class Agent:
         self.save_run_response_to_file(
             run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
         )
-        
+
         session.upsert_run(run=run_response)
 
         # Save session to storage
@@ -3325,7 +3325,6 @@ class Agent:
         knowledge_filters: Optional[Dict[str, Any]] = None,
     ) -> None:
         if self._rebuild_tools:
-                
             self._rebuild_tools = False
 
             agent_tools = self.get_tools(
@@ -3410,7 +3409,7 @@ class Agent:
                                 log_debug(f"Added tool {func.name}")
                         except Exception as e:
                             log_warning(f"Could not add tool {tool}: {e}")
-        
+
         # Update the session state for the functions
         for func in self._functions_for_model.values():
             func._session_state = session_state
@@ -3588,7 +3587,6 @@ class Agent:
         session_id: str,
         user_id: Optional[str] = None,
     ) -> AgentSession:
-        
         from time import time
 
         # Returning cached session if we have one
@@ -3601,7 +3599,7 @@ class Agent:
             log_debug(f"Reading AgentSession: {session_id}")
 
             agent_session = cast(AgentSession, self._read_session(session_id=session_id))
-            
+
         if agent_session is None:
             # Creating new session if none found
             log_debug(f"Creating new AgentSession: {session_id}")
@@ -3691,7 +3689,7 @@ class Agent:
         session_id_to_load = session_id or self.session_id
 
         # First check cached session if caching is enabled
-        if self.cache_session and hasattr(self, '_agent_session') and self._agent_session is not None:
+        if self.cache_session and hasattr(self, "_agent_session") and self._agent_session is not None:
             if self._agent_session.session_id == session_id_to_load:
                 return self._agent_session
 

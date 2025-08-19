@@ -6,15 +6,10 @@ from agno.vectordb.base import VectorDb
 
 
 class LangChainVectorDb(VectorDb):
-    def __init__(
-        self,
-        vectorstore: Optional[Any] = None,
-        search_kwargs: Optional[dict] = None,
-        **kwargs
-    ):
+    def __init__(self, vectorstore: Optional[Any] = None, search_kwargs: Optional[dict] = None, **kwargs):
         """
         Initialize LangChainVectorDb.
-        
+
         Args:
             vectorstore: The LangChain vectorstore instance
             search_kwargs: Additional search parameters for the retriever
