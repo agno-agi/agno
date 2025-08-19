@@ -4,6 +4,8 @@
 3. Run: `python cookbook/rag/02_agentic_rag_pgvector.py` to run the agent
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
@@ -21,7 +23,7 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_content(
+knowledge.add_content_sync(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
 )
 

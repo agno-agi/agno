@@ -3669,22 +3669,32 @@ class Agent:
         self,
         session_id: Optional[str] = None,
     ) -> Optional[AgentSession]:
-        """Load an AgentSession from database.
+        """Load an AgentSession from database or cache.
 
         Args:
             session_id: The session_id to load from storage.
 
         Returns:
-            AgentSession: The AgentSession loaded from the database or created if it does not exist.
+            AgentSession: The AgentSession loaded from the database/cache or None if not found.
         """
         if not session_id and not self.session_id:
             raise Exception("No session_id provided")
 
         session_id_to_load = session_id or self.session_id
 
+        # First check cached session if caching is enabled
+        if self.cache_session and hasattr(self, '_agent_session') and self._agent_session is not None:
+            if self._agent_session.session_id == session_id_to_load:
+                return self._agent_session
+
         # Try to load from database
         if self.db is not None:
             agent_session = cast(AgentSession, self._read_session(session_id=session_id_to_load))  # type: ignore
+            
+            # Cache the session if caching is enabled and we found it
+            if agent_session is not None and self.cache_session:
+                self._agent_session = agent_session
+            
             return agent_session
 
         log_warning(f"AgentSession {session_id_to_load} not found in db")

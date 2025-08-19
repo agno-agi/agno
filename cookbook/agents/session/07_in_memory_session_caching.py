@@ -8,6 +8,7 @@ agent = Agent(
     add_history_to_context=True,
     # Number of historical responses to add to the messages.
     num_history_runs=3,
+    cache_session=True,
     description="You are a helpful assistant that always responds in a polite, upbeat and positive manner.",
 )
 
