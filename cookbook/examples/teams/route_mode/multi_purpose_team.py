@@ -1,7 +1,4 @@
-from pathlib import Path
-
 from agno.agent import Agent
-from agno.media import Audio, File, Image  # type: ignore
 from agno.models.anthropic import Claude
 from agno.models.deepseek import DeepSeek
 from agno.models.google.gemini import Gemini
@@ -11,9 +8,7 @@ from agno.tools.calculator import CalculatorTools
 from agno.tools.dalle import DalleTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.e2b import E2BTools
-from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
-from agno.utils.media import download_file
 
 web_agent = Agent(
     name="Web Agent",
@@ -178,7 +173,7 @@ agent_team.print_response(
     "Summarize analyst recommendations and share the latest news for NVDA", stream=True
 )
 
-# image_path = Path(__file__).parent.joinpath("sample.jpg")
+# image_path = Path(__file__).parent.joinpath("res/sample.jpg")
 # # # Use image agent to analyze the image
 # agent_team.print_response(
 #     "Write a 3 sentence fiction story about the image",
@@ -216,7 +211,7 @@ agent_team.print_response(
 # agent_team.print_response("9.11 and 9.9 -- which is bigger?", stream=True)
 
 
-# pdf_path = Path(__file__).parent.joinpath("ThaiRecipes.pdf")
+# pdf_path = Path(__file__).parent.joinpath("res/ThaiRecipes.pdf")
 
 # # Download the file using the download_file function
 # download_file(

@@ -4,7 +4,6 @@ Create user memories with an Agent by providing a either text or a list of messa
 
 from agno.db.postgres import PostgresDb
 from agno.memory import MemoryManager
-from agno.memory.manager import MemoryManager
 from agno.models.anthropic.claude import Claude
 from agno.models.message import Message
 from agno.models.openai import OpenAIChat
@@ -52,7 +51,7 @@ jane_doe_id = "jane_doe@example.com"
 
 # Send a history of messages and add memories
 memory.create_user_memories(
-    input=[
+    messages=[
         Message(role="user", content="Hi, how are you?"),
         Message(role="assistant", content="I'm good, thank you!"),
         Message(role="user", content="What are you capable of?"),

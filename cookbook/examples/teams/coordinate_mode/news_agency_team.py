@@ -1,6 +1,7 @@
-"""
+"""Example of a Team using the `coordinate` mode to play the role of a News Agency.
+
 1. Run: `pip install openai duckduckgo-search newspaper4k lxml_html_clean agno` to install the dependencies
-2. Run: `python cookbook/teams/coordinate/news_agency_team.py` to run the agent
+2. Run: `python cookbook/examples/teams/coordinate_mode/news_agency_team.py` to run the agent
 """
 
 from pathlib import Path

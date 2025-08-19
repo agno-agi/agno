@@ -414,6 +414,14 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             evaluated_component_name = self.team.name
 
         if self.db:
+            eval_input = {
+                "additional_guidelines": self.additional_guidelines,
+                "additional_context": self.additional_context,
+                "num_iterations": self.num_iterations,
+                "expected_output": self.expected_output,
+                "input": self.input,
+            }
+
             log_eval_run(
                 db=self.db,
                 run_id=self.eval_id,  # type: ignore
@@ -425,7 +433,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 model_provider=model_provider,
                 name=self.name if self.name is not None else None,
                 evaluated_component_name=evaluated_component_name,
-                workflow_id=None,
+                eval_input=eval_input,
             )
 
         logger.debug(f"*********** Evaluation {self.eval_id} Finished ***********")
@@ -538,6 +546,13 @@ Remember: You must only compare the agent_output to the expected_output. The exp
 
         # Log results to the Agno DB if requested
         if self.db:
+            eval_input = {
+                "additional_guidelines": self.additional_guidelines,
+                "additional_context": self.additional_context,
+                "num_iterations": self.num_iterations,
+                "expected_output": self.expected_output,
+                "input": self.input,
+            }
             await async_log_eval_run(
                 db=self.db,
                 run_id=self.eval_id,  # type: ignore
@@ -550,6 +565,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 evaluated_component_name=evaluated_component_name,
                 team_id=team_id,
                 workflow_id=None,
+                eval_input=eval_input,
             )
 
         logger.debug(f"*********** Evaluation {self.eval_id} Finished ***********")
@@ -634,6 +650,14 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 model_provider = None
                 evaluated_component_name = None
 
+            eval_input = {
+                "additional_guidelines": self.additional_guidelines,
+                "additional_context": self.additional_context,
+                "num_iterations": self.num_iterations,
+                "expected_output": self.expected_output,
+                "input": self.input,
+            }
+
             log_eval_run(
                 db=self.db,
                 run_id=self.eval_id,  # type: ignore
@@ -646,6 +670,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 model_provider=model_provider,
                 evaluated_component_name=evaluated_component_name,
                 workflow_id=None,
+                eval_input=eval_input,
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
@@ -724,6 +749,14 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 model_provider = self.team.model.provider if self.team.model is not None else None
                 evaluated_component_name = self.team.name
 
+            eval_input = {
+                "additional_guidelines": self.additional_guidelines,
+                "additional_context": self.additional_context,
+                "num_iterations": self.num_iterations,
+                "expected_output": self.expected_output,
+                "input": self.input,
+            }
+
             await async_log_eval_run(
                 db=self.db,
                 run_id=self.eval_id,  # type: ignore
@@ -736,6 +769,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 model_provider=model_provider,
                 evaluated_component_name=evaluated_component_name,
                 workflow_id=None,
+                eval_input=eval_input,
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")

@@ -43,7 +43,7 @@ def test_route_team_basic():
     assert isinstance(response.content, str)
     assert len(response.content) > 0
     assert len(response.member_responses) == 1
-    assert response.member_responses[0].id == finance_agent.id
+    assert response.member_responses[0].agent_id == finance_agent.id  # type: ignore
     assert team.id == finance_agent.team_id
 
 
@@ -92,7 +92,7 @@ def test_route_team_structured_output():
     assert response.content.price is not None
     member_responses = response.member_responses
     assert len(member_responses) == 1
-    assert response.member_responses[0].id == finance_agent.id
+    assert response.member_responses[0].agent_id == finance_agent.id  # type: ignore
 
 
 def test_route_team_with_multiple_agents():
@@ -159,7 +159,7 @@ def test_route_team_with_expected_output():
     assert isinstance(response.content, str)
     assert len(response.content) > 0
     assert len(response.member_responses) == 1
-    assert response.member_responses[0].id == math_agent.id
+    assert response.member_responses[0].agent_id == math_agent.id  # type: ignore
 
 
 def test_route_team_multiple_calls():
@@ -197,15 +197,19 @@ def test_route_team_multiple_calls():
 
     # This should route to the finance agent
     response = team.run("What is the current stock price of AAPL?")
+    assert response is not None
+    assert response.tools is not None
     assert response.tools[0].tool_name == "forward_task_to_member"
-    assert response.tools[0].tool_args["member_id"] == finance_agent.id
+    assert response.tools[0].tool_args["member_id"] == finance_agent.id  # type: ignore
 
-    assert response.member_responses[0].id == finance_agent.id
-    assert "What is the current stock price of AAPL?" in response.member_responses[0].messages[1].content
+    assert response.member_responses[0].agent_id == finance_agent.id  # type: ignore
+    assert "What is the current stock price of AAPL?" in response.member_responses[0].messages[1].content  # type: ignore
 
     # This should route to the weather agent
     response = team.run("What is the weather in Tokyo?")
+    assert response is not None
+    assert response.tools is not None
     assert response.tools[0].tool_name == "forward_task_to_member"
-    assert response.tools[0].tool_args["member_id"] == web_agent.id
-    assert response.member_responses[0].id == web_agent.id
-    assert "What is the weather in Tokyo?" in response.member_responses[0].messages[1].content
+    assert response.tools[0].tool_args["member_id"] == web_agent.id  # type: ignore
+    assert response.member_responses[0].agent_id == web_agent.id  # type: ignore
+    assert "What is the weather in Tokyo?" in response.member_responses[0].messages[1].content  # type: ignore

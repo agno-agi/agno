@@ -17,22 +17,22 @@ knowledge = Knowledge(
 )
 
 
-knowledge.add_content(
+asyncio.run(knowledge.add_content(
     name="Recipes",
     path="cookbook/knowledge/data/filters/cv_4.pdf",
     metadata={"doc_type": "recipe_book"},
-)
+))
 
-knowledge.add_content(
+asyncio.run(knowledge.add_content(
     name="Recipes",
     topics=["Manchester United"],
     reader=WikipediaReader(),
-)
+))
 
-knowledge.add_content(
+asyncio.run(knowledge.add_content(
     name="Recipes",
     url="https://en.wikipedia.org/wiki/Manchester_United_F.C.",
-)
+))
 
 
 agent = Agent(

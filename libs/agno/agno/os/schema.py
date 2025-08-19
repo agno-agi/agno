@@ -109,6 +109,7 @@ class AgentResponse(BaseModel):
     extra_messages: Optional[Dict[str, Any]] = None
     response_settings: Optional[Dict[str, Any]] = None
     streaming: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
 
     @classmethod
     def from_agent(cls, agent: Agent, memory_app: Optional[MemoryApp] = None) -> "AgentResponse":
@@ -306,7 +307,6 @@ class AgentResponse(BaseModel):
             "stream": agent.stream,
             "stream_intermediate_steps": agent.stream_intermediate_steps,
         }
-
         return AgentResponse(
             id=agent.id,
             name=agent.name,
@@ -325,6 +325,7 @@ class AgentResponse(BaseModel):
             extra_messages=filter_meaningful_config(extra_messages_info, agent_defaults),
             response_settings=filter_meaningful_config(response_settings_info, agent_defaults),
             streaming=filter_meaningful_config(streaming_info, agent_defaults),
+            metadata=agent.metadata
         )
 
 
@@ -344,6 +345,7 @@ class TeamResponse(BaseModel):
     response_settings: Optional[Dict[str, Any]] = None
     streaming: Optional[Dict[str, Any]] = None
     members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = None
+    metadata: Optional[Dict[str, Any]] = None   
 
     @classmethod
     def from_team(cls, team: Team, memory_app: Optional[MemoryApp] = None) -> "TeamResponse":
@@ -549,6 +551,7 @@ class TeamResponse(BaseModel):
                 else None
                 for member in team.members
             ],
+            metadata=team.metadata,
         )
 
 
@@ -560,7 +563,7 @@ class WorkflowResponse(BaseModel):
     steps: Optional[List[Dict[str, Any]]] = None
     agent: Optional[AgentResponse] = None
     team: Optional[TeamResponse] = None
-
+    metadata: Optional[Dict[str, Any]] = None
     @classmethod
     def _resolve_agents_and_teams_recursively(cls, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Parse Agents and Teams into AgentResponse and TeamResponse objects.
@@ -595,6 +598,7 @@ class WorkflowResponse(BaseModel):
             description=workflow.description,
             steps=steps,
             input_schema=get_workflow_input_schema_dict(workflow),
+            metadata=workflow.metadata,
         )
 
 

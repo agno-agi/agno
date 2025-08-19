@@ -10,7 +10,7 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 from rich.pretty import pprint
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-db = PostgresDb(db_url=db_url, user_memory_table="user_memories")
+db = PostgresDb(db_url=db_url, memory_table="user_memories")
 
 # No need to set the model, it gets set by the agent to the agent's model
 memory_manager = MemoryManager(db=db)

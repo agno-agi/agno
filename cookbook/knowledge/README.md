@@ -4,32 +4,19 @@
 
 > Note: Fork and clone this repository if needed
 
-### 1. Create a virtual environment
+## Getting Started
 
-```shell
+### 1. Setup Environment
+
+```bash
 python3 -m venv ~/.venvs/aienv
 source ~/.venvs/aienv/bin/activate
+pip install -U agno openai pgvector "psycopg[binary]" sqlalchemy
 ```
 
-### 2. Install libraries
+### 2. Start PgVector Database
 
-```shell
-pip install -U pgvector "psycopg[binary]" sqlalchemy openai agno
-```
-
-### 3. Run PgVector
-
-> Install [docker desktop](https://docs.docker.com/desktop/install/mac-install/) first.
-
-- Run using a helper script
-
-```shell
-./cookbook/scripts/run_pgvector.sh
-```
-
-- OR run using the docker run command
-
-```shell
+```bash
 docker run -d \
   -e POSTGRES_DB=ai \
   -e POSTGRES_USER=ai \
@@ -41,18 +28,50 @@ docker run -d \
   agnohq/pgvector:16
 ```
 
-### 4. Test Knowledge Cookbooks
+### 3. Basic Knowledge Base
 
-Eg: PDF URL Knowledge Base
+```python
+from agno.agent import Agent
+from agno.knowledge.knowledge import Knowledge
+from agno.vectordb.pgvector import PgVector
 
-- Install libraries
+knowledge = Knowledge(
+    vector_db=PgVector(
+        table_name="vectors",
+        db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"
+    )
+)
 
-```shell
-pip install -U pypdf bs4
+# Add content from URL
+knowledge.add_content(
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+)
+
+# Create agent with knowledge
+agent = Agent(
+    name="Knowledge Agent",
+    knowledge=knowledge,
+    search_knowledge=True,
+)
+
+agent.print_response("What can you tell me about Thai recipes?")
 ```
 
-- Run the PDF URL script
+## Examples
 
-```shell
-python cookbook/agent_concepts/knowledge/pdf_url.py
-```
+Add docs, manuals, and databases so agents can search and cite specific sources instead of guessing.
+
+### Basic Operations
+- **[from_path.py](./basic_operations/from_path.py)** - Add content from local files
+- **[from_url.py](./basic_operations/from_url.py)** - Add content from URLs  
+- **[from_multiple.py](./basic_operations/from_multiple.py)** - Add multiple sources
+- **[specify_reader.py](./basic_operations/specify_reader.py)** - Use specific document readers
+- **[async_speedup.py](./basic_operations/async_speedup.py)** - Async processing for performance
+
+### Other Topics
+- **[chunking/](./chunking/)** - Text chunking strategies
+- **[embedders/](./embedders/)** - Embedding model providers  
+- **[filters/](./filters/)** - Content filtering and access control
+- **[readers/](./readers/)** - Document format processors
+- **[search_type/](./search_type/)** - Search algorithm options
+- **[vector_db/](./vector_db/)** - Vector database implementations

@@ -16,10 +16,10 @@ from langchain_openai import OpenAIEmbeddings
 chroma_db_dir = pathlib.Path("./chroma_db")
 
 # Define the path to the document to be loaded into the knowledge base
-state_of_the_union = pathlib.Path("data/demo/state_of_the_union.txt")
+state_of_the_union = pathlib.Path("cookbook/knowledge/testing_resources/state_of_the_union.txt")
 
 # Load the document
-raw_documents = TextLoader(str(state_of_the_union)).load()
+raw_documents = TextLoader(str(state_of_the_union), encoding="utf-8").load()
 
 # Split the document into chunks
 text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=0)

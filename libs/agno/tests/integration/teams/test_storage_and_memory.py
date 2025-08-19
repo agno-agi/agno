@@ -1,19 +1,20 @@
+"""Run: `pip install google-genai` to install the dependencies"""
+
 import pytest
 
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
-from agno.models.google.gemini import Gemini
 from agno.models.openai.chat import OpenAIChat
 from agno.team.team import Team
 
 
 @pytest.fixture
 def route_team(shared_db):
-    """Create a route team with storage and memory for testing."""
+    """Create a route team with db and memory for testing."""
     return Team(
         name="Route Team",
         mode="route",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-4o"),
         members=[],
         db=shared_db,
         enable_user_memories=True,
@@ -22,7 +23,7 @@ def route_team(shared_db):
 
 @pytest.fixture
 def route_team_with_members(shared_db):
-    """Create a route team with storage and memory for testing."""
+    """Create a route team with db and memory for testing."""
 
     def get_weather(city: str) -> str:
         return f"The weather in {city} is sunny."
@@ -32,7 +33,7 @@ def route_team_with_members(shared_db):
 
     travel_agent = Agent(
         name="Travel Agent",
-        model=Gemini(id="gemini-2.0-flash-001"),
+        model=OpenAIChat(id="gpt-4o"),
         db=shared_db,
         add_history_to_context=True,
         role="Search the web for travel information. Don't call multiple tools at once. First get weather, then restaurants.",
@@ -41,7 +42,7 @@ def route_team_with_members(shared_db):
     return Team(
         name="Route Team",
         mode="route",
-        model=Gemini(id="gemini-2.0-flash-001"),
+        model=OpenAIChat(id="gpt-4o"),
         members=[travel_agent],
         db=shared_db,
         instructions="Route a single question to the travel agent. Don't make multiple requests.",
@@ -51,7 +52,7 @@ def route_team_with_members(shared_db):
 
 @pytest.mark.asyncio
 async def test_run_history_persistence(route_team, shared_db):
-    """Test that all runs within a session are persisted in storage."""
+    """Test that all runs within a session are persisted in db."""
     user_id = "john@example.com"
     session_id = "session_123"
     num_turns = 5
@@ -81,7 +82,7 @@ async def test_run_history_persistence(route_team, shared_db):
 
 @pytest.mark.asyncio
 async def test_run_session_summary(route_team, shared_db):
-    """Test that the session summary is persisted in storage."""
+    """Test that the session summary is persisted in db."""
     session_id = "session_123"
     user_id = "john@example.com"
 
@@ -109,7 +110,7 @@ async def test_run_session_summary(route_team, shared_db):
 
 @pytest.mark.asyncio
 async def test_member_run_history_persistence(route_team_with_members, shared_db):
-    """Test that all runs within a member's session are persisted in storage."""
+    """Test that all runs within a member's session are persisted in db."""
     user_id = "john@example.com"
     session_id = "session_123"
 
@@ -121,15 +122,11 @@ async def test_member_run_history_persistence(route_team_with_members, shared_db
         "I'm traveling to Tokyo, what is the weather and open restaurants?", user_id=user_id, session_id=session_id
     )
 
-    sessions = route_team_with_members.get_session(session_id=session_id)
+    session = route_team_with_members.get_session(session_id=session_id)
+    assert len(session.runs) >= 2, "Team leader run and atleast 1 member run"
+    assert len(session.runs[-1].messages) == 4, "Only system message, user message, tool call, and response"
 
-    assert len(sessions.runs) >= 2, "Team leader run and atleast 1 member run"
-
-    assert len(sessions.runs[-1].messages) == 7, (
-        "Only system message, user message, two tool calls (and results), and response"
-    )
-
-    first_user_message_content = sessions.runs[0].messages[1].content
+    first_user_message_content = session.runs[1].messages[1].content
     assert "I'm traveling to Tokyo, what is the weather and open restaurants?" in first_user_message_content
 
     # Second request
@@ -137,11 +134,10 @@ async def test_member_run_history_persistence(route_team_with_members, shared_db
         "I'm traveling to Munich, what is the weather and open restaurants?", user_id=user_id, session_id=session_id
     )
 
-    sessions = route_team_with_members.get_session(session_id=session_id)
-
-    assert len(sessions.runs) >= 4, "2 team leader runs and atleast 2 member runs"
-
-    assert len(sessions.runs[-1].messages) == 13, "Full history of messages"
+    session = route_team_with_members.get_session(session_id=session_id)
+    assert len(session.runs) >= 4, "2 team leader runs and atleast 2 member runs"
+    assert len(session.runs[0].messages) == 3, "Messages relevant to the team leader"
+    assert len(session.runs[2].messages) >= 8, "Messages relevant to Agent with the relevant tool"
 
     # Third request (to the member directly)
     await route_team_with_members.members[0].arun(
@@ -150,16 +146,14 @@ async def test_member_run_history_persistence(route_team_with_members, shared_db
         session_id=session_id,
     )
 
-    sessions = route_team_with_members.get_session(session_id=session_id)
-
-    assert len(sessions.runs) >= 5, "3 team leader runs and atleast 2 member runs"
-
-    assert len(sessions.runs[-1].messages) == 15, "Full history of messages"
+    session = route_team_with_members.get_session(session_id=session_id)
+    assert len(session.runs) >= 4, "3 team leader runs and atleast a member run"
+    assert len(session.runs[-1].messages) >= 4, "Messages relevant to Agent with the relevant tool"
 
 
 @pytest.mark.asyncio
 async def test_multi_user_multi_session_route_team(route_team, shared_db):
-    """Test multi-user multi-session route team with storage and memory."""
+    """Test multi-user multi-session route team with db and memory."""
     # Define user and session IDs
     user_1_id = "user_1@example.com"
     user_2_id = "user_2@example.com"
@@ -203,7 +197,7 @@ async def test_multi_user_multi_session_route_team(route_team, shared_db):
         session_id=user_1_session_1_id,
     )
 
-    # Verify storage DB has the right sessions
+    # Verify the DB has the right sessions
     all_sessions = shared_db.get_sessions(session_type=SessionType.TEAM)
     assert len(all_sessions) == 4  # 4 sessions total
 

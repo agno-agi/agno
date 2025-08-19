@@ -1,8 +1,7 @@
-"""This cookbook shows how to remove vectors from Knowledge.
+"""This cookbook shows how to skip content if it already exists in the knowledge base.
+Existing content is skipped by default.
 
-You can remove vectors by metadata or by name.
-
-1. Run: `python cookbook/agent_concepts/knowledge/06_remove_vectors.py` to run the cookbook
+1. Run: `python cookbook/agent_concepts/knowledge/10_skip_if_exists.py` to run the cookbook
 """
 
 import asyncio
@@ -10,7 +9,6 @@ import asyncio
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
 
-# Create Knowledge Instance
 knowledge = Knowledge(
     name="Basic SDK Knowledge Base",
     description="Agno 2.0 Knowledge Implementation",
@@ -19,24 +17,22 @@ knowledge = Knowledge(
     ),
 )
 
-asyncio.run(
-    knowledge.add_content(
-        name="CV",
-        path="cookbook_v2/knowledge/data/filters/cv_1.pdf",
-        metadata={"user_tag": "Engineering Candidates"},
-    )
-)
-
-
-knowledge.remove_vectors_by_metadata({"user_tag": "Engineering Candidates"})
-
 # Add from local file to the knowledge base
 asyncio.run(
     knowledge.add_content(
         name="CV",
-        path="cookbook_v2/knowledge/data/filters/cv_1.pdf",
+        path="cookbook/knowledge/testing_resources/cv_1.pdf",
         metadata={"user_tag": "Engineering Candidates"},
+        skip_if_exists=True,  # True by default
     )
 )
 
-knowledge.remove_vectors_by_name("CV")
+# Add from local file to the knowledge base, but don't skip if it already exists
+asyncio.run(
+    knowledge.add_content(
+        name="CV",
+        path="cookbook/knowledge/testing_resources/cv_1.pdf",
+        metadata={"user_tag": "Engineering Candidates"},
+        skip_if_exists=False,
+    )
+)

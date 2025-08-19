@@ -29,7 +29,6 @@ try:
     )
     from mistralai.models.chatcompletionresponse import (  # type: ignore
         ChatCompletionResponse,  # type: ignore
-        ChatCompletionResponseUsage,  # type: ignore
     )
     from mistralai.models.deltamessage import DeltaMessage  # type: ignore
     from mistralai.types.basemodel import Unset  # type: ignore
@@ -415,7 +414,7 @@ class MistralChat(Model):
 
         return model_response
 
-    def _get_metrics(self, response_usage: ChatCompletionResponseUsage) -> Metrics:
+    def _get_metrics(self, response_usage: any) -> Metrics:
         """
         Parse the given Mistral usage into an Agno Metrics object.
 

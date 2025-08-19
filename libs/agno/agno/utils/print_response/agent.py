@@ -48,6 +48,7 @@ def print_response_stream(
     _response_thinking: str = ""
     response_content_batch: Union[str, JSON, Markdown] = ""
     reasoning_steps: List[ReasoningStep] = []
+    accumulated_tool_calls: List = []
 
     with Live(console=console) as live_log:
         status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
@@ -94,6 +95,14 @@ def print_response_stream(
                     panels.append(response_panel)
                     live_log.update(Group(*panels))
                     return
+
+                if (
+                    response_event.event == RunEvent.tool_call_started
+                    and hasattr(response_event, "tool")
+                    and response_event.tool is not None
+                ):
+                    accumulated_tool_calls.append(response_event.tool)
+
                 if response_event.event == RunEvent.run_content:  # type: ignore
                     if hasattr(response_event, "content"):
                         if isinstance(response_event.content, str):
@@ -156,6 +165,7 @@ def print_response_stream(
                 reasoning_steps=reasoning_steps,
                 show_reasoning=show_reasoning,
                 show_full_reasoning=show_full_reasoning,
+                accumulated_tool_calls=accumulated_tool_calls,
             )
             panels.extend(additional_panels)
             if panels:
@@ -213,6 +223,7 @@ async def aprint_response_stream(
     _response_thinking: str = ""
     reasoning_steps: List[ReasoningStep] = []
     response_content_batch: Union[str, JSON, Markdown] = ""
+    accumulated_tool_calls: List = []
 
     with Live(console=console) as live_log:
         status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
@@ -260,6 +271,9 @@ async def aprint_response_stream(
                     panels.append(response_panel)
                     live_log.update(Group(*panels))
                     break
+
+                if resp.event == RunEvent.tool_call_started and hasattr(resp, "tool") and resp.tool is not None:
+                    accumulated_tool_calls.append(resp.tool)
 
                 if resp.event == RunEvent.run_content:  # type: ignore
                     if isinstance(resp.content, str):
@@ -323,6 +337,7 @@ async def aprint_response_stream(
                 reasoning_steps=reasoning_steps,
                 show_reasoning=show_reasoning,
                 show_full_reasoning=show_full_reasoning,
+                accumulated_tool_calls=accumulated_tool_calls,
             )
             panels.extend(additional_panels)
             if panels:
@@ -363,6 +378,7 @@ def build_panels_stream(
     reasoning_steps: List[ReasoningStep],
     show_reasoning: bool = True,
     show_full_reasoning: bool = False,
+    accumulated_tool_calls: Optional[List] = None,
 ):
     panels = []
 
@@ -396,16 +412,12 @@ def build_panels_stream(
         )
         panels.append(thinking_panel)
 
-    # Add tool calls panel if available
-    if (
-        hasattr(response_event, "tool")
-        and response_event.tool is not None
-        and response_event.event == RunEvent.tool_call_started
-    ):
+    if accumulated_tool_calls:  # Use accumulated tool calls instead of just current event
         # Create bullet points for each tool call
         tool_calls_content = Text()
-        formatted_tool_call = format_tool_calls([response_event.tool])
-        tool_calls_content.append(f"• {formatted_tool_call}\n")
+        formatted_tool_calls = format_tool_calls(accumulated_tool_calls)
+        for formatted_tool_call in formatted_tool_calls:
+            tool_calls_content.append(f"• {formatted_tool_call}\n")
 
         tool_calls_panel = create_panel(
             content=tool_calls_content.plain.rstrip(),
