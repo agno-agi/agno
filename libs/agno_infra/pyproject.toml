@@ -1,7 +1,7 @@
 [project]
 name = "agno-infra"
 version = "0.1.0-rc1"
-description = "A lightweight framework and CLI for managing Agent Operating Systems"
+description = "A lightweight framework and CLI for managing Agentic Infrastructure"
 requires-python = ">=3.7,<4"
 readme = "README.md"
 license-files = ["LICENSE"]

@@ -12,7 +12,7 @@ from agno.utilities.logging import set_log_level_to_debug
 
 agno_cli = typer.Typer(
     help="""\b
-Agno is a model-agnostic framework for building AI Agents.
+Agno is a lightweight framework for building Agent Systems.
 \b
 Usage:
 1. Run `ag init` to create a new /infra directory

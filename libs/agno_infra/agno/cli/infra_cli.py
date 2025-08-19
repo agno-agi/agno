@@ -63,7 +63,7 @@ def create(
     ),
 ):
     """\b
-    Create a new infrastructure in the current directory using a starter template or url
+    Create a new Agentic Infrastructure project in the current directory using a starter template
     \b
     Examples:
     > ag infra create -t agent-infra-docker                -> Create an `agent-infra-docker` in the current directory
