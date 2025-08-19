@@ -23,7 +23,7 @@ asyncio.run(
         [
             {
                 "name": "CV's",
-                "path": "cookbook_v2/knowledge/data/filters/cv_1.pdf",
+                "path": "cookbook/knowledge/data/filters/cv_1.pdf",
                 "metadata": {"user_tag": "Engineering candidates"},
             },
             {

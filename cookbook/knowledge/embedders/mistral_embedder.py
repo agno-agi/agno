@@ -24,6 +24,6 @@ knowledge = Knowledge(
 
 asyncio.run(
     knowledge.add_content(
-        path="cookbook_v2/knowledge/data/filters/cv_1.pdf",
+        path="cookbook/knowledge/data/filters/cv_1.pdf",
     )
 )

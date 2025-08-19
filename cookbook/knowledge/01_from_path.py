@@ -28,7 +28,7 @@ knowledge = Knowledge(
 asyncio.run(
     knowledge.add_content(
         name="CV",
-        path="cookbook_v2/knowledge/data/filters/cv_1.pdf",
+        path="cookbook/knowledge/data/filters/cv_1.pdf",
         metadata={"user_tag": "Engineering Candidates"},
     )
 )
