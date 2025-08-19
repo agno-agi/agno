@@ -217,7 +217,7 @@ class LinearTools(Toolkit):
         """
 
         query = """
-        mutation IssueCreate ($title: String!, $description: String!, $teamId: String!, $projectId: String!, $assigneeId: String!){
+        mutation IssueCreate ($title: String!, $description: String!, $teamId: String!, $projectId: String, $assigneeId: String){
           issueCreate(
             input: { title: $title, description: $description, teamId: $teamId, projectId: $projectId, assigneeId: $assigneeId}
           ) {
