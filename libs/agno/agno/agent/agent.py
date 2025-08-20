@@ -4698,7 +4698,7 @@ class Agent:
         from agno.knowledge.document import Document
 
         if num_documents is None and self.knowledge is not None:
-            num_documents = self.knowledge.num_documents
+            num_documents = self.knowledge.max_results
         # Validate the filters against known valid filter keys
         if self.knowledge is not None:
             valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
@@ -4763,7 +4763,7 @@ class Agent:
         from agno.knowledge.document import Document
 
         if num_documents is None and self.knowledge is not None:
-            num_documents = self.knowledge.num_documents
+            num_documents = self.knowledge.max_results
 
         # Validate the filters against known valid filter keys
         if self.knowledge is not None:
