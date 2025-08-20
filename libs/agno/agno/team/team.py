@@ -5671,7 +5671,7 @@ class Team:
             TeamSession: The TeamSession loaded from the database or created if it does not exist.
         """
         if not session_id and not self.session_id:
-            raise Exception("No session_id provided")
+            return None
 
         session_id_to_load = session_id or self.session_id
 

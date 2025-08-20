@@ -53,7 +53,7 @@ if __name__ == "__main__":
     asyncio.run(
         knowledge.add_content(
             name="Recipes",
-            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
         )
     )
 

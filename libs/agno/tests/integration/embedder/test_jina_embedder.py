@@ -15,7 +15,7 @@ def test_embedder_initialization(embedder):
     assert embedder.dimensions == 1024
     assert embedder.embedding_type == "float"
     assert not embedder.late_chunking
-    assert embedder.api_key is not None  # Should load from environment
+    assert embedder.api_key is not None, "JINA_API_KEY env variable is not set"
 
 
 def test_get_embedding(embedder):

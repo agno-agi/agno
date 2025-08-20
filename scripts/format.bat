@@ -32,7 +32,6 @@ IF NOT EXIST "%COOKBOOK_DIR%" (
     EXIT /B 1
 )
 
-REM Format all libraries
 SET AGNO_FORMAT="%AGNO_DIR%\scripts\format.bat"
 IF EXIST %AGNO_FORMAT% (
     ECHO [INFO] Running %AGNO_FORMAT%
@@ -49,7 +48,6 @@ IF EXIST %AGNO_INFRA_FORMAT% (
     ECHO [WARNING] %AGNO_INFRA_FORMAT% does not exist, skipping
 )
 
-REM Format all cookbook examples
 SET COOKBOOK_FORMAT="%COOKBOOK_DIR%\scripts\format.bat"
 IF EXIST %COOKBOOK_FORMAT% (
     ECHO [INFO] Running %COOKBOOK_FORMAT%

@@ -1,7 +1,10 @@
 from agno.agent.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai.chat import OpenAIChat
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
+
+db = SqliteDb(db_file="tmp/workflow.db")
 
 
 # Define tools to manage a shopping list in workflow session state
@@ -11,12 +14,6 @@ def add_item(session_state, item: str) -> str:
     Args:
         item (str): The item to add to the shopping list
     """
-    if session_state is None:
-        session_state = {}
-
-    if "shopping_list" not in session_state:
-        session_state["shopping_list"] = []
-
     # Check if item already exists (case-insensitive)
     existing_items = [
         existing_item.lower() for existing_item in session_state["shopping_list"]
@@ -34,11 +31,7 @@ def remove_item(session_state, item: str) -> str:
     Args:
         item (str): The item to remove from the shopping list
     """
-    if session_state is None:
-        session_state = {}
-
-    if "shopping_list" not in session_state:
-        session_state["shopping_list"] = []
+    if len(session_state["shopping_list"]) == 0:
         return f"Shopping list is empty. Cannot remove '{item}'."
 
     # Find and remove item (case-insensitive)
@@ -53,20 +46,13 @@ def remove_item(session_state, item: str) -> str:
 
 def remove_all_items(session_state) -> str:
     """Remove all items from the shopping list in workflow session state."""
-    if session_state is None:
-        session_state = {}
-
     session_state["shopping_list"] = []
     return "Removed all items from the shopping list."
 
 
 def list_items(session_state) -> str:
     """List all items in the shopping list from workflow session state."""
-    if (
-        session_state is None
-        or "shopping_list" not in session_state
-        or not session_state["shopping_list"]
-    ):
+    if len(session_state["shopping_list"]) == 0:
         return "Shopping list is empty."
 
     items = session_state["shopping_list"]
@@ -115,8 +101,9 @@ view_list_step = Step(
 # Create workflow with workflow_session_state
 shopping_workflow = Workflow(
     name="Shopping List Workflow",
+    db=db,
     steps=[manage_items_step, view_list_step],
-    session_state={},  # Initialize empty workflow session state
+    session_state={"shopping_list": []},
 )
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@
 
 import asyncio
 
-from agno.agent import Agent
+from agno.agent import Agent  # noqa
 from agno.db.postgres.postgres import PostgresDb
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
@@ -37,15 +37,15 @@ vector_db.update_metadata(
     metadata={"my_special_tag": "DUDDDE"},
 )
 
-# agent = Agent(
-#     name="My Agent",
-#     description="Agno 2.0 Agent Implementation",
-#     knowledge=knowledge,
-#     search_knowledge=True,
-#     debug_mode=True,
-# )
+agent = Agent(
+    name="My Agent",
+    description="Agno 2.0 Agent Implementation",
+    knowledge=knowledge,
+    search_knowledge=True,
+    debug_mode=True,
+)
 
-# agent.print_response(
-#     "What skills does Jordan Mitchell have?",
-#     markdown=True,
-# )
+agent.print_response(
+    "What skills does Jordan Mitchell have?",
+    markdown=True,
+)

@@ -1,5 +1,3 @@
-import os
-
 from agno.agent import Agent
 from agno.db.json import JsonDb  # noqa: F401
 from agno.knowledge.knowledge import Knowledge

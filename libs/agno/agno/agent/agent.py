@@ -1492,7 +1492,6 @@ class Agent:
                         session=agent_session,
                         response_format=response_format,
                     )
-                    return response
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
@@ -2077,7 +2076,6 @@ class Agent:
                         session=agent_session,
                         response_format=response_format,
                     )
-                    return response
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
@@ -3619,9 +3617,6 @@ class Agent:
 
     def _update_session_state(self, session: AgentSession, session_state: Dict[str, Any]):
         """Load the existing Agent from an AgentSession (from the database)"""
-
-        if not hasattr(session, "memory"):
-            return
 
         from agno.utils.merge_dict import merge_dictionaries
 
