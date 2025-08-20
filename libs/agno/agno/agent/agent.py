@@ -28,6 +28,7 @@ from uuid import NAMESPACE_DNS, uuid4, uuid5
 from pydantic import BaseModel
 
 from agno.db.base import BaseDb, SessionType, UserMemory
+from agno.db.in_memory import InMemoryDb
 from agno.exceptions import ModelProviderError, StopAgentRun
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
@@ -122,8 +123,6 @@ class Agent:
     session_state: Optional[Dict[str, Any]] = None
     # If True, the agent can update the session state
     enable_agentic_state: bool = False
-    # If True, cache the session in memory
-    cache_session: bool = False
 
     search_session_history: Optional[bool] = False
     num_history_sessions: Optional[int] = None
@@ -153,6 +152,8 @@ class Agent:
     # --- Database ---
     # Database to use for this agent
     db: Optional[BaseDb] = None
+    # If True, use in-memory storage as a database
+    in_memory_db: bool = False
 
     # --- Agent History ---
     # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
@@ -335,10 +336,10 @@ class Agent:
         session_state: Optional[Dict[str, Any]] = None,
         search_session_history: Optional[bool] = False,
         num_history_sessions: Optional[int] = None,
-        cache_session: bool = False,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
         db: Optional[BaseDb] = None,
+        in_memory_db: bool = False,
         memory_manager: Optional[MemoryManager] = None,
         enable_agentic_memory: bool = False,
         enable_user_memories: bool = False,
@@ -418,12 +419,18 @@ class Agent:
         self.search_session_history = search_session_history
         self.num_history_sessions = num_history_sessions
 
-        self.cache_session = cache_session
-
         self.dependencies = dependencies
         self.add_dependencies_to_context = add_dependencies_to_context
 
         self.db = db
+        self.in_memory_db = in_memory_db
+
+        if self.in_memory_db and self.db is None:
+            self.db = InMemoryDb()
+        if self.in_memory_db and self.db is not None:
+            log_warning(
+                "In-memory database is enabled, but a database is provided. The provided database will be used."
+            )
 
         self.memory_manager = memory_manager
         self.enable_agentic_memory = enable_agentic_memory
@@ -1054,7 +1061,6 @@ class Agent:
                         user_id=user_id,
                         session=agent_session,
                         response_format=response_format,
-                        refresh_session_before_write=refresh_session_before_write,
                     )
                     return response
             except ModelProviderError as e:
@@ -3704,9 +3710,6 @@ class Agent:
                 created_at=int(time()),
             )
 
-        if self.cache_session:
-            self._agent_session = agent_session
-
         return agent_session
 
     def get_run_response(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
@@ -3779,19 +3782,9 @@ class Agent:
 
         session_id_to_load = session_id or self.session_id
 
-        # First check cached session if caching is enabled
-        if self.cache_session and hasattr(self, "_agent_session") and self._agent_session is not None:
-            if self._agent_session.session_id == session_id_to_load:
-                return self._agent_session
-
         # Try to load from database
         if self.db is not None:
             agent_session = cast(AgentSession, self._read_session(session_id=session_id_to_load))  # type: ignore
-
-            # Cache the session if caching is enabled and we found it
-            if agent_session is not None and self.cache_session:
-                self._agent_session = agent_session
-
             return agent_session
 
         log_warning(f"AgentSession {session_id_to_load} not found in db")
@@ -3810,9 +3803,10 @@ class Agent:
             and self.workflow_id is None
             and session.session_data is not None
         ):
-            session.session_data["session_state"].pop("current_session_id", None)
-            session.session_data["session_state"].pop("current_user_id", None)
-            session.session_data["session_state"].pop("current_run_id", None)
+            if session.session_data is not None and "session_state" in session.session_data:
+                session.session_data["session_state"].pop("current_session_id", None)
+                session.session_data["session_state"].pop("current_user_id", None)
+                session.session_data["session_state"].pop("current_run_id", None)
 
             # TODO: Add image/audio/video artifacts to the session correctly, from runs
             if self.images is not None:

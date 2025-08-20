@@ -6,8 +6,8 @@
 from typing import List
 
 from agno.agent import Agent
+from agno.db.in_memory import InMemoryDb
 from agno.models.openai import OpenAIChat
-from agno.storage.in_memory import InMemoryStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
@@ -32,22 +32,24 @@ web_searcher = Agent(
     model=OpenAIChat("gpt-4o"),
     role="Searches the web for information on a topic",
     tools=[DuckDuckGoTools()],
-    add_datetime_to_instructions=True,
 )
 
+# Setup the in-memory database
+db = InMemoryDb()
+
+# Setup the team and pass the database
 hn_team = Team(
     name="HackerNews Team",
     mode="coordinate",
     model=OpenAIChat("gpt-4o"),
     members=[hn_researcher, web_searcher],
-    storage=InMemoryStorage(mode="team"),
+    db=db,
     instructions=[
         "First, search hackernews for what the user is asking about.",
         "Then, ask the web searcher to search for each story to get more information.",
         "Finally, provide a thoughtful and engaging summary.",
     ],
     response_model=Article,
-    show_tool_calls=True,
     markdown=True,
     show_members_responses=True,
 )

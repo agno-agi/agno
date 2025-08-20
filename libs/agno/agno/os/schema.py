@@ -133,7 +133,6 @@ class AgentResponse(BaseModel):
             "num_history_runs": 3,
             "enable_session_summaries": False,
             "search_session_history": False,
-            "cache_session": True,
             # Knowledge defaults
             "add_references": False,
             "references_format": "json",
@@ -211,7 +210,6 @@ class AgentResponse(BaseModel):
             "num_history_runs": agent.num_history_runs,
             "search_session_history": agent.search_session_history,
             "num_history_sessions": agent.num_history_sessions,
-            "cache_session": agent.cache_session,
         }
 
         knowledge_info = {
@@ -368,7 +366,6 @@ class TeamResponse(BaseModel):
             "add_history_to_context": False,
             "num_history_runs": 3,
             "enable_session_summaries": False,
-            "cache_session": True,
             # Knowledge defaults
             "add_references": False,
             "references_format": "json",
@@ -439,7 +436,6 @@ class TeamResponse(BaseModel):
             "add_history_to_context": team.add_history_to_context,
             "enable_session_summaries": team.enable_session_summaries,
             "num_history_runs": team.num_history_runs,
-            "cache_session": team.cache_session,
         }
 
         knowledge_info = {

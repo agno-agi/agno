@@ -1,14 +1,21 @@
+"""This example shows how to use an in-memory database.
+
+With this you will be able to store sessions, user memories, etc. without setting up a database.
+Keep in mind that in production setups it is recommended to use a database.
+"""
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
+    # Use in-memory database. All db features will be available.
+    in_memory_db=True,
     # Set add_history_to_context=true to add the previous chat history to the context sent to the Model.
     add_history_to_context=True,
     # Number of historical responses to add to the messages.
     num_history_runs=3,
-    cache_session=True,
     description="You are a helpful assistant that always responds in a polite, upbeat and positive manner.",
 )
 

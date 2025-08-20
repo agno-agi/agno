@@ -56,9 +56,8 @@ def run_test():
         session_state={"customer_profiles": {"123": {"name": "Jane Doe"}}},
         instructions="Your profiles: {customer_profiles}. Use `process_customer_request`. Use either create or retrieve as action for the tool.",
         add_state_in_messages=True,
-        show_tool_calls=True,
         debug_mode=True,
-        cache_session=False,
+        in_memory_db=True,
     )
 
     prompt = "First, create customer 789 named 'Tom'. Then, retrieve Tom's profile. Step by step."

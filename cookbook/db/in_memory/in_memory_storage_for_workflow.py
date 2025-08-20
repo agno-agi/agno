@@ -1,11 +1,21 @@
+"""
+Use JSON files as the database for a Workflow.
+Useful for simple demos where performance is not critical.
+
+Run `pip install duckduckgo-search openai` to install dependencies.
+"""
+
 from agno.agent import Agent
+from agno.db.in_memory import InMemoryDb
 from agno.models.openai import OpenAIChat
-from agno.storage.json import JsonStorage
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
-from agno.workflow.v2.step import Step
-from agno.workflow.v2.workflow import Workflow
+from agno.workflow.step import Step
+from agno.workflow.workflow import Workflow
+
+# Setup the in-memory database
+db = InMemoryDb()
 
 # Define agents
 hackernews_agent = Agent(
@@ -54,13 +64,10 @@ if __name__ == "__main__":
     content_creation_workflow = Workflow(
         name="Content Creation Workflow",
         description="Automated content creation from blog posts to social media",
-        storage=JsonStorage(
-            dir_path="tmp/workflow_v2",
-            mode="workflow_v2",
-        ),
+        db=db,
         steps=[research_step, content_planning_step],
     )
     content_creation_workflow.print_response(
-        message="AI trends in 2024",
+        input="AI trends in 2024",
         markdown=True,
     )
