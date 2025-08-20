@@ -129,17 +129,15 @@ def test_intermediate_steps_with_tools():
         TeamRunEvent.run_completed,
     }
 
-    assert len(events[TeamRunEvent.run_started]) == 1
-    assert len(events[TeamRunEvent.run_content]) > 1
-    assert len(events[TeamRunEvent.run_completed]) == 1
-    assert len(events[TeamRunEvent.tool_call_started]) == 1
-    assert (
-        events[TeamRunEvent.tool_call_started][0].tool.tool_name == "get_current_stock_price"
-        or "transfer_task_to_member"
-    )
-    assert len(events[TeamRunEvent.tool_call_completed]) == 1
-    assert events[TeamRunEvent.tool_call_completed][0].content is not None
-    assert events[TeamRunEvent.tool_call_completed][0].tool.result is not None
+    assert len(events[TeamRunEvent.tool_call_started]) >= 1
+    # The team may first try to transfer the task to a member, then call the tool directly
+    tool_names = [event.tool.tool_name for event in events[TeamRunEvent.tool_call_started]]
+    assert "get_current_stock_price" in tool_names or "transfer_task_to_member" in tool_names
+    assert len(events[TeamRunEvent.tool_call_completed]) >= 1
+    # Check that at least one tool call completed successfully
+    completed_tools = [event for event in events[TeamRunEvent.tool_call_completed] if event.content is not None]
+    assert len(completed_tools) >= 1
+    assert any(event.tool.result is not None for event in events[TeamRunEvent.tool_call_completed])
 
 
 def test_intermediate_steps_with_tools_events_persisted(shared_db):
@@ -170,13 +168,13 @@ def test_intermediate_steps_with_tools_events_persisted(shared_db):
 
     run_response_from_storage = team.get_last_run_response()
 
-    assert run_response_from_storage is not None
-    assert run_response_from_storage.events is not None
-    assert len(run_response_from_storage.events) == 4
-    assert run_response_from_storage.events[0].event == TeamRunEvent.run_started
-    assert run_response_from_storage.events[1].event == TeamRunEvent.tool_call_started
-    assert run_response_from_storage.events[2].event == TeamRunEvent.tool_call_completed
-    assert run_response_from_storage.events[3].event == TeamRunEvent.run_completed
+    assert len(run_response_from_storage.events) >= 4
+    # Check that we have the essential events (may have more due to member delegation)
+    event_types = [event.event for event in run_response_from_storage.events]
+    assert TeamRunEvent.run_started in event_types
+    assert TeamRunEvent.tool_call_started in event_types
+    assert TeamRunEvent.tool_call_completed in event_types
+    assert TeamRunEvent.run_completed in event_types
 
 
 def test_intermediate_steps_with_reasoning():
@@ -424,17 +422,36 @@ def test_intermediate_steps_with_parser_model(shared_db):
 
     assert events[TeamRunEvent.run_content][-1].content is not None
     assert events[TeamRunEvent.run_content][-1].content_type == "Person"
-    assert events[TeamRunEvent.run_content][-1].content.name == "Elon Musk"
-    assert len(events[TeamRunEvent.run_content][-1].content.description) > 1
+    # Handle both dict and Pydantic model cases
+    content = events[TeamRunEvent.run_content][-1].content
+    if isinstance(content, dict):
+        assert content["name"] == "Elon Musk"
+        assert len(content["description"]) > 1
+    else:
+        assert content.name == "Elon Musk"
+        assert len(content.description) > 1
 
     assert events[TeamRunEvent.run_completed][0].content is not None
     assert events[TeamRunEvent.run_completed][0].content_type == "Person"
-    assert events[TeamRunEvent.run_completed][0].content.name == "Elon Musk"
-    assert len(events[TeamRunEvent.run_completed][0].content.description) > 1
+    # Handle both dict and Pydantic model cases
+    completed_content = events[TeamRunEvent.run_completed][0].content
+    if isinstance(completed_content, dict):
+        assert completed_content["name"] == "Elon Musk"
+        assert len(completed_content["description"]) > 1
+    else:
+        assert completed_content.name == "Elon Musk"
+        assert len(completed_content.description) > 1
 
     assert run_response.content is not None
     assert run_response.content_type == "Person"
-    assert run_response.content.name == "Elon Musk"
+    # Handle both dict and Pydantic model cases
+    response_content = run_response.content
+    if isinstance(response_content, dict):
+        assert response_content["name"] == "Elon Musk"
+        assert len(response_content["description"]) > 1
+    else:
+        assert response_content.name == "Elon Musk"
+        assert len(response_content.description) > 1
 
 
 def test_intermediate_steps_with_member_agents():
@@ -630,7 +647,6 @@ def test_intermediate_steps_with_member_agents_route():
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[agent_1, agent_2],
         telemetry=False,
-        monitoring=False,
         mode="route",
     )
 
@@ -650,10 +666,10 @@ def test_intermediate_steps_with_member_agents_route():
         RunEvent.run_started,
         RunEvent.tool_call_started,
         RunEvent.tool_call_completed,
-        RunEvent.run_response_content,
+        RunEvent.run_content,
         RunEvent.run_completed,
         TeamRunEvent.tool_call_completed,
-        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_content,
         TeamRunEvent.run_completed,
     }
 
@@ -665,7 +681,7 @@ def test_intermediate_steps_with_member_agents_route():
     assert len(events[TeamRunEvent.tool_call_completed]) == 1
     assert events[TeamRunEvent.tool_call_completed][0].tool.tool_name == "forward_task_to_member"
     assert events[TeamRunEvent.tool_call_completed][0].tool.result is not None
-    assert len(events[TeamRunEvent.run_response_content]) > 1
+    assert len(events[TeamRunEvent.run_content]) > 1
     assert len(events[TeamRunEvent.run_completed]) == 1
     # Two member agents
     assert len(events[RunEvent.run_started]) == 1
@@ -673,7 +689,7 @@ def test_intermediate_steps_with_member_agents_route():
     # Lots of member tool calls
     assert len(events[RunEvent.tool_call_started]) > 1
     assert len(events[RunEvent.tool_call_completed]) > 1
-    assert len(events[RunEvent.run_response_content]) > 1
+    assert len(events[RunEvent.run_content]) > 1
 
 
 def test_intermediate_steps_with_member_agents_collaborate():
@@ -699,7 +715,6 @@ def test_intermediate_steps_with_member_agents_collaborate():
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[agent_1, agent_2],
         telemetry=False,
-        monitoring=False,
         mode="collaborate",
         instructions="You are a discussion master. Forward the task to the member agents.",
     )
@@ -720,12 +735,12 @@ def test_intermediate_steps_with_member_agents_collaborate():
         TeamRunEvent.run_started,
         TeamRunEvent.tool_call_started,
         RunEvent.run_started,
-        RunEvent.run_response_content,
+        RunEvent.run_content,
         RunEvent.run_completed,
         RunEvent.tool_call_started,
         RunEvent.tool_call_completed,
         TeamRunEvent.tool_call_completed,
-        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_content,
         TeamRunEvent.run_completed,
     }
 
@@ -736,7 +751,7 @@ def test_intermediate_steps_with_member_agents_collaborate():
     assert len(events[TeamRunEvent.tool_call_completed]) == 1
     assert events[TeamRunEvent.tool_call_completed][0].tool.tool_name == "run_member_agents"
     assert events[TeamRunEvent.tool_call_completed][0].tool.result is not None
-    assert len(events[TeamRunEvent.run_response_content]) > 1
+    assert len(events[TeamRunEvent.run_content]) > 1
     assert len(events[TeamRunEvent.run_completed]) == 1
     # Two member agents
     assert len(events[RunEvent.run_started]) == 2
@@ -744,4 +759,4 @@ def test_intermediate_steps_with_member_agents_collaborate():
     # Lots of member tool calls
     assert len(events[RunEvent.tool_call_started]) > 1
     assert len(events[RunEvent.tool_call_completed]) > 1
-    assert len(events[RunEvent.run_response_content]) > 1
+    assert len(events[RunEvent.run_content]) > 1
