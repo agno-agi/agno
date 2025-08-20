@@ -3621,9 +3621,6 @@ class Agent:
     def _update_session_state(self, session: AgentSession, session_state: Dict[str, Any]):
         """Load the existing Agent from an AgentSession (from the database)"""
 
-        if not hasattr(session, "memory"):
-            return
-
         from agno.utils.merge_dict import merge_dictionaries
 
         # Get the session_state from the database and update the current session_state
