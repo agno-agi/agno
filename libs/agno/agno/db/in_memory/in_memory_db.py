@@ -122,7 +122,7 @@ class InMemoryDb(BaseDb):
             return None
 
         except Exception as e:
-            log_error(f"Exception reading from session storage: {e}")
+            log_error(f"Exception reading session: {e}")
             return None
 
     def get_sessions(
@@ -214,13 +214,12 @@ class InMemoryDb(BaseDb):
                 raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
-            log_error(f"Exception reading from session storage: {e}")
+            log_error(f"Exception reading sessions: {e}")
             return [] if deserialize else ([], 0)
 
     def rename_session(
         self, session_id: str, session_type: SessionType, session_name: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
-        """Rename a session in in-memory storage."""
         try:
             for i, session in enumerate(self._sessions):
                 if session.get("session_id") == session_id and session.get("session_type") == session_type.value:
@@ -252,7 +251,6 @@ class InMemoryDb(BaseDb):
     def upsert_session(
         self, session: Session, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
-        """Insert or update a session in in-memory storage."""
         try:
             session_dict = session.to_dict()
 
@@ -305,7 +303,6 @@ class InMemoryDb(BaseDb):
 
     # -- Memory methods --
     def delete_user_memory(self, memory_id: str):
-        """Delete a user memory from in-memory storage."""
         try:
             original_count = len(self._memories)
             self._memories = [m for m in self._memories if m.get("memory_id") != memory_id]
@@ -328,7 +325,6 @@ class InMemoryDb(BaseDb):
             log_error(f"Error deleting memories: {e}")
 
     def get_all_memory_topics(self) -> List[str]:
-        """Get all memory topics from in-memory storage."""
         try:
             topics = set()
             for memory in self._memories:
@@ -344,7 +340,6 @@ class InMemoryDb(BaseDb):
     def get_user_memory(
         self, memory_id: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
-        """Get a memory from in-memory storage."""
         try:
             for memory_data in self._memories:
                 if memory_data.get("memory_id") == memory_id:
@@ -371,7 +366,6 @@ class InMemoryDb(BaseDb):
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
-        """Get all memories from in-memory storage with filtering and pagination."""
         try:
             # Apply filters
             filtered_memories = []
@@ -452,7 +446,6 @@ class InMemoryDb(BaseDb):
     def upsert_user_memory(
         self, memory: UserMemory, deserialize: Optional[bool] = True
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
-        """Upsert a user memory in in-memory storage."""
         try:
             if memory.memory_id is None:
                 memory.memory_id = str(uuid4())
@@ -482,7 +475,7 @@ class InMemoryDb(BaseDb):
             return None
 
     def clear_memories(self) -> None:
-        """Delete all memories from the in-memory storage.
+        """Delete all memories.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -719,7 +712,7 @@ class InMemoryDb(BaseDb):
             return [], 0
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
-        """Upsert knowledge content in in-memory storage.
+        """Upsert knowledge content.
 
         Args:
             knowledge_row (KnowledgeRow): The knowledge row to upsert.
@@ -755,7 +748,7 @@ class InMemoryDb(BaseDb):
     # -- Eval methods --
 
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
-        """Create an EvalRunRecord in in-memory storage."""
+        """Create an EvalRunRecord"""
         try:
             current_time = int(time.time())
             eval_dict = eval_run.model_dump()
@@ -871,7 +864,7 @@ class InMemoryDb(BaseDb):
     def rename_eval_run(
         self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
-        """Rename an eval run in in-memory storage."""
+        """Rename an eval run."""
         try:
             for i, run_data in enumerate(self._eval_runs):
                 if run_data.get("run_id") == eval_run_id:

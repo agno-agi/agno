@@ -5,13 +5,17 @@ Keep in mind that in production setups it is recommended to use a database.
 """
 
 from agno.agent import Agent
+from agno.db.in_memory import InMemoryDb
 from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
+# Setup the in-memory database
+db = InMemoryDb()
+
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    # Use in-memory database. All db features will be available.
-    in_memory_db=True,
+    # Use the in-memory database. All db features will be available.
+    db=db,
     # Set add_history_to_context=true to add the previous chat history to the context sent to the Model.
     add_history_to_context=True,
     # Number of historical responses to add to the messages.
