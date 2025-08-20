@@ -1,10 +1,11 @@
 import base64
 import time
+from pathlib import Path
 from uuid import uuid4
 
 from agno.agent import Agent
 from agno.media import ImageArtifact, VideoArtifact
-from agno.tools.toolkit import Toolkit
+from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_info
 
 try:
@@ -263,7 +264,8 @@ class OpenCVTools(Toolkit):
                 out.release()
 
                 # Verify the file was created and has content
-                if not os.path.exists(temp_filepath) or os.path.getsize(temp_filepath) == 0:
+                temp_path = Path(temp_filepath)
+                if not temp_path.exists() or temp_path.stat().st_size == 0:
                     error_msg = "Video file was not created or is empty"
                     log_error(error_msg)
                     return error_msg

@@ -47,7 +47,7 @@ class LinearTools(Toolkit):
         if get_high_priority_issues:
             tools.append(self.get_high_priority_issues)
 
-        super().__init__(name="linear tools", tools=tools, **kwargs)
+        super().__init__(name="linear_tools", tools=tools, **kwargs)
 
     def _execute_query(self, query, variables=None):
         """Helper method to execute GraphQL queries with optional variables."""

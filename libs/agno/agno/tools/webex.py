@@ -1,8 +1,8 @@
 import json
-import os
+from os import getenv
 from typing import Any, List, Optional
 
-from agno.tools.toolkit import Toolkit
+from agno.tools import Toolkit
 from agno.utils.log import logger
 
 try:
@@ -16,8 +16,7 @@ class WebexTools(Toolkit):
     def __init__(
         self, send_message: bool = True, list_rooms: bool = True, access_token: Optional[str] = None, **kwargs
     ):
-        if access_token is None:
-            access_token = os.getenv("WEBEX_ACCESS_TOKEN")
+        access_token = access_token or getenv("WEBEX_ACCESS_TOKEN")
         if access_token is None:
             raise ValueError("Webex access token is not set. Please set the WEBEX_ACCESS_TOKEN environment variable.")
 

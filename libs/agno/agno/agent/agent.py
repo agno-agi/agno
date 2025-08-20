@@ -47,7 +47,7 @@ from agno.run.response import (
 from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager
 from agno.tools.function import Function
-from agno.tools.toolkit import Toolkit
+from agno.tools import Toolkit
 from agno.utils.events import (
     create_memory_update_completed_event,
     create_memory_update_started_event,

@@ -83,7 +83,7 @@ class TutorAppAgent:
             read_chat_history=True,
             read_tool_call_history=True,
             add_history_to_context=True,
-            num_history_responses=5,
+            num_history_runs=5,
             description=tutor_description,  # Pass formatted description
             instructions=tutor_instructions,  # Pass formatted instructions
             debug_mode=True,

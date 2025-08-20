@@ -6,7 +6,7 @@ from agno.run.response import (
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
-from agno.run.workflow import WorkflowRunEvent, WorkflowRunResponse
+from agno.run.workflow import WorkflowRunEvent, WorkflowRunOutput
 from agno.tools.googlesearch import GoogleSearchTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.parallel import Parallel
@@ -51,7 +51,7 @@ search_step = Step(
 )
 
 
-def print_stored_events(run_response: WorkflowRunResponse, example_name):
+def print_stored_events(run_response: WorkflowRunOutput, example_name):
     """Helper function to print stored events in a nice format"""
     print(f"\n--- {example_name} - Stored Events ---")
     if run_response.events:
@@ -67,7 +67,7 @@ print("=== Simple Step Workflow with Event Storage ===")
 step_workflow = Workflow(
     name="Simple Step Workflow",
     description="Basic workflow demonstrating step event storage",
-    storage=SqliteDb(
+    db=SqliteDb(
         session_table="workflow_session",
         db_file="tmp/workflow.db",
     ),

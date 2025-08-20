@@ -454,7 +454,6 @@ class MongoDb(BaseDb):
                     "runs": serialized_session_dict.get("runs"),
                     "agent_data": serialized_session_dict.get("agent_data"),
                     "session_data": serialized_session_dict.get("session_data"),
-                    "chat_history": serialized_session_dict.get("chat_history"),
                     "summary": serialized_session_dict.get("summary"),
                     "metadata": serialized_session_dict.get("metadata"),
                     "created_at": serialized_session_dict.get("created_at"),
@@ -490,7 +489,6 @@ class MongoDb(BaseDb):
                     "session_data": serialized_session_dict.get("session_data"),
                     "summary": serialized_session_dict.get("summary"),
                     "metadata": serialized_session_dict.get("metadata"),
-                    "chat_history": serialized_session_dict.get("chat_history"),
                     "created_at": serialized_session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
@@ -524,7 +522,6 @@ class MongoDb(BaseDb):
                     "session_data": serialized_session_dict.get("session_data"),
                     "summary": serialized_session_dict.get("summary"),
                     "metadata": serialized_session_dict.get("metadata"),
-                    "chat_history": serialized_session_dict.get("chat_history"),
                     "created_at": serialized_session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }

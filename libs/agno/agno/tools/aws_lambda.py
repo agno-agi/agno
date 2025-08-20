@@ -9,9 +9,6 @@ except ImportError:
 
 
 class AWSLambdaTools(Toolkit):
-    name: str = "AWSLambdaTool"
-    description: str = "A tool for interacting with AWS Lambda functions"
-
     def __init__(
         self,
         region_name: str = "us-east-1",

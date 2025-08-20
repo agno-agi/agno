@@ -487,7 +487,6 @@ class RedisDb(BaseDb):
                     "team_data": session_dict.get("team_data"),
                     "workflow_data": session_dict.get("workflow_data"),
                     "session_data": session_dict.get("session_data"),
-                    "chat_history": session_dict.get("chat_history"),
                     "summary": session_dict.get("summary"),
                     "metadata": session_dict.get("metadata"),
                     "created_at": session_dict.get("created_at") or int(time.time()),
@@ -523,7 +522,6 @@ class RedisDb(BaseDb):
                     "session_data": session_dict.get("session_data"),
                     "summary": session_dict.get("summary"),
                     "metadata": session_dict.get("metadata"),
-                    "chat_history": session_dict.get("chat_history"),
                     "created_at": session_dict.get("created_at") or int(time.time()),
                     "updated_at": int(time.time()),
                 }
@@ -559,7 +557,6 @@ class RedisDb(BaseDb):
                     "agent_data": None,
                     "team_data": None,
                     "summary": None,
-                    "chat_history": None,
                 }
 
                 success = self._store_record(

@@ -45,8 +45,8 @@ from agno.run.messages import RunMessages
 from agno.run.response import RunEvent, RunOutput, RunOutputEvent
 from agno.run.team import TeamRunEvent, TeamRunOutput, TeamRunOutputEvent
 from agno.session import SessionSummaryManager, TeamSession
+from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.tools.toolkit import Toolkit
 from agno.utils.events import (
     create_team_memory_update_completed_event,
     create_team_memory_update_started_event,
@@ -4750,21 +4750,22 @@ class Team:
                             history.append(Message(role="user", content=member_agent_task))
 
 
-                    async def run_member_agent(agent=current_agent) -> str:
-                        member_session_state_copy = copy(session_state)
-                        member_agent_run_response = await agent.arun(
-                            input=member_agent_task if history is None else history,
-                            user_id=user_id,
-                            # All members have the same session_id
-                            session_id=session.session_id,
-                            images=images,
-                            videos=videos,
-                            audio=audio,
-                            files=files,
-                            stream=False,
-                            debug_mode=debug_mode,
-                        )
-                        check_if_run_cancelled(member_agent_run_response)
+                async def run_member_agent(agent=current_agent, idx=current_index) -> str:
+                    member_agent_run_response = await agent.arun(
+                        input=member_agent_task if history is None else None,
+                        user_id=user_id,
+                        # All members have the same session_id
+                        session_id=session.session_id,
+                        session_state=member_session_state_copy,  # Send a copy to the agent
+                        messages=history if history is not None else None,
+                        images=images,
+                        videos=videos,
+                        audio=audio,
+                        files=files,
+                        stream=False,
+                        refresh_session_before_write=True,
+                    )
+                    check_if_run_cancelled(member_agent_run_response)
 
                         # Add team run id to the member run
                         if member_agent_run_response is not None:
