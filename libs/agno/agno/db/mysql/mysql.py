@@ -108,7 +108,9 @@ class MySQLDb(BaseDb):
 
             log_debug(f"Creating table {db_schema}.{table_name} with schema: {table_schema}")
 
-            columns, indexes, unique_constraints = [], [], []
+            columns: List[Column] = []
+            indexes: List[str] = []
+            unique_constraints: List[str] = []
             schema_unique_constraints = table_schema.pop("_unique_constraints", [])
 
             # Get the columns, indexes, and unique constraints from the table schema
@@ -124,7 +126,7 @@ class MySQLDb(BaseDb):
                 if col_config.get("unique", False):
                     column_kwargs["unique"] = True
                     unique_constraints.append(col_name)
-                columns.append(Column(*column_args, **column_kwargs))
+                columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
             table_metadata = MetaData(schema=db_schema)
@@ -392,7 +394,7 @@ class MySQLDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-    ) -> Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
+    ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
 
@@ -463,11 +465,18 @@ class MySQLDb(BaseDb):
                 if not result:
                     return [] if deserialize else ([], 0)
 
-                eval_runs_raw = [row._mapping for row in result]
+                session_dicts = [dict(row._mapping) for row in result]
                 if not deserialize:
-                    return eval_runs_raw, total_count
+                    return session_dicts, total_count
 
-                return [EvalRunRecord.model_validate(row) for row in eval_runs_raw]
+                if session_type == SessionType.AGENT:
+                    return [AgentSession.from_dict(record) for record in session_dicts]  # type: ignore
+                elif session_type == SessionType.TEAM:
+                    return [TeamSession.from_dict(record) for record in session_dicts]  # type: ignore
+                elif session_type == SessionType.WORKFLOW:
+                    return [WorkflowSession.from_dict(record) for record in session_dicts]  # type: ignore
+                else:
+                    raise ValueError(f"Invalid session type: {session_type}")
 
         except Exception as e:
             log_error(f"Exception getting eval runs: {e}")
@@ -531,7 +540,9 @@ class MySQLDb(BaseDb):
             log_error(f"Exception renaming session: {e}")
             return None
 
-    def upsert_session(self, session: Session, deserialize: Optional[bool] = True) -> Optional[Session]:
+    def upsert_session(
+        self, session: Session, deserialize: Optional[bool] = True
+    ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Insert or update a session in the database.
 
@@ -584,10 +595,10 @@ class MySQLDb(BaseDb):
                     row = result.fetchone()
                     if not row:
                         return None
-                    session = dict(row._mapping)
-                    if session is None or not deserialize:
-                        return session
-                    return AgentSession.from_dict(session)
+                    session_dict = dict(row._mapping)
+                    if session_dict is None or not deserialize:
+                        return session_dict
+                    return AgentSession.from_dict(session_dict)
 
             elif isinstance(session, TeamSession):
                 with self.Session() as sess, sess.begin():
@@ -622,10 +633,10 @@ class MySQLDb(BaseDb):
                     row = result.fetchone()
                     if not row:
                         return None
-                    session = dict(row._mapping)
-                    if session is None or not deserialize:
-                        return session
-                    return TeamSession.from_dict(session)
+                    session_dict = dict(row._mapping)
+                    if session_dict is None or not deserialize:
+                        return session_dict
+                    return TeamSession.from_dict(session_dict)
 
             else:
                 with self.Session() as sess, sess.begin():
@@ -660,10 +671,10 @@ class MySQLDb(BaseDb):
                     row = result.fetchone()
                     if not row:
                         return None
-                    session = dict(row._mapping)
-                    if session is None or not deserialize:
-                        return session
-                    return WorkflowSession.from_dict(session)
+                    session_dict = dict(row._mapping)
+                    if session_dict is None or not deserialize:
+                        return session_dict
+                    return WorkflowSession.from_dict(session_dict)
 
         except Exception as e:
             log_error(f"Exception upserting into sessions table: {e}")
@@ -788,7 +799,6 @@ class MySQLDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
         topics: Optional[List[str]] = None,
         search_content: Optional[str] = None,
         limit: Optional[int] = None,
@@ -803,7 +813,6 @@ class MySQLDb(BaseDb):
             user_id (Optional[str]): The ID of the user to filter by.
             agent_id (Optional[str]): The ID of the agent to filter by.
             team_id (Optional[str]): The ID of the team to filter by.
-            workflow_id (Optional[str]): The ID of the workflow to filter by.
             topics (Optional[List[str]]): The topics to filter by.
             search_content (Optional[str]): The content to search for.
             limit (Optional[int]): The maximum number of memories to return.
@@ -832,8 +841,6 @@ class MySQLDb(BaseDb):
                     stmt = stmt.where(table.c.agent_id == agent_id)
                 if team_id is not None:
                     stmt = stmt.where(table.c.team_id == team_id)
-                if workflow_id is not None:
-                    stmt = stmt.where(table.c.workflow_id == workflow_id)
                 if topics is not None:
                     # MySQL JSON contains syntax
                     topic_conditions = []
@@ -1072,6 +1079,9 @@ class MySQLDb(BaseDb):
 
         # 2. No metrics records. Return the date of the first recorded session.
         first_session, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
+        if not isinstance(first_session, list):
+            raise ValueError("Error obtaining session list to calculate metrics")
+
         first_session_date = first_session[0]["created_at"] if first_session else None
 
         # 3. No metrics records and no sessions records. Return None.
@@ -1610,7 +1620,8 @@ class MySQLDb(BaseDb):
             return
 
         # Parse the content into the new format
-        memories = []
+        memories: List[UserMemory] = []
+        sessions: List[AgentSession] | List[TeamSession] | List[WorkflowSession] = []
         if v1_table_type == "agent_sessions":
             sessions = parse_agent_sessions(old_content)
         elif v1_table_type == "team_sessions":

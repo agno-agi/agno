@@ -66,7 +66,6 @@ USER_MEMORY_COLLECTION_SCHEMA = [
     {"key": "user_id"},
     {"key": "agent_id"},
     {"key": "team_id"},
-    {"key": "workflow_id"},
     {"key": "topics"},
     {"key": "updated_at"},
     # Composite indexes for memory queries
@@ -78,6 +77,7 @@ USER_MEMORY_COLLECTION_SCHEMA = [
 EVAL_COLLECTION_SCHEMA = [
     {"key": "run_id", "unique": True},
     {"key": "eval_type"},
+    {"key": "eval_input"},
     {"key": "agent_id"},
     {"key": "team_id"},
     {"key": "workflow_id"},

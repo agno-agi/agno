@@ -45,6 +45,7 @@ def test_team_metrics_basic(shared_db):
 
     # Check session metrics
     session_from_db = team.get_session(session_id=team.session_id)
+    assert session_from_db is not None and session_from_db.session_data is not None
     assert session_from_db.session_data["session_metrics"]["input_tokens"] is not None
     assert session_from_db.session_data["session_metrics"]["output_tokens"] is not None
     assert session_from_db.session_data["session_metrics"]["total_tokens"] is not None
@@ -78,6 +79,7 @@ def test_team_metrics_streaming():
     run_response = team.get_last_run_response()
 
     # Verify metrics exist after stream completion
+    assert run_response is not None
     assert run_response.metrics is not None
 
     # Basic metrics checks
@@ -108,6 +110,8 @@ def test_team_metrics_multiple_runs(shared_db):
     response = team.run("What is the current stock price of AAPL?")
 
     # Capture metrics after first run
+    assert response is not None
+    assert response.metrics is not None
     assert response.metrics.total_tokens > 0
 
     # Second run
@@ -115,6 +119,7 @@ def test_team_metrics_multiple_runs(shared_db):
 
     # Verify metrics have been updated after second run
     session_from_db = team.get_session(session_id=team.session_id)
+    assert session_from_db is not None and session_from_db.session_data is not None
     assert session_from_db.session_data["session_metrics"]["total_tokens"] > response.metrics.total_tokens
 
 
@@ -130,12 +135,14 @@ def test_team_metrics_with_history(shared_db):
 
     team.run("Hi")
     run_response = team.get_last_run_response()
+    assert run_response is not None
     assert run_response.metrics is not None
     assert run_response.metrics.input_tokens is not None
 
     session_from_db = team.get_session(session_id=team.session_id)
 
     # Check the session metrics (team.session_metrics) coincide with the sum of run metrics
+    assert session_from_db is not None and session_from_db.session_data is not None
     assert run_response.metrics.input_tokens == session_from_db.session_data["session_metrics"]["input_tokens"]
     assert run_response.metrics.output_tokens == session_from_db.session_data["session_metrics"]["output_tokens"]
     assert run_response.metrics.total_tokens == session_from_db.session_data["session_metrics"]["total_tokens"]
@@ -143,12 +150,14 @@ def test_team_metrics_with_history(shared_db):
     # Checking metrics aggregation works with multiple runs
     team.run("Hi")
     run_response = team.get_last_run_response()
+    assert run_response is not None
     assert run_response.metrics is not None
     assert run_response.metrics.input_tokens is not None
 
     session_from_db = team.get_session(session_id=team.session_id)
 
     # run metrics are less than session metrics because we add the history to the context
+    assert session_from_db is not None and session_from_db.session_data is not None
     assert run_response.metrics.input_tokens < session_from_db.session_data["session_metrics"]["input_tokens"]
     assert run_response.metrics.output_tokens < session_from_db.session_data["session_metrics"]["output_tokens"]
     assert run_response.metrics.total_tokens < session_from_db.session_data["session_metrics"]["total_tokens"]

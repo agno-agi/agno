@@ -234,8 +234,12 @@ async def handle_workflow_via_websocket(websocket: WebSocket, message: dict, os:
             return
 
         # Generate session_id if not provided
+        # Use workflow's default session_id if not provided in message
         if not session_id:
-            session_id = str(uuid4())
+            if workflow.session_id:
+                session_id = workflow.session_id
+            else:
+                session_id = str(uuid4())
 
         # Execute workflow in background with streaming
         await workflow.arun(
@@ -678,6 +682,7 @@ def get_base_router(
     @router.get(
         "/agents/{agent_id}",
         response_model=AgentResponse,
+        response_model_exclude_none=True,
     )
     async def get_agent(agent_id: str):
         agent = get_agent_by_id(agent_id, os.agents)
@@ -934,6 +939,7 @@ def get_base_router(
     @router.get(
         "/teams/{team_id}",
         response_model=TeamResponse,
+        response_model_exclude_none=True,
     )
     async def get_team(team_id: str):
         team = get_team_by_id(team_id, os.teams)
@@ -1012,6 +1018,7 @@ def get_base_router(
     @router.get(
         "/workflows/{workflow_id}/",
         response_model=WorkflowResponse,
+        response_model_exclude_none=True,
     )
     async def get_workflow(workflow_id: str):
         workflow = get_workflow_by_id(workflow_id, os.workflows)

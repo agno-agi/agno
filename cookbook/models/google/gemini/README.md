@@ -109,3 +109,15 @@ python cookbook/models/google/gemini/flash_thinking_agent.py
 python cookbook/models/google/gemini/agent_with_thinking_budget.py
 ```
 
+### 14. Run agent with URL context
+
+```shell
+python cookbook/models/google/gemini/url_context.py
+```
+
+### 15. Run agent with URL context + Search Grounding
+
+```shell
+python cookbook/models/google/gemini/url_context_with_search.py
+```
+

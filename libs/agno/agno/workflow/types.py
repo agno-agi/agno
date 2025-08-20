@@ -133,16 +133,14 @@ class StepInput:
         # Regular step, return content directly
         return step_output.content  # type: ignore[return-value]
 
-    def _get_deepest_step_content(
-        self, step_output: "StepOutput"
-    ) -> Optional[Union[str, Dict[str, Any], List[Any], BaseModel, Any]]:
+    def _get_deepest_step_content(self, step_output: "StepOutput") -> Optional[Union[str, Dict[str, str]]]:
         """Helper method to recursively extract deepest content from nested steps"""
         # If this step has nested steps, go deeper
         if step_output.steps and len(step_output.steps) > 0:
             return self._get_deepest_step_content(step_output.steps[-1])
 
         # Return the content of this step
-        return step_output.content
+        return step_output.content  # type: ignore[return-value]
 
     def get_all_previous_content(self) -> str:
         """Get concatenated content from all previous steps"""
@@ -166,7 +164,7 @@ class StepInput:
             return None
 
         # Use the helper method to get the deepest content
-        return self._get_deepest_step_content(last_output)
+        return self._get_deepest_step_content(last_output)  # type: ignore[return-value]
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary"""
@@ -289,6 +287,18 @@ class StepOutput:
         if audio:
             audio = [AudioArtifact.model_validate(aud) for aud in audio]
 
+        metrics_data = data.get("metrics")
+        metrics = None
+        if metrics_data:
+            if isinstance(metrics_data, dict):
+                # Convert dict to Metrics object
+                from agno.models.metrics import Metrics
+
+                metrics = Metrics(**metrics_data)
+            else:
+                # Already a Metrics object
+                metrics = metrics_data
+
         # Handle nested steps
         steps_data = data.get("steps")
         steps = None
@@ -306,7 +316,7 @@ class StepOutput:
             images=images,
             videos=videos,
             audio=audio,
-            metrics=data.get("metrics"),
+            metrics=metrics,
             success=data.get("success", True),
             error=data.get("error"),
             stop=data.get("stop", False),
@@ -335,11 +345,25 @@ class StepMetrics:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "StepMetrics":
         """Create StepMetrics from dictionary"""
+
+        # Handle metrics properly
+        metrics_data = data.get("metrics")
+        metrics = None
+        if metrics_data:
+            if isinstance(metrics_data, dict):
+                # Convert dict to Metrics object
+                from agno.models.metrics import Metrics
+
+                metrics = Metrics(**metrics_data)
+            else:
+                # Already a Metrics object
+                metrics = metrics_data
+
         return cls(
             step_name=data["step_name"],
             executor_type=data["executor_type"],
             executor_name=data["executor_name"],
-            metrics=data.get("metrics"),
+            metrics=metrics,
         )
 
 

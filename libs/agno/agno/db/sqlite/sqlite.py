@@ -115,7 +115,9 @@ class SqliteDb(BaseDb):
             table_schema = get_table_schema_definition(table_type)
             log_debug(f"Creating table {table_name} with schema: {table_schema}")
 
-            columns, indexes, unique_constraints = [], [], []
+            columns: List[Column] = []
+            indexes: List[str] = []
+            unique_constraints: List[str] = []
             schema_unique_constraints = table_schema.pop("_unique_constraints", [])
 
             # Get the columns, indexes, and unique constraints from the table schema
@@ -133,7 +135,7 @@ class SqliteDb(BaseDb):
                     column_kwargs["unique"] = True
                     unique_constraints.append(col_name)
 
-                columns.append(Column(*column_args, **column_kwargs))
+                columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
             table_metadata = MetaData()
@@ -378,7 +380,7 @@ class SqliteDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-    ) -> Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
+    ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
         Args:
@@ -556,7 +558,6 @@ class SqliteDb(BaseDb):
                         session_data=serialized_session.get("session_data"),
                         metadata=serialized_session.get("metadata"),
                         runs=serialized_session.get("runs"),
-                        chat_history=serialized_session.get("chat_history"),
                         summary=serialized_session.get("summary"),
                         created_at=serialized_session.get("created_at"),
                         updated_at=serialized_session.get("created_at"),
@@ -567,7 +568,6 @@ class SqliteDb(BaseDb):
                             agent_id=serialized_session.get("agent_id"),
                             user_id=serialized_session.get("user_id"),
                             runs=serialized_session.get("runs"),
-                            chat_history=serialized_session.get("chat_history"),
                             summary=serialized_session.get("summary"),
                             agent_data=serialized_session.get("agent_data"),
                             session_data=serialized_session.get("session_data"),
@@ -575,7 +575,7 @@ class SqliteDb(BaseDb):
                             updated_at=int(time.time()),
                         ),
                     )
-                    stmt = stmt.returning(*table.columns)
+                    stmt = stmt.returning(*table.columns)  # type: ignore
                     result = sess.execute(stmt)
                     row = result.fetchone()
 
@@ -592,7 +592,6 @@ class SqliteDb(BaseDb):
                         team_id=serialized_session.get("team_id"),
                         user_id=serialized_session.get("user_id"),
                         runs=serialized_session.get("runs"),
-                        chat_history=serialized_session.get("chat_history"),
                         summary=serialized_session.get("summary"),
                         created_at=serialized_session.get("created_at"),
                         updated_at=serialized_session.get("created_at"),
@@ -606,7 +605,6 @@ class SqliteDb(BaseDb):
                         set_=dict(
                             team_id=serialized_session.get("team_id"),
                             user_id=serialized_session.get("user_id"),
-                            chat_history=serialized_session.get("chat_history"),
                             summary=serialized_session.get("summary"),
                             runs=serialized_session.get("runs"),
                             team_data=serialized_session.get("team_data"),
@@ -615,7 +613,7 @@ class SqliteDb(BaseDb):
                             updated_at=int(time.time()),
                         ),
                     )
-                    stmt = stmt.returning(*table.columns)
+                    stmt = stmt.returning(*table.columns)  # type: ignore
                     result = sess.execute(stmt)
                     row = result.fetchone()
 
@@ -632,7 +630,6 @@ class SqliteDb(BaseDb):
                         workflow_id=serialized_session.get("workflow_id"),
                         user_id=serialized_session.get("user_id"),
                         runs=serialized_session.get("runs"),
-                        chat_history=serialized_session.get("chat_history"),
                         summary=serialized_session.get("summary"),
                         created_at=serialized_session.get("created_at") or int(time.time()),
                         updated_at=serialized_session.get("updated_at") or int(time.time()),
@@ -645,7 +642,6 @@ class SqliteDb(BaseDb):
                         set_=dict(
                             workflow_id=serialized_session.get("workflow_id"),
                             user_id=serialized_session.get("user_id"),
-                            chat_history=serialized_session.get("chat_history"),
                             summary=serialized_session.get("summary"),
                             runs=serialized_session.get("runs"),
                             workflow_data=serialized_session.get("workflow_data"),
@@ -654,7 +650,7 @@ class SqliteDb(BaseDb):
                             updated_at=int(time.time()),
                         ),
                     )
-                    stmt = stmt.returning(*table.columns)
+                    stmt = stmt.returning(*table.columns)  # type: ignore
                     result = sess.execute(stmt)
                     row = result.fetchone()
 
@@ -775,7 +771,6 @@ class SqliteDb(BaseDb):
         user_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
         topics: Optional[List[str]] = None,
         search_content: Optional[str] = None,
         limit: Optional[int] = None,
@@ -790,7 +785,6 @@ class SqliteDb(BaseDb):
             user_id (Optional[str]): The ID of the user to filter by.
             agent_id (Optional[str]): The ID of the agent to filter by.
             team_id (Optional[str]): The ID of the team to filter by.
-            workflow_id (Optional[str]): The ID of the workflow to filter by.
             topics (Optional[List[str]]): The topics to filter by.
             search_content (Optional[str]): The content to search for.
             limit (Optional[int]): The maximum number of memories to return.
@@ -820,8 +814,6 @@ class SqliteDb(BaseDb):
                     stmt = stmt.where(table.c.agent_id == agent_id)
                 if team_id is not None:
                     stmt = stmt.where(table.c.team_id == team_id)
-                if workflow_id is not None:
-                    stmt = stmt.where(table.c.workflow_id == workflow_id)
                 if topics is not None:
                     topic_conditions = [text(f"topics::text LIKE '%\"{topic}\"%'") for topic in topics]
                     stmt = stmt.where(and_(*topic_conditions))
@@ -955,7 +947,7 @@ class SqliteDb(BaseDb):
                     input=memory.input,
                     updated_at=int(time.time()),
                 )
-                stmt = stmt.on_conflict_do_update(
+                stmt = stmt.on_conflict_do_update(  # type: ignore
                     index_elements=["memory_id"],
                     set_=dict(
                         memory=memory.memory,
@@ -1588,7 +1580,8 @@ class SqliteDb(BaseDb):
             return
 
         # Parse the content into the new format
-        memories = []
+        memories: List[UserMemory] = []
+        sessions: List[AgentSession] | List[TeamSession] | List[WorkflowSession] = []
         if v1_table_type == "agent_sessions":
             sessions = parse_agent_sessions(old_content)
         elif v1_table_type == "team_sessions":

@@ -36,6 +36,7 @@ def test_collaborate_team_basic():
     assert isinstance(response.content, str)
     assert len(response.content) > 0
     tools = response.tools
+    assert tools is not None
     assert len(tools) == 1
 
 

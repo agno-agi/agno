@@ -2,6 +2,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunOutput
+from agno.db.sqlite import SqliteDb
 from agno.models.cerebras import CerebrasOpenAI
 
 
@@ -42,8 +43,6 @@ def test_basic_stream():
     for response in responses:
         assert response.content is not None
 
-    _assert_metrics(agent.run_response)
-
 
 @pytest.mark.asyncio
 async def test_async_basic():
@@ -61,16 +60,13 @@ async def test_async_basic():
 async def test_async_basic_stream():
     agent = Agent(model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"), markdown=True, telemetry=False)
 
-    response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
-
-    async for response in response_stream:
+    async for response in agent.arun("Share a 2 sentence horror story", stream=True):
         assert response.content is not None
-
-    _assert_metrics(agent.run_response)
 
 
 def test_with_memory():
     agent = Agent(
+        db=SqliteDb(db_file="tmp/test_with_memory.db"),
         model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
         add_history_to_context=True,
         num_history_runs=5,
@@ -84,6 +80,7 @@ def test_with_memory():
 
     # Second interaction should remember the name
     response2 = agent.run("What's my name?")
+    assert response2.content is not None
     assert "John Smith" in response2.content
 
     # Verify memories were created

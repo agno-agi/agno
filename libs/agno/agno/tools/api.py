@@ -76,7 +76,10 @@ class CustomApiTools(Toolkit):
             str: JSON string containing response data or error message
         """
         try:
-            url = f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}" if self.base_url else endpoint
+            if self.base_url:
+                url = f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+            else:
+                url = endpoint
             log_debug(f"Making {method} request to {url}")
 
             response = requests.request(

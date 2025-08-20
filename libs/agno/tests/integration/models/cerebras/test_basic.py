@@ -67,6 +67,7 @@ async def test_async_basic_stream():
 
 def test_with_memory():
     agent = Agent(
+        db=SqliteDb(db_file="tmp/test_with_memory.db"),
         model=Cerebras(id="llama-4-scout-17b-16e-instruct"),
         add_history_to_context=True,
         num_history_runs=5,
@@ -80,7 +81,7 @@ def test_with_memory():
 
     # Second interaction should remember the name
     response2 = agent.run("What's my name?")
-    assert "John Smith" in response2.content
+    assert response2.content is not None and "John Smith" in response2.content
 
     # Verify memories were created
     messages = agent.get_messages_for_session()
@@ -119,18 +120,18 @@ def test_history():
         add_history_to_context=True,
         telemetry=False,
     )
-    agent.run("Hello")
-    assert agent.run_response is not None and agent.run_response.messages is not None
-    assert len(agent.run_response.messages) == 2
+    run_output = agent.run("Hello")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 2
 
-    agent.run("Hello 2")
-    assert agent.run_response is not None and agent.run_response.messages is not None
-    assert len(agent.run_response.messages) == 4
+    run_output = agent.run("Hello 2")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 4
 
-    agent.run("Hello 3")
-    assert agent.run_response is not None and agent.run_response.messages is not None
-    assert len(agent.run_response.messages) == 6
+    run_output = agent.run("Hello 3")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 6
 
-    agent.run("Hello 4")
-    assert agent.run_response is not None and agent.run_response.messages is not None
-    assert len(agent.run_response.messages) == 8
+    run_output = agent.run("Hello 4")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 8

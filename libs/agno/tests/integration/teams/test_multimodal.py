@@ -28,9 +28,10 @@ def test_team_image_input(shared_db):
 
     session_in_db = team.get_session(session_id=team.session_id)
     assert session_in_db is not None
+    assert session_in_db.runs is not None
     assert session_in_db.runs[-1].messages is not None
     assert session_in_db.runs[-1].messages[1].role == "user"
-    assert session_in_db.runs[-1].messages[1].images is not None
+    assert session_in_db.runs[-1].messages[1].images is not None  # type: ignore
     assert (
         session_in_db.runs[-1].messages[1].images[0].url
         == "https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
@@ -61,6 +62,7 @@ def test_team_image_input_no_prompt(shared_db):
 
     session_in_db = team.get_session(session_id=team.session_id)
     assert session_in_db is not None
+    assert session_in_db.runs is not None
     assert session_in_db.runs[-1].messages is not None
     assert session_in_db.runs[-1].messages[1].role == "user"
     assert session_in_db.runs[-1].messages[1].images is not None

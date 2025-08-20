@@ -22,7 +22,7 @@ def test_youtube_knowledge_base_directory(setup_vector_db):
     urls = ["https://www.youtube.com/watch?v=NwZ26lxl8wU", "https://www.youtube.com/watch?v=lrg8ZWI7MCg"]
 
     kb = Knowledge(vector_db=setup_vector_db)
-    kb.add_contents(
+    kb.add_contents_sync(
         urls=urls,
     )
 
@@ -48,7 +48,7 @@ def test_youtube_knowledge_base_directory(setup_vector_db):
 def test_youtube_knowledge_base_single_url(setup_vector_db):
     """Test loading a single YouTube video into the knowledge base."""
     kb = Knowledge(vector_db=setup_vector_db)
-    kb.add_contents(
+    kb.add_contents_sync(
         urls=["https://www.youtube.com/watch?v=NwZ26lxl8wU"],
     )
 
@@ -81,7 +81,7 @@ async def test_youtube_knowledge_base_async_directory(setup_vector_db):
     urls = ["https://www.youtube.com/watch?v=NwZ26lxl8wU", "https://www.youtube.com/watch?v=lrg8ZWI7MCg"]
 
     kb = Knowledge(vector_db=setup_vector_db)
-    kb.add_contents(
+    kb.add_contents_sync(
         urls=urls,
     )
 
@@ -115,7 +115,7 @@ async def test_youtube_knowledge_base_async_directory(setup_vector_db):
 async def test_youtube_knowledge_base_async_single_url(setup_vector_db):
     """Test asynchronously loading a single YouTube video."""
     kb = Knowledge(vector_db=setup_vector_db)
-    await kb.async_add_content(
+    await kb.add_content(
         url="https://www.youtube.com/watch?v=lrg8ZWI7MCg",
     )
 
@@ -145,7 +145,7 @@ async def test_youtube_knowledge_base_async_single_url(setup_vector_db):
 def test_youtube_knowledge_base_empty_urls(setup_vector_db):
     """Test loading with empty URL list."""
     kb = Knowledge(vector_db=setup_vector_db)
-    kb.add_contents(
+    kb.add_contents_sync(
         urls=[],
     )
 

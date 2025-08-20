@@ -4,6 +4,11 @@ Google Sheets Toolkit can be used to read, create, update and duplicate Google S
 
 Example spreadsheet: https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/
 The ID is the URL of the spreadsheet and the range is the sheet name and the range of cells to read.
+
+Note: Add the complete auth URL as an Authorised redirect URIs for the Client ID in the Google Cloud Console.
+
+e.g for Localhost and port 8080: http://localhost:8080/flowName=GeneralOAuthFlow and pass the oauth_port to the toolkit
+
 """
 
 from agno.agent import Agent
@@ -15,6 +20,7 @@ SAMPLE_RANGE_NAME = "Class Data!A2:E"
 google_sheets_tools = GoogleSheetsTools(
     spreadsheet_id=SAMPLE_SPREADSHEET_ID,
     spreadsheet_range=SAMPLE_RANGE_NAME,
+    oauth_port=8080,  # or any other port
 )
 
 agent = Agent(

@@ -116,7 +116,7 @@ class DiscordClient:
                 if self.agent:
                     self.agent.additional_context = additional_context
                     agent_response: RunOutput = await self.agent.arun(
-                        message_text,
+                        input=message_text,
                         user_id=message_user_id,
                         session_id=str(thread.id),
                         images=[Image(url=message_image)] if message_image else None,
@@ -128,7 +128,7 @@ class DiscordClient:
                 elif self.team:
                     self.team.additional_context = additional_context
                     team_response: TeamRunOutput = await self.team.arun(
-                        message_text,
+                        input=message_text,
                         user_id=message_user_id,
                         session_id=str(thread.id),
                         images=[Image(url=message_image)] if message_image else None,

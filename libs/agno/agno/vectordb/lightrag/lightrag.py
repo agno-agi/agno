@@ -79,6 +79,10 @@ class LightRag(VectorDb):
         """Upsert documents into the vector database"""
         pass
 
+    def delete_by_content_id(self, content_id: str) -> None:
+        """Delete documents by content ID"""
+        pass
+
     async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Async upsert documents into the vector database"""
         pass
@@ -208,12 +212,12 @@ class LightRag(VectorDb):
         content_type: Optional[str] = None,
         send_metadata: bool = False,
         skip_if_exists: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> Optional[str]:
         """Insert file from raw bytes into the LightRAG server."""
 
         if not file_content:
             log_warning("File content is empty.")
-            return {"error": "File content is empty"}
+            return None
 
         if send_metadata and filename and content_type:
             # Send with filename and content type (full UploadFile format)
@@ -234,9 +238,10 @@ class LightRag(VectorDb):
             log_info(f"Track ID: {track_id}")
             result = await self._get_document_id(track_id)  # type: ignore
             log_info(f"Document ID: {result}")
+
             return result
 
-    async def insert_text(self, file_source: str, text: str) -> Dict[str, Any]:
+    async def insert_text(self, file_source: str, text: str) -> Optional[str]:
         """Insert text into the LightRAG server."""
         import httpx
 
@@ -254,6 +259,7 @@ class LightRag(VectorDb):
             log_info(f"Track ID: {track_id}")
             result = await self._get_document_id(track_id)  # type: ignore
             log_info(f"Document ID: {result}")
+
             return result
 
     async def _get_document_id(self, track_id: str) -> Optional[str]:

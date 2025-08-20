@@ -25,7 +25,7 @@ agent = Agent(
 def main():
     # Load the knowledge
     asyncio.run(
-        knowledge.async_add_content(
+        knowledge.add_content(
             topics=["Generative AI", "Machine Learning"],
             reader=ArxivReader(),
         )

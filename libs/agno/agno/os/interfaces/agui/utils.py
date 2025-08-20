@@ -158,7 +158,7 @@ def _create_events_from_chunk(
                 message_id=message_id,
                 delta=content,
             )
-            events_to_emit.append(content_event)
+            events_to_emit.append(content_event)  # type: ignore
 
     # Handle starting a new tool call
     elif chunk.event == RunEvent.tool_call_started:
@@ -177,7 +177,7 @@ def _create_events_from_chunk(
                 tool_call_id=tool_call.tool_call_id,  # type: ignore
                 delta=json.dumps(tool_call.tool_args),
             )
-            events_to_emit.append(args_event)
+            events_to_emit.append(args_event)  # type: ignore
 
     # Handle tool call completion
     elif chunk.event == RunEvent.tool_call_completed:
@@ -188,7 +188,17 @@ def _create_events_from_chunk(
                     type=EventType.TOOL_CALL_END,
                     tool_call_id=tool_call.tool_call_id,  # type: ignore
                 )
-                events_to_emit.append(end_event)
+                events_to_emit.append(end_event)  # type: ignore
+
+                if tool_call.result is not None:
+                    result_event = ToolCallResultEvent(
+                        type=EventType.TOOL_CALL_RESULT,
+                        tool_call_id=tool_call.tool_call_id,  # type: ignore
+                        content=str(tool_call.result),
+                        role="tool",
+                        message_id=str(uuid.uuid4()),
+                    )
+                    events_to_emit.append(result_event)  # type: ignore
 
                 if tool_call.result is not None:
                     result_event = ToolCallResultEvent(
@@ -202,13 +212,13 @@ def _create_events_from_chunk(
 
     # Handle reasoning
     elif chunk.event == RunEvent.reasoning_started:
-        step_event = StepStartedEvent(type=EventType.STEP_STARTED, step_name="reasoning")
-        events_to_emit.append(step_event)
+        step_event = StepStartedEvent(type=EventType.STEP_STARTED, step_name="reasoning")  # type: ignore
+        events_to_emit.append(step_event)  # type: ignore
     elif chunk.event == RunEvent.reasoning_completed:
-        step_event = StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning")
-        events_to_emit.append(step_event)
+        step_event = StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning")  # type: ignore
+        events_to_emit.append(step_event)  # type: ignore
 
-    return events_to_emit, message_started
+    return events_to_emit, message_started  # type: ignore
 
 
 def _create_completion_events(
@@ -234,7 +244,34 @@ def _create_completion_events(
     # End the message and run, denoting the end of the session
     if message_started:
         end_message_event = TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
-        events_to_emit.append(end_message_event)
+        events_to_emit.append(end_message_event)  # type: ignore
+
+    # emit frontend tool calls, i.e. external_execution=True
+    if isinstance(chunk, RunPausedEvent) and chunk.tools is not None:
+        for tool in chunk.tools:
+            if tool.tool_call_id is None or tool.tool_name is None:
+                continue
+
+            start_event = ToolCallStartEvent(
+                type=EventType.TOOL_CALL_START,
+                tool_call_id=tool.tool_call_id,
+                tool_call_name=tool.tool_name,
+                parent_message_id=message_id,
+            )
+            events_to_emit.append(start_event)  # type: ignore
+
+            args_event = ToolCallArgsEvent(
+                type=EventType.TOOL_CALL_ARGS,
+                tool_call_id=tool.tool_call_id,
+                delta=json.dumps(tool.tool_args),
+            )
+            events_to_emit.append(args_event)  # type: ignore
+
+            end_event = ToolCallEndEvent(
+                type=EventType.TOOL_CALL_END,
+                tool_call_id=tool.tool_call_id,
+            )
+            events_to_emit.append(end_event)
 
     # emit frontend tool calls, i.e. external_execution=True
     if isinstance(chunk, RunPausedEvent) and chunk.tools is not None:
@@ -264,9 +301,9 @@ def _create_completion_events(
             events_to_emit.append(end_event)
 
     run_finished_event = RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)
-    events_to_emit.append(run_finished_event)
+    events_to_emit.append(run_finished_event)  # type: ignore
 
-    return events_to_emit
+    return events_to_emit  # type: ignore
 
 
 def _emit_event_logic(event: BaseEvent, event_buffer: EventBuffer) -> List[BaseEvent]:

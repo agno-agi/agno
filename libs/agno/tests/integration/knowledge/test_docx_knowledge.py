@@ -1,18 +1,16 @@
-import os
 from pathlib import Path
 
 import pytest
 
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.lancedb import LanceDb
+from agno.vectordb.chroma import ChromaDb
 
 
 @pytest.fixture
 def setup_vector_db():
     """Setup a temporary vector DB for testing."""
-    table_name = f"docx_test_{os.urandom(4).hex()}"
-    vector_db = LanceDb(table_name=table_name, uri="tmp/lancedb")
+    vector_db = ChromaDb(collection="vectors", path="tmp/chromadb", persistent_client=True)
     yield vector_db
     # Clean up after test
     vector_db.drop()
@@ -34,12 +32,12 @@ def prepare_knowledge_base(setup_vector_db):
     kb = Knowledge(vector_db=setup_vector_db)
 
     # Load documents with different user IDs and metadata
-    kb.add_content(
+    kb.add_content_sync(
         path=get_filtered_data_dir() / "cv_1.docx",
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    kb.add_content(
+    kb.add_content_sync(
         path=get_filtered_data_dir() / "cv_2.docx",
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -53,12 +51,12 @@ async def aprepare_knowledge_base(setup_vector_db):
     kb = Knowledge(vector_db=setup_vector_db)
 
     # Load contents with different user IDs and metadata
-    await kb.async_add_content(
+    await kb.async_add_content_sync(
         path=get_filtered_data_dir() / "cv_1.docx",
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    await kb.async_add_content(
+    await kb.async_add_content_sync(
         path=get_filtered_data_dir() / "cv_2.docx",
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -71,7 +69,7 @@ def test_docx_knowledge_base_directory(setup_vector_db):
     docx_dir = get_test_data_dir()
 
     kb = Knowledge(vector_db=setup_vector_db)
-    kb.add_content(
+    kb.add_content_sync(
         path=docx_dir,
     )
 
@@ -97,12 +95,12 @@ async def test_docx_knowledge_base_async_directory(setup_vector_db):
     docx_dir = get_test_data_dir()
 
     kb = Knowledge(vector_db=setup_vector_db)
-    await kb.async_add_content(
+    await kb.add_content(
         path=docx_dir,
     )
 
     assert await setup_vector_db.async_exists()
-    assert await setup_vector_db.async_get_count() > 0
+    assert setup_vector_db.get_count() > 0
 
     # Enable search on the agent
     agent = Agent(knowledge=kb, search_knowledge=True)
@@ -125,11 +123,11 @@ def test_text_knowledge_base_with_metadata_path(setup_vector_db):
         vector_db=setup_vector_db,
     )
 
-    kb.add_content(
+    kb.add_content_sync(
         path=str(get_filtered_data_dir() / "cv_1.docx"),
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
-    kb.add_content(
+    kb.add_content_sync(
         path=str(get_filtered_data_dir() / "cv_2.docx"),
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -149,11 +147,11 @@ def test_docx_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
         vector_db=setup_vector_db,
     )
 
-    kb.add_content(
+    kb.add_content_sync(
         path=str(get_filtered_data_dir() / "cv_1.docx"),
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
-    kb.add_content(
+    kb.add_content_sync(
         path=str(get_filtered_data_dir() / "cv_2.docx"),
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )

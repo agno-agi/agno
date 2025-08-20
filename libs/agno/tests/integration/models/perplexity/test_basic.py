@@ -44,9 +44,6 @@ def test_basic_stream():
     for response in responses:
         assert response.content is not None
 
-    assert agent.run_response is not None
-    _assert_metrics(agent.run_response)
-
 
 @pytest.mark.asyncio
 async def test_async_basic():
@@ -68,12 +65,10 @@ async def test_async_basic_stream():
     async for response in agent.arun("Share a 2 sentence horror story", stream=True):
         assert response.content is not None
 
-    assert agent.run_response is not None
-    _assert_metrics(agent.run_response)
-
 
 def test_with_memory():
     agent = Agent(
+        db=SqliteDb(db_file="tmp/test_with_memory.db"),
         model=Perplexity(id="sonar"),
         add_history_to_context=True,
         markdown=True,
@@ -128,16 +123,18 @@ def test_history():
         add_history_to_context=True,
         telemetry=False,
     )
-    agent.run("Hello")
-    assert agent.run_response is not None
-    assert agent.run_response.messages is not None
-    assert len(agent.run_response.messages) == 2
-    agent.run("Hello 2")
-    assert len(agent.run_response.messages) == 4
-    agent.run("Hello 3")
-    assert len(agent.run_response.messages) == 6
-    agent.run("Hello 4")
-    assert len(agent.run_response.messages) == 8
+    run_output = agent.run("Hello")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 2
+    run_output = agent.run("Hello 2")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 4
+    run_output = agent.run("Hello 3")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 6
+    run_output = agent.run("Hello 4")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 8
 
 
 # TODO: citation tests are not working

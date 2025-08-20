@@ -93,8 +93,11 @@ def test_set_id_from_name():
     )
     team.set_id()
     team_id = team.id
+
+    assert team_id is not None
     assert is_valid_uuid(team_id)
 
+    team.id = None
     team.set_id()
     # It is deterministic, so it should be the same
     assert team.id == team_id
@@ -105,4 +108,5 @@ def test_set_id_auto_generated():
         members=[],
     )
     team.set_id()
+    assert team.id is not None
     assert is_valid_uuid(team.id)

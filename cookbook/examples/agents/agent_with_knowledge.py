@@ -1,3 +1,5 @@
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
@@ -16,8 +18,10 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_content(
-    name="Agno Docs", url="https://docs.agno.com/introduction/agents.md"
+asyncio.run(
+    knowledge.add_content(
+        name="Agno Docs", url="https://docs.agno.com/introduction/agents.md"
+    )
 )
 
 agent = Agent(

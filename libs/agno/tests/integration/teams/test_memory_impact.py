@@ -409,7 +409,7 @@ async def test_team_memory_with_multiple_members(shared_db):
 
     agent1 = Agent(
         name="Financial Advisor",
-        model=MockModel(id="gpt-4o-mini"),
+        model=MockModel(id="gpt-4o-mini"),  # type: ignore
         role="Provide financial planning and budget analysis",
         tools=[calculate_budget],
         db=shared_db,
@@ -419,7 +419,7 @@ async def test_team_memory_with_multiple_members(shared_db):
 
     agent2 = Agent(
         name="Health Coach",
-        model=MockModel(id="gpt-4o-mini"),
+        model=MockModel(id="gpt-4o-mini"),  # type: ignore
         role="Analyze health data and provide wellness recommendations",
         tools=[analyze_health_data],
         db=shared_db,
@@ -429,7 +429,7 @@ async def test_team_memory_with_multiple_members(shared_db):
 
     agent3 = Agent(
         name="Meeting Coordinator",
-        model=MockModel(id="gpt-4o-mini"),
+        model=MockModel(id="gpt-4o-mini"),  # type: ignore
         role="Help schedule meetings and coordinate team activities",
         tools=[schedule_meeting],
         db=shared_db,
@@ -440,7 +440,7 @@ async def test_team_memory_with_multiple_members(shared_db):
     team = Team(
         name="Personal Assistant Team",
         mode="route",
-        model=MockModel(id="gpt-4o-mini"),
+        model=MockModel(id="gpt-4o-mini"),  # type: ignore
         members=[agent1, agent2, agent3],
         db=shared_db,
         enable_user_memories=True,

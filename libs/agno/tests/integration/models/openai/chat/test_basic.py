@@ -41,9 +41,6 @@ def test_basic_stream():
     for chunk in run_stream:
         assert chunk.content is not None
 
-    assert agent.run_response is not None
-    _assert_metrics(agent.run_response)
-
 
 @pytest.mark.asyncio
 async def test_async_basic():
@@ -80,6 +77,7 @@ def test_exception_handling():
 
 def test_with_memory():
     agent = Agent(
+        db=SqliteDb(db_file="tmp/test_with_memory.db"),
         model=OpenAIChat(id="gpt-4o-mini"),
         add_history_to_context=True,
         markdown=True,
@@ -159,25 +157,21 @@ def test_history():
         add_history_to_context=True,
         telemetry=False,
     )
-    agent.run("Hello")
-    assert agent.run_response is not None
-    assert agent.run_response.messages is not None
-    assert len(agent.run_response.messages) == 2
+    run_output = agent.run("Hello")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 2
 
-    agent.run("Hello 2")
-    assert agent.run_response is not None
-    assert agent.run_response.messages is not None
-    assert len(agent.run_response.messages) == 4
+    run_output = agent.run("Hello 2")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 4
 
-    agent.run("Hello 3")
-    assert agent.run_response is not None
-    assert agent.run_response.messages is not None
-    assert len(agent.run_response.messages) == 6
+    run_output = agent.run("Hello 3")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 6
 
-    agent.run("Hello 4")
-    assert agent.run_response is not None
-    assert agent.run_response.messages is not None
-    assert len(agent.run_response.messages) == 8
+    run_output = agent.run("Hello 4")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 8
 
 
 def test_cache_read_tokens():

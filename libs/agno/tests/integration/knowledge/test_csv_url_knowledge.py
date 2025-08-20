@@ -3,14 +3,11 @@ import pytest
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.csv_reader import CSVUrlReader
-from agno.vectordb.lancedb.lance_db import LanceDb
+from agno.vectordb.chroma import ChromaDb
 
 
 def test_csv_url_knowledge():
-    vector_db = LanceDb(
-        table_name="recipes_2s3",
-        uri="tmp/lancedb",
-    )
+    vector_db = ChromaDb(collection="vectors", path="tmp/chromadb", persistent_client=True)
     knowledge = Knowledge(
         vector_db=vector_db,
     )
@@ -21,7 +18,7 @@ def test_csv_url_knowledge():
             chunk=False,
         ),
     )
-    knowledge.add_content(
+    knowledge.add_content_sync(
         url="https://agno-public.s3.amazonaws.com/csvs/employees.csv",
         reader=CSVUrlReader(
             chunk=False,
@@ -55,17 +52,14 @@ def test_csv_url_knowledge():
 
 @pytest.mark.asyncio
 async def test_csv_url_knowledge_async():
-    vector_db = LanceDb(
-        table_name="recipes_async_2s",
-        uri="tmp/lancedb",
-    )
+    vector_db = ChromaDb(collection="vectors", path="tmp/chromadb", persistent_client=True)
 
     knowledge = Knowledge(
         vector_db=vector_db,
     )
 
     # Set chunk explicitly to False
-    await knowledge.async_add_contents(
+    await knowledge.add_content_sync(
         urls=[
             "https://agno-public.s3.amazonaws.com/demo_data/IMDB-Movie-Data.csv",
             "https://agno-public.s3.amazonaws.com/csvs/employees.csv",
@@ -76,7 +70,7 @@ async def test_csv_url_knowledge_async():
     )
     assert await vector_db.async_exists()
 
-    doc_count = await vector_db.async_get_count()
+    doc_count = await vector_db.get_count()
     assert doc_count > 2, f"Expected multiple documents but got {doc_count}"
 
     # The count should also not be unreasonably large

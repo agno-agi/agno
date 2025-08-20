@@ -6,8 +6,8 @@ from agno.knowledge.embedder.base import Embedder
 from agno.utils.log import logger
 
 try:
-    from mistralai import Mistral
-    from mistralai.models.embeddingresponse import EmbeddingResponse
+    from mistralai import Mistral  # type: ignore
+    from mistralai.models.embeddingresponse import EmbeddingResponse  # type: ignore
 except ImportError:
     logger.error("`mistralai` not installed")
     raise

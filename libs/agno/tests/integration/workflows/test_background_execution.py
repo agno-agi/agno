@@ -79,8 +79,8 @@ async def test_multi_step_background_execution(multi_step_workflow):
             # Verify completed response
             assert result.status == RunStatus.completed
             assert len(result.step_results) == 2  # Two steps
-            assert result.workflow_metrics is not None
-            assert len(result.workflow_metrics.steps) == 2
+            assert result.metrics is not None
+            assert len(result.metrics.steps) == 2
             break
 
         await asyncio.sleep(1)

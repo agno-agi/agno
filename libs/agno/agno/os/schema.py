@@ -109,6 +109,10 @@ class AgentResponse(BaseModel):
     extra_messages: Optional[Dict[str, Any]] = None
     response_settings: Optional[Dict[str, Any]] = None
     streaming: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+    class Config:
+        exclude_none = True
 
     @classmethod
     def from_agent(cls, agent: Agent, memory_app: Optional[MemoryApp] = None) -> "AgentResponse":
@@ -132,7 +136,7 @@ class AgentResponse(BaseModel):
             "num_history_runs": 3,
             "enable_session_summaries": False,
             "search_session_history": False,
-            "cache_session": True,
+            "cache_session": False,
             # Knowledge defaults
             "add_references": False,
             "references_format": "json",
@@ -181,18 +185,17 @@ class AgentResponse(BaseModel):
         if additional_input and isinstance(additional_input[0], Message):
             additional_input = [message.to_dict() for message in additional_input]  # type: ignore
 
-        model_name = agent.model.name or agent.model.__class__.__name__ if agent.model else None
-        model_provider = agent.model.provider or agent.model.__class__.__name__ if agent.model else ""
-        model_id = agent.model.id if agent.model else None
-
-        if model_provider and model_id:
-            model_provider = f"{model_provider} {model_id}"
-        elif model_name and model_id:
-            model_provider = f"{model_name} {model_id}"
-        elif model_id:
-            model_provider = model_id
-        else:
-            model_provider = ""
+        # Build model only if it has at least one non-null field
+        model_name = agent.model.name if (agent.model and agent.model.name) else None
+        model_provider = agent.model.provider if (agent.model and agent.model.provider) else None
+        model_id = agent.model.id if (agent.model and agent.model.id) else None
+        _agent_model_data: Dict[str, Any] = {}
+        if model_name is not None:
+            _agent_model_data["name"] = model_name
+        if model_id is not None:
+            _agent_model_data["model"] = model_id
+        if model_provider is not None:
+            _agent_model_data["provider"] = model_provider
 
         session_table = agent.db.session_table_name if agent.db else None
         knowledge_table = agent.db.knowledge_table_name if agent.db and agent.knowledge else None
@@ -306,15 +309,10 @@ class AgentResponse(BaseModel):
             "stream": agent.stream,
             "stream_intermediate_steps": agent.stream_intermediate_steps,
         }
-
         return AgentResponse(
             id=agent.id,
             name=agent.name,
-            model=ModelResponse(
-                name=model_name,
-                model=model_id,
-                provider=model_provider,
-            ),
+            model=ModelResponse(**_agent_model_data) if _agent_model_data else None,
             tools=filter_meaningful_config(tools_info, {}),
             sessions=filter_meaningful_config(sessions_info, agent_defaults),
             knowledge=filter_meaningful_config(knowledge_info, agent_defaults),
@@ -325,6 +323,7 @@ class AgentResponse(BaseModel):
             extra_messages=filter_meaningful_config(extra_messages_info, agent_defaults),
             response_settings=filter_meaningful_config(response_settings_info, agent_defaults),
             streaming=filter_meaningful_config(streaming_info, agent_defaults),
+            metadata=agent.metadata,
         )
 
 
@@ -344,6 +343,10 @@ class TeamResponse(BaseModel):
     response_settings: Optional[Dict[str, Any]] = None
     streaming: Optional[Dict[str, Any]] = None
     members: Optional[List[Union[AgentResponse, "TeamResponse"]]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+    class Config:
+        exclude_none = True
 
     @classmethod
     def from_team(cls, team: Team, memory_app: Optional[MemoryApp] = None) -> "TeamResponse":
@@ -366,7 +369,7 @@ class TeamResponse(BaseModel):
             "add_history_to_context": False,
             "num_history_runs": 3,
             "enable_session_summaries": False,
-            "cache_session": True,
+            "cache_session": False,
             # Knowledge defaults
             "add_references": False,
             "references_format": "json",
@@ -421,7 +424,7 @@ class TeamResponse(BaseModel):
         elif model_id:
             model_provider = model_id
         else:
-            model_provider = ""
+            model_provider = None
 
         session_table = team.db.session_table_name if team.db else None
         knowledge_table = team.db.knowledge_table_name if team.db and team.knowledge else None
@@ -523,15 +526,20 @@ class TeamResponse(BaseModel):
             "stream_member_events": team.stream_member_events,
         }
 
+        # Build team model only if it has at least one non-null field
+        _team_model_data: Dict[str, Any] = {}
+        if team.model and team.model.name is not None:
+            _team_model_data["name"] = team.model.name
+        if team.model and team.model.id is not None:
+            _team_model_data["model"] = team.model.id
+        if team.model and team.model.provider is not None:
+            _team_model_data["provider"] = team.model.provider
+
         return TeamResponse(
             id=team.id,
             name=team.name,
             mode=team.mode,
-            model=ModelResponse(
-                name=model_name,
-                model=model_id,
-                provider=model_provider,
-            ),
+            model=ModelResponse(**_team_model_data) if _team_model_data else None,
             tools=filter_meaningful_config(tools_info, {}),
             sessions=filter_meaningful_config(sessions_info, team_defaults),
             knowledge=filter_meaningful_config(knowledge_info, team_defaults),
@@ -549,6 +557,7 @@ class TeamResponse(BaseModel):
                 else None
                 for member in team.members
             ],
+            metadata=team.metadata,
         )
 
 
@@ -560,6 +569,42 @@ class WorkflowResponse(BaseModel):
     steps: Optional[List[Dict[str, Any]]] = None
     agent: Optional[AgentResponse] = None
     team: Optional[TeamResponse] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+    class Config:
+        exclude_none = True
+
+    @classmethod
+    def _resolve_agents_and_teams_recursively(cls, steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Parse Agents and Teams into AgentResponse and TeamResponse objects.
+
+        If the given steps have nested steps, recursively work on those."""
+        if not steps:
+            return steps
+
+        def _prune_none(value: Any) -> Any:
+            # Recursively remove None values from dicts and lists
+            if isinstance(value, dict):
+                return {k: _prune_none(v) for k, v in value.items() if v is not None}
+            if isinstance(value, list):
+                return [_prune_none(v) for v in value]
+            return value
+
+        for idx, step in enumerate(steps):
+            if step.get("agent"):
+                # Convert to dict and exclude fields that are None
+                step["agent"] = AgentResponse.from_agent(step["agent"]).model_dump(exclude_none=True)
+
+            if step.get("team"):
+                step["team"] = TeamResponse.from_team(step["team"]).model_dump(exclude_none=True)
+
+            if step.get("steps"):
+                step["steps"] = cls._resolve_agents_and_teams_recursively(step["steps"])
+
+            # Prune None values in the entire step
+            steps[idx] = _prune_none(step)
+
+        return steps
 
     @classmethod
     def from_workflow(cls, workflow: Workflow) -> "WorkflowResponse":
@@ -567,11 +612,7 @@ class WorkflowResponse(BaseModel):
         steps = workflow_dict.get("steps")
 
         if steps:
-            for step in steps:
-                if step.get("agent"):
-                    step["agent"] = AgentResponse.from_agent(step["agent"])
-                if step.get("team"):
-                    step["team"] = TeamResponse.from_team(step["team"])
+            steps = cls._resolve_agents_and_teams_recursively(steps)
 
         return cls(
             id=workflow.id,
@@ -579,6 +620,7 @@ class WorkflowResponse(BaseModel):
             description=workflow.description,
             steps=steps,
             input_schema=get_workflow_input_schema_dict(workflow),
+            metadata=workflow.metadata,
         )
 
 
@@ -815,7 +857,7 @@ class WorkflowRunSchema(BaseModel):
             content=run_response.get("content", ""),
             content_type=run_response.get("content_type", ""),
             status=run_response.get("status", ""),
-            metrics=run_response.get("workflow_metrics", {}),
+            metrics=run_response.get("metrics", {}),
             step_results=run_response.get("step_results", []),
             step_executor_runs=run_response.get("step_executor_runs", []),
             created_at=run_response["created_at"],
