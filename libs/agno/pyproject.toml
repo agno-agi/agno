@@ -97,7 +97,7 @@ elevenlabs = ["elevenlabs"]
 evm = ["web3"]
 exa = ["exa_py"]
 fal = ["fal_client"]
-firecrawl = ["firecrawl-py"]
+firecrawl = ["firecrawl-py==2.16.3"]
 crawl4ai= ["crawl4ai"]
 github = ["PyGithub"]
 gmail = ["google-api-python-client", "google-auth-httplib2", "google-auth-oauthlib"]
@@ -224,7 +224,6 @@ tools = [
   "agno[google_bigquery]",
   "agno[psycopg]",
   "agno[trafilatura]",
-  "agno[firecrawl]",
 ]
 
 # All storage
