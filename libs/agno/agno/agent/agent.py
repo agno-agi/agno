@@ -2700,21 +2700,18 @@ class Agent:
             if run_response.images is None:
                 run_response.images = []
             run_response.images.extend(self.images)
-            # Clear agent images after transferring to avoid duplication
             self.images = []
         
         if self.videos:
             if run_response.videos is None:
                 run_response.videos = []
             run_response.videos.extend(self.videos)
-            # Clear agent videos after transferring
             self.videos = []
             
         if self.audio:
             if run_response.audio is None:
                 run_response.audio = []
             run_response.audio.extend(self.audio)
-            # Clear agent audio after transferring
             self.audio = []
 
         # Update the run_response audio with the model response audio
