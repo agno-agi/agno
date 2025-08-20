@@ -4,7 +4,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import urlopen
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_info
+from agno.utils.log import log_debug
 
 try:
     from youtube_transcript_api import YouTubeTranscriptApi

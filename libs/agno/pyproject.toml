@@ -224,6 +224,7 @@ tools = [
   "agno[google_bigquery]",
   "agno[psycopg]",
   "agno[trafilatura]",
+  "agno[firecrawl]",
 ]
 
 # All storage
