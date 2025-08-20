@@ -492,7 +492,7 @@ class Loop:
             step_name=self.name,
             step_id=loop_step_id,
             step_type=StepType.LOOP,
-           content=f"Loop {self.name} completed {iteration} iterations with {len(flattened_results)} total steps",
+            content=f"Loop {self.name} completed {iteration} iterations with {len(flattened_results)} total steps",
             success=all(result.success for result in flattened_results) if flattened_results else True,
             steps=flattened_results,
         )

@@ -233,7 +233,6 @@ class Condition:
 
         log_debug(f"Condition End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
 
-    
         return StepOutput(
             step_name=self.name,
             step_id=conditional_step_id,
