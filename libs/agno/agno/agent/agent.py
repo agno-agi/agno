@@ -1499,7 +1499,6 @@ class Agent:
                         user_id=user_id,
                         session=agent_session,
                         response_format=response_format,
-                        refresh_session_before_write=refresh_session_before_write,
                     )
                     return response
             except ModelProviderError as e:
