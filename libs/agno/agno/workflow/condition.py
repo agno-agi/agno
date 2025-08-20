@@ -233,19 +233,12 @@ class Condition:
 
         log_debug(f"Condition End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
 
-        # Determine content - preserve structured output from single step or use summary
-        if len(all_results) == 1 and not isinstance(all_results[0].content, str):
-            # Single step with structured output - pass it through
-            content = all_results[0].content
-        else:
-            # Multiple steps or string content - use summary
-            content = f"Condition {self.name} completed with {len(all_results)} results"
-
+    
         return StepOutput(
             step_name=self.name,
             step_id=conditional_step_id,
             step_type=StepType.CONDITION,
-            content=content,
+            content=f"Condition {self.name} completed with {len(all_results)} results",
             success=all(result.success for result in all_results) if all_results else True,
             error=None,
             stop=False,
@@ -398,19 +391,11 @@ class Condition:
                 parent_step_id=parent_step_id,
             )
 
-        # Determine content - preserve structured output from single step or use summary
-        if len(all_results) == 1 and not isinstance(all_results[0].content, str):
-            # Single step with structured output - pass it through
-            content = all_results[0].content
-        else:
-            # Multiple steps or string content - use summary
-            content = f"Condition {self.name} completed with {len(all_results)} results"
-
         yield StepOutput(
             step_name=self.name,
             step_id=conditional_step_id,
             step_type=StepType.CONDITION,
-            content=content,
+            content=f"Condition {self.name} completed with {len(all_results)} results",
             success=all(result.success for result in all_results) if all_results else True,
             steps=all_results,
         )
@@ -502,20 +487,12 @@ class Condition:
                 break
 
         log_debug(f"Condition End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
-        
-        # Determine content - preserve structured output from single step or use summary
-        if len(all_results) == 1 and not isinstance(all_results[0].content, str):
-            # Single step with structured output - pass it through
-            content = all_results[0].content
-        else:
-            # Multiple steps or string content - use summary
-            content = f"Condition {self.name} completed with {len(all_results)} results"
             
         return StepOutput(
             step_name=self.name,
             step_id=conditional_step_id,
             step_type=StepType.CONDITION,
-            content=content,
+            content=f"Condition {self.name} completed with {len(all_results)} results",
             success=all(result.success for result in all_results) if all_results else True,
             error=None,
             stop=False,
@@ -671,19 +648,11 @@ class Condition:
                 parent_step_id=parent_step_id,
             )
 
-        # Determine content - preserve structured output from single step or use summary
-        if len(all_results) == 1 and not isinstance(all_results[0].content, str):
-            # Single step with structured output - pass it through
-            content = all_results[0].content
-        else:
-            # Multiple steps or string content - use summary
-            content = f"Condition {self.name} completed with {len(all_results)} results"
-
         yield StepOutput(
             step_name=self.name,
             step_id=conditional_step_id,
             step_type=StepType.CONDITION,
-            content=content,
+            content=f"Condition {self.name} completed with {len(all_results)} results",
             success=all(result.success for result in all_results) if all_results else True,
             steps=all_results,
         )
