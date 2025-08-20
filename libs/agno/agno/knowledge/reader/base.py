@@ -48,17 +48,14 @@ class Reader:
         except ValueError as e:
             raise ValueError(f"Failed to set chunking strategy: {e}")
 
-    def set_chunking_strategy(self, strategy_type: ChunkingStrategyType, **kwargs) -> None:
-        """Set the chunking strategy from a ChunkingStrategyEnum."""
-        self.chunking_strategy = ChunkingStrategyFactory.create_strategy(strategy_type, **kwargs)
-
     def read(self, obj: Any, name: Optional[str] = None) -> List[Document]:
         raise NotImplementedError
 
     async def async_read(self, obj: Any, name: Optional[str] = None, password: Optional[str] = None) -> List[Document]:
         raise NotImplementedError
 
-    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+    @classmethod
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for this reader.
 
         Returns:

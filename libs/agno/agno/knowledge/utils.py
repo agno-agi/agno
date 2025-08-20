@@ -16,8 +16,8 @@ def get_reader_info(reader_key: str) -> Dict:
 
         return {
             "id": reader_key,
-            "name": getattr(reader, "name", reader_key.title()),
-            "description": getattr(reader, "description", f"Reads {reader_key} files"),
+            "name": reader_key.replace("_", " ").title() + " Reader",
+            "description": f"Reads {reader_key} files",
             "chunking_strategies": supported_strategies,
         }
     except ImportError as e:
