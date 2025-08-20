@@ -783,6 +783,8 @@ class Workflow:
             call_kwargs["workflow"] = self
         if "execution_input" in sig.parameters:
             call_kwargs["execution_input"] = execution_input  # type: ignore
+        if "session_state" in sig.parameters:
+            call_kwargs["session_state"] = self.session_state
 
         # Add any other kwargs that the function expects
         for param_name in kwargs:
@@ -1134,6 +1136,8 @@ class Workflow:
             call_kwargs["workflow"] = self
         if "execution_input" in sig.parameters:
             call_kwargs["execution_input"] = execution_input  # type: ignore
+        if "session_state" in sig.parameters:
+            call_kwargs["session_state"] = self.session_state
 
         # Add any other kwargs that the function expects
         for param_name in kwargs:
