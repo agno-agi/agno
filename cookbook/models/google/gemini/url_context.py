@@ -6,7 +6,6 @@ from agno.models.google import Gemini
 agent = Agent(
     model=Gemini(id="gemini-2.5-flash", url_context=True),
     markdown=True,
-    debug_mode=True,
 )
 
 url1 = "https://www.foodnetwork.com/recipes/ina-garten/perfect-roast-chicken-recipe-1940592"
