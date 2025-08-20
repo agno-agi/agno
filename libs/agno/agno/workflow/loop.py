@@ -205,11 +205,20 @@ class Loop:
         for iteration_results in all_results:
             flattened_results.extend(iteration_results)
 
+        # Determine content - preserve structured output from single step in single iteration or use summary
+        if (iteration == 1 and len(flattened_results) == 1 and 
+            not isinstance(flattened_results[0].content, str)):
+            # Single iteration with single step with structured output - pass it through
+            content = flattened_results[0].content
+        else:
+            # Multiple iterations/steps or string content - use summary
+            content = f"Loop {self.name} completed {iteration} iterations with {len(flattened_results)} total steps"
+
         return StepOutput(
             step_name=self.name,
             step_id=str(uuid4()),
             step_type=StepType.LOOP,
-            content=f"Loop {self.name} completed {iteration} iterations with {len(flattened_results)} total steps",
+            content=content,
             success=all(result.success for result in flattened_results) if flattened_results else True,
             steps=flattened_results,
         )
@@ -393,11 +402,20 @@ class Loop:
         for iteration_results in all_results:
             flattened_results.extend(iteration_results)
 
+        # Determine content - preserve structured output from single step in single iteration or use summary
+        if (iteration == 1 and len(flattened_results) == 1 and 
+            not isinstance(flattened_results[0].content, str)):
+            # Single iteration with single step with structured output - pass it through
+            content = flattened_results[0].content
+        else:
+            # Multiple iterations/steps or string content - use summary
+            content = f"Loop {self.name} completed {iteration} iterations with {len(flattened_results)} total steps"
+
         yield StepOutput(
             step_name=self.name,
             step_id=loop_step_id,
             step_type=StepType.LOOP,
-            content=f"Loop {self.name} completed {iteration} iterations with {len(flattened_results)} total steps",
+            content=content,
             success=all(result.success for result in flattened_results) if flattened_results else True,
             steps=flattened_results,
         )
@@ -488,11 +506,20 @@ class Loop:
         for iteration_results in all_results:
             flattened_results.extend(iteration_results)
 
+        # Determine content - preserve structured output from single step in single iteration or use summary
+        if (iteration == 1 and len(flattened_results) == 1 and 
+            not isinstance(flattened_results[0].content, str)):
+            # Single iteration with single step with structured output - pass it through
+            content = flattened_results[0].content
+        else:
+            # Multiple iterations/steps or string content - use summary
+            content = f"Loop {self.name} completed {iteration} iterations with {len(flattened_results)} total steps"
+
         return StepOutput(
             step_name=self.name,
             step_id=loop_step_id,
             step_type=StepType.LOOP,
-            content=f"Loop {self.name} completed {iteration} iterations with {len(flattened_results)} total steps",
+            content=content,
             success=all(result.success for result in flattened_results) if flattened_results else True,
             steps=flattened_results,
         )
@@ -679,11 +706,20 @@ class Loop:
         for iteration_results in all_results:
             flattened_results.extend(iteration_results)
 
+        # Determine content - preserve structured output from single step in single iteration or use summary
+        if (iteration == 1 and len(flattened_results) == 1 and 
+            not isinstance(flattened_results[0].content, str)):
+            # Single iteration with single step with structured output - pass it through
+            content = flattened_results[0].content
+        else:
+            # Multiple iterations/steps or string content - use summary
+            content = f"Loop {self.name} completed {iteration} iterations with {len(flattened_results)} total steps"
+
         yield StepOutput(
             step_name=self.name,
             step_id=loop_step_id,
             step_type=StepType.LOOP,
-            content=f"Loop {self.name} completed {iteration} iterations with {len(flattened_results)} total steps",
+            content=content,
             success=all(result.success for result in flattened_results) if flattened_results else True,
             steps=flattened_results,
         )

@@ -175,11 +175,19 @@ class Steps:
 
             log_debug(f"Steps End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
 
+            # Determine content - preserve structured output from single step or use summary
+            if len(all_results) == 1 and not isinstance(all_results[0].content, str):
+                # Single step with structured output - pass it through
+                content = all_results[0].content
+            else:
+                # Multiple steps or string content - use summary
+                content = f"Steps {self.name} completed with {len(all_results)} results"
+
             return StepOutput(
                 step_name=self.name,
                 step_id=steps_id,
                 step_type=StepType.STEPS,
-                content=f"Steps {self.name} completed with {len(all_results)} results",
+                content=content,
                 success=all(result.success for result in all_results) if all_results else True,
                 steps=all_results,
             )
@@ -310,11 +318,19 @@ class Steps:
                     parent_step_id=parent_step_id,
                 )
 
+            # Determine content - preserve structured output from single step or use summary
+            if len(all_results) == 1 and not isinstance(all_results[0].content, str):
+                # Single step with structured output - pass it through
+                content = all_results[0].content
+            else:
+                # Multiple steps or string content - use summary
+                content = f"Steps {self.name} completed with {len(all_results)} results"
+
             yield StepOutput(
                 step_name=self.name,
                 step_id=steps_id,
                 step_type=StepType.STEPS,
-                content=f"Steps {self.name} completed with {len(all_results)} results",
+                content=content,
                 success=all(result.success for result in all_results) if all_results else True,
                 steps=all_results,
             )
@@ -392,11 +408,19 @@ class Steps:
 
             log_debug(f"Steps End: {self.name} ({len(all_results)} results)", center=True, symbol="-")
 
+            # Determine content - preserve structured output from single step or use summary
+            if len(all_results) == 1 and not isinstance(all_results[0].content, str):
+                # Single step with structured output - pass it through
+                content = all_results[0].content
+            else:
+                # Multiple steps or string content - use summary
+                content = f"Steps {self.name} completed with {len(all_results)} results"
+
             return StepOutput(
                 step_name=self.name,
                 step_id=steps_id,
                 step_type=StepType.STEPS,
-                content=f"Steps {self.name} completed with {len(all_results)} results",
+                content=content,
                 success=all(result.success for result in all_results) if all_results else True,
                 steps=all_results,
             )
@@ -526,11 +550,19 @@ class Steps:
                     parent_step_id=parent_step_id,
                 )
 
+            # Determine content - preserve structured output from single step or use summary
+            if len(all_results) == 1 and not isinstance(all_results[0].content, str):
+                # Single step with structured output - pass it through
+                content = all_results[0].content
+            else:
+                # Multiple steps or string content - use summary
+                content = f"Steps {self.name} completed with {len(all_results)} results"
+
             yield StepOutput(
                 step_name=self.name,
                 step_id=steps_id,
                 step_type=StepType.STEPS,
-                content=f"Steps {self.name} completed with {len(all_results)} results",
+                content=content,
                 success=all(result.success for result in all_results) if all_results else True,
                 steps=all_results,
             )
