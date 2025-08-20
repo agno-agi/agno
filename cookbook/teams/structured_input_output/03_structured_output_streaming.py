@@ -1,6 +1,3 @@
-import asyncio
-from typing import Iterator  # noqa
-
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team

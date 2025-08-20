@@ -1,5 +1,5 @@
 import json
-import os
+from os import getenv
 from typing import Any, List, Optional
 
 from agno.tools import Toolkit
@@ -24,7 +24,7 @@ class ScrapeGraphTools(Toolkit):
         searchscraper: bool = False,
         **kwargs,
     ):
-        self.api_key: Optional[str] = api_key or os.getenv("SGAI_API_KEY")
+        self.api_key: Optional[str] = api_key or getenv("SGAI_API_KEY")
         self.client = Client(api_key=self.api_key)
 
         # Start with smartscraper by default

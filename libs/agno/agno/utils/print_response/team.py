@@ -672,35 +672,36 @@ def print_response_stream(
             final_panels.append(thinking_panel)
 
         # Add member tool calls and responses in correct order
-        for i, member_response in enumerate(run_response.member_responses):  # type: ignore
-            member_id = None
-            if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
-                member_id = member_response.agent_id
-            elif isinstance(member_response, TeamRunOutput) and member_response.team_id is not None:
-                member_id = member_response.team_id
+        if run_response is not None and hasattr(run_response, "member_responses"):
+            for i, member_response in enumerate(run_response.member_responses):  # type: ignore
+                member_id = None
+                if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
+                    member_id = member_response.agent_id
+                elif isinstance(member_response, TeamRunOutput) and member_response.team_id is not None:
+                    member_id = member_response.team_id
 
-            if member_id:
-                # First add tool calls if any
-                if member_id in member_tool_calls and member_tool_calls[member_id]:
-                    formatted_calls = format_tool_calls(member_tool_calls[member_id])
-                    if formatted_calls:
-                        console_width = console.width if console else 80
-                        panel_width = console_width + 30
+                if member_id:
+                    # First add tool calls if any
+                    if member_id in member_tool_calls and member_tool_calls[member_id]:
+                        formatted_calls = format_tool_calls(member_tool_calls[member_id])
+                        if formatted_calls:
+                            console_width = console.width if console else 80
+                            panel_width = console_width + 30
 
-                        lines = []
-                        for call in formatted_calls:
-                            wrapped_call = textwrap.fill(f"• {call}", width=panel_width, subsequent_indent="  ")
-                            lines.append(wrapped_call)
+                            lines = []
+                            for call in formatted_calls:
+                                wrapped_call = textwrap.fill(f"• {call}", width=panel_width, subsequent_indent="  ")
+                                lines.append(wrapped_call)
 
-                        tool_calls_text = "\n\n".join(lines)
+                            tool_calls_text = "\n\n".join(lines)
 
-                        member_name = team._get_member_name(member_id)
-                        member_tool_calls_panel = create_panel(
-                            content=tool_calls_text,
-                            title=f"{member_name} Tool Calls",
-                            border_style="yellow",
-                        )
-                        final_panels.append(member_tool_calls_panel)
+                            member_name = team._get_member_name(member_id)
+                            member_tool_calls_panel = create_panel(
+                                content=tool_calls_text,
+                                title=f"{member_name} Tool Calls",
+                                border_style="yellow",
+                            )
+                            final_panels.append(member_tool_calls_panel)
 
                 # Add reasoning steps if any
                 reasoning_steps = []

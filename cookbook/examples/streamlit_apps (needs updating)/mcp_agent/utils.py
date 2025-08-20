@@ -279,7 +279,7 @@ def session_selector_widget(
             st.session_state["mcp_agent"] = get_mcp_agent(
                 model_str=model_str,
                 session_id=selected_session_id,
-                num_history_responses=num_history_responses,
+                num_history_runs=num_history_responses,
                 mcp_tools=mcp_tools,
                 mcp_server_ids=mcp_server_ids,
             )

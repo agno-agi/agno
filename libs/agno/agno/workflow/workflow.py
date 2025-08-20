@@ -500,6 +500,7 @@ class Workflow:
             if session.session_data.get("session_state") is not None:
                 session.session_data["session_state"].pop("current_session_id", None)
                 session.session_data["session_state"].pop("current_user_id", None)
+                session.session_data["session_state"].pop("current_run_id", None)
                 session.session_data["session_state"].pop("workflow_id", None)
                 session.session_data["session_state"].pop("run_id", None)
                 session.session_data["session_state"].pop("session_id", None)

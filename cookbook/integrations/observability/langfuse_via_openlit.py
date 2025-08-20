@@ -26,22 +26,24 @@ os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = (
 
 os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = f"Authorization=Basic {LANGFUSE_AUTH}"
 
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+    OTLPSpanExporter,  # noqa: E402
+)
+from opentelemetry.sdk.trace import TracerProvider  # noqa: E402
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor  # noqa: E402
 
 trace_provider = TracerProvider()
 trace_provider.add_span_processor(SimpleSpanProcessor(OTLPSpanExporter()))
 
 # Sets the global default tracer provider
-from opentelemetry import trace
+from opentelemetry import trace  # noqa: E402
 
 trace.set_tracer_provider(trace_provider)
 
 # Creates a tracer from the global tracer provider
 tracer = trace.get_tracer(__name__)
 
-import openlit
+import openlit  # noqa: E402
 
 # Initialize OpenLIT instrumentation. The disable_batch flag is set to true to process traces immediately.
 openlit.init(tracer=tracer, disable_batch=True)

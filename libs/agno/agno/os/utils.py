@@ -9,8 +9,8 @@ from agno.media import File as FileMedia
 from agno.os.apps.base import BaseApp
 from agno.os.apps.memory import MemoryApp
 from agno.team.team import Team
+from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
 

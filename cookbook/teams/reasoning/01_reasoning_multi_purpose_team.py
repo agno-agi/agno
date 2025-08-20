@@ -12,7 +12,6 @@ The team consists of:
 - A code execution agent that can execute code in a secure E2B sandbox
 """
 
-import asyncio
 from pathlib import Path
 from textwrap import dedent
 
@@ -24,7 +23,6 @@ from agno.models.openai.chat import OpenAIChat
 from agno.team.team import Team
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.e2b import E2BTools
 from agno.tools.file import FileTools
 from agno.tools.github import GithubTools
 from agno.tools.knowledge import KnowledgeTools
@@ -32,6 +30,7 @@ from agno.tools.pubmed import PubmedTools
 from agno.tools.python import PythonTools
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
+from agno.utils.print_response.team import print_response
 from agno.vectordb.lancedb.lance_db import LanceDb
 from agno.vectordb.search import SearchType
 
@@ -236,11 +235,9 @@ if __name__ == "__main__":
     # Medical research
     txt_path = Path(__file__).parent.resolve() / "medical_history.txt"
     loaded_txt = open(txt_path, "r").read()
-    asyncio.run(
-        agent_team.aprint_response(
-            dedent(f"""I have a patient with the following medical information:\n {loaded_txt}
-                                                    What is the most likely diagnosis?
-                                                """),
-            stream=True,
-        )
+    print_response(
+        input=dedent(f"""I have a patient with the following medical information:\n {loaded_txt}
+                         What is the most likely diagnosis?
+                        """),
+        team=agent_team,
     )

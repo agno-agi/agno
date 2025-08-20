@@ -1,8 +1,8 @@
 import json
-import os
+from os import getenv
 from typing import Any, Dict, List, Optional
 
-from agno.tools.toolkit import Toolkit
+from agno.tools import Toolkit
 from agno.utils.log import logger
 
 try:
@@ -22,7 +22,7 @@ class SlackTools(Toolkit):
         get_channel_history: bool = True,
         **kwargs,
     ):
-        self.token: Optional[str] = token or os.getenv("SLACK_TOKEN")
+        self.token: Optional[str] = token or getenv("SLACK_TOKEN")
         if self.token is None or self.token == "":
             raise ValueError("SLACK_TOKEN is not set")
         self.client = WebClient(token=self.token)

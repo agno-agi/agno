@@ -1,11 +1,11 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
-from agno.models.base import MessageData, Model
+from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
@@ -16,8 +16,8 @@ from agno.utils.models.cohere import format_messages
 try:
     from cohere import AsyncClientV2 as CohereAsyncClient
     from cohere import ClientV2 as CohereClient
-    from cohere.types.chat_response import ChatResponse
-    from cohere.types.streamed_chat_response_v2 import StreamedChatResponseV2
+    from cohere.v2.types.v2chat_response import V2ChatResponse
+    from cohere.v2.types.v2chat_stream_response import V2ChatStreamResponse
 except ImportError:
     raise ImportError("`cohere` not installed. Please install using `pip install cohere`")
 
@@ -277,12 +277,12 @@ class Cohere(Model):
             log_error(f"Unexpected error calling Cohere API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
-    def _parse_provider_response(self, response: ChatResponse, **kwargs) -> ModelResponse:
+    def _parse_provider_response(self, response: V2ChatResponse, **kwargs) -> ModelResponse:
         """
         Parse the model provider response.
 
         Args:
-            response (ChatResponse): The response from the Cohere API.
+            response (V2ChatResponse): The response from the Cohere API.
         """
         model_response = ModelResponse()
 
@@ -292,7 +292,8 @@ class Cohere(Model):
         if response_message.content is not None:
             full_content = ""
             for item in response_message.content:
-                full_content += item.text
+                if hasattr(item, "text") and item.text is not None:  # type: ignore
+                    full_content += item.text  # type: ignore
             model_response.content = full_content
 
         if response_message.tool_calls is not None:
@@ -303,39 +304,27 @@ class Cohere(Model):
 
         return model_response
 
-    def _process_stream_response(
-        self,
-        response: StreamedChatResponseV2,
-        assistant_message: Message,
-        stream_data: MessageData,
-        tool_use: Dict[str, Any],
-    ) -> Tuple[Optional[ModelResponse], Dict[str, Any]]:
+    def _parse_provider_response_delta(self, response: V2ChatStreamResponse) -> ModelResponse:  # type: ignore
         """
-        Common handler for processing stream responses from Cohere.
+        Parse the streaming response from the model provider into ModelResponse objects.
 
         Args:
-            response: The streamed response from Cohere
-            assistant_message: The assistant message being built
-            stream_data: Data accumulated during streaming
-            tool_use: Current tool use data being built
+            response: Raw response chunk from the model provider
 
         Returns:
-            Tuple containing the ModelResponse to yield and updated tool_use dict
+            ModelResponse: Parsed response delta
         """
-        model_response = None
+        model_response = ModelResponse()
+        tool_use: Dict[str, Any] = {}
 
         if (
             response.type == "content-delta"
             and response.delta is not None
             and response.delta.message is not None
             and response.delta.message.content is not None
+            and response.delta.message.content.text is not None
         ):
-            # Update metrics
-            assistant_message.metrics.output_tokens += 1
-
-            # Update provider response content
-            stream_data.response_content += response.delta.message.content.text
-            model_response = ModelResponse(content=response.delta.message.content.text)
+            model_response.content = response.delta.message.content.text  # type: ignore
 
         elif response.type == "tool-call-start" and response.delta is not None:
             if response.delta.message is not None and response.delta.message.tool_calls is not None:
@@ -346,14 +335,12 @@ class Cohere(Model):
                 response.delta.message is not None
                 and response.delta.message.tool_calls is not None
                 and response.delta.message.tool_calls.function is not None
+                and response.delta.message.tool_calls.function.arguments is not None
             ):
                 tool_use["function"]["arguments"] += response.delta.message.tool_calls.function.arguments
 
         elif response.type == "tool-call-end":
-            if assistant_message.tool_calls is None:
-                assistant_message.tool_calls = []
-            assistant_message.tool_calls.append(tool_use)
-            tool_use = {}
+            model_response.tool_calls = [tool_use]
 
         elif (
             response.type == "message-end"
@@ -363,64 +350,7 @@ class Cohere(Model):
         ):
             model_response.response_usage = self._get_metrics(response.delta.usage)  # type: ignore
 
-        return model_response, tool_use
-
-    def process_response_stream(
-        self,
-        messages: List[Message],
-        assistant_message: Message,
-        stream_data: MessageData,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
-    ) -> Iterator[ModelResponse]:
-        """Process the synchronous response stream."""
-        tool_use: Dict[str, Any] = {}
-
-        for response in self.invoke_stream(
-            messages=messages,
-            assistant_message=assistant_message,
-            response_format=response_format,
-            tools=tools,
-            tool_choice=tool_choice,
-            run_response=run_response,
-        ):
-            model_response, tool_use = self._process_stream_response(
-                response=response, assistant_message=assistant_message, stream_data=stream_data, tool_use=tool_use
-            )
-            if model_response is not None:
-                yield model_response
-
-    async def aprocess_response_stream(
-        self,
-        messages: List[Message],
-        assistant_message: Message,
-        stream_data: MessageData,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
-    ) -> AsyncIterator[ModelResponse]:
-        """Process the asynchronous response stream."""
-        tool_use: Dict[str, Any] = {}
-
-        async for response in self.ainvoke_stream(
-            messages=messages,
-            assistant_message=assistant_message,
-            response_format=response_format,
-            tools=tools,
-            tool_choice=tool_choice,
-            run_response=run_response,
-        ):
-            model_response, tool_use = self._process_stream_response(
-                response=response, assistant_message=assistant_message, stream_data=stream_data, tool_use=tool_use
-            )
-            if model_response is not None:
-                yield model_response
-
-    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:  # type: ignore
-        pass
+        return model_response
 
     def _get_metrics(self, response_usage) -> Metrics:
         """
@@ -434,8 +364,8 @@ class Cohere(Model):
         """
         metrics = Metrics()
 
-        metrics.input_tokens = response_usage.input_tokens or 0
-        metrics.output_tokens = response_usage.output_tokens or 0
+        metrics.input_tokens = response_usage.tokens.input_tokens or 0
+        metrics.output_tokens = response_usage.tokens.output_tokens or 0
         metrics.total_tokens = metrics.input_tokens + metrics.output_tokens
 
         return metrics

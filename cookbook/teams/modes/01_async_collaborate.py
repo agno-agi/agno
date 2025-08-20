@@ -28,6 +28,7 @@ from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.utils.print_response.team import aprint_response
 
 reddit_researcher = Agent(
     name="Reddit Researcher",
@@ -76,8 +77,9 @@ agent_team = Team(
 
 async def main():
     """Main async function demonstrating collaborative team mode."""
-    await agent_team.aprint_response(
+    await aprint_response(
         input="Start the discussion on the topic: 'What is the best way to learn to code?'",
+        team=agent_team,
         # stream=True,
         # stream_intermediate_steps=True,
     )

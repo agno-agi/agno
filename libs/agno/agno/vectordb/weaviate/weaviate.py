@@ -176,7 +176,6 @@ class Weaviate(VectorDb):
         )
         return len(result.objects) > 0
 
-
     def name_exists(self, name: str) -> bool:
         """
         Validate if a document with the given name exists in Weaviate.

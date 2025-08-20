@@ -14,7 +14,6 @@ SESSION_SCHEMA = {
     "team_data": {"type": "json"},
     "workflow_data": {"type": "json"},
     "metadata": {"type": "json"},
-    "chat_history": {"type": "json"},
     "runs": {"type": "json"},
     "summary": {"type": "json"},
     "created_at": {"type": "integer"},

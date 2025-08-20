@@ -48,7 +48,7 @@ thinking_web_agent = Agent(
     # Adds the history of the conversation to the messages
     add_history_to_context=True,
     # Number of history responses to add to the messages
-    num_history_responses=5,
+    num_history_runs=5,
     # Adds markdown formatting to the messages
     markdown=True,
 )
@@ -69,7 +69,7 @@ thinking_finance_agent = Agent(
     storage=SqliteDb(session_table="finance_agent", db_file=agent_storage),
     add_datetime_to_context=True,
     add_history_to_context=True,
-    num_history_responses=5,
+    num_history_runs=5,
     markdown=True,
 )
 

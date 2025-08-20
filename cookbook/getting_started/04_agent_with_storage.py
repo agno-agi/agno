@@ -122,7 +122,7 @@ def recipe_agent(user: str = "user"):
         # 2. Automatically add the chat history to the messages sent to the model
         # add_history_to_context=True,
         # Number of historical responses to add to the messages.
-        # num_history_responses=3,
+        # num_history_runs=3,
         markdown=True,
     )
 

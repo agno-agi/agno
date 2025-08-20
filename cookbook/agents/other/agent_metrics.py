@@ -1,11 +1,10 @@
 from typing import Iterator
 
-from agno.agent import Agent, RunOutputEvent
+from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.tools.yfinance import YFinanceTools
-from agno.utils.pprint import pprint_run_response
-from rich.pretty import pprint
+from agno.utils import pprint
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),

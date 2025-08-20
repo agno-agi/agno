@@ -25,7 +25,7 @@ def chat_followup_agent(
         tools=tools,
         read_chat_history=True,
         add_history_to_context=True,
-        num_history_responses=5,
+        num_history_runs=5,
         markdown=True,
         add_datetime_to_context=True,
     )

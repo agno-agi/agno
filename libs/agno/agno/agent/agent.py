@@ -46,8 +46,8 @@ from agno.run.response import (
 )
 from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager
+from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.tools.toolkit import Toolkit
 from agno.utils.events import (
     create_memory_update_completed_event,
     create_memory_update_started_event,
@@ -792,7 +792,10 @@ class Agent:
             ):
                 yield event
         else:
-            from agno.run.response import IntermediateRunResponseContentEvent, RunResponseContentEvent
+            from agno.run.response import (
+                IntermediateRunResponseContentEvent,
+                RunContentEvent,
+            )  # type: ignore
 
             for event in self._handle_model_response_stream(
                 session=session,
@@ -802,7 +805,7 @@ class Agent:
                 stream_intermediate_steps=stream_intermediate_steps,
                 workflow_context=workflow_context,
             ):
-                if isinstance(event, RunResponseContentEvent):
+                if isinstance(event, RunContentEvent):
                     if stream_intermediate_steps:
                         yield IntermediateRunResponseContentEvent(
                             content=event.content,
@@ -1231,7 +1234,10 @@ class Agent:
             ):
                 yield event
         else:
-            from agno.run.response import IntermediateRunResponseContentEvent, RunResponseContentEvent
+            from agno.run.response import (
+                IntermediateRunResponseContentEvent,
+                RunContentEvent,
+            )  # type: ignore
 
             async for event in self._ahandle_model_response_stream(
                 session=session,
@@ -1241,7 +1247,7 @@ class Agent:
                 stream_intermediate_steps=stream_intermediate_steps,
                 workflow_context=workflow_context,
             ):
-                if isinstance(event, RunResponseContentEvent):
+                if isinstance(event, RunContentEvent):
                     if stream_intermediate_steps:
                         yield IntermediateRunResponseContentEvent(
                             content=event.content,
@@ -1492,7 +1498,6 @@ class Agent:
                         session=agent_session,
                         response_format=response_format,
                     )
-                    return response
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
@@ -2077,7 +2082,6 @@ class Agent:
                         session=agent_session,
                         response_format=response_format,
                     )
-                    return response
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
@@ -3496,8 +3500,9 @@ class Agent:
                             log_warning(f"Could not add tool {tool}: {e}")
 
         # Update the session state for the functions
-        for func in self._functions_for_model.values():
-            func._session_state = session_state
+        if self._functions_for_model:
+            for func in self._functions_for_model.values():
+                func._session_state = session_state
 
     def _model_should_return_structured_output(self):
         self.model = cast(Model, self.model)

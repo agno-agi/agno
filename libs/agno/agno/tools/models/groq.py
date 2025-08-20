@@ -1,6 +1,6 @@
 import base64
-import os
 from os import getenv
+from pathlib import Path
 from typing import Optional
 from uuid import uuid4
 
@@ -52,7 +52,7 @@ class GroqTools(Toolkit):
         log_debug(f"Transcribing audio from {audio_source} using Groq model {self.transcription_model}")
         try:
             # Check if the audio source as a local file or a URL
-            if not os.path.exists(audio_source):
+            if not Path(audio_source).exists():
                 log_debug(f"Audio source '{audio_source}' not found locally, attempting as URL.")
                 transcription_text = self.client.audio.transcriptions.create(
                     url=audio_source,
@@ -63,7 +63,7 @@ class GroqTools(Toolkit):
                 log_debug(f"Transcribing local file: {audio_source}")
                 with open(audio_source, "rb") as audio_file:
                     transcription_text = self.client.audio.transcriptions.create(
-                        file=(os.path.basename(audio_source), audio_file.read()),
+                        file=(Path(audio_source).name, audio_file.read()),
                         model=self.transcription_model,
                         response_format="text",
                     )
@@ -83,7 +83,7 @@ class GroqTools(Toolkit):
         """
         log_debug(f"Translating audio from {audio_source} to English using Groq model {self.translation_model}")
         try:
-            if not os.path.exists(audio_source):
+            if not Path(audio_source).exists():
                 log_debug(f"Audio source '{audio_source}' not found locally.")
                 translation = self.client.audio.translations.create(
                     url=audio_source,
@@ -94,7 +94,7 @@ class GroqTools(Toolkit):
                 log_debug(f"Translating local file: {audio_source}")
                 with open(audio_source, "rb") as audio_file:
                     translation = self.client.audio.translations.create(
-                        file=(os.path.basename(audio_source), audio_file.read()),
+                        file=(Path(audio_source).name, audio_file.read()),
                         model=self.translation_model,
                         response_format="text",
                     )

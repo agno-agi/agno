@@ -45,8 +45,8 @@ from agno.run.messages import RunMessages
 from agno.run.response import RunEvent, RunOutput, RunOutputEvent
 from agno.run.team import TeamRunEvent, TeamRunOutput, TeamRunOutputEvent
 from agno.session import SessionSummaryManager, TeamSession
+from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.tools.toolkit import Toolkit
 from agno.utils.events import (
     create_team_memory_update_completed_event,
     create_team_memory_update_started_event,
@@ -5671,7 +5671,7 @@ class Team:
             TeamSession: The TeamSession loaded from the database or created if it does not exist.
         """
         if not session_id and not self.session_id:
-            raise Exception("No session_id provided")
+            return None
 
         session_id_to_load = session_id or self.session_id
 
