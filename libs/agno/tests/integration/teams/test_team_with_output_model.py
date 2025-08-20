@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
-from agno.run.team import RunContentEvent, IntermediateRunContentEvent
+from agno.run.team import IntermediateRunContentEvent, RunContentEvent
 from agno.team import Team
 
 agent = Agent(
@@ -48,7 +48,7 @@ def test_team_with_output_model_stream():
     run_response_content_event: bool = False
     intermediate_run_response_content_event: bool = False
     final_response = None
-    
+
     for event in response:
         print(event)
         print(type(event))
@@ -69,11 +69,12 @@ def test_team_with_output_model_stream():
         assert isinstance(final_response.content, str)
         assert len(final_response.content) > 0
 
+
 async def test_team_with_output_model_stream_async():
     run_response_content_event: bool = False
     intermediate_run_response_content_event: bool = False
     final_response = None
-    
+
     async for event in team.arun("Tell me about Yosemite National Park.", stream=True):
         if isinstance(event, RunContentEvent):
             run_response_content_event = True
