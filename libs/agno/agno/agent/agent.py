@@ -2696,6 +2696,27 @@ class Agent:
                         run_response=run_response, tool_name=tool_name, tool_args=tool_args
                     )
 
+        if self.images:
+            if run_response.images is None:
+                run_response.images = []
+            run_response.images.extend(self.images)
+            # Clear agent images after transferring to avoid duplication
+            self.images = []
+        
+        if self.videos:
+            if run_response.videos is None:
+                run_response.videos = []
+            run_response.videos.extend(self.videos)
+            # Clear agent videos after transferring
+            self.videos = []
+            
+        if self.audio:
+            if run_response.audio is None:
+                run_response.audio = []
+            run_response.audio.extend(self.audio)
+            # Clear agent audio after transferring
+            self.audio = []
+
         # Update the run_response audio with the model response audio
         if model_response.audio is not None:
             run_response.response_audio = model_response.audio
@@ -4431,6 +4452,41 @@ class Agent:
         # 4. Add user message to run_messages
         user_message: Optional[Message] = None
 
+        # Get media artifacts from previous run response if available and convert to proper format
+        previous_run_images = []
+        previous_run_videos = []
+        previous_run_audio = []
+        
+        if self.add_history_to_context:  # Only include if we're adding history context
+            last_run_response = self.get_last_run_response(session_id=session.session_id)
+            if last_run_response:
+                # Convert ImageArtifacts to Images for message compatibility
+                if last_run_response.images:
+                    from agno.media import Image
+                    for img_artifact in last_run_response.images:
+                        if img_artifact.url:
+                            previous_run_images.append(Image(url=img_artifact.url))
+                        elif img_artifact.content:
+                            previous_run_images.append(Image(content=img_artifact.content))
+                
+                # Convert VideoArtifacts to Videos for message compatibility  
+                if last_run_response.videos:
+                    from agno.media import Video
+                    for video_artifact in last_run_response.videos:
+                        if video_artifact.url:
+                            previous_run_videos.append(Video(url=video_artifact.url))
+                        elif video_artifact.content:
+                            previous_run_videos.append(Video(content=video_artifact.content))
+                
+                # Convert AudioArtifacts to Audio for message compatibility
+                if last_run_response.audio:
+                    from agno.media import Audio
+                    for audio_artifact in last_run_response.audio:
+                        if audio_artifact.url:
+                            previous_run_audio.append(Audio(url=audio_artifact.url))
+                        elif audio_artifact.content:
+                            previous_run_audio.append(Audio(content=audio_artifact.content))
+
         # 4.1 Build user message if input is None, str or list and not a list of Message/dict objects
         if (
             input is None
@@ -4443,13 +4499,23 @@ class Agent:
                 )
             )
         ):
+            # Combine current media with media from previous run
+            all_images = list(images) if images else []
+            all_images.extend(previous_run_images)
+            
+            all_videos = list(videos) if videos else []
+            all_videos.extend(previous_run_videos)
+            
+            all_audio = list(audio) if audio else []
+            all_audio.extend(previous_run_audio)
+            
             user_message = self._get_user_message(
                 run_response=run_response,
                 session=session,
                 input=input,
-                audio=audio,
-                images=images,
-                videos=videos,
+                audio=all_audio if all_audio else None,
+                images=all_images if all_images else None,
+                videos=all_videos if all_videos else None,
                 files=files,
                 knowledge_filters=knowledge_filters,
                 **kwargs,

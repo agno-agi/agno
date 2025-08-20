@@ -1080,6 +1080,20 @@ class Model(ABC):
 
         function_call_success = function_execution_result.status == "success"
 
+        # Handle media artifacts from function results
+        if function_call_success and hasattr(function_call.function, '_agent'):
+            if function_execution_result.images:
+                for image in function_execution_result.images:
+                    function_call.function._agent.add_image(image)
+            
+            if function_execution_result.videos:
+                for video in function_execution_result.videos:
+                    function_call.function._agent.add_video(video)
+                    
+            if function_execution_result.audio:
+                for audio in function_execution_result.audio:
+                    function_call.function._agent.add_audio(audio)
+
         # Stop function call timer
         function_call_timer.stop()
 
