@@ -571,35 +571,34 @@ class Agent:
             log_info("Setting default model to OpenAI Chat")
             self.model = OpenAIChat(id="gpt-4o")
 
-    def _validate_input(self, message: Optional[Union[str, List, Dict, Message, BaseModel]]) -> Optional[BaseModel]:
-        """Parse and validate input against input_schema if provided"""
+    def _validate_input(
+        self, input: Union[str, List, Dict, Message, BaseModel]
+    ) -> Union[str, List, Dict, Message, BaseModel]:
+        """Parse and validate input against input_schema if provided, otherwise return input as-is"""
         if self.input_schema is None:
-            return None
-
-        if message is None:
-            raise ValueError("Input required when input_schema is set")
+            return input  # Return input unchanged if no schema is set
 
         # Handle Message objects - extract content
-        if isinstance(message, Message):
-            message = message.content
+        if isinstance(input, Message):
+            input = input.content
 
         # Case 1: Message is already a BaseModel instance
-        if isinstance(message, BaseModel):
-            if isinstance(message, self.input_schema):
+        if isinstance(input, BaseModel):
+            if isinstance(input, self.input_schema):
                 try:
                     # Re-validate to catch any field validation errors
-                    message.model_validate(message.model_dump())
-                    return message
+                    input.model_validate(input.model_dump())
+                    return input
                 except Exception as e:
                     raise ValueError(f"BaseModel validation failed: {str(e)}")
             else:
                 # Different BaseModel types
-                raise ValueError(f"Expected {self.input_schema.__name__} but got {type(message).__name__}")
+                raise ValueError(f"Expected {self.input_schema.__name__} but got {type(input).__name__}")
 
         # Case 2: Message is a dict
-        elif isinstance(message, dict):
+        elif isinstance(input, dict):
             try:
-                validated_model = self.input_schema(**message)
+                validated_model = self.input_schema(**input)
                 return validated_model
             except Exception as e:
                 raise ValueError(f"Failed to parse dict into {self.input_schema.__name__}: {str(e)}")
@@ -607,7 +606,7 @@ class Agent:
         # Case 3: Other types not supported for structured input
         else:
             raise ValueError(
-                f"Cannot validate {type(message)} against input_schema. Expected dict or {self.input_schema.__name__} instance."
+                f"Cannot validate {type(input)} against input_schema. Expected dict or {self.input_schema.__name__} instance."
             )
 
     def _set_memory_manager(self) -> None:
@@ -985,8 +984,6 @@ class Agent:
 
         # Validate input against input_schema if provided
         validated_input = self._validate_input(input)
-        if validated_input is not None:
-            input = validated_input
 
         session_id, user_id, session_state = self._initialize_session(
             run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
@@ -1072,7 +1069,7 @@ class Agent:
                 # Prepare run messages
                 run_messages: RunMessages = self.get_run_messages(
                     run_response=run_response,
-                    input=input,
+                    input=validated_input,
                     session=agent_session,
                     user_id=user_id,
                     audio=audio,
@@ -1435,8 +1432,6 @@ class Agent:
 
         # Validate input against input_schema if provided
         validated_input = self._validate_input(input)
-        if validated_input is not None:
-            input = validated_input
 
         session_id, user_id, session_state = self._initialize_session(
             run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
@@ -1516,7 +1511,7 @@ class Agent:
                 # Prepare run messages
                 run_messages: RunMessages = self.get_run_messages(
                     run_response=run_response,
-                    input=input,
+                    input=validated_input,
                     session=agent_session,
                     user_id=user_id,
                     audio=audio,

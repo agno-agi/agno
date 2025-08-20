@@ -552,45 +552,33 @@ class Team:
             self.telemetry = telemetry_env.lower() == "true"
 
     def _validate_input(
-        self, input_message: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]]
-    ) -> Optional[BaseModel]:
-        """Parse and validate input against input_schema if provided"""
+        self, input: Union[str, List, Dict, Message, BaseModel]
+    ) -> Union[str, List, Dict, Message, BaseModel]:
+        """Parse and validate input against input_schema if provided, otherwise return input as-is"""
         if self.input_schema is None:
-            return None
-
-        if input_message is None:
-            raise ValueError("Input required when input_schema is set")
+            return input  # Return input unchanged if no schema is set
 
         # Handle Message objects - extract content
-        if isinstance(input_message, Message):
-            input_message = input_message.content
-        elif isinstance(input_message, list) and len(input_message) > 0 and isinstance(input_message[0], Message):
-            # For list of messages, validate the first user message content
-            for msg in input_message:
-                if isinstance(msg, Message) and msg.role == "user":
-                    input_message = msg.content
-                    break
-            else:
-                # No user message found
-                raise ValueError("No user message found in message list for input validation")
+        if isinstance(input, Message):
+            input = input.content
 
         # Case 1: Message is already a BaseModel instance
-        if isinstance(input_message, BaseModel):
-            if isinstance(input_message, self.input_schema):
+        if isinstance(input, BaseModel):
+            if isinstance(input, self.input_schema):
                 try:
                     # Re-validate to catch any field validation errors
-                    input_message.model_validate(input_message.model_dump())
-                    return input_message
+                    input.model_validate(input.model_dump())
+                    return input
                 except Exception as e:
                     raise ValueError(f"BaseModel validation failed: {str(e)}")
             else:
                 # Different BaseModel types
-                raise ValueError(f"Expected {self.input_schema.__name__} but got {type(input_message).__name__}")
+                raise ValueError(f"Expected {self.input_schema.__name__} but got {type(input).__name__}")
 
         # Case 2: Message is a dict
-        elif isinstance(input_message, dict):
+        elif isinstance(input, dict):
             try:
-                validated_model = self.input_schema(**input_message)
+                validated_model = self.input_schema(**input)
                 return validated_model
             except Exception as e:
                 raise ValueError(f"Failed to parse dict into {self.input_schema.__name__}: {str(e)}")
@@ -598,7 +586,7 @@ class Team:
         # Case 3: Other types not supported for structured input
         else:
             raise ValueError(
-                f"Cannot validate {type(input_message)} against input_schema. Expected dict or {self.input_schema.__name__} instance."
+                f"Cannot validate {type(input)} against input_schema. Expected dict or {self.input_schema.__name__} instance."
             )
 
     def _initialize_member(self, member: Union["Team", Agent], debug_mode: Optional[bool] = None) -> None:
@@ -984,8 +972,6 @@ class Team:
 
         # Validate input against input_schema if provided
         validated_input = self._validate_input(input)
-        if validated_input is not None:
-            input = validated_input
 
         if store_member_responses is not None:
             self.store_member_responses = store_member_responses
@@ -1097,7 +1083,7 @@ class Team:
                         run_response=run_response,
                         session=team_session,
                         user_id=user_id,
-                        input_message=input,
+                        input_message=validated_input,
                         audio=audio,
                         images=images,
                         videos=videos,
@@ -1110,7 +1096,7 @@ class Team:
                         run_response=run_response,
                         session=team_session,
                         user_id=user_id,
-                        input_message=input,
+                        input_message=validated_input,
                         audio=audio,
                         images=images,
                         videos=videos,
@@ -1443,8 +1429,6 @@ class Team:
 
         # Validate input against input_schema if provided
         validated_input = self._validate_input(input)
-        if validated_input is not None:
-            input = validated_input
 
         if store_member_responses is not None:
             self.store_member_responses = store_member_responses
@@ -1550,7 +1534,7 @@ class Team:
                         session=team_session,  # type: ignore
                         run_response=run_response,
                         user_id=user_id,
-                        input_message=input,
+                        input_message=validated_input,
                         audio=audio,
                         images=images,
                         videos=videos,
@@ -1563,7 +1547,7 @@ class Team:
                         session=team_session,  # type: ignore
                         run_response=run_response,
                         user_id=user_id,
-                        input_message=input,
+                        input_message=validated_input,
                         audio=audio,
                         images=images,
                         videos=videos,

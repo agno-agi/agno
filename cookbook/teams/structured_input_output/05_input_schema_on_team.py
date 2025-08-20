@@ -1,5 +1,5 @@
 """
-This example demonstrates how to use input_schema with teams for automatic 
+This example demonstrates how to use input_schema with teams for automatic
 input validation and structured data handling.
 
 The input_schema feature allows teams to automatically validate and convert
@@ -11,20 +11,28 @@ from typing import List
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.tools.hackernews import HackerNewsTools
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.hackernews import HackerNewsTools
 from pydantic import BaseModel, Field
 
 
 class ResearchProject(BaseModel):
     """Structured research project with validation requirements."""
-    
+
     project_name: str = Field(description="Name of the research project")
-    research_topics: List[str] = Field(description="List of topics to research", min_items=1)
+    research_topics: List[str] = Field(
+        description="List of topics to research", min_items=1
+    )
     target_audience: str = Field(description="Intended audience for the research")
-    depth_level: str = Field(description="Research depth level", pattern="^(basic|intermediate|advanced)$")
-    max_sources: int = Field(description="Maximum number of sources to use", ge=3, le=20, default=10)
-    include_recent_only: bool = Field(description="Whether to focus only on recent sources", default=True)
+    depth_level: str = Field(
+        description="Research depth level", pattern="^(basic|intermediate|advanced)$"
+    )
+    max_sources: int = Field(
+        description="Maximum number of sources to use", ge=3, le=20, default=10
+    )
+    include_recent_only: bool = Field(
+        description="Whether to focus only on recent sources", default=True
+    )
 
 
 # Create research agents
@@ -41,7 +49,7 @@ hackernews_agent = Agent(
 )
 
 web_researcher = Agent(
-    name="Web Researcher", 
+    name="Web Researcher",
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[DuckDuckGoTools()],
     role="Conduct comprehensive web research",
@@ -61,7 +69,7 @@ research_team = Team(
     input_schema=ResearchProject,
     instructions=[
         "Conduct thorough research based on the validated input",
-        "Coordinate between team members to avoid duplicate work", 
+        "Coordinate between team members to avoid duplicate work",
         "Ensure research depth matches the specified level",
         "Respect the maximum sources limit",
         "Focus on recent sources if requested",
@@ -86,7 +94,7 @@ print("\n=== Example 2: Pydantic Model Input (direct pass-through) ===")
 research_request = ResearchProject(
     project_name="Blockchain Development Tools",
     research_topics=["Ethereum", "Solana", "Web3 Libraries"],
-    target_audience="Blockchain Developers", 
+    target_audience="Blockchain Developers",
     depth_level="advanced",
     max_sources=12,
     include_recent_only=False,
