@@ -3808,9 +3808,10 @@ class Agent:
             and self.workflow_id is None
             and session.session_data is not None
         ):
-            session.session_data["session_state"].pop("current_session_id", None)
-            session.session_data["session_state"].pop("current_user_id", None)
-            session.session_data["session_state"].pop("current_run_id", None)
+            if session.session_data.get("session_state") is not None:
+                session.session_data["session_state"].pop("current_session_id", None)
+                session.session_data["session_state"].pop("current_user_id", None)
+                session.session_data["session_state"].pop("current_run_id", None)
 
             # TODO: Add image/audio/video artifacts to the session correctly, from runs
             if self.images is not None:
@@ -4416,9 +4417,9 @@ class Agent:
 
                 run_messages.messages += history_copy
 
-        # 4.1 Build user message if message is None, str or list
         # 4. Add user message to run_messages
         user_message: Optional[Message] = None
+
         # 4.1 Build user message if input is None, str or list and not a list of Message/dict objects
         if (
             input is None
@@ -4442,15 +4443,18 @@ class Agent:
                 knowledge_filters=knowledge_filters,
                 **kwargs,
             )
+
         # 4.2 If input is provided as a Message, use it directly
         elif isinstance(input, Message):
             user_message = input
+
         # 4.3 If input is provided as a dict, try to validate it as a Message
         elif isinstance(input, dict):
             try:
                 user_message = Message.model_validate(input)
             except Exception as e:
                 log_warning(f"Failed to validate message: {e}")
+
         # 4.4 If input is provided as a BaseModel, convert it to a Message
         elif isinstance(input, BaseModel):
             try:
@@ -4459,11 +4463,6 @@ class Agent:
                 user_message = Message(role=self.user_message_role, content=content)
             except Exception as e:
                 log_warning(f"Failed to convert BaseModel to message: {e}")
-
-        # Add user message to run_messages
-        if user_message is not None:
-            run_messages.user_message = user_message
-            run_messages.messages.append(user_message)
 
         # 5. Add input messages to run_messages if provided (List[Message] or List[Dict])
         if (

@@ -498,12 +498,13 @@ class Workflow:
             Optional[WorkflowSession]: The saved WorkflowSession or None if not saved.
         """
         if self.db is not None and session.session_data is not None:
-            session.session_data["session_state"].pop("current_session_id", None)
-            session.session_data["session_state"].pop("current_user_id", None)
-            session.session_data["session_state"].pop("workflow_id", None)
-            session.session_data["session_state"].pop("run_id", None)
-            session.session_data["session_state"].pop("session_id", None)
-            session.session_data["session_state"].pop("workflow_name", None)
+            if session.session_data.get("session_state") is not None:
+                session.session_data["session_state"].pop("current_session_id", None)
+                session.session_data["session_state"].pop("current_user_id", None)
+                session.session_data["session_state"].pop("workflow_id", None)
+                session.session_data["session_state"].pop("run_id", None)
+                session.session_data["session_state"].pop("session_id", None)
+                session.session_data["session_state"].pop("workflow_name", None)
 
             self._upsert_session(session=session)
             log_debug(f"Created or updated WorkflowSession record: {session.session_id}")
