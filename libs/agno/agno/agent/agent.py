@@ -280,7 +280,7 @@ class Agent:
     output_model: Optional[Model] = None
     # Provide a prompt for the output model
     output_model_prompt: Optional[str] = None
-    # If True, the response from the Model is converted into the response_model
+    # If True, the response from the Model is converted into the output_schema
     # Otherwise, the response is returned as a JSON string
     parse_response: bool = True
     # Use model enforced structured_outputs if supported (e.g. OpenAIChat)

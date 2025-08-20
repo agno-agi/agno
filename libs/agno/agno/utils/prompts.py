@@ -85,7 +85,7 @@ def get_json_output_prompt(output_schema: Union[str, list, BaseModel]) -> str:
                     json_output_prompt += f"\n{json.dumps(response_model_properties, indent=2)}"
                     json_output_prompt += "\n</json_field_properties>"
         else:
-            log_warning(f"Could not build json schema for {response_model}")
+            log_warning(f"Could not build json schema for {output_schema}")
     else:
         json_output_prompt += "Provide the output as JSON."
 
