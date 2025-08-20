@@ -122,9 +122,9 @@ Use different models for reasoning vs parsing structured outputs, or for generat
 - [`other/parse_model.py`](./other/parse_model.py) - Parser model for structured outputs
 - [`other/output_model.py`](./other/output_model.py) - Output model for final responses
 
-### 🚀 Advanced Patterns
+### Other Patterns
 
-Advanced patterns including database integration, session management, and dependency injection for production applications.
+Some other patterns include database integration, session management, and dependency injection for production applications.
 
 **Examples:**
 - [`db/`](./db/) - Database integration patterns
