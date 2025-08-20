@@ -31,7 +31,6 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.db.base import BaseDb, SessionType, UserMemory
-from agno.db.in_memory import InMemoryDb
 from agno.exceptions import ModelProviderError, RunCancelledException
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
@@ -141,6 +140,8 @@ class Team:
     session_state: Optional[Dict[str, Any]] = None
     # If True, the team can update the session state
     enable_agentic_state: bool = False
+    # If True, cache the current Team session in memory for faster access
+    cache_session: bool = False
 
     # If True, add the session state variables in the user and system messages
     add_state_in_messages: bool = False
@@ -180,8 +181,6 @@ class Team:
     # --- Database ---
     # Database to use for this agent
     db: Optional[BaseDb] = None
-    # If True, use in-memory storage as a database
-    in_memory_db: bool = False
 
     # Memory manager to use for this agent
     memory_manager: Optional[MemoryManager] = None
@@ -334,7 +333,7 @@ class Team:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         add_state_in_messages: bool = False,
-        in_memory_db: bool = False,
+        cache_session: bool = False,
         description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
         expected_output: Optional[str] = None,
@@ -412,6 +411,7 @@ class Team:
         self.session_id = session_id
         self.session_state = session_state
         self.add_state_in_messages = add_state_in_messages
+        self.cache_session = cache_session
 
         self.description = description
         self.instructions = instructions
@@ -457,14 +457,6 @@ class Team:
         self.parse_response = parse_response
 
         self.db = db
-        self.in_memory_db = in_memory_db
-
-        if self.in_memory_db and self.db is None:
-            self.db = InMemoryDb()
-        if self.in_memory_db and self.db is not None:
-            log_warning(
-                "In-memory database is enabled, but a database is provided. The provided database will be used."
-            )
 
         self.enable_agentic_memory = enable_agentic_memory
         self.enable_user_memories = enable_user_memories
@@ -5660,6 +5652,10 @@ class Team:
                 created_at=int(time()),
             )
 
+        # Cache the session if relevant
+        if team_session is not None and self.cache_session:
+            self._team_session = team_session
+
         return team_session
 
     def get_session(
@@ -5679,9 +5675,19 @@ class Team:
 
         session_id_to_load = session_id or self.session_id
 
-        # Try to load from database
+        # If there is a cached session, return it
+        if self.cache_session and hasattr(self, "_team_session") and self._team_session is not None:
+            if self._team_session.session_id == session_id_to_load:
+                return self._team_session
+
+        # Load and return the session from the database
         if self.db is not None:
             team_session = cast(TeamSession, self._read_session(session_id=session_id_to_load))  # type: ignore
+
+            # Cache the session if relevant
+            if team_session is not None and self.cache_session:
+                self._team_session = team_session
+
             return team_session
 
         log_warning(f"TeamSession {session_id_to_load} not found in db")

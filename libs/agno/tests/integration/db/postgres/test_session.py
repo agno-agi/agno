@@ -35,7 +35,7 @@ def sample_agent_session() -> AgentSession:
     """Fixture returning a sample AgentSession"""
     agent_run = RunOutput(
         run_id="test_agent_run_1",
-        id="test_agent_1",
+        agent_id="test_agent_1",
         user_id="test_user_1",
         status=RunStatus.completed,
         messages=[],
@@ -45,8 +45,6 @@ def sample_agent_session() -> AgentSession:
         agent_id="test_agent_1",
         user_id="test_user_1",
         team_id="test_team_1",
-        team_session_id="test_team_session_1",
-        workflow_id="test_workflow_1",
         session_data={"session_name": "Test Agent Session", "key": "value"},
         agent_data={"name": "Test Agent", "model": "gpt-4"},
         metadata={"extra_key": "extra_value"},
@@ -62,7 +60,7 @@ def sample_team_session() -> TeamSession:
     """Fixture returning a sample TeamSession"""
     team_run = TeamRunOutput(
         run_id="test_team_run_1",
-        id="test_team_1",
+        team_id="test_team_1",
         status=RunStatus.completed,
         messages=[],
         created_at=int(time.time()),
@@ -71,8 +69,6 @@ def sample_team_session() -> TeamSession:
         session_id="test_team_session_1",
         team_id="test_team_1",
         user_id="test_user_1",
-        team_session_id="parent_team_session_1",
-        workflow_id="test_workflow_1",
         session_data={"session_name": "Test Team Session", "key": "value"},
         team_data={"name": "Test Team", "model": "gpt-4"},
         metadata={"extra_key": "extra_value"},
@@ -326,6 +322,7 @@ def test_get_sessions_with_pagination(postgres_db_real: PostgresDb):
     assert len(page2) == 2
 
     # Verify no overlap
+    assert isinstance(page1, list) and isinstance(page2, list)
     page1_ids = {s.session_id for s in page1}
     page2_ids = {s.session_id for s in page2}
     assert len(page1_ids & page2_ids) == 0
@@ -580,7 +577,7 @@ def test_upsert_session_handles_all_agent_session_fields(postgres_db_real: Postg
     # Create comprehensive AgentSession with all possible fields populated
     agent_run = RunOutput(
         run_id="test_run_comprehensive",
-        id="comprehensive_agent",
+        agent_id="comprehensive_agent",
         user_id="comprehensive_user",
         status=RunStatus.completed,
         messages=[],
@@ -588,7 +585,6 @@ def test_upsert_session_handles_all_agent_session_fields(postgres_db_real: Postg
 
     comprehensive_agent_session = AgentSession(
         session_id="comprehensive_agent_session",
-        team_session_id="parent_team_session_id",
         agent_id="comprehensive_agent_id",
         user_id="comprehensive_user_id",
         session_data={
@@ -619,11 +615,9 @@ def test_upsert_session_handles_all_agent_session_fields(postgres_db_real: Postg
 
     # Verify all fields are preserved
     assert result.session_id == comprehensive_agent_session.session_id
-    assert result.team_session_id == comprehensive_agent_session.team_session_id
     assert result.agent_id == comprehensive_agent_session.agent_id
     assert result.team_id == comprehensive_agent_session.team_id
     assert result.user_id == comprehensive_agent_session.user_id
-    assert result.workflow_id == comprehensive_agent_session.workflow_id
     assert result.session_data == comprehensive_agent_session.session_data
     assert result.metadata == comprehensive_agent_session.metadata
     assert result.agent_data == comprehensive_agent_session.agent_data
@@ -639,7 +633,7 @@ def test_upsert_session_handles_all_team_session_fields(postgres_db_real: Postgr
     # Create comprehensive TeamSession with all possible fields populated
     team_run = TeamRunOutput(
         run_id="test_team_run_comprehensive",
-        id="comprehensive_team",
+        team_id="comprehensive_team",
         status=RunStatus.completed,
         messages=[],
         created_at=int(time.time()),
@@ -652,7 +646,6 @@ def test_upsert_session_handles_all_team_session_fields(postgres_db_real: Postgr
 
     comprehensive_team_session = TeamSession(
         session_id="comprehensive_team_session",
-        team_session_id="parent_team_session_id",
         team_id="comprehensive_team_id",
         user_id="comprehensive_user_id",
         team_data={
@@ -676,7 +669,7 @@ def test_upsert_session_handles_all_team_session_fields(postgres_db_real: Postgr
             "team_metrics": {"efficiency": 0.95},
         },
         runs=[team_run],
-        summary=team_summary.to_dict(),
+        summary=team_summary,
         created_at=int(time.time()),
         updated_at=int(time.time()),
     )
@@ -688,14 +681,13 @@ def test_upsert_session_handles_all_team_session_fields(postgres_db_real: Postgr
 
     # Verify all fields are preserved
     assert result.session_id == comprehensive_team_session.session_id
-    assert result.team_session_id == comprehensive_team_session.team_session_id
     assert result.team_id == comprehensive_team_session.team_id
     assert result.user_id == comprehensive_team_session.user_id
     assert result.team_data == comprehensive_team_session.team_data
     assert result.session_data == comprehensive_team_session.session_data
     assert result.metadata == comprehensive_team_session.metadata
     assert isinstance(result.summary, SessionSummary)
-    assert result.summary.to_dict() == comprehensive_team_session.summary
+    assert result.summary == comprehensive_team_session.summary
     assert result.created_at == comprehensive_team_session.created_at
     assert result.updated_at == comprehensive_team_session.updated_at
     assert result.runs is not None

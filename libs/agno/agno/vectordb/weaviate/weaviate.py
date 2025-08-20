@@ -169,102 +169,13 @@ class Weaviate(VectorDb):
 
     def content_hash_exists(self, content_hash: str) -> bool:
         """Check if a document with the given content hash exists in the collection."""
-        pass
-
-    def doc_content_changed(self, document: Document, check_existing: Optional[bool] = True) -> Optional[bool]:
-        """
-        Check if the content of the document has changed by comparing its UUID.
-
-        Args:
-            document (Document): Document to check
-
-        Returns:
-            bool: True if the document content has changed, False otherwise. None on wrong input.
-            check_existing (bool): If True, check if the document exists before checking if the content changed.
-        """
-        if not document or not document.content:
-            logger.warning("Invalid document: Missing content.")
-            return None
-
-        if check_existing and document.name and not self.name_exists(document.name):
-            logger.warning(f"A document by this name does not exist: {document.name}")
-            return None
-
-        doc_uuid, _ = self._get_doc_uuid(document)
-
         collection = self.get_client().collections.get(self.collection)
-        existing_doc = collection.query.fetch_object_by_id(doc_uuid)
+        result = collection.query.fetch_objects(
+            limit=1,
+            filters=Filter.by_property("content_hash").equal(content_hash),
+        )
+        return len(result.objects) > 0
 
-        if not existing_doc:
-            return True
-        else:
-            return False
-
-    def doc_delete(self, name: str) -> None:
-        """
-        Delete all documents from Weaviate with a specific 'name' property.
-
-        Args:
-            name (str): Document name to delete.
-        """
-        collection = self.get_client().collections.get(self.collection)
-        filter_expr = Filter.by_property("name").equal(name)
-
-        result = collection.data.delete_many(where=filter_expr)
-
-        log_debug(f"Deleted document by name: '{name}' - {result.successful} documents deleted.")
-        if result.failed > 0:
-            logger.warning(
-                f"Failed to delete (some chunks of) document with name: '{name}' - "
-                f"Failed {result.failed} out of {result.matches} times. {result.successful} successful deletions."
-            )
-
-    def doc_exists(self, document: Document) -> bool:
-        """
-        Validate if the document exists using consistent UUID generation.
-
-        Args:
-            content_hash (str): The content hash to check.
-
-        Returns:
-            bool: True if the document exists, False otherwise.
-        """
-        if not document or not document.content:
-            logger.warning("Invalid document: Missing content.")
-            return False  # Early exit for invalid input
-
-        doc_uuid, _ = self._get_doc_uuid(document)
-
-        collection = self.get_client().collections.get(self.collection)
-        return collection.data.exists(doc_uuid)
-
-    async def async_doc_exists(self, document: Document) -> bool:
-        """
-        Validate if the document exists using consistent UUID generation asynchronously.
-
-        Args:
-            document (Document): Document to validate
-
-        Returns:
-            bool: True if the document exists, False otherwise
-        """
-        if not document or not document.content:
-            logger.warning("Invalid document: Missing content.")
-            return False  # Early exit for invalid input
-
-        doc_uuid, _ = self._get_doc_uuid(document)
-
-        client = await self.get_async_client()
-        try:
-            doc_uuid = uuid.UUID(hex=content_hash[:32])
-            collection = self.get_client().collections.get(self.collection)
-            return collection.data.exists(doc_uuid)
-        except ValueError:
-            log_info(f"Invalid UUID format for content_hash '{content_hash}' - treating as non-existent")
-            return False
-        except Exception as e:
-            logger.error(f"Error checking if content_hash '{content_hash}' exists: {e}")
-            return False
 
     def name_exists(self, name: str) -> bool:
         """
@@ -449,42 +360,10 @@ class Weaviate(VectorDb):
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
-        if not documents:
-            return
-
-        log_debug(f"Upserting {len(documents)} documents into Weaviate asynchronously.")
-        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
-        await asyncio.gather(*embed_tasks, return_exceptions=True)
-
-        client = await self.get_async_client()
-        try:
-            collection = client.collections.get(self.collection)
-
-            for document in documents:
-                if document.embedding is None:
-                    logger.error(f"Document embedding is None: {document.name}")
-                    continue
-
-                cleaned_content = document.content.replace("\x00", "\ufffd")
-                record_id = md5(cleaned_content.encode()).hexdigest()
-                doc_uuid = uuid.UUID(hex=record_id[:32])
-
-                # Serialize meta_data to JSON string
-                meta_data_str = json.dumps(document.meta_data) if document.meta_data else None
-
-                properties = {
-                    "name": document.name,
-                    "content": cleaned_content,
-                    "meta_data": meta_data_str,
-                    "content_id": document.content_id,
-                    "content_hash": content_hash,
-                }
-
-                await collection.data.replace(uuid=doc_uuid, properties=properties, vector=document.embedding)
-
-                log_debug(f"Upserted document asynchronously: {document.name}")
-        finally:
-            await client.close()
+        if self.content_hash_exists(content_hash):
+            self._delete_by_content_hash(content_hash)
+        await self.async_insert(content_hash=content_hash, documents=documents, filters=filters)
+        return
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """

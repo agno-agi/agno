@@ -35,7 +35,6 @@ def sample_user_memory() -> UserMemory:
         feedback="positive",
         agent_id="test_agent_1",
         team_id="test_team_1",
-        workflow_id="test_workflow_1",
     )
 
 
@@ -51,7 +50,6 @@ def test_insert_memory(postgres_db_real: PostgresDb, sample_user_memory):
     assert result.user_id == sample_user_memory.user_id
     assert result.agent_id == sample_user_memory.agent_id
     assert result.team_id == sample_user_memory.team_id
-    assert result.workflow_id == sample_user_memory.workflow_id
 
 
 def test_update_memory(postgres_db_real: PostgresDb, sample_user_memory):
@@ -216,7 +214,6 @@ def test_comprehensive_user_memory_fields(postgres_db_real: PostgresDb):
         feedback="Very positive feedback about this memory",
         agent_id="comprehensive_agent",
         team_id="comprehensive_team",
-        workflow_id="comprehensive_workflow",
     )
 
     # Inserting the memory
@@ -232,7 +229,6 @@ def test_comprehensive_user_memory_fields(postgres_db_real: PostgresDb):
     assert result.input == comprehensive_memory.input
     assert result.agent_id == comprehensive_memory.agent_id
     assert result.team_id == comprehensive_memory.team_id
-    assert result.workflow_id == comprehensive_memory.workflow_id
 
     # Verify the memory can be retrieved with all fields intact
     retrieved = postgres_db_real.get_user_memory(memory_id=comprehensive_memory.memory_id)  # type: ignore
@@ -245,4 +241,3 @@ def test_comprehensive_user_memory_fields(postgres_db_real: PostgresDb):
     assert retrieved.input == comprehensive_memory.input
     assert retrieved.agent_id == comprehensive_memory.agent_id
     assert retrieved.team_id == comprehensive_memory.team_id
-    assert retrieved.workflow_id == comprehensive_memory.workflow_id

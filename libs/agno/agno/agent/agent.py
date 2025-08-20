@@ -28,7 +28,6 @@ from uuid import NAMESPACE_DNS, uuid4, uuid5
 from pydantic import BaseModel
 
 from agno.db.base import BaseDb, SessionType, UserMemory
-from agno.db.in_memory import InMemoryDb
 from agno.exceptions import ModelProviderError, StopAgentRun
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
@@ -123,6 +122,8 @@ class Agent:
     session_state: Optional[Dict[str, Any]] = None
     # If True, the agent can update the session state
     enable_agentic_state: bool = False
+    # If True, cache the current Agent session in memory for faster access
+    cache_session: bool = False
 
     search_session_history: Optional[bool] = False
     num_history_sessions: Optional[int] = None
@@ -152,8 +153,6 @@ class Agent:
     # --- Database ---
     # Database to use for this agent
     db: Optional[BaseDb] = None
-    # If True, use in-memory storage as a database
-    in_memory_db: bool = False
 
     # --- Agent History ---
     # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
@@ -334,12 +333,12 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        cache_session: bool = False,
         search_session_history: Optional[bool] = False,
         num_history_sessions: Optional[int] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
         db: Optional[BaseDb] = None,
-        in_memory_db: bool = False,
         memory_manager: Optional[MemoryManager] = None,
         enable_agentic_memory: bool = False,
         enable_user_memories: bool = False,
@@ -415,6 +414,7 @@ class Agent:
 
         self.session_id = session_id
         self.session_state = session_state
+        self.cache_session = cache_session
 
         self.search_session_history = search_session_history
         self.num_history_sessions = num_history_sessions
@@ -423,14 +423,6 @@ class Agent:
         self.add_dependencies_to_context = add_dependencies_to_context
 
         self.db = db
-        self.in_memory_db = in_memory_db
-
-        if self.in_memory_db and self.db is None:
-            self.db = InMemoryDb()
-        if self.in_memory_db and self.db is not None:
-            log_warning(
-                "In-memory database is enabled, but a database is provided. The provided database will be used."
-            )
 
         self.memory_manager = memory_manager
         self.enable_agentic_memory = enable_agentic_memory
@@ -3706,6 +3698,9 @@ class Agent:
                 created_at=int(time()),
             )
 
+        if self.cache_session:
+            self._agent_session = agent_session
+
         return agent_session
 
     def get_run_response(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
@@ -3778,9 +3773,19 @@ class Agent:
 
         session_id_to_load = session_id or self.session_id
 
-        # Try to load from database
+        # If there is a cached session, return it
+        if self.cache_session and hasattr(self, "_agent_session") and self._agent_session is not None:
+            if self._agent_session.session_id == session_id_to_load:
+                return self._agent_session
+
+        # Load and return the session from the database
         if self.db is not None:
             agent_session = cast(AgentSession, self._read_session(session_id=session_id_to_load))  # type: ignore
+
+            # Cache the session if relevant
+            if agent_session is not None and self.cache_session:
+                self._agent_session = agent_session
+
             return agent_session
 
         log_warning(f"AgentSession {session_id_to_load} not found in db")
@@ -4700,7 +4705,7 @@ class Agent:
         from agno.knowledge.document import Document
 
         if num_documents is None and self.knowledge is not None:
-            num_documents = self.knowledge.num_documents
+            num_documents = self.knowledge.max_results
         # Validate the filters against known valid filter keys
         if self.knowledge is not None:
             valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
@@ -4765,7 +4770,7 @@ class Agent:
         from agno.knowledge.document import Document
 
         if num_documents is None and self.knowledge is not None:
-            num_documents = self.knowledge.num_documents
+            num_documents = self.knowledge.max_results
 
         # Validate the filters against known valid filter keys
         if self.knowledge is not None:

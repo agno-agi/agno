@@ -1,6 +1,6 @@
 import pytest
 
-from agno.embedder.jina import JinaEmbedder
+from agno.knowledge.embedder.jina import JinaEmbedder
 
 
 @pytest.fixture
