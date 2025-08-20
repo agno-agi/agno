@@ -235,3 +235,41 @@ async def test_stream_with_tool_call_blocking():
     tool_start_idx = event_types.index(EventType.TOOL_CALL_START)
     tool_end_idx = event_types.index(EventType.TOOL_CALL_END)
     assert tool_start_idx < tool_end_idx
+
+
+@pytest.mark.asyncio
+async def test_stream_with_tool_confirmation():
+    """Test that a StateSnapshotEvent is emitted when a tool requires confirmation."""
+    from agno.models.response import ToolExecution
+    from agno.run.response import RunEvent, RunResponsePausedEvent
+
+    async def mock_stream_with_confirmation():
+        # Create a paused event with a tool that requires confirmation
+        paused_event = RunResponsePausedEvent()
+        paused_event.event = RunEvent.run_paused
+
+        tool_to_confirm = ToolExecution(
+            tool_call_id="tool_123",
+            tool_name="test_tool",
+            tool_args={"arg1": "value1"},
+            requires_confirmation=True,
+        )
+        paused_event.tools = [tool_to_confirm]
+        yield paused_event
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream_with_confirmation(), "thread_1", "run_1"):
+        events.append(event)
+
+    # Assert that only one StateSnapshotEvent is emitted
+    assert len(events) == 1
+    event = events[0]
+    assert event.type == EventType.STATE_SNAPSHOT
+
+    # Assert the content of the snapshot
+    snapshot = event.snapshot
+    assert snapshot["status"] == "paused_for_confirmation"
+    assert len(snapshot["tools_to_confirm"]) == 1
+    tool_info = snapshot["tools_to_confirm"][0]
+    assert tool_info["tool_call_id"] == "tool_123"
+    assert tool_info["tool_name"] == "test_tool"
