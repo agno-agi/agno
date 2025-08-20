@@ -1018,11 +1018,49 @@ class Model(ABC):
         success: bool,
         output: Optional[Union[List[Any], str]] = None,
         timer: Optional[Timer] = None,
+        function_execution_result: Optional[FunctionExecutionResult] = None,
     ) -> Message:
         """Create a function call result message."""
         kwargs = {}
         if timer is not None:
             kwargs["metrics"] = Metrics(duration=timer.elapsed)
+        
+        # Include media artifacts from function execution result in the tool message
+        images = None
+        videos = None
+        audio = None
+        
+        if success and function_execution_result:
+            # Convert ImageArtifacts to Images for message compatibility
+            if function_execution_result.images:
+                from agno.media import Image
+                images = []
+                for img_artifact in function_execution_result.images:
+                    if img_artifact.url:
+                        images.append(Image(url=img_artifact.url))
+                    elif img_artifact.content:
+                        images.append(Image(content=img_artifact.content))
+            
+            # Convert VideoArtifacts to Videos for message compatibility
+            if function_execution_result.videos:
+                from agno.media import Video
+                videos = []
+                for vid_artifact in function_execution_result.videos:
+                    if vid_artifact.url:
+                        videos.append(Video(url=vid_artifact.url))
+                    elif vid_artifact.content:
+                        videos.append(Video(content=vid_artifact.content))
+            
+            # Convert AudioArtifacts to Audio for message compatibility
+            if function_execution_result.audio:
+                from agno.media import Audio
+                audio = []
+                for aud_artifact in function_execution_result.audio:
+                    if aud_artifact.url:
+                        audio.append(Audio(url=aud_artifact.url))
+                    elif aud_artifact.content:
+                        audio.append(Audio(content=aud_artifact.content))
+        
         return Message(
             role=self.tool_message_role,
             content=output if success else function_call.error,
@@ -1031,6 +1069,9 @@ class Model(ABC):
             tool_args=function_call.arguments,
             tool_call_error=not success,
             stop_after_tool_call=function_call.function.stop_after_tool_call,
+            images=images,
+            videos=videos,
+            audio=audio,
             **kwargs,  # type: ignore
         )
 
@@ -1131,7 +1172,11 @@ class Model(ABC):
 
         # Create and yield function call result
         function_call_result = self.create_function_call_result(
-            function_call, success=function_call_success, output=function_call_output, timer=function_call_timer
+            function_call, 
+            success=function_call_success, 
+            output=function_call_output, 
+            timer=function_call_timer,
+            function_execution_result=function_execution_result
         )
         yield ModelResponse(
             content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.",
