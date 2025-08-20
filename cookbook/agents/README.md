@@ -2,8 +2,7 @@
 
 Welcome to the **Agno Agents Cookbook** - your comprehensive guide to building intelligent AI agents with Agno. This cookbook contains practical examples, patterns, and best practices for creating powerful AI applications using Agno's agent framework.
 
-- [Agno Agents Cookbook - Developer Guide](#agno-agents-cookbook---developer-guide)
-  - [Table of Contents](#table-of-contents)
+- [Table of Contents](#table-of-contents)
   - [Overview](#overview)
     - [Key Agent Features](#key-agent-features)
   - [Quick Start](#quick-start)
