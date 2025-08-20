@@ -140,8 +140,7 @@ class Team:
     session_state: Optional[Dict[str, Any]] = None
     # If True, the team can update the session state
     enable_agentic_state: bool = False
-
-    # If True, cache the session in memory
+    # If True, cache the current Team session in memory for faster access
     cache_session: bool = False
 
     # If True, add the session state variables in the user and system messages
@@ -334,7 +333,7 @@ class Team:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         add_state_in_messages: bool = False,
-        cache_session: bool = True,
+        cache_session: bool = False,
         description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
         expected_output: Optional[str] = None,
@@ -412,7 +411,6 @@ class Team:
         self.session_id = session_id
         self.session_state = session_state
         self.add_state_in_messages = add_state_in_messages
-
         self.cache_session = cache_session
 
         self.description = description
@@ -550,9 +548,15 @@ class Team:
             self.telemetry = telemetry_env.lower() == "true"
 
     def _initialize_member(self, member: Union["Team", Agent], debug_mode: Optional[bool] = None) -> None:
+        # Set debug mode for all members
+        if debug_mode:
+            member.debug_mode = True
+            member.debug_level = self.debug_level
+
         if isinstance(member, Agent):
             member.team_id = self.id
             member.set_id()
+
         elif isinstance(member, Team):
             if member.id is None:
                 member.id = str(uuid4())
@@ -4545,7 +4549,7 @@ class Team:
                         files=files,
                         stream=False,
                         workflow_context=workflow_context,
-                        debug_mode=debug_mode
+                        debug_mode=debug_mode,
                     )
 
                     check_if_run_cancelled(member_agent_run_response)  # type: ignore
@@ -4658,7 +4662,7 @@ class Team:
                         stream=True,
                         stream_intermediate_steps=stream_intermediate_steps,
                         debug_mode=debug_mode,
-                        yield_run_response=True
+                        yield_run_response=True,
                     )
                     member_agent_run_response = None
                     try:
@@ -4671,7 +4675,6 @@ class Team:
                             check_if_run_cancelled(member_agent_run_output_event)
                             await queue.put(member_agent_run_output_event)
                     finally:
-
                         # Add team run id to the member run
                         if member_agent_run_response is not None:
                             member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
@@ -4749,24 +4752,22 @@ class Team:
                         if history:
                             history.append(Message(role="user", content=member_agent_task))
 
-
-                async def run_member_agent(agent=current_agent, idx=current_index) -> str:
-                    member_agent_run_response = await agent.arun(
-                        input=member_agent_task if history is None else None,
-                        user_id=user_id,
-                        # All members have the same session_id
-                        session_id=session.session_id,
-                        session_state=member_session_state_copy,  # Send a copy to the agent
-                        messages=history if history is not None else None,
-                        images=images,
-                        videos=videos,
-                        audio=audio,
-                        files=files,
-                        stream=False,
-                        refresh_session_before_write=True,
-                    )
-                    check_if_run_cancelled(member_agent_run_response)
-
+                    async def run_member_agent(agent=current_agent) -> str:
+                        member_session_state_copy = copy(session_state)
+                        member_agent_run_response = await agent.arun(
+                            input=member_agent_task if history is None else history,
+                            user_id=user_id,
+                            # All members have the same session_id
+                            session_id=session.session_id,
+                            images=images,
+                            videos=videos,
+                            audio=audio,
+                            files=files,
+                            stream=False,
+                            debug_mode=debug_mode,
+                        )
+                        check_if_run_cancelled(member_agent_run_response)
+                        
                         # Add team run id to the member run
                         if member_agent_run_response is not None:
                             member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
@@ -4796,12 +4797,17 @@ class Team:
                             self._update_team_media(member_agent_run_response)  # type: ignore
 
                         try:
-                            if member_agent_run_response.content is None and (member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0):
+                            if member_agent_run_response.content is None and (
+                                member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
+                            ):
                                 return f"Agent {member_name}: No response from the member agent."
                             elif isinstance(member_agent_run_response.content, str):
                                 if len(member_agent_run_response.content.strip()) > 0:
                                     return f"Agent {member_name}: {member_agent_run_response.content}"
-                                elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
+                                elif (
+                                    member_agent_run_response.tools is not None
+                                    and len(member_agent_run_response.tools) > 0
+                                ):
                                     return f"Agent {member_name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"
                             elif issubclass(type(member_agent_run_response.content), BaseModel):
                                 return f"Agent {member_name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
@@ -5093,7 +5099,7 @@ class Team:
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
-                    yield_run_response=True
+                    yield_run_response=True,
                 )
                 member_agent_run_response = None
                 async for member_agent_run_response_event in member_agent_run_response_stream:
@@ -5646,7 +5652,8 @@ class Team:
                 created_at=int(time()),
             )
 
-        if self.cache_session:
+        # Cache the session if relevant
+        if team_session is not None and self.cache_session:
             self._team_session = team_session
 
         return team_session
@@ -5668,9 +5675,19 @@ class Team:
 
         session_id_to_load = session_id or self.session_id
 
-        # Try to load from database
+        # If there is a cached session, return it
+        if self.cache_session and hasattr(self, "_team_session") and self._team_session is not None:
+            if self._team_session.session_id == session_id_to_load:
+                return self._team_session
+
+        # Load and return the session from the database
         if self.db is not None:
             team_session = cast(TeamSession, self._read_session(session_id=session_id_to_load))  # type: ignore
+
+            # Cache the session if relevant
+            if team_session is not None and self.cache_session:
+                self._team_session = team_session
+
             return team_session
 
         log_warning(f"TeamSession {session_id_to_load} not found in db")

@@ -122,7 +122,7 @@ class Agent:
     session_state: Optional[Dict[str, Any]] = None
     # If True, the agent can update the session state
     enable_agentic_state: bool = False
-    # If True, cache the session in memory
+    # If True, cache the current Agent session in memory for faster access
     cache_session: bool = False
 
     search_session_history: Optional[bool] = False
@@ -333,9 +333,9 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        cache_session: bool = False,
         search_session_history: Optional[bool] = False,
         num_history_sessions: Optional[int] = None,
-        cache_session: bool = False,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
         db: Optional[BaseDb] = None,
@@ -414,11 +414,10 @@ class Agent:
 
         self.session_id = session_id
         self.session_state = session_state
+        self.cache_session = cache_session
 
         self.search_session_history = search_session_history
         self.num_history_sessions = num_history_sessions
-
-        self.cache_session = cache_session
 
         self.dependencies = dependencies
         self.add_dependencies_to_context = add_dependencies_to_context
@@ -3777,16 +3776,16 @@ class Agent:
 
         session_id_to_load = session_id or self.session_id
 
-        # First check cached session if caching is enabled
+        # If there is a cached session, return it
         if self.cache_session and hasattr(self, "_agent_session") and self._agent_session is not None:
             if self._agent_session.session_id == session_id_to_load:
                 return self._agent_session
 
-        # Try to load from database
+        # Load and return the session from the database
         if self.db is not None:
             agent_session = cast(AgentSession, self._read_session(session_id=session_id_to_load))  # type: ignore
 
-            # Cache the session if caching is enabled and we found it
+            # Cache the session if relevant
             if agent_session is not None and self.cache_session:
                 self._agent_session = agent_session
 
@@ -3808,9 +3807,10 @@ class Agent:
             and self.workflow_id is None
             and session.session_data is not None
         ):
-            session.session_data["session_state"].pop("current_session_id", None)
-            session.session_data["session_state"].pop("current_user_id", None)
-            session.session_data["session_state"].pop("current_run_id", None)
+            if session.session_data is not None and "session_state" in session.session_data:
+                session.session_data["session_state"].pop("current_session_id", None)
+                session.session_data["session_state"].pop("current_user_id", None)
+                session.session_data["session_state"].pop("current_run_id", None)
 
             # TODO: Add image/audio/video artifacts to the session correctly, from runs
             if self.images is not None:
@@ -4416,9 +4416,9 @@ class Agent:
 
                 run_messages.messages += history_copy
 
-        # 4.1 Build user message if message is None, str or list
         # 4. Add user message to run_messages
         user_message: Optional[Message] = None
+
         # 4.1 Build user message if input is None, str or list and not a list of Message/dict objects
         if (
             input is None
@@ -4442,15 +4442,18 @@ class Agent:
                 knowledge_filters=knowledge_filters,
                 **kwargs,
             )
+
         # 4.2 If input is provided as a Message, use it directly
         elif isinstance(input, Message):
             user_message = input
+
         # 4.3 If input is provided as a dict, try to validate it as a Message
         elif isinstance(input, dict):
             try:
                 user_message = Message.model_validate(input)
             except Exception as e:
                 log_warning(f"Failed to validate message: {e}")
+
         # 4.4 If input is provided as a BaseModel, convert it to a Message
         elif isinstance(input, BaseModel):
             try:
@@ -4459,11 +4462,6 @@ class Agent:
                 user_message = Message(role=self.user_message_role, content=content)
             except Exception as e:
                 log_warning(f"Failed to convert BaseModel to message: {e}")
-
-        # Add user message to run_messages
-        if user_message is not None:
-            run_messages.user_message = user_message
-            run_messages.messages.append(user_message)
 
         # 5. Add input messages to run_messages if provided (List[Message] or List[Dict])
         if (
@@ -4700,7 +4698,7 @@ class Agent:
         from agno.knowledge.document import Document
 
         if num_documents is None and self.knowledge is not None:
-            num_documents = self.knowledge.num_documents
+            num_documents = self.knowledge.max_results
         # Validate the filters against known valid filter keys
         if self.knowledge is not None:
             valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
@@ -4765,7 +4763,7 @@ class Agent:
         from agno.knowledge.document import Document
 
         if num_documents is None and self.knowledge is not None:
-            num_documents = self.knowledge.num_documents
+            num_documents = self.knowledge.max_results
 
         # Validate the filters against known valid filter keys
         if self.knowledge is not None:

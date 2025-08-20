@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 import pytest
 from ag_ui.core import EventType
 
-from agno.app.agui.utils import EventBuffer, async_stream_agno_response_as_agui_events
+from agno.os.interfaces.agui.utils import EventBuffer, async_stream_agno_response_as_agui_events
 from agno.run.response import RunContentEvent, ToolCallCompletedEvent, ToolCallStartedEvent
 
 

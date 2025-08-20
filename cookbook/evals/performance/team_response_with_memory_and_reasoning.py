@@ -1032,7 +1032,6 @@ team = Team(
     read_team_history=False,
     stream=True,
     stream_intermediate_steps=True,
-    cache_session=False,
 )
 
 

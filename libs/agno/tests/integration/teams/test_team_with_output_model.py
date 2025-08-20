@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
-from agno.run.team import IntermediateRunResponseContentEvent, RunResponseContentEvent
+from agno.run.response import IntermediateRunResponseContentEvent, RunResponseContentEvent
 from agno.team import Team
 
 agent = Agent(
@@ -9,7 +9,6 @@ agent = Agent(
     description="You are an expert on national parks and provide concise guides.",
     output_model=OpenAIChat(id="gpt-4o"),
     telemetry=False,
-    monitoring=False,
 )
 
 team = Team(
@@ -20,7 +19,6 @@ team = Team(
     description="You are an expert on national parks and provide concise guides.",
     stream_intermediate_steps=True,
     telemetry=False,
-    monitoring=False,
 )
 
 

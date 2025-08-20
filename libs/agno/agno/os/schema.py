@@ -136,7 +136,7 @@ class AgentResponse(BaseModel):
             "num_history_runs": 3,
             "enable_session_summaries": False,
             "search_session_history": False,
-            "cache_session": True,
+            "cache_session": False,
             # Knowledge defaults
             "add_references": False,
             "references_format": "json",
@@ -369,7 +369,7 @@ class TeamResponse(BaseModel):
             "add_history_to_context": False,
             "num_history_runs": 3,
             "enable_session_summaries": False,
-            "cache_session": True,
+            "cache_session": False,
             # Knowledge defaults
             "add_references": False,
             "references_format": "json",
