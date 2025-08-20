@@ -12,8 +12,7 @@ class ContentType(str, Enum):
     # Document file extensions
     PDF = ".pdf"
     TXT = ".txt"
-    MD = ".md"
-    MARKDOWN = ".markdown"
+    MARKDOWN = ".md"
     DOCX = ".docx"
     DOC = ".doc"
     JSON = ".json"

@@ -26,7 +26,7 @@ class MarkdownReader(Reader):
         ]
 
     def get_supported_content_types(self) -> List[ContentType]:
-        return [ContentType.MD, ContentType.MARKDOWN]
+        return [ContentType.MARKDOWN]
 
     def __init__(
         self,

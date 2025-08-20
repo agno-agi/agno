@@ -57,26 +57,11 @@ class Reader:
 
     @classmethod
     def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
-        """Get the list of supported chunking strategies for this reader.
-
-        Returns:
-            List of ChunkingStrategyType enums that this reader supports.
-        """
-        # Default implementation returns common strategies
-        return [
-            ChunkingStrategyType.FIXED_SIZE_CHUNKING,
-            ChunkingStrategyType.DOCUMENT_CHUNKING,
-            ChunkingStrategyType.RECURSIVE_CHUNKING,
-            ChunkingStrategyType.AGENTIC_CHUNKING,
-            ChunkingStrategyType.MARKDOWN_CHUNKING,
-            ChunkingStrategyType.ROW_CHUNKING,
-            ChunkingStrategyType.SEMANTIC_CHUNKING,
-        ]
+        return []
 
     @classmethod
     def get_supported_content_types(cls) -> List[ContentType]:
-        """Get the list of supported content types for this reader."""
-        return [ContentType.FILE, ContentType.URL, ContentType.TEXT]
+        return []
 
     def chunk_document(self, document: Document) -> List[Document]:
         print(f"chunk_document: {self.chunking_strategy}")
