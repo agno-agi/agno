@@ -4545,7 +4545,7 @@ class Team:
                         files=files,
                         stream=False,
                         workflow_context=workflow_context,
-                        debug_mode=debug_mode
+                        debug_mode=debug_mode,
                     )
 
                     check_if_run_cancelled(member_agent_run_response)  # type: ignore
@@ -4658,7 +4658,7 @@ class Team:
                         stream=True,
                         stream_intermediate_steps=stream_intermediate_steps,
                         debug_mode=debug_mode,
-                        yield_run_response=True
+                        yield_run_response=True,
                     )
                     member_agent_run_response = None
                     try:
@@ -4671,7 +4671,6 @@ class Team:
                             check_if_run_cancelled(member_agent_run_output_event)
                             await queue.put(member_agent_run_output_event)
                     finally:
-
                         # Add team run id to the member run
                         if member_agent_run_response is not None:
                             member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
@@ -4749,7 +4748,6 @@ class Team:
                         if history:
                             history.append(Message(role="user", content=member_agent_task))
 
-
                     async def run_member_agent(agent=current_agent) -> str:
                         member_session_state_copy = copy(session_state)
                         member_agent_run_response = await agent.arun(
@@ -4795,12 +4793,17 @@ class Team:
                             self._update_team_media(member_agent_run_response)  # type: ignore
 
                         try:
-                            if member_agent_run_response.content is None and (member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0):
+                            if member_agent_run_response.content is None and (
+                                member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0
+                            ):
                                 return f"Agent {member_name}: No response from the member agent."
                             elif isinstance(member_agent_run_response.content, str):
                                 if len(member_agent_run_response.content.strip()) > 0:
                                     return f"Agent {member_name}: {member_agent_run_response.content}"
-                                elif member_agent_run_response.tools is not None and len(member_agent_run_response.tools) > 0:
+                                elif (
+                                    member_agent_run_response.tools is not None
+                                    and len(member_agent_run_response.tools) > 0
+                                ):
                                     return f"Agent {member_name}: {','.join([tool.result for tool in member_agent_run_response.tools])}"
                             elif issubclass(type(member_agent_run_response.content), BaseModel):
                                 return f"Agent {member_name}: {member_agent_run_response.content.model_dump_json(indent=2)}"  # type: ignore
@@ -5092,7 +5095,7 @@ class Team:
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
-                    yield_run_response=True
+                    yield_run_response=True,
                 )
                 member_agent_run_response = None
                 async for member_agent_run_response_event in member_agent_run_response_stream:
