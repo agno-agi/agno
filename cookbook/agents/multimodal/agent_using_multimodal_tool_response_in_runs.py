@@ -9,7 +9,6 @@ from agno.db.sqlite import SqliteDb
 # Create an Agent with the DALL-E tool
 agent = Agent(tools=[DalleTools()], name="DALL-E Image Generator", add_history_to_context=True, db=SqliteDb(db_file="tmp/test.db"))
 
-# Example 1: Generate a basic image with default settings
 agent.print_response(
     "Generate an image of a Siamese white furry cat sitting on a couch?",
     markdown=True,
