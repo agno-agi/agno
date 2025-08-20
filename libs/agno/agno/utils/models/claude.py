@@ -277,6 +277,7 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                             type="tool_use",
                         )
                     )
+
         # Skip empty assistant responses
         if message.role == "assistant" and not content:
             continue

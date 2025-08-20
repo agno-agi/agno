@@ -410,7 +410,6 @@ class WorkflowRunOutput:
 
     content: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, Any]] = None
     content_type: str = "str"
-    metrics: Optional[Dict[str, Any]] = None
 
     # Workflow-specific fields
     workflow_id: Optional[str] = None
@@ -435,7 +434,7 @@ class WorkflowRunOutput:
     events: Optional[List[WorkflowRunOutputEvent]] = None
 
     # Workflow metrics aggregated from all steps
-    workflow_metrics: Optional["WorkflowMetrics"] = None
+    metrics: Optional["WorkflowMetrics"] = None
 
     metadata: Optional[Dict[str, Any]] = None
     created_at: int = field(default_factory=lambda: int(time()))
@@ -461,7 +460,7 @@ class WorkflowRunOutput:
                 "step_results",
                 "step_executor_runs",
                 "events",
-                "workflow_metrics",
+                "metrics",
             ]
         }
 
@@ -497,8 +496,8 @@ class WorkflowRunOutput:
         if self.step_executor_runs:
             _dict["step_executor_runs"] = [run.to_dict() for run in self.step_executor_runs]
 
-        if self.workflow_metrics is not None:
-            _dict["workflow_metrics"] = self.workflow_metrics.to_dict()
+        if self.metrics is not None:
+            _dict["metrics"] = self.metrics.to_dict()
 
         if self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
@@ -513,7 +512,7 @@ class WorkflowRunOutput:
         # Import here to avoid circular import
         from agno.workflow.step import StepOutput
 
-        workflow_metrics_dict = data.pop("workflow_metrics", {})
+        workflow_metrics_dict = data.pop("metrics", {})
         workflow_metrics = None
         if workflow_metrics_dict:
             from agno.workflow.workflow import WorkflowMetrics
@@ -562,7 +561,7 @@ class WorkflowRunOutput:
             audio=audio,
             response_audio=response_audio,
             events=events,
-            workflow_metrics=workflow_metrics,
+            metrics=workflow_metrics,
             step_executor_runs=step_executor_runs,
             **data,
         )

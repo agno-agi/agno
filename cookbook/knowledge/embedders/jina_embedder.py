@@ -35,5 +35,5 @@ knowledge = Knowledge(
             timeout=30.0,  # Configure request timeout
         ),
     ),
-    num_documents=2,
+    max_results=2,
 )

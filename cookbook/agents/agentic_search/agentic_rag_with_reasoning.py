@@ -4,6 +4,8 @@
 3. Run: `python cookbook/agent_concepts/agentic_search/agentic_rag_with_reasoning.py` to run the agent
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.knowledge import Knowledge
@@ -23,7 +25,9 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_contents(urls=["https://docs.agno.com/introduction/agents.md"])
+asyncio.run(
+    knowledge.add_contents(urls=["https://docs.agno.com/introduction/agents.md"])
+)
 
 agent = Agent(
     model=Claude(id="claude-sonnet-4-20250514"),

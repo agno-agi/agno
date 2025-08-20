@@ -4,7 +4,7 @@ version = "2.0.0-rc.1"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
-license = { file = "LICENSE" }
+license-files = ["LICENSE"]
 authors = [
   {name = "Ashpreet Bedi", email = "ashpreet@agno.com"}
 ]
@@ -35,19 +35,19 @@ dependencies = [
   "gitpython",
   # Required to avoid `SyncHttpxClientWrapper` error
   "httpx==0.27.2",  
+  "packaging",
   "pydantic-settings",
   "pydantic",
   "python-dotenv",
   "python-multipart",
   "pyyaml",
   "rich",
-  "tomli",
   "typer",
   "typing-extensions",
 ]
 
 [project.optional-dependencies]
-dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn", "arxiv"]
+dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn"]
 
 # Models integration test dependencies
 integration-tests = [
@@ -86,6 +86,7 @@ portkey = ["portkey-ai"]
 # Dependencies for Tools
 agentql = ["agentql"]
 apify = ["apify-client"]
+arxiv = ["arxiv"]
 brave = ["brave-search"]
 browserbase = ["browserbase", "playwright"]
 cartesia = ["cartesia"]
@@ -107,7 +108,7 @@ mcp = ["mcp"]
 mem0 = ["mem0ai"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 opencv = ["opencv-python"]
-psycopg2 = ["psycopg2-binary"]
+psycopg = ["psycopg-binary", "psycopg"]
 todoist = ["todoist-api-python"]
 valyu = ["valyu"]
 webex = ["webexpythonsdk"]
@@ -116,10 +117,11 @@ youtube = ["youtube_transcript_api"]
 zep = ["zep-cloud"]
 daytona=["daytona"]
 oxylabs = ["oxylabs"]
+trafilatura = ["trafilatura"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
-postgres = ["psycopg-binary", "psycopg"]
+postgres = ["psycopg-binary"]
 sqlite = ["sqlalchemy"]
 gcs = ["google-cloud-storage"]
 firestore = ["google-cloud-firestore"]
@@ -162,10 +164,12 @@ performance = ["memory_profiler"]
 cookbooks = ["inquirer", "email_validator"]
 
 # Dependencies for Docker
-docker = ["agno-docker"]
+docker = ["agno-os[docker]"]
 
 # Dependencies for AWS
-aws = ["agno-aws", "agno-docker"]
+aws = ["agno-os[aws]", "agno-os[docker]"]
+
+os = ["agno-os"]
 
 # All models
 models = [
@@ -190,6 +194,7 @@ models = [
 # All tools
 tools = [
   "agno[apify]",
+  "agno[arxiv]",
   "agno[brave]",
   "agno[exa]",
   "agno[cartesia]",
@@ -219,7 +224,8 @@ tools = [
   "agno[zep]",
   "agno[mem0]",
   "agno[google_bigquery]",
-  "agno[psycopg2]",
+  "agno[psycopg]",
+  "agno[trafilatura]",
 ]
 
 # All storage
@@ -278,10 +284,6 @@ tests = [
     "twine",
     "build",
 ]
-
-[project.scripts]
-ag = "agno.cli.entrypoint:agno_cli"
-agno = "agno.cli.entrypoint:agno_cli"
 
 [project.urls]
 homepage = "https://agno.com"
@@ -404,7 +406,6 @@ module = [
   "portkey_ai.*",
   "playwright.sync_api.*",
   "psycopg.*",
-  "psycopg2.*",
   "pyarrow.*",
   "pycountry.*",
   "pymongo.*",
@@ -452,6 +453,7 @@ module = [
   "acouchbase.*",
   "zep_cloud.*",
   "oxylabs.*",
-  "surrealdb.*"
+  "surrealdb.*",
+  "trafilatura.*"
 ]
 ignore_missing_imports = true

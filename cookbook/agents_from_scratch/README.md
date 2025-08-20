@@ -31,22 +31,6 @@ If you want to use the ElevenLabs API, export your API key:
 export ELEVENLABS_API_KEY=your_api_key
 ```
 
-## Run the Playground
-
-We recommend testing the Agents in the Agent UI, which is a web application that allows you to chat with your Agents.
-
-### Authenticate with Agno
-
-```bash
-ag setup
-```
-
-### Run the Playground
-
-```bash
-python cookbook/agents_from_scratch/playground.py
-```
-
 ## Run the Agents in the CLI
 
 You may also run the Agents in the CLI, which is useful for testing and debugging.

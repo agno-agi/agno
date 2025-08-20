@@ -36,7 +36,7 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
 
         # Request streaming response from agent
         response_stream = agent.arun(
-            messages=messages,
+            input=messages,
             session_id=run_input.thread_id,
             stream=True,
             stream_intermediate_steps=True,

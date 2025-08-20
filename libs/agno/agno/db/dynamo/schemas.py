@@ -73,7 +73,6 @@ USER_MEMORY_TABLE_SCHEMA = {
         {"AttributeName": "user_id", "AttributeType": "S"},
         {"AttributeName": "agent_id", "AttributeType": "S"},
         {"AttributeName": "team_id", "AttributeType": "S"},
-        {"AttributeName": "workflow_id", "AttributeType": "S"},
         {"AttributeName": "updated_at", "AttributeType": "S"},
     ],
     "GlobalSecondaryIndexes": [
@@ -124,6 +123,7 @@ EVAL_TABLE_SCHEMA = {
     "AttributeDefinitions": [
         {"AttributeName": "run_id", "AttributeType": "S"},
         {"AttributeName": "eval_type", "AttributeType": "S"},
+        {"AttributeName": "eval_input", "AttributeType": "S"},
         {"AttributeName": "agent_id", "AttributeType": "S"},
         {"AttributeName": "team_id", "AttributeType": "S"},
         {"AttributeName": "workflow_id", "AttributeType": "S"},

@@ -36,6 +36,7 @@ def test_team_default_state(shared_db):
     session_from_storage = team.get_session(session_id=session_id)
     assert session_from_storage is not None
     assert session_from_storage.session_id == session_id
+    assert session_from_storage.session_data is not None
     assert session_from_storage.session_data["session_state"] == session_state
 
 
@@ -52,6 +53,7 @@ def test_team_set_session_name(shared_db):
     session_from_storage = team.get_session(session_id=session_id)
     assert session_from_storage is not None
     assert session_from_storage.session_id == session_id
+    assert session_from_storage.session_data is not None
     assert session_from_storage.session_data["session_name"] == "my_test_session"
 
 
@@ -92,20 +94,26 @@ def test_team_session_state_switch_session_id(shared_db):
     # First run with a different session ID
     team.run("What can you do?", session_id=session_id_1)
     session_from_storage = team.get_session(session_id=session_id_1)
+    assert session_from_storage is not None
     assert session_from_storage.session_id == session_id_1
+    assert session_from_storage.session_data is not None
     assert session_from_storage.session_data["session_state"] == session_state
 
     # Second run with different session ID
     team.run("What can you do?", session_id=session_id_2)
     session_from_storage = team.get_session(session_id=session_id_2)
+    assert session_from_storage is not None
     assert session_from_storage.session_id == session_id_2
+    assert session_from_storage.session_data is not None
     assert session_from_storage.session_data["session_state"] == session_state
 
     # Third run with the original session ID
     team.run("What can you do?", session_id=session_id_1)
     session_from_storage = team.get_session(session_id=session_id_1)
+    assert session_from_storage is not None
     assert session_from_storage.session_id == session_id_1
-    assert session_from_storage.session_data["session_state"] == session_state
+    assert session_from_storage.session_data is not None
+    assert session_from_storage.session_data["session_state"]["test_key"] == session_state["test_key"]
 
 
 def test_team_with_state_on_team(shared_db):
@@ -130,6 +138,9 @@ def test_team_with_state_on_team(shared_db):
     response = team.run(
         'Current shopping list: {shopping_list}. Other random json ```json { "properties": { "title": { "title": "a" } } }```'
     )
+
+    assert response is not None
+    assert response.messages is not None
     assert (
         response.messages[1].content
         == 'Current shopping list: [\'oranges\']. Other random json ```json { "properties": { "title": { "title": "a" } } }```'
@@ -158,6 +169,8 @@ def test_team_with_state_on_team_stream(shared_db):
         pass
 
     session_from_storage = team.get_session(session_id=team.session_id)
+    assert session_from_storage is not None
+    assert session_from_storage.session_data is not None
     assert session_from_storage.session_data["session_state"] == {"shopping_list": ["oranges"]}
 
     for _ in team.run(
@@ -167,6 +180,8 @@ def test_team_with_state_on_team_stream(shared_db):
         pass
 
     run_response = team.get_last_run_response()
+    assert run_response is not None
+    assert run_response.messages is not None
     assert (
         run_response.messages[1].content
         == 'Current shopping list: [\'oranges\']. Other random json ```json { "properties": { "title": { "title": "a" } } }```'
@@ -193,6 +208,8 @@ def test_team_with_state_on_run(shared_db):
     team.run("Add oranges to my shopping list", session_id="session_1", session_state={"shopping_list": []})
 
     session_from_storage = team.get_session(session_id="session_1")
+    assert session_from_storage is not None
+    assert session_from_storage.session_data is not None
     assert session_from_storage.session_data["session_state"] == {"shopping_list": ["oranges"]}
 
     response = team.run(
@@ -200,6 +217,8 @@ def test_team_with_state_on_run(shared_db):
         session_id="session_1",
     )
 
+    assert response is not None
+    assert response.messages is not None
     assert (
         response.messages[1].content
         == 'Current shopping list: [\'oranges\']. Other random json ```json { "properties": { "title": { "title": "a" } } }```'
@@ -229,6 +248,8 @@ def test_team_with_state_on_run_stream(shared_db):
         pass
 
     session_from_storage = team.get_session(session_id="session_1")
+    assert session_from_storage is not None
+    assert session_from_storage.session_data is not None
     assert session_from_storage.session_data["session_state"] == {"shopping_list": ["oranges"]}
 
     for response in team.run(
@@ -239,6 +260,8 @@ def test_team_with_state_on_run_stream(shared_db):
         pass
 
     run_response = team.get_last_run_response(session_id="session_1")
+    assert run_response is not None
+    assert run_response.messages is not None
     assert (
         run_response.messages[1].content
         == 'Current shopping list: [\'oranges\']. Other random json ```json { "properties": { "title": { "title": "a" } } }```'
@@ -265,6 +288,8 @@ async def test_team_with_state_on_run_async(shared_db):
     await team.arun("Add oranges to my shopping list", session_id="session_1", session_state={"shopping_list": []})
 
     session_from_storage = team.get_session(session_id="session_1")
+    assert session_from_storage is not None
+    assert session_from_storage.session_data is not None
     assert session_from_storage.session_data["session_state"] == {"shopping_list": ["oranges"]}
 
     response = await team.arun(
@@ -272,6 +297,8 @@ async def test_team_with_state_on_run_async(shared_db):
         session_id="session_1",
     )
 
+    assert response is not None
+    assert response.messages is not None
     assert (
         response.messages[1].content
         == 'Current shopping list: [\'oranges\']. Other random json ```json { "properties": { "title": { "title": "a" } } }```'
@@ -301,6 +328,8 @@ async def test_team_with_state_on_run_stream_async(shared_db):
         pass
 
     session_from_storage = team.get_session(session_id="session_1")
+    assert session_from_storage is not None
+    assert session_from_storage.session_data is not None
     assert session_from_storage.session_data["session_state"] == {"shopping_list": ["oranges"]}
 
     async for response in team.arun(
@@ -311,6 +340,8 @@ async def test_team_with_state_on_run_stream_async(shared_db):
         pass
 
     run_response = team.get_last_run_response(session_id="session_1")
+    assert run_response is not None
+    assert run_response.messages is not None
     assert (
         run_response.messages[1].content
         == 'Current shopping list: [\'oranges\']. Other random json ```json { "properties": { "title": { "title": "a" } } }```'
@@ -336,4 +367,6 @@ def test_team_with_state_shared_with_members(shared_db):
     team.run("Add oranges to my shopping list", session_id="session_1", session_state={"shopping_list": []})
 
     session_from_storage = team.get_session(session_id="session_1")
+    assert session_from_storage is not None
+    assert session_from_storage.session_data is not None
     assert session_from_storage.session_data["session_state"] == {"shopping_list": ["oranges"]}

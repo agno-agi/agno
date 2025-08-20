@@ -123,8 +123,6 @@ class Workflow:
     user_id: Optional[str] = None
     # Default session state (stored in the database to persist across runs)
     session_state: Optional[Dict[str, Any]] = None
-    # If True, cache the session in memory
-    cache_session: bool = False
 
     # If True, the workflow runs in debug mode
     debug_mode: Optional[bool] = False
@@ -174,7 +172,6 @@ class Workflow:
         self.id = id
         self.name = name
         self.description = description
-        self.db = db
         self.steps = steps
         self.session_id = session_id
         self.session_state = session_state
@@ -188,6 +185,7 @@ class Workflow:
         self.input_schema = input_schema
         self.metadata = metadata
         self.cache_session = cache_session
+        self.db = db
 
         self._workflow_session: Optional[WorkflowSession] = None
 
@@ -461,7 +459,8 @@ class Workflow:
                 created_at=int(time()),
             )
 
-        if self.cache_session:
+        # Cache the session if relevant
+        if workflow_session is not None and self.cache_session:
             self._workflow_session = workflow_session
 
         return workflow_session
@@ -498,12 +497,13 @@ class Workflow:
             Optional[WorkflowSession]: The saved WorkflowSession or None if not saved.
         """
         if self.db is not None and session.session_data is not None:
-            session.session_data["session_state"].pop("current_session_id", None)
-            session.session_data["session_state"].pop("current_user_id", None)
-            session.session_data["session_state"].pop("workflow_id", None)
-            session.session_data["session_state"].pop("run_id", None)
-            session.session_data["session_state"].pop("session_id", None)
-            session.session_data["session_state"].pop("workflow_name", None)
+            if session.session_data.get("session_state") is not None:
+                session.session_data["session_state"].pop("current_session_id", None)
+                session.session_data["session_state"].pop("current_user_id", None)
+                session.session_data["session_state"].pop("workflow_id", None)
+                session.session_data["session_state"].pop("run_id", None)
+                session.session_data["session_state"].pop("session_id", None)
+                session.session_data["session_state"].pop("workflow_name", None)
 
             self._upsert_session(session=session)
             log_debug(f"Created or updated WorkflowSession record: {session.session_id}")
@@ -886,7 +886,7 @@ class Workflow:
 
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
-                    workflow_run_response.workflow_metrics = self._aggregate_workflow_metrics(collected_step_outputs)
+                    workflow_run_response.metrics = self._aggregate_workflow_metrics(collected_step_outputs)
                     last_output = cast(StepOutput, collected_step_outputs[-1])
 
                     # Use deepest nested content if this is a container (Steps/Router/Loop/etc.)
@@ -1059,7 +1059,7 @@ class Workflow:
 
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
-                    workflow_run_response.workflow_metrics = self._aggregate_workflow_metrics(collected_step_outputs)
+                    workflow_run_response.metrics = self._aggregate_workflow_metrics(collected_step_outputs)
                     last_output = cast(StepOutput, collected_step_outputs[-1])
 
                     # Use deepest nested content if this is a container (Steps/Router/Loop/etc.)
@@ -1257,7 +1257,7 @@ class Workflow:
 
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
-                    workflow_run_response.workflow_metrics = self._aggregate_workflow_metrics(collected_step_outputs)
+                    workflow_run_response.metrics = self._aggregate_workflow_metrics(collected_step_outputs)
                     last_output = cast(StepOutput, collected_step_outputs[-1])
 
                     # Use deepest nested content if this is a container (Steps/Router/Loop/etc.)
@@ -1432,7 +1432,7 @@ class Workflow:
 
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
-                    workflow_run_response.workflow_metrics = self._aggregate_workflow_metrics(collected_step_outputs)
+                    workflow_run_response.metrics = self._aggregate_workflow_metrics(collected_step_outputs)
                     last_output = cast(StepOutput, collected_step_outputs[-1])
 
                     # Use deepest nested content if this is a container (Steps/Router/Loop/etc.)
@@ -2226,10 +2226,8 @@ class Workflow:
         session_metrics = self._get_session_metrics(session=session)
 
         # If workflow has metrics, convert and add them to session metrics
-        if workflow_run_response.workflow_metrics:
-            run_session_metrics = self._calculate_session_metrics_from_workflow_metrics(
-                workflow_run_response.workflow_metrics
-            )
+        if workflow_run_response.metrics:
+            run_session_metrics = self._calculate_session_metrics_from_workflow_metrics(workflow_run_response.metrics)
 
             session_metrics += run_session_metrics
 

@@ -3,7 +3,7 @@ import json
 import uuid
 from hashlib import md5
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     from warnings import filterwarnings
@@ -74,6 +74,13 @@ class Weaviate(VectorDb):
         self.reranker: Optional[Reranker] = reranker
         self.hybrid_search_alpha = hybrid_search_alpha
 
+    @staticmethod
+    def _get_doc_uuid(document: Document) -> Tuple[uuid.UUID, str]:
+        cleaned_content = document.content.replace("\x00", "\ufffd")
+        content_hash = md5(cleaned_content.encode()).hexdigest()
+        doc_uuid = uuid.UUID(hex=content_hash[:32])
+        return doc_uuid, cleaned_content
+
     def get_client(self) -> weaviate.WeaviateClient:
         """Initialize and return a Weaviate client instance.
 
@@ -119,7 +126,7 @@ class Weaviate(VectorDb):
             await self.async_client.connect()  # type: ignore
 
         if not await self.async_client.is_ready():  # type: ignore
-            raise Exception("Weaviate async client is not ready")
+            raise ConnectionError("Weaviate async client is not ready")
 
         return self.async_client  # type: ignore
 
@@ -161,24 +168,14 @@ class Weaviate(VectorDb):
             await client.close()
 
     def content_hash_exists(self, content_hash: str) -> bool:
-        """Check if a document with the given content hash exists in the collection.
+        """Check if a document with the given content hash exists in the collection."""
+        collection = self.get_client().collections.get(self.collection)
+        result = collection.query.fetch_objects(
+            limit=1,
+            filters=Filter.by_property("content_hash").equal(content_hash),
+        )
+        return len(result.objects) > 0
 
-        Args:
-            content_hash (str): The content hash to check.
-
-        Returns:
-            bool: True if the document exists, False otherwise.
-        """
-        try:
-            doc_uuid = uuid.UUID(hex=content_hash[:32])
-            collection = self.get_client().collections.get(self.collection)
-            return collection.data.exists(doc_uuid)
-        except ValueError:
-            log_info(f"Invalid UUID format for content_hash '{content_hash}' - treating as non-existent")
-            return False
-        except Exception as e:
-            logger.error(f"Error checking if content_hash '{content_hash}' exists: {e}")
-            return False
 
     def name_exists(self, name: str) -> bool:
         """
@@ -329,6 +326,28 @@ class Weaviate(VectorDb):
             self._delete_by_content_hash(content_hash)
         self.insert(content_hash=content_hash, documents=documents, filters=filters)
 
+        _docs_to_insert = []
+        for document in documents:
+            assert document.name is not None, "Document name must be set for upsert operation."
+
+            if self.name_exists(document.name):
+                if self.doc_content_changed(document, check_existing=False):
+                    log_debug(
+                        f"Document already exists, but content changed. Document will be deleted and added again: {document.name}"
+                    )
+
+                    is_first_or_only_chunk = ("chunk" in document.meta_data and document.meta_data["chunk"] == 1) or (
+                        "chunk" not in document.meta_data
+                    )
+                    if is_first_or_only_chunk:
+                        self.doc_delete(document.name)
+                    _docs_to_insert.append(document)
+                else:
+                    log_debug(f"Document skipped, content is unchanged: {document.name}")
+            else:
+                _docs_to_insert.append(document)
+        self.insert(_docs_to_insert)
+
     async def async_upsert(
         self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
     ) -> None:
@@ -341,42 +360,10 @@ class Weaviate(VectorDb):
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
         """
-        if not documents:
-            return
-
-        log_debug(f"Upserting {len(documents)} documents into Weaviate asynchronously.")
-        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
-        await asyncio.gather(*embed_tasks, return_exceptions=True)
-
-        client = await self.get_async_client()
-        try:
-            collection = client.collections.get(self.collection)
-
-            for document in documents:
-                if document.embedding is None:
-                    logger.error(f"Document embedding is None: {document.name}")
-                    continue
-
-                cleaned_content = document.content.replace("\x00", "\ufffd")
-                record_id = md5(cleaned_content.encode()).hexdigest()
-                doc_uuid = uuid.UUID(hex=record_id[:32])
-
-                # Serialize meta_data to JSON string
-                meta_data_str = json.dumps(document.meta_data) if document.meta_data else None
-
-                properties = {
-                    "name": document.name,
-                    "content": cleaned_content,
-                    "meta_data": meta_data_str,
-                    "content_id": document.content_id,
-                    "content_hash": content_hash,
-                }
-
-                await collection.data.replace(uuid=doc_uuid, properties=properties, vector=document.embedding)
-
-                log_debug(f"Upserted document asynchronously: {document.name}")
-        finally:
-            await client.close()
+        if self.content_hash_exists(content_hash):
+            self._delete_by_content_hash(content_hash)
+        await self.async_insert(content_hash=content_hash, documents=documents, filters=filters)
+        return
 
     def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
         """

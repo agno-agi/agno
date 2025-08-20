@@ -64,7 +64,9 @@ def print_response(
     from agno.utils.timer import Timer
 
     if console is None:
-        from agno.cli.console import console
+        from rich.console import Console
+
+        console = Console()
 
     # Show workflow info
     media_info = []
@@ -193,7 +195,9 @@ def print_response_stream(
 ) -> None:
     """Print workflow execution with clean streaming"""
     if console is None:
-        from agno.cli.console import console
+        from rich.console import Console
+
+        console = Console()
 
     stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
 
@@ -793,7 +797,9 @@ async def aprint_response(
     from agno.utils.timer import Timer
 
     if console is None:
-        from agno.cli.console import console
+        from rich.console import Console
+
+        console = Console()
 
     # Show workflow info
     media_info = []
@@ -847,9 +853,9 @@ async def aprint_response(
             # Execute workflow and get the response directly
             workflow_response: WorkflowRunOutput = await workflow.arun(
                 input=input,
-                additional_data=additional_data,
                 user_id=user_id,
                 session_id=session_id,
+                additional_data=additional_data,
                 audio=audio,
                 images=images,
                 videos=videos,
@@ -858,31 +864,9 @@ async def aprint_response(
 
             response_timer.stop()
 
-            # Show individual step responses if available
             if show_step_details and workflow_response.step_results:
                 for i, step_output in enumerate(workflow_response.step_results):
-                    # Handle both single StepOutput and List[StepOutput] (from loop/parallel steps)
-                    if isinstance(step_output, list):
-                        # This is a loop or parallel step with multiple outputs
-                        for j, sub_step_output in enumerate(step_output):
-                            if sub_step_output.content:
-                                formatted_content = format_step_content_for_display(sub_step_output)
-                                step_panel = create_panel(
-                                    content=Markdown(formatted_content) if markdown else formatted_content,
-                                    title=f"Step {i + 1}.{j + 1}: {sub_step_output.step_name} (Completed)",
-                                    border_style="orange3",
-                                )
-                                console.print(step_panel)  # type: ignore
-                    else:
-                        # This is a regular single step
-                        if step_output.content:
-                            formatted_content = format_step_content_for_display(step_output)
-                            step_panel = create_panel(
-                                content=Markdown(formatted_content) if markdown else formatted_content,
-                                title=f"Step {i + 1}: {step_output.step_name} (Completed)",
-                                border_style="orange3",
-                            )
-                            console.print(step_panel)  # type: ignore
+                    print_step_output_recursive(step_output, i + 1, markdown, console)  # type: ignore
 
             # For callable functions, show the content directly since there are no step_results
             elif show_step_details and callable(workflow.steps) and workflow_response.content:
@@ -944,7 +928,9 @@ async def aprint_response_stream(
 ) -> None:
     """Print workflow execution with clean streaming - orange step blocks displayed once"""
     if console is None:
-        from agno.cli.console import console
+        from rich.console import Console
+
+        console = Console()
 
     stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
 

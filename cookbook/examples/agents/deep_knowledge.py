@@ -107,7 +107,7 @@ def create_agent(session_id: Optional[str] = None) -> Agent:
         knowledge=agent_knowledge,
         db=agent_db,
         add_history_to_context=True,
-        num_history_responses=3,
+        num_history_runs=3,
         read_chat_history=True,
         markdown=True,
     )
@@ -163,7 +163,7 @@ def run_interactive_loop(agent: Agent):
         questions = [
             inquirer.List(
                 "topic",
-                input="Select a topic or ask a different question:",
+                message="Select a topic or ask a different question:",
                 choices=choices,
             )
         ]
@@ -173,7 +173,7 @@ def run_interactive_loop(agent: Agent):
             break
 
         if answer["topic"] == "Enter custom question...":
-            questions = [inquirer.Text("custom", input="Enter your question:")]
+            questions = [inquirer.Text("custom", message="Enter your question:")]
             custom_answer = inquirer.prompt(questions)
             topic = custom_answer["custom"]
         else:

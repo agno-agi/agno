@@ -85,14 +85,7 @@ class WorkflowSession:
                 try:
                     runs_data.append(run.to_dict())
                 except Exception as e:
-                    # If run serialization fails, create a minimal representation
-                    runs_data.append(
-                        {
-                            "run_id": getattr(run, "run_id", "unknown"),
-                            "status": str(getattr(run, "status", "unknown")),
-                            "error": f"Serialization failed: {str(e)}",
-                        }
-                    )
+                    raise ValueError(f"Serialization failed: {str(e)}")
         return {
             "session_id": self.session_id,
             "user_id": self.user_id,

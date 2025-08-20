@@ -18,6 +18,7 @@ class RunEvent(str, Enum):
 
     run_started = "RunStarted"
     run_content = "RunContent"
+    run_intermediate_content = "RunIntermediateContent"
     run_completed = "RunCompleted"
     run_error = "RunError"
     run_cancelled = "RunCancelled"
@@ -38,6 +39,9 @@ class RunEvent(str, Enum):
     parser_model_response_started = "ParserModelResponseStarted"
     parser_model_response_completed = "ParserModelResponseCompleted"
 
+    output_model_response_started = "OutputModelResponseStarted"
+    output_model_response_completed = "OutputModelResponseCompleted"
+
 
 @dataclass
 class BaseAgentRunEvent(BaseRunOutputEvent):
@@ -54,9 +58,22 @@ class BaseAgentRunEvent(BaseRunOutputEvent):
     step_id: Optional[str] = None
     step_name: Optional[str] = None
     step_index: Optional[int] = None
+    tools: Optional[List[ToolExecution]] = None
 
     # For backwards compatibility
     content: Optional[Any] = None
+
+    @property
+    def tools_requiring_confirmation(self):
+        return [t for t in self.tools if t.requires_confirmation] if self.tools else []
+
+    @property
+    def tools_requiring_user_input(self):
+        return [t for t in self.tools if t.requires_user_input] if self.tools else []
+
+    @property
+    def tools_awaiting_external_execution(self):
+        return [t for t in self.tools if t.external_execution_required] if self.tools else []
 
 
 @dataclass
@@ -76,10 +93,18 @@ class RunContentEvent(BaseAgentRunEvent):
     content: Optional[Any] = None
     content_type: str = "str"
     thinking: Optional[str] = None
+    reasoning_content: Optional[str] = None
     citations: Optional[Citations] = None
     response_audio: Optional[AudioResponse] = None  # Model audio response
     image: Optional[ImageArtifact] = None  # Image attached to the response
     metadata: Optional[RunOutputMetaData] = None
+
+
+@dataclass
+class IntermediateRunContentEvent(BaseAgentRunEvent):
+    event: str = RunEvent.run_intermediate_content.value
+    content: Optional[Any] = None
+    content_type: str = "str"
 
 
 @dataclass
@@ -184,9 +209,20 @@ class ParserModelResponseCompletedEvent(BaseAgentRunEvent):
     event: str = RunEvent.parser_model_response_completed.value
 
 
+@dataclass
+class OutputModelResponseStartedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.output_model_response_started.value
+
+
+@dataclass
+class OutputModelResponseCompletedEvent(BaseAgentRunEvent):
+    event: str = RunEvent.output_model_response_completed.value
+
+
 RunOutputEvent = Union[
     RunStartedEvent,
     RunContentEvent,
+    IntermediateRunContentEvent,
     RunCompletedEvent,
     RunErrorEvent,
     RunCancelledEvent,
@@ -201,6 +237,8 @@ RunOutputEvent = Union[
     ToolCallCompletedEvent,
     ParserModelResponseStartedEvent,
     ParserModelResponseCompletedEvent,
+    OutputModelResponseStartedEvent,
+    OutputModelResponseCompletedEvent,
 ]
 
 
@@ -208,6 +246,7 @@ RunOutputEvent = Union[
 RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.run_started.value: RunStartedEvent,
     RunEvent.run_content.value: RunContentEvent,
+    RunEvent.run_intermediate_content.value: IntermediateRunContentEvent,
     RunEvent.run_completed.value: RunCompletedEvent,
     RunEvent.run_error.value: RunErrorEvent,
     RunEvent.run_cancelled.value: RunCancelledEvent,
@@ -222,6 +261,8 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.tool_call_completed.value: ToolCallCompletedEvent,
     RunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,
     RunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
+    RunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,
+    RunEvent.output_model_response_completed.value: OutputModelResponseCompletedEvent,
 }
 
 
@@ -398,6 +439,9 @@ class RunOutput:
         messages = data.pop("messages", None)
         messages = [Message.model_validate(message) for message in messages] if messages else None
 
+        citations = data.pop("citations", None)
+        citations = Citations.model_validate(citations) if citations else None
+
         tools = data.pop("tools", [])
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
 
@@ -413,8 +457,14 @@ class RunOutput:
         response_audio = data.pop("response_audio", None)
         response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
 
+        metrics = data.pop("metrics", None)
+        if metrics:
+            metrics = Metrics(**metrics)
+
         return cls(
             messages=messages,
+            metrics=metrics,
+            citations=citations,
             tools=tools,
             images=images,
             audio=audio,

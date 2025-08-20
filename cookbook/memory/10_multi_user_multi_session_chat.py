@@ -92,15 +92,18 @@ if __name__ == "__main__":
 
     user_1_memories = memory_manager.get_user_memories(user_id=user_1_id)
     print("User 1's memories:")
+    assert user_1_memories is not None
     for i, m in enumerate(user_1_memories):
         print(f"{i}: {m.memory}")
 
     user_2_memories = memory_manager.get_user_memories(user_id=user_2_id)
     print("User 2's memories:")
+    assert user_2_memories is not None
     for i, m in enumerate(user_2_memories):
         print(f"{i}: {m.memory}")
 
     user_3_memories = memory_manager.get_user_memories(user_id=user_3_id)
     print("User 3's memories:")
+    assert user_3_memories is not None
     for i, m in enumerate(user_3_memories):
         print(f"{i}: {m.memory}")

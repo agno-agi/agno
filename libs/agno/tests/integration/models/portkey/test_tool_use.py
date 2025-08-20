@@ -2,7 +2,7 @@ from typing import Optional
 
 import pytest
 
-from agno.agent import Agent, RunOutput  # noqa
+from agno.agent import Agent
 from agno.models.portkey import Portkey
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
