@@ -2,6 +2,7 @@ import json
 from typing import Any, Callable, Dict
 
 from agno.agent import Agent
+from agno.db.in_memory import InMemoryDb
 from agno.models.openai import OpenAIChat
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_info, log_warning
@@ -13,7 +14,11 @@ class CustomerDBTools(Toolkit):
         self.register(self.process_customer_request)
 
     def process_customer_request(
-        agent: Agent, customer_id: str, action: str = "retrieve", name: str = "John Doe"
+        self,
+        agent: Agent,
+        customer_id: str,
+        action: str = "retrieve",
+        name: str = "John Doe",
     ):
         log_warning("Tool called, this shouldn't happen.")
         return "This should not be seen."
@@ -56,9 +61,8 @@ def run_test():
         session_state={"customer_profiles": {"123": {"name": "Jane Doe"}}},
         instructions="Your profiles: {customer_profiles}. Use `process_customer_request`. Use either create or retrieve as action for the tool.",
         add_state_in_messages=True,
-        show_tool_calls=True,
         debug_mode=True,
-        cache_session=False,
+        db=InMemoryDb(),
     )
 
     prompt = "First, create customer 789 named 'Tom'. Then, retrieve Tom's profile. Step by step."

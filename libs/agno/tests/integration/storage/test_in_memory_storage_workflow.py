@@ -1,8 +1,8 @@
 import pytest
 
 from agno.agent import Agent
+from agno.db.in_memory import InMemoryStorage
 from agno.run.response import RunResponse
-from agno.storage.in_memory import InMemoryStorage
 from agno.storage.session.workflow import WorkflowSession
 from agno.workflow import Workflow
 

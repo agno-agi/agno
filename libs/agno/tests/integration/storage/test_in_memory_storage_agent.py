@@ -1,7 +1,7 @@
 import pytest
 
 from agno.agent import Agent
-from agno.storage.in_memory import InMemoryStorage
+from agno.db.in_memory import InMemoryStorage
 from agno.storage.session.agent import AgentSession
 
 
