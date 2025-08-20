@@ -8,6 +8,7 @@ from agno.knowledge.chunking.document import DocumentChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.types import ContentType
 from agno.utils.http import async_fetch_with_retry, fetch_with_retry
 from agno.utils.log import log_error, log_info, logger
 
@@ -322,14 +323,26 @@ class BasePDFReader(Reader):
 class PDFReader(BasePDFReader):
     """Reader for PDF files"""
 
-    def read(
-        self,
-        pdf: Optional[Union[str, Path, IO[Any]]] = None,
-        name: Optional[str] = None,
-        password: Optional[str] = None,
-    ) -> List[Document]:
-        if pdf is None:
-            log_error("No pdf provided")
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.PDF]
+
+    def read(self, pdf: Union[str, Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
+        try:
+            if name:
+                doc_name = name
+            elif isinstance(pdf, str):
+                doc_name = pdf.split("/")[-1].split(".")[0].replace(" ", "_")
+            else:
+                doc_name = pdf.name.split(".")[0]
+        except Exception:
+            doc_name = "pdf"
+
+        log_info(f"Reading: {doc_name}")
+
+        try:
+            doc_reader = DocumentReader(pdf)
+        except PdfStreamError as e:
+            logger.error(f"Error reading PDF: {e}")
             return []
 
         try:
@@ -395,6 +408,9 @@ class PDFUrlReader(BasePDFReader):
     def __init__(self, proxy: Optional[str] = None, password: Optional[str] = None, **kwargs):
         super().__init__(password=password, **kwargs)
         self.proxy = proxy
+
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.URL]
 
     def read(self, url: str, name: Optional[str] = None) -> List[Document]:
         if not url:

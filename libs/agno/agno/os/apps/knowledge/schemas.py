@@ -107,4 +107,5 @@ class ReaderSchema(BaseModel):
 
 class ConfigResponseSchema(BaseModel):
     readers: Optional[List[ReaderSchema]] = None
+    readersForType: Optional[Dict[str, List[str]]] = None
     filters: Optional[List[str]] = None

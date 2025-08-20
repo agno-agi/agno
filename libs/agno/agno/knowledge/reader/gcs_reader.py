@@ -7,6 +7,7 @@ from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.types import ContentType
 from agno.utils.log import log_info
 
 try:
@@ -33,6 +34,9 @@ class GCSReader(Reader):
             ChunkingStrategyType.RECURSIVE_CHUNKING,
             ChunkingStrategyType.SEMANTIC_CHUNKING,
         ]
+
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.FILE, ContentType.URL]
 
     def read(self, name: Optional[str], blob: storage.Blob) -> List[Document]:
         log_info(f"Reading: gs://{blob.bucket.name}/{blob.name}")

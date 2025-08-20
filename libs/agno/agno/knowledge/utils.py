@@ -1,6 +1,7 @@
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from agno.knowledge.reader.reader_factory import ReaderFactory
+from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug
 
 
@@ -14,11 +15,15 @@ def get_reader_info(reader_key: str) -> Dict:
         # Get supported chunking strategies for this reader
         supported_strategies = reader.get_supported_chunking_strategies()
 
+        # Get supported content types for this reader
+        supported_content_types = reader.get_supported_content_types()
+
         return {
             "id": reader_key,
             "name": reader_key.replace("_", " ").title() + " Reader",
             "description": f"Reads {reader_key} files",
             "chunking_strategies": supported_strategies,
+            "content_types": [ct.value for ct in supported_content_types],  # Convert enums to string values
         }
     except ImportError as e:
         # Skip readers with missing dependencies
@@ -40,3 +45,29 @@ def get_all_readers_info() -> List[Dict]:
             log_debug(f"Skipping reader '{key}': {e}")
             continue
     return readers_info
+
+
+def get_content_types_to_readers_mapping() -> Dict[str, List[str]]:
+    """Get mapping of content types to list of reader IDs that support them.
+
+    Returns:
+        Dictionary mapping content type strings (ContentType enum values) to list of reader IDs.
+    """
+    content_type_mapping = {}
+    readers_info = get_all_readers_info()
+
+    for reader_info in readers_info:
+        reader_id = reader_info["id"]
+        content_types = reader_info.get("content_types", [])
+
+        for content_type in content_types:
+            if content_type not in content_type_mapping:
+                content_type_mapping[content_type] = []
+            content_type_mapping[content_type].append(reader_id)
+
+    return content_type_mapping
+
+
+def get_all_content_types() -> List[ContentType]:
+    """Get all available content types as ContentType enums."""
+    return list(ContentType)

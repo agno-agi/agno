@@ -8,6 +8,7 @@ from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, log_info, logger
 
 try:
@@ -42,6 +43,9 @@ class S3Reader(Reader):
             ChunkingStrategyType.SEMANTIC_CHUNKING,
         ]
 
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.FILE, ContentType.URL, ContentType.TEXT]
+
     def read(self, name: Optional[str], s3_object: S3Object) -> List[Document]:
         try:
             log_info(f"Reading S3 file: {s3_object.uri}")
@@ -70,6 +74,9 @@ class S3TextReader(Reader):
             ChunkingStrategyType.DOCUMENT_CHUNKING,
             ChunkingStrategyType.RECURSIVE_CHUNKING,
         ]
+
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.TEXT]
 
     def read(self, name: Optional[str], s3_object: S3Object) -> List[Document]:
         try:
@@ -118,6 +125,9 @@ class S3TextReader(Reader):
 
 class S3PDFReader(Reader):
     """Reader for PDF files on S3"""
+
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.FILE]
 
     def read(self, name: Optional[str], s3_object: S3Object) -> List[Document]:
         try:

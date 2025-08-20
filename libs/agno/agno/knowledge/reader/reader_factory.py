@@ -144,6 +144,33 @@ class ReaderFactory:
         return GCSReader(**config)
 
     @classmethod
+    def _get_arxiv_reader(cls, **kwargs) -> Reader:
+        """Get Arxiv reader instance."""
+        from agno.knowledge.reader.arxiv_reader import ArxivReader
+
+        config: Dict[str, Any] = {"name": "Arxiv Reader", "description": "Reads Arxiv papers"}
+        config.update(kwargs)
+        return ArxivReader(**config)
+
+    @classmethod
+    def _get_wikipedia_reader(cls, **kwargs) -> Reader:
+        """Get Wikipedia reader instance."""
+        from agno.knowledge.reader.wikipedia_reader import WikipediaReader
+
+        config: Dict[str, Any] = {"name": "Wikipedia Reader", "description": "Reads Wikipedia articles"}
+        config.update(kwargs)
+        return WikipediaReader(**config)
+
+    @classmethod
+    def _get_web_search_reader(cls, **kwargs) -> Reader:
+        """Get Web Search reader instance."""
+        from agno.knowledge.reader.web_search_reader import WebSearchReader
+
+        config: Dict[str, Any] = {"name": "Web Search Reader", "description": "Performs web searches"}
+        config.update(kwargs)
+        return WebSearchReader(**config)
+
+    @classmethod
     def _get_reader_method(cls, reader_key: str):
         """Get the appropriate reader method for the given key."""
         method_name = f"_get_{reader_key}_reader"

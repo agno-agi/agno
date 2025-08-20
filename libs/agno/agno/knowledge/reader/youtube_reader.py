@@ -5,7 +5,12 @@ from agno.knowledge.chunking.recursive import RecursiveChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+<<<<<<< HEAD
 from agno.utils.log import log_debug, log_info, logger
+=======
+from agno.knowledge.types import ContentType
+from agno.utils.log import log_info, logger
+>>>>>>> 6161f1dac (update)
 
 try:
     from youtube_transcript_api import YouTubeTranscriptApi
@@ -31,7 +36,10 @@ class YouTubeReader(Reader):
             ChunkingStrategyType.FIXED_SIZE_CHUNKING,
         ]
 
-    def read(self, video_url: str, name: Optional[str] = None) -> List[Document]:
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.URL]
+
+    def read(self, url: str, name: Optional[str] = None) -> List[Document]:
         try:
             # Extract video ID from URL
             video_id = url.split("v=")[-1].split("&")[0]

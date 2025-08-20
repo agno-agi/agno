@@ -7,6 +7,7 @@ from agno.knowledge.chunking.markdown import MarkdownChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.types import ContentType
 from agno.utils.log import log_info, logger
 
 
@@ -23,6 +24,9 @@ class MarkdownReader(Reader):
             ChunkingStrategyType.SEMANTIC_CHUNKING,
             ChunkingStrategyType.FIXED_SIZE_CHUNKING,
         ]
+
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.MD, ContentType.MARKDOWN]
 
     def __init__(
         self,

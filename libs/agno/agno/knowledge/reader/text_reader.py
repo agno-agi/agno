@@ -7,6 +7,7 @@ from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.types import ContentType
 from agno.utils.log import log_info, logger
 
 
@@ -25,6 +26,9 @@ class TextReader(Reader):
             ChunkingStrategyType.RECURSIVE_CHUNKING,
             ChunkingStrategyType.SEMANTIC_CHUNKING,
         ]
+
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.TXT]
 
     def read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         try:

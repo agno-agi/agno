@@ -1,6 +1,6 @@
 import json
 import math
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Path, Query, UploadFile
@@ -8,7 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Path,
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader import ReaderFactory
-from agno.knowledge.utils import get_all_readers_info
+from agno.knowledge.utils import get_all_readers_info, get_content_types_to_readers_mapping
 from agno.os.apps.knowledge.schemas import (
     ConfigResponseSchema,
     ContentResponseSchema,
@@ -305,8 +305,13 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
                         )
                     )
 
+        # Get content types to readers mapping
+
+        types_of_readers = get_content_types_to_readers_mapping()
+
         return ConfigResponseSchema(
             readers=reader_schemas,
+            readersForType=types_of_readers,
             filters=knowledge.get_filters(),
         )
 

@@ -12,6 +12,7 @@ from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyT
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.reader.url_reader import URLReader
+from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, logger
 
 try:
@@ -70,6 +71,9 @@ class WebSearchReader(Reader):
             ChunkingStrategyType.SEMANTIC_CHUNKING,
             ChunkingStrategyType.FIXED_SIZE_CHUNKING,
         ]
+
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.URL, ContentType.TEXT]
 
     def _respect_rate_limits(self):
         """Ensure we don't exceed rate limits"""

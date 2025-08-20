@@ -18,6 +18,7 @@ from agno.knowledge.chunking.row import RowChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.types import ContentType
 from agno.utils.log import logger
 
 
@@ -36,6 +37,9 @@ class CSVReader(Reader):
             ChunkingStrategyType.DOCUMENT_CHUNKING,
             ChunkingStrategyType.RECURSIVE_CHUNKING,
         ]
+
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.CSV, ContentType.XLSX, ContentType.XLS]
 
     def read(
         self, file: Union[Path, IO[Any]], delimiter: str = ",", quotechar: str = '"', name: Optional[str] = None
@@ -182,6 +186,9 @@ class CSVUrlReader(Reader):
             ChunkingStrategyType.AGENTIC_CHUNKING,
             ChunkingStrategyType.DOCUMENT_CHUNKING,
         ]
+
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.URL]
 
     def read(self, url: str, name: Optional[str] = None) -> List[Document]:
         if not url:

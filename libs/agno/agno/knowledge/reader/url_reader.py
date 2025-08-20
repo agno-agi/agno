@@ -7,6 +7,7 @@ from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.types import ContentType
 from agno.utils.http import async_fetch_with_retry, fetch_with_retry
 from agno.utils.log import log_debug
 
@@ -29,6 +30,9 @@ class URLReader(Reader):
             ChunkingStrategyType.RECURSIVE_CHUNKING,
             ChunkingStrategyType.SEMANTIC_CHUNKING,
         ]
+
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.URL]
 
     def read(self, url: str, id: Optional[str] = None, name: Optional[str] = None) -> List[Document]:
         if not url:

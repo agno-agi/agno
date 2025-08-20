@@ -5,6 +5,7 @@ from typing import Any, List, Optional
 from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyFactory, ChunkingStrategyType
 from agno.knowledge.document.base import Document
+from agno.knowledge.types import ContentType
 
 
 @dataclass
@@ -71,6 +72,11 @@ class Reader:
             ChunkingStrategyType.ROW_CHUNKING,
             ChunkingStrategyType.SEMANTIC_CHUNKING,
         ]
+
+    @classmethod
+    def get_supported_content_types(cls) -> List[ContentType]:
+        """Get the list of supported content types for this reader."""
+        return [ContentType.FILE, ContentType.URL, ContentType.TEXT]
 
     def chunk_document(self, document: Document) -> List[Document]:
         print(f"chunk_document: {self.chunking_strategy}")

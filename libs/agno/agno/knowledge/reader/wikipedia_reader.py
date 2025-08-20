@@ -4,6 +4,7 @@ from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document import Document
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, log_info
 
 try:
@@ -30,6 +31,9 @@ class WikipediaReader(Reader):
             ChunkingStrategyType.RECURSIVE_CHUNKING,
             ChunkingStrategyType.SEMANTIC_CHUNKING,
         ]
+
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.TEXT]
 
     def read(self, topic: str) -> List[Document]:
         log_debug(f"Reading Wikipedia topic: {topic}")

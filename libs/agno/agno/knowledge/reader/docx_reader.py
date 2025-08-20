@@ -7,6 +7,7 @@ from agno.knowledge.chunking.document import DocumentChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.types import ContentType
 from agno.utils.log import log_info, logger
 
 try:
@@ -30,6 +31,9 @@ class DocxReader(Reader):
             ChunkingStrategyType.AGENTIC_CHUNKING,
             ChunkingStrategyType.RECURSIVE_CHUNKING,
         ]
+
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.DOCX, ContentType.DOC]
 
     def read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         """Read a docx file and return a list of documents"""
