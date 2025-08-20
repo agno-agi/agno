@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 
 import pytest
@@ -5,14 +6,13 @@ import pytest
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.arxiv_reader import ArxivReader
-from agno.vectordb.lancedb import LanceDb
+from agno.vectordb.chroma import ChromaDb
 
 
 @pytest.fixture
 def setup_vector_db():
     """Setup a temporary vector DB for testing."""
-    table_name = f"arxiv_test_{uuid.uuid4().hex[:8]}"
-    vector_db = LanceDb(table_name=table_name, uri="tmp/lancedb")
+    vector_db = ChromaDb(collection="vectors", path="tmp/chromadb", persistent_client=True)
     yield vector_db
     # Clean up after test
     vector_db.drop()
@@ -27,7 +27,7 @@ def test_arxiv_knowledge_base_integration(setup_vector_db):
         vector_db=setup_vector_db,
     )
 
-    knowledge.add_content(
+    knowledge.add_content_sync(
         metadata={"user_tag": "Arxiv content"},
         # "Attention Is All You Need" and "BERT" papers
         topics=["1706.03762", "1810.04805"],
@@ -59,7 +59,7 @@ def test_arxiv_knowledge_base_search_integration(setup_vector_db):
         vector_db=setup_vector_db,
     )
 
-    knowledge.add_content(
+    knowledge.add_content_sync(
         metadata={"user_tag": "Arxiv content"},
         topics=["transformer architecture language models"],
         reader=reader,
@@ -97,7 +97,7 @@ async def test_arxiv_knowledge_base_async_integration(setup_vector_db):
 
     assert await setup_vector_db.async_exists()
     # Check that we have at least the papers we requested
-    assert await setup_vector_db.async_get_count() >= 2
+    assert setup_vector_db.get_count() >= 2
 
     agent = Agent(
         knowledge=knowledge,

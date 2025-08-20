@@ -5,14 +5,13 @@ import pytest
 
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.lancedb.lance_db import LanceDb
+from agno.vectordb.chroma import ChromaDb
 
 
 @pytest.fixture
 def setup_vector_db():
     """Setup a temporary vector DB for testing."""
-    table_name = f"docx_test_{os.urandom(4).hex()}"
-    vector_db = LanceDb(table_name=table_name, uri="tmp/lancedb")
+    vector_db = ChromaDb(collection="vectors", path="tmp/chromadb", persistent_client=True)
     yield vector_db
     # Clean up after test
     vector_db.drop()
@@ -29,12 +28,12 @@ def prepare_knowledge_base(setup_vector_db):
     kb = Knowledge(vector_db=setup_vector_db)
 
     # Load documents with different user IDs and metadata
-    kb.add_content(
+    kb.add_content_sync(
         path=get_filtered_data_dir() / "cv_1.json",
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    kb.add_content(
+    kb.add_content_sync(
         path=get_filtered_data_dir() / "cv_2.json",
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -43,16 +42,13 @@ def prepare_knowledge_base(setup_vector_db):
 
 
 def test_json_knowledge_base():
-    vector_db = LanceDb(
-        table_name="recipes_json",
-        uri="tmp/lancedb",
-    )
+    vector_db = ChromaDb(collection="vectors", path="tmp/chromadb", persistent_client=True)
 
     knowledge_base = Knowledge(
         vector_db=vector_db,
     )
 
-    knowledge_base.add_content(
+    knowledge_base.add_content_sync(
         path=str(Path(__file__).parent / "data/json"),
     )
 
@@ -79,16 +75,13 @@ def test_json_knowledge_base():
 
 
 def test_json_knowledge_base_single_file():
-    vector_db = LanceDb(
-        table_name="recipes_json_single",
-        uri="tmp/lancedb",
-    )
+    vector_db = ChromaDb(collection="vectors", path="tmp/chromadb", persistent_client=True)
 
     # Create a knowledge base with a single JSON file
     knowledge_base = Knowledge(
         vector_db=vector_db,
     )
-    knowledge_base.add_content(
+    knowledge_base.add_content_sync(
         path=str(Path(__file__).parent / "data/json/recipes.json"),
     )
 
@@ -104,17 +97,14 @@ def test_json_knowledge_base_single_file():
 
 @pytest.mark.asyncio
 async def test_json_knowledge_base_async():
-    vector_db = LanceDb(
-        table_name="recipes_json_async",
-        uri="tmp/lancedb",
-    )
+    vector_db = ChromaDb(collection="vectors", path="tmp/chromadb", persistent_client=True)
 
     # Create knowledge base
     knowledge_base = Knowledge(
         vector_db=vector_db,
     )
 
-    await knowledge_base.async_add_content(
+    await knowledge_base.add_content(
         path=str(Path(__file__).parent / "data/json"),
     )
 
@@ -122,7 +112,7 @@ async def test_json_knowledge_base_async():
 
     # We have 2 JSON files with 3 and 2 documents respectively
     expected_docs = 5
-    assert await vector_db.async_get_count() == expected_docs
+    assert vector_db.get_count() == expected_docs
 
     # Create and use the agent
     agent = Agent(knowledge=knowledge_base)
@@ -148,12 +138,12 @@ def test_text_knowledge_base_with_metadata_path(setup_vector_db):
     kb = Knowledge(
         vector_db=setup_vector_db,
     )
-    kb.add_content(
+    kb.add_content_sync(
         path=str(get_filtered_data_dir() / "cv_1.json"),
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    kb.add_content(
+    kb.add_content_sync(
         path=str(get_filtered_data_dir() / "cv_2.json"),
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -177,11 +167,11 @@ def test_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
     kb = Knowledge(
         vector_db=setup_vector_db,
     )
-    kb.add_content(
+    kb.add_content_sync(
         path=str(get_filtered_data_dir() / "cv_1.json"),
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
-    kb.add_content(
+    kb.add_content_sync(
         path=str(get_filtered_data_dir() / "cv_2.json"),
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )

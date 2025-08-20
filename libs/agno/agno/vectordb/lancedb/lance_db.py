@@ -89,10 +89,18 @@ class LanceDb(VectorDb):
 
         if table_name and table_name in self.connection.table_names():
             # Open the table if it exists
-            self.table = self.connection.open_table(name=table_name)
-            self.table_name = self.table.name
-            self._vector_col = self.table.schema.names[0]
-            self._id = self.table.schema.names[1]  # type: ignore
+            try:
+                self.table = self.connection.open_table(name=table_name)
+                self.table_name = self.table.name
+                self._vector_col = self.table.schema.names[0]
+                self._id = self.table.schema.names[1]  # type: ignore
+            except ValueError as e:
+                # Table might have been dropped by async operations but sync connection hasn't updated
+                if "was not found" in str(e):
+                    log_debug(f"Table {table_name} listed but not accessible, will create if needed")
+                    self.table = None
+                else:
+                    raise
 
         # LanceDB table details
         if self.table is None:
@@ -136,9 +144,27 @@ class LanceDb(VectorDb):
         """Get or create an async connection to LanceDB."""
         if self.async_connection is None:
             self.async_connection = await lancedb.connect_async(self.uri)
+        # Only try to open table if it exists and we don't have it already
         if self.async_table is None:
-            self.async_table = await self.async_connection.open_table(self.table_name)
+            table_names = await self.async_connection.table_names()
+            if self.table_name in table_names:
+                try:
+                    self.async_table = await self.async_connection.open_table(self.table_name)
+                except ValueError:
+                    # Table might have been dropped by another operation
+                    pass
         return self.async_connection
+
+    def _refresh_sync_connection(self) -> None:
+        """Refresh the sync connection to see changes made by async operations."""
+        try:
+            # Re-establish sync connection to see async changes
+            if self.connection and self.table_name in self.connection.table_names():
+                self.table = self.connection.open_table(self.table_name)
+                log_debug(f"Refreshed sync connection for table: {self.table_name}")
+        except Exception as e:
+            log_debug(f"Could not refresh sync connection: {e}")
+            # If refresh fails, we can still function but sync methods might not see async changes
 
     def create(self) -> None:
         """Create the table if it does not exist."""
@@ -147,7 +173,7 @@ class LanceDb(VectorDb):
 
     async def async_create(self) -> None:
         """Create the table asynchronously if it does not exist."""
-        if not self.exists():
+        if not await self.async_exists():
             conn = await self._get_async_connection()
             schema = self._base_schema()
 
@@ -336,6 +362,9 @@ class LanceDb(VectorDb):
                 await self.async_table.add(data)  # type: ignore
 
             log_debug(f"Asynchronously inserted {len(data)} documents")
+
+            # Refresh sync connection to see async changes
+            self._refresh_sync_connection()
         except Exception as e:
             logger.error(f"Error during async document insertion: {e}")
             raise
@@ -571,6 +600,8 @@ class LanceDb(VectorDb):
         if self.exists():
             log_debug(f"Deleting collection: {self.table_name}")
             self.connection.drop_table(self.table_name)  # type: ignore
+            # Clear the table reference after dropping
+            self.table = None
 
     async def async_drop(self) -> None:
         """Drop the table asynchronously."""
@@ -578,16 +609,26 @@ class LanceDb(VectorDb):
             log_debug(f"Deleting collection: {self.table_name}")
             conn = await self._get_async_connection()
             await conn.drop_table(self.table_name)
+            # Clear the async table reference after dropping
+            self.async_table = None
 
     def exists(self) -> bool:
+        # If we have an async table that was created, the table exists
+        if self.async_table is not None:
+            return True
         if self.connection:
             return self.table_name in self.connection.table_names()
         return False
 
     async def async_exists(self) -> bool:
         """Check if the table exists asynchronously."""
-        conn = await self._get_async_connection()
-        table_names = await conn.table_names()
+        # If we have an async table that was created, the table exists
+        if self.async_table is not None:
+            return True
+        # Check if table exists in database without trying to open it
+        if self.async_connection is None:
+            self.async_connection = await lancedb.connect_async(self.uri)
+        table_names = await self.async_connection.table_names()
         return self.table_name in table_names
 
     async def async_get_count(self) -> int:
@@ -597,7 +638,34 @@ class LanceDb(VectorDb):
             return await self.async_table.count_rows()
         return 0
 
+    def _async_get_count_sync(self) -> int:
+        """Helper method to run async_get_count in a new thread with its own event loop"""
+        import asyncio
+
+        return asyncio.run(self.async_get_count())
+
     def get_count(self) -> int:
+        # If we have data in the async table but sync table isn't available, try to get count from async table
+        if self.async_table is not None:
+            try:
+                import asyncio
+
+                # Check if we're already in an async context
+                try:
+                    loop = asyncio.get_running_loop()
+                    # We're in an async context, can't use asyncio.run
+                    # Use threading to run in a separate thread with its own event loop
+                    import concurrent.futures
+
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(self._async_get_count_sync)
+                        return future.result(timeout=5)
+                except RuntimeError:
+                    # No event loop running, safe to use asyncio.run
+                    return asyncio.run(self.async_get_count())
+            except Exception:
+                pass
+
         if self.exists() and self.table:
             return self.table.count_rows()
         return 0
