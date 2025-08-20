@@ -3969,10 +3969,20 @@ class Agent:
                 import inspect
 
                 signature = inspect.signature(self.instructions)
+                instruction_args = {}
+
+                # Check for agent parameter
                 if "agent" in signature.parameters:
-                    _instructions = self.instructions(agent=self)
-                else:
-                    _instructions = self.instructions()
+                    instruction_args["agent"] = self
+
+                # Check for session_state parameter
+                if "session_state" in signature.parameters:
+                    session_state = {}
+                    if session.session_data and "session_state" in session.session_data:
+                        session_state = session.session_data["session_state"] or {}
+                    instruction_args["session_state"] = session_state
+
+                _instructions = self.instructions(**instruction_args)
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)
