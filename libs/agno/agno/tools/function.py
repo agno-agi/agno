@@ -427,8 +427,6 @@ class Function(BaseModel):
             log_error(f"Error writing cache: {e}")
 
 
-# Remove the separate FunctionExecutionResponse class and update FunctionExecutionResult
-
 class FunctionExecutionResult(BaseModel):
     status: Literal["success", "failure"]
     result: Optional[Any] = None
