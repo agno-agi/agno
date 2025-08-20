@@ -19,8 +19,8 @@ def get_default_reasoning_agent(
     debug_mode: bool = False,
     debug_level: Literal[1, 2] = 1,
     session_state: Optional[Dict[str, Any]] = None,
-    context: Optional[Dict[str, Any]] = None,
-    extra_data: Optional[Dict[str, Any]] = None,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> Optional["Agent"]:  # type: ignore  # noqa: F821
     from agno.agent import Agent
 
@@ -88,8 +88,8 @@ def get_default_reasoning_agent(
         debug_mode=debug_mode,
         debug_level=debug_level,
         session_state=session_state,
-        context=context,
-        extra_data=extra_data,
+        dependencies=dependencies,
+        metadata=metadata,
     )
 
     return agent
