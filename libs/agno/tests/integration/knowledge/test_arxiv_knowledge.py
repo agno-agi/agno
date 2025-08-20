@@ -89,7 +89,7 @@ async def test_arxiv_knowledge_base_async_integration(setup_vector_db):
         max_results=1,  # Limit to exactly one result per query
     )
 
-    await knowledge.async_add_content(
+    await knowledge.add_content(
         # "GPT-3" and "AlphaFold" papers
         topics=["2005.14165", "2003.02645"],
         reader=reader,

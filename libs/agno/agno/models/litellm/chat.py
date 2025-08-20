@@ -11,6 +11,7 @@ from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.run.response import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 
 try:
     import litellm
@@ -75,6 +76,31 @@ class LiteLLM(Model):
         for m in messages:
             msg = {"role": m.role, "content": m.content if m.content is not None else ""}
 
+            # Handle media
+            if (m.images is not None and len(m.images) > 0) or (m.audio is not None and len(m.audio) > 0):
+                if isinstance(m.content, str):
+                    content_list = [{"type": "text", "text": m.content}]
+                    if m.images is not None:
+                        content_list.extend(images_to_message(images=m.images))
+                    if m.audio is not None:
+                        content_list.extend(audio_to_message(audio=m.audio))
+                    msg["content"] = content_list
+
+            if m.videos is not None and len(m.videos) > 0:
+                log_warning("Video input is currently unsupported by LLM providers.")
+
+            # Handle files
+            if m.files is not None:
+                if isinstance(msg["content"], str):
+                    content_list = [{"type": "text", "text": msg["content"]}]
+                else:
+                    content_list = msg["content"]
+                for file in m.files:
+                    file_part = _format_file_for_message(file)
+                    if file_part:
+                        content_list.append(file_part)
+                msg["content"] = content_list
+
             # Handle tool calls in assistant messages
             if m.role == "assistant" and m.tool_calls:
                 msg["tool_calls"] = [
@@ -97,12 +123,8 @@ class LiteLLM(Model):
                 if m.images is not None and len(m.images) > 0:
                     log_warning("Image input is currently unsupported.")
 
-                if m.files is not None and len(m.files) > 0:
-                    log_warning("File input is currently unsupported.")
-
                 if m.videos is not None and len(m.videos) > 0:
                     log_warning("Video input is currently unsupported.")
-
             formatted_messages.append(msg)
 
         return formatted_messages

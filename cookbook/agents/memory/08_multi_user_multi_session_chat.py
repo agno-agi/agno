@@ -16,7 +16,7 @@ from agno.memory import MemoryManager
 from agno.models.openai import OpenAIChat
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-db = PostgresDb(db_url=db_url, user_memory_table="user_memories")
+db = PostgresDb(db_url=db_url, memory_table="user_memories")
 
 memory = MemoryManager(model=OpenAIChat(id="gpt-4o"), db=db)
 

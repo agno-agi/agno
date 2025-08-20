@@ -1,10 +1,8 @@
 from textwrap import dedent
-from typing import Optional, Union
+from typing import Any, Dict, Optional
 
-from agno.agent import Agent
-from agno.team.team import Team
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error
 
 
 class ThinkingTools(Toolkit):
@@ -42,7 +40,7 @@ class ThinkingTools(Toolkit):
             **kwargs,
         )
 
-    def think(self, agent: Union[Agent, Team], thought: str) -> str:
+    def think(self, session_state: Dict[str, Any], thought: str) -> str:
         """Use the tool to think about something.
         It will not obtain new information or take any actions, but just append the thought to the log and return the result.
         Use it when complex reasoning or some cache memory or a scratchpad is needed.
@@ -54,14 +52,14 @@ class ThinkingTools(Toolkit):
             log_debug(f"Thought: {thought}")
 
             # Add the thought to the Agent state
-            if agent.session_state is None:
-                agent.session_state = {}
-            if "thoughts" not in agent.session_state:
-                agent.session_state["thoughts"] = []
-            agent.session_state["thoughts"].append(thought)
+            if session_state is None:
+                session_state = {}
+            if "thoughts" not in session_state:
+                session_state["thoughts"] = []
+            session_state["thoughts"].append(thought)
 
             # Return the full log of thoughts and the new thought
-            thoughts = "\n".join([f"- {t}" for t in agent.session_state["thoughts"]])
+            thoughts = "\n".join([f"- {t}" for t in session_state["thoughts"]])
             formatted_thoughts = dedent(
                 f"""Thoughts:
                 {thoughts}
@@ -69,5 +67,5 @@ class ThinkingTools(Toolkit):
             ).strip()
             return formatted_thoughts
         except Exception as e:
-            logger.error(f"Error recording thought: {e}")
+            log_error(f"Error recording thought: {e}")
             return f"Error recording thought: {e}"

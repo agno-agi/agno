@@ -23,13 +23,14 @@ def pprint_run_response(
     show_time: bool = False,
 ) -> None:
     from rich.box import ROUNDED
+    from rich.console import Console
     from rich.json import JSON
     from rich.live import Live
     from rich.markdown import Markdown
     from rich.status import Status
     from rich.table import Table
 
-    from agno.cli.console import console
+    console = Console()
 
     # If run_response is a single RunOutput, wrap it in a list to make it iterable
     if (
@@ -106,14 +107,14 @@ async def apprint_run_response(
     show_time: bool = False,
 ) -> None:
     from rich.box import ROUNDED
+    from rich.console import Console
     from rich.json import JSON
     from rich.live import Live
     from rich.markdown import Markdown
     from rich.status import Status
     from rich.table import Table
 
-    from agno.cli.console import console
-
+    console = Console()
     # If run_response is a single RunOutput, wrap it in a list to make it iterable
     if (
         isinstance(run_response, RunOutput)

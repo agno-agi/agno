@@ -34,6 +34,7 @@ pprint(memories)
 
 # Delete a memory
 print("\nDeleting memory")
+assert memory_id_2 is not None
 memory.delete_user_memory(user_id=jane_doe_id, memory_id=memory_id_2)
 print("Memory deleted\n")
 memories = memory.get_user_memories(user_id=jane_doe_id)
@@ -42,6 +43,7 @@ pprint(memories)
 
 # Replace a memory
 print("\nReplacing memory")
+assert memory_id_1 is not None
 memory.replace_user_memory(
     memory_id=memory_id_1,
     memory=UserMemory(memory="The user's name is Jane Mary Doe", topics=["name"]),

@@ -8,7 +8,7 @@ from rich.pretty import pprint
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-db = PostgresDb(db_url=db_url, user_memory_table="standalone_memories")
+db = PostgresDb(db_url=db_url, memory_table="standalone_memories")
 
 memory = MemoryManager(db=db)
 

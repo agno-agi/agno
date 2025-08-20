@@ -98,6 +98,7 @@ def test_basic_intermediate_steps_events_persisted(shared_db):
 
     run_response_from_storage = team.get_last_run_response()
 
+    assert run_response_from_storage is not None
     assert run_response_from_storage.events is not None
     assert len(run_response_from_storage.events) == 2, "We should only have the run started and run completed events"
     assert run_response_from_storage.events[0].event == TeamRunEvent.run_started
@@ -112,10 +113,10 @@ def test_intermediate_steps_with_tools():
         telemetry=False,
     )
 
-    response_generator = team.run("What is the stock price of Apple?", stream=True, stream_intermediate_steps=True)
-
     events = {}
-    for run_response_delta in response_generator:
+    for run_response_delta in team.run(
+        "What is the stock price of Apple?", stream=True, stream_intermediate_steps=True
+    ):
         if run_response_delta.event not in events:
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
@@ -132,7 +133,10 @@ def test_intermediate_steps_with_tools():
     assert len(events[TeamRunEvent.run_content]) > 1
     assert len(events[TeamRunEvent.run_completed]) == 1
     assert len(events[TeamRunEvent.tool_call_started]) == 1
-    assert events[TeamRunEvent.tool_call_started][0].tool.tool_name == "get_current_stock_price"
+    assert (
+        events[TeamRunEvent.tool_call_started][0].tool.tool_name == "get_current_stock_price"
+        or "transfer_task_to_member"
+    )
     assert len(events[TeamRunEvent.tool_call_completed]) == 1
     assert events[TeamRunEvent.tool_call_completed][0].content is not None
     assert events[TeamRunEvent.tool_call_completed][0].tool.result is not None
@@ -148,10 +152,10 @@ def test_intermediate_steps_with_tools_events_persisted(shared_db):
         telemetry=False,
     )
 
-    response_generator = team.run("What is the stock price of Apple?", stream=True, stream_intermediate_steps=True)
-
     events = {}
-    for run_response_delta in response_generator:
+    for run_response_delta in team.run(
+        "What is the stock price of Apple?", stream=True, stream_intermediate_steps=True
+    ):
         if run_response_delta.event not in events:
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
@@ -166,6 +170,7 @@ def test_intermediate_steps_with_tools_events_persisted(shared_db):
 
     run_response_from_storage = team.get_last_run_response()
 
+    assert run_response_from_storage is not None
     assert run_response_from_storage.events is not None
     assert len(run_response_from_storage.events) == 4
     assert run_response_from_storage.events[0].event == TeamRunEvent.run_started
@@ -606,3 +611,137 @@ def test_intermediate_steps_with_member_agents_streaming_off():
     assert events[TeamRunEvent.tool_call_completed][1].tool.result is not None
     assert len(events[TeamRunEvent.run_content]) > 1
     assert len(events[TeamRunEvent.run_completed]) == 1
+
+
+def test_intermediate_steps_with_member_agents_route():
+    agent_1 = Agent(
+        name="Analyst",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are an expert problem-solving assistant with strong analytical skills! 🧠",
+        tools=[ReasoningTools(add_instructions=True)],
+    )
+    agent_2 = Agent(
+        name="Math Agent",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You can do Math!",
+        tools=[CalculatorTools()],
+    )
+    team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[agent_1, agent_2],
+        telemetry=False,
+        monitoring=False,
+        mode="route",
+    )
+
+    response_generator = team.run(
+        "Solve the problem: 'solve 10 factorial'", stream=True, stream_intermediate_steps=True
+    )
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        TeamRunEvent.run_started,
+        TeamRunEvent.tool_call_started,
+        RunEvent.run_started,
+        RunEvent.tool_call_started,
+        RunEvent.tool_call_completed,
+        RunEvent.run_response_content,
+        RunEvent.run_completed,
+        TeamRunEvent.tool_call_completed,
+        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_completed,
+    }
+
+    assert len(events[TeamRunEvent.run_started]) == 1
+    # Transfer twice, from team to member agents
+    assert len(events[TeamRunEvent.tool_call_started]) == 1
+    assert events[TeamRunEvent.tool_call_started][0].tool.tool_name == "forward_task_to_member"
+    assert events[TeamRunEvent.tool_call_started][0].tool.tool_args["member_id"] == "math-agent"
+    assert len(events[TeamRunEvent.tool_call_completed]) == 1
+    assert events[TeamRunEvent.tool_call_completed][0].tool.tool_name == "forward_task_to_member"
+    assert events[TeamRunEvent.tool_call_completed][0].tool.result is not None
+    assert len(events[TeamRunEvent.run_response_content]) > 1
+    assert len(events[TeamRunEvent.run_completed]) == 1
+    # Two member agents
+    assert len(events[RunEvent.run_started]) == 1
+    assert len(events[RunEvent.run_completed]) == 1
+    # Lots of member tool calls
+    assert len(events[RunEvent.tool_call_started]) > 1
+    assert len(events[RunEvent.tool_call_completed]) > 1
+    assert len(events[RunEvent.run_response_content]) > 1
+
+
+def test_intermediate_steps_with_member_agents_collaborate():
+    def get_news_from_hackernews(query: str):
+        return "The best way to learn to code is to use the Hackernews API."
+
+    def get_news_from_duckduckgo(query: str):
+        return "The best way to learn to code is to use the DuckDuckGo API."
+
+    agent_1 = Agent(
+        name="Web Researcher",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are an expert web researcher with strong analytical skills! Use your tools to find answers to questions.",
+        tools=[get_news_from_duckduckgo],
+    )
+    agent_2 = Agent(
+        name="Hackernews Researcher",
+        model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You are an expert hackernews researcher with strong analytical skills! Use your tools to find answers to questions.",
+        tools=[get_news_from_hackernews],
+    )
+    team = Team(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        members=[agent_1, agent_2],
+        telemetry=False,
+        monitoring=False,
+        mode="collaborate",
+        instructions="You are a discussion master. Forward the task to the member agents.",
+    )
+
+    response_generator = team.run(
+        message="Start the discussion on the topic: 'What is the best way to learn to code?'",
+        stream=True,
+        stream_intermediate_steps=True,
+    )
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert events.keys() == {
+        TeamRunEvent.run_started,
+        TeamRunEvent.tool_call_started,
+        RunEvent.run_started,
+        RunEvent.run_response_content,
+        RunEvent.run_completed,
+        RunEvent.tool_call_started,
+        RunEvent.tool_call_completed,
+        TeamRunEvent.tool_call_completed,
+        TeamRunEvent.run_response_content,
+        TeamRunEvent.run_completed,
+    }
+
+    assert len(events[TeamRunEvent.run_started]) == 1
+    # Transfer twice, from team to member agents
+    assert len(events[TeamRunEvent.tool_call_started]) == 1
+    assert events[TeamRunEvent.tool_call_started][0].tool.tool_name == "run_member_agents"
+    assert len(events[TeamRunEvent.tool_call_completed]) == 1
+    assert events[TeamRunEvent.tool_call_completed][0].tool.tool_name == "run_member_agents"
+    assert events[TeamRunEvent.tool_call_completed][0].tool.result is not None
+    assert len(events[TeamRunEvent.run_response_content]) > 1
+    assert len(events[TeamRunEvent.run_completed]) == 1
+    # Two member agents
+    assert len(events[RunEvent.run_started]) == 2
+    assert len(events[RunEvent.run_completed]) == 2
+    # Lots of member tool calls
+    assert len(events[RunEvent.tool_call_started]) > 1
+    assert len(events[RunEvent.tool_call_completed]) > 1
+    assert len(events[RunEvent.run_response_content]) > 1

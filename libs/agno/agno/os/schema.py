@@ -309,7 +309,6 @@ class AgentResponse(BaseModel):
             "stream": agent.stream,
             "stream_intermediate_steps": agent.stream_intermediate_steps,
         }
-
         return AgentResponse(
             id=agent.id,
             name=agent.name,
@@ -324,6 +323,7 @@ class AgentResponse(BaseModel):
             extra_messages=filter_meaningful_config(extra_messages_info, agent_defaults),
             response_settings=filter_meaningful_config(response_settings_info, agent_defaults),
             streaming=filter_meaningful_config(streaming_info, agent_defaults),
+            metadata=agent.metadata,
         )
 
 
@@ -557,6 +557,7 @@ class TeamResponse(BaseModel):
                 else None
                 for member in team.members
             ],
+            metadata=team.metadata,
         )
 
 
@@ -619,6 +620,7 @@ class WorkflowResponse(BaseModel):
             description=workflow.description,
             steps=steps,
             input_schema=get_workflow_input_schema_dict(workflow),
+            metadata=workflow.metadata,
         )
 
 
@@ -855,7 +857,7 @@ class WorkflowRunSchema(BaseModel):
             content=run_response.get("content", ""),
             content_type=run_response.get("content_type", ""),
             status=run_response.get("status", ""),
-            metrics=run_response.get("workflow_metrics", {}),
+            metrics=run_response.get("metrics", {}),
             step_results=run_response.get("step_results", []),
             step_executor_runs=run_response.get("step_executor_runs", []),
             created_at=run_response["created_at"],

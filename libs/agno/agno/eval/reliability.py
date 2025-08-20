@@ -147,6 +147,10 @@ class ReliabilityEval:
                 model_id = self.team_response.model
                 model_provider = self.team_response.model_provider
 
+            eval_input = {
+                "expected_tool_calls": self.expected_tool_calls,
+            }
+
             log_eval_run(
                 db=self.db,
                 run_id=self.eval_id,  # type: ignore
@@ -157,6 +161,7 @@ class ReliabilityEval:
                 team_id=team_id,
                 model_id=model_id,
                 model_provider=model_provider,
+                eval_input=eval_input,
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
@@ -241,6 +246,10 @@ class ReliabilityEval:
                 model_id = self.team_response.model
                 model_provider = self.team_response.model_provider
 
+            eval_input = {
+                "expected_tool_calls": self.expected_tool_calls,
+            }
+
             await async_log_eval_run(
                 db=self.db,
                 run_id=self.eval_id,  # type: ignore
@@ -251,6 +260,7 @@ class ReliabilityEval:
                 team_id=team_id,
                 model_id=model_id,
                 model_provider=model_provider,
+                eval_input=eval_input,
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")

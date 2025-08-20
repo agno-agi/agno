@@ -886,7 +886,7 @@ class Workflow:
 
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
-                    workflow_run_response.workflow_metrics = self._aggregate_workflow_metrics(collected_step_outputs)
+                    workflow_run_response.metrics = self._aggregate_workflow_metrics(collected_step_outputs)
                     last_output = cast(StepOutput, collected_step_outputs[-1])
 
                     # Use deepest nested content if this is a container (Steps/Router/Loop/etc.)
@@ -1059,7 +1059,7 @@ class Workflow:
 
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
-                    workflow_run_response.workflow_metrics = self._aggregate_workflow_metrics(collected_step_outputs)
+                    workflow_run_response.metrics = self._aggregate_workflow_metrics(collected_step_outputs)
                     last_output = cast(StepOutput, collected_step_outputs[-1])
 
                     # Use deepest nested content if this is a container (Steps/Router/Loop/etc.)
@@ -1257,7 +1257,7 @@ class Workflow:
 
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
-                    workflow_run_response.workflow_metrics = self._aggregate_workflow_metrics(collected_step_outputs)
+                    workflow_run_response.metrics = self._aggregate_workflow_metrics(collected_step_outputs)
                     last_output = cast(StepOutput, collected_step_outputs[-1])
 
                     # Use deepest nested content if this is a container (Steps/Router/Loop/etc.)
@@ -1432,7 +1432,7 @@ class Workflow:
 
                 # Update the workflow_run_response with completion data
                 if collected_step_outputs:
-                    workflow_run_response.workflow_metrics = self._aggregate_workflow_metrics(collected_step_outputs)
+                    workflow_run_response.metrics = self._aggregate_workflow_metrics(collected_step_outputs)
                     last_output = cast(StepOutput, collected_step_outputs[-1])
 
                     # Use deepest nested content if this is a container (Steps/Router/Loop/etc.)
@@ -2226,10 +2226,8 @@ class Workflow:
         session_metrics = self._get_session_metrics(session=session)
 
         # If workflow has metrics, convert and add them to session metrics
-        if workflow_run_response.workflow_metrics:
-            run_session_metrics = self._calculate_session_metrics_from_workflow_metrics(
-                workflow_run_response.workflow_metrics
-            )
+        if workflow_run_response.metrics:
+            run_session_metrics = self._calculate_session_metrics_from_workflow_metrics(workflow_run_response.metrics)
 
             session_metrics += run_session_metrics
 

@@ -1,9 +1,9 @@
 from agno.agent import Agent
 
 
-def get_instructions(agent: Agent):
-    if agent.session_state and agent.session_state.get("current_user_id"):
-        return f"Make the story about {agent.session_state.get('current_user_id')}."
+def get_instructions(session_state):
+    if session_state and session_state.get("current_user_id"):
+        return f"Make the story about {session_state.get('current_user_id')}."
     return "Make the story about the user."
 
 

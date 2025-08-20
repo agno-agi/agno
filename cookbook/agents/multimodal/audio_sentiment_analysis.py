@@ -1,5 +1,6 @@
 import requests
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.media import Audio
 from agno.models.google import Gemini
 
@@ -8,6 +9,10 @@ agent = Agent(
     model=Gemini(id="gemini-2.0-flash-exp"),
     add_history_to_context=True,
     markdown=True,
+    db=SqliteDb(
+        session_table="audio_sentiment_analysis_sessions",
+        db_file="tmp/audio_sentiment_analysis.db",
+    ),
 )
 
 url = "https://agno-public.s3.amazonaws.com/demo_data/sample_conversation.wav"
@@ -16,7 +21,6 @@ response = requests.get(url)
 audio_content = response.content
 
 # Give a sentiment analysis of this audio conversation. Use speaker A, speaker B to identify speakers.
-
 agent.print_response(
     "Give a sentiment analysis of this audio conversation. Use speaker A, speaker B to identify speakers.",
     audio=[Audio(content=audio_content)],

@@ -44,7 +44,7 @@ knowledge = Knowledge(
 )
 
 for result in search_results:
-    knowledge.add_content(
+    knowledge.add_content_sync(
         content=result,
         metadata={
             "source": "search_results",

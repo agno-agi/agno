@@ -29,6 +29,11 @@ except ImportError:
     AIOBOTO3_AVAILABLE = False
 
 
+BEDROCK_SUPPORTED_IMAGE_FORMATS = ["png", "jpeg", "webp", "gif"]
+BEDROCK_SUPPORTED_VIDEO_FORMATS = ["mp4", "mov", "mkv", "webm", "flv", "mpeg", "mpg", "wmv", "three_gp"]
+BEDROCK_SUPPORTED_FILE_FORMATS = ["pdf", "csv", "doc", "docx", "xls", "xlsx", "html", "txt", "md"]
+
+
 @dataclass
 class AwsBedrock(Model):
     """
@@ -264,11 +269,16 @@ class AwsBedrock(Model):
 
                 if message.images:
                     for image in message.images:
-                        if not image.content or not image.format:
-                            raise ValueError("Image content and format are required.")
+                        if not image.content:
+                            raise ValueError("Image content is required for AWS Bedrock.")
+                        if not image.format:
+                            raise ValueError("Image format is required for AWS Bedrock.")
 
-                        if image.format not in ["png", "jpeg", "webp", "gif"]:
-                            raise ValueError(f"Unsupported image format: {image.format}")
+                        if image.format not in BEDROCK_SUPPORTED_IMAGE_FORMATS:
+                            raise ValueError(
+                                f"Unsupported image format: {image.format}. "
+                                f"Supported formats: {BEDROCK_SUPPORTED_IMAGE_FORMATS}"
+                            )
 
                         formatted_message["content"].append(
                             {
@@ -285,21 +295,16 @@ class AwsBedrock(Model):
 
                 if message.videos:
                     for video in message.videos:
-                        if not video.content or not video.format:
-                            raise ValueError("Video content and format are required.")
+                        if not video.content:
+                            raise ValueError("Video content is required for AWS Bedrock.")
+                        if not video.format:
+                            raise ValueError("Video format is required for AWS Bedrock.")
 
-                        if video.format not in [
-                            "mp4",
-                            "mov",
-                            "mkv",
-                            "webm",
-                            "flv",
-                            "mpeg",
-                            "mpg",
-                            "wmv",
-                            "three_gp",
-                        ]:
-                            raise ValueError(f"Unsupported video format: {video.format}")
+                        if video.format not in BEDROCK_SUPPORTED_VIDEO_FORMATS:
+                            raise ValueError(
+                                f"Unsupported video format: {video.format}. "
+                                f"Supported formats: {BEDROCK_SUPPORTED_VIDEO_FORMATS}"
+                            )
 
                         formatted_message["content"].append(
                             {
@@ -311,8 +316,33 @@ class AwsBedrock(Model):
                                 }
                             }
                         )
-                if message.files is not None and len(message.files) > 0:
-                    log_warning("File input is currently unsupported.")
+
+                if message.files:
+                    for file in message.files:
+                        if not file.content:
+                            raise ValueError("File content is required for AWS Bedrock document input.")
+                        if not file.format:
+                            raise ValueError("File format is required for AWS Bedrock document input.")
+                        if not file.name:
+                            raise ValueError("File name is required for AWS Bedrock document input.")
+
+                        if file.format not in BEDROCK_SUPPORTED_FILE_FORMATS:
+                            raise ValueError(
+                                f"Unsupported file format: {file.format}. "
+                                f"Supported formats: {BEDROCK_SUPPORTED_FILE_FORMATS}"
+                            )
+
+                        formatted_message["content"].append(
+                            {
+                                "document": {
+                                    "format": file.format,
+                                    "name": file.name,
+                                    "source": {
+                                        "bytes": file.content,
+                                    },
+                                }
+                            }
+                        )
 
                 formatted_messages.append(formatted_message)
         # TODO: Add caching: https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-call.html
@@ -506,6 +536,81 @@ class AwsBedrock(Model):
 
             assistant_message.metrics.stop_timer()
 
+        except ClientError as e:
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            raise ModelProviderError(message=str(e.response), model_name=self.name, model_id=self.id) from e
+        except Exception as e:
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+
+    async def ainvoke(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Async invoke the Bedrock API.
+        """
+        try:
+            formatted_messages, system_message = self._format_messages(messages)
+
+            tool_config = None
+            if tools is not None and tools:
+                tool_config = {"tools": self._format_tools_for_request(tools)}
+
+            body = {
+                "system": system_message,
+                "toolConfig": tool_config,
+                "inferenceConfig": self._get_inference_config(),
+            }
+            body = {k: v for k, v in body.items() if v is not None}
+
+            if self.request_params:
+                log_debug(f"Calling {self.provider} with request parameters: {self.request_params}", log_level=2)
+                body.update(**self.request_params)
+
+            async with self.get_async_client() as client:
+                return await client.converse(modelId=self.id, messages=formatted_messages, **body)
+        except ClientError as e:
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            raise ModelProviderError(message=str(e.response), model_name=self.name, model_id=self.id) from e
+        except Exception as e:
+            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
+            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+
+    async def ainvoke_stream(
+        self,
+        messages: List[Message],
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+    ):
+        """
+        Async invoke the Bedrock API with streaming.
+        """
+        try:
+            formatted_messages, system_message = self._format_messages(messages)
+
+            tool_config = None
+            if tools is not None and tools:
+                tool_config = {"tools": self._format_tools_for_request(tools)}
+
+            body = {
+                "system": system_message,
+                "toolConfig": tool_config,
+                "inferenceConfig": self._get_inference_config(),
+            }
+            body = {k: v for k, v in body.items() if v is not None}
+
+            if self.request_params:
+                body.update(**self.request_params)
+
+            async with self.get_async_client() as client:
+                response = await client.converse_stream(modelId=self.id, messages=formatted_messages, **body)
+                async for chunk in response["stream"]:
+                    yield chunk
         except ClientError as e:
             log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e.response), model_name=self.name, model_id=self.id) from e
