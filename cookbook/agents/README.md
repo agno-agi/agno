@@ -7,7 +7,7 @@ Welcome to the **Agno Agents Cookbook** - your comprehensive guide to building i
   - [Overview](#overview)
     - [Key Agent Features](#key-agent-features)
   - [Quick Start](#quick-start)
-  - [Cookbook Categories](#cookbook-categories)
+  - [Sections](#sections)
     - [Tool Integration](#-tool-integration)
     - [RAG & Knowledge](#rag--knowledge)
     - [Human-in-the-Loop](#human-in-the-loop)
@@ -58,7 +58,7 @@ agent = Agent(
 agent.print_response("What are the latest AI developments?")
 ```
 
-## Cookbook Categories
+## Sections
 
 ### 🔧 Tool Integration
 
@@ -66,7 +66,7 @@ agent.print_response("What are the latest AI developments?")
 
 Agno agents can use tools in the following ways:
 
-**1. Built-in Tools** - Ready-to-use tool collections:
+**1. Agno ToolKits** - Ready-to-use tool collections in Agno:
 ```python
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.calculator import Calculator
@@ -100,7 +100,7 @@ agent = Agent(
 )
 ```
 
-**3. Toolkits** - Make your own custom Toolkit class
+**3. Custom Toolkits** - Make your own custom Toolkit class
 ```python
 from agno.tools import Toolkit
 
@@ -175,7 +175,7 @@ agent.print_response(
 - [`rag/agentic_rag_with_reranking.py`](./rag/agentic_rag_with_reranking.py) - Enhanced retrieval with reranking
 
 
-### Human-in-the-Loop
+### Human-in-the-Loop (HITL)
 
 **User confirmation, input, and interactive flow**
 
@@ -342,9 +342,9 @@ agent.print_response("What did I discuss previously?", session_id="session_3")  
 
 ### Event Handling & Streaming
 
-**Capture and visualize agent events during execution**
+**Capture and visualize agent events during streaming**
 
-Agno agents emit events during execution that you can capture for monitoring, debugging, or building interactive UIs:
+Agno agents emit events during streaming that you can capture for monitoring, debugging, or building interactive UIs:
 
 **Basic Event Streaming** - Monitor tool calls and responses:
 ```python
@@ -404,12 +404,23 @@ asyncio.run(capture_reasoning(task))
 **Available Events:**
 - `RunEvent.run_started` - Agent execution begins
 - `RunEvent.run_content` - Response content chunks
+- `RunEvent.run_intermediate_content` - Intermediate response content
+- `RunEvent.run_completed` - Agent execution ends
+- `RunEvent.run_error` - Agent execution error
+- `RunEvent.run_cancelled` - Agent execution cancelled
+- `RunEvent.run_paused` - Agent execution paused
+- `RunEvent.run_continued` - Agent execution continued
 - `RunEvent.tool_call_started` - Tool execution begins  
 - `RunEvent.tool_call_completed` - Tool execution finished
 - `RunEvent.reasoning_started` - Reasoning mode begins
 - `RunEvent.reasoning_step` - Individual reasoning steps
 - `RunEvent.reasoning_completed` - Reasoning finished
-- `RunEvent.run_completed` - Agent execution ends
+- `RunEvent.memory_update_started` - Memory update begins
+- `RunEvent.memory_update_completed` - Memory update finished
+- `RunEvent.parser_model_response_started` - Parser model response begins
+- `RunEvent.parser_model_response_completed` - Parser model response finished
+- `RunEvent.output_model_response_started` - Output model response begins
+- `RunEvent.output_model_response_completed` - Output model response finished
 
 **See more examples:**
 - [`events/basic_agent_events.py`](./events/basic_agent_events.py) - Tool call event handling
@@ -512,6 +523,70 @@ agent.print_response(
 
 ```
 
+## Parser Model & Output Model
+
+Agno supports specialized models for different stages of agent processing, allowing you to optimize performance, cost, and quality for specific tasks.
+
+### Parser Model
+
+The `parser_model` is used specifically for parsing structured outputs when using `response_model`. This allows you to use a faster, cheaper model for the parsing task while using a more powerful model for the main reasoning.
+
+**Benefits:**
+- **Cost Optimization** - Use cheaper models (like GPT-4o-mini) for parsing while using premium models for reasoning
+- **Performance** - Faster parsing with models optimized for structured data extraction
+- **Reliability** - Dedicated parsing models often have better JSON/structured output consistency
+- **Resource Allocation** - Separate concerns between reasoning and parsing tasks
+
+**Example:**
+```python
+from agno.agent import Agent
+from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIChat
+from pydantic import BaseModel
+
+class TravelPlan(BaseModel):
+    destination: str
+    duration_days: int
+    budget_usd: float
+    activities: list[str]
+
+agent = Agent(
+    model=Claude(id="claude-sonnet-4"),  # Powerful model for reasoning
+    parser_model=OpenAIChat(id="gpt-4o"),  # Fast model for parsing
+    response_model=TravelPlan,
+)
+```
+
+### Output Model
+
+The `output_model` is used to generate the final response after all processing is complete. This enables you to use different models for different stages of the agent workflow.
+
+**Benefits:**
+- **Quality Control** - Use specialized models for final output generation
+- **Style Consistency** - Different models for different response styles (technical vs conversational)
+- **Cost Management** - Use expensive models only for final output, cheaper models for intermediate steps
+- **Multi-Modal Support** - Use text models for reasoning, multi-modal models for final responses
+
+**Example:**
+```python
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools.duckduckgo import DuckDuckGoTools
+
+agent = Agent(
+    model=OpenAIChat(id="gpt-4"),  # Standard model for reasoning and tool use
+    output_model=OpenAIChat(id="o3-mini"),  # Specialized model for final response
+    tools=[DuckDuckGoTools()],
+)
+
+agent.print_response("Latest news from France?", stream=True)
+```
+
+**See Examples:**
+- [`other/parse_model.py`](./other/parse_model.py) - Parser model for structured outputs
+- [`other/output_model.py`](./other/output_model.py) - Output model for final responses
+
+
 **Examples:**
 - **[`db/`](./db/)** - Database integration patterns
   - `chat_history.py` - Retrieving conversation history
@@ -523,9 +598,5 @@ agent.print_response(
   - `07_in_memory_session_caching.py` - Performance optimization
 - **[`dependencies/`](./dependencies/)** - Dependency injection patterns
   - `add_dependencies_to_context.py` - Injecting external data into agent context
-
-For more advanced patterns and enterprise features, explore:
-- **[Agno Teams](/cookbook/teams/)** - Multi-agent collaboration
-- **[Agno Workflows](/cookbook/workflows/)** - Complex orchestration
 
 ---
