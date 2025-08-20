@@ -204,7 +204,7 @@ class Gemini(Model):
         builtin_tools = []
 
         if self.grounding:
-            log_info("Grounding enabled.")
+            log_info("Grounding enabled. This is a legacy tool. For Gemini 2.0+ Please use enable `search` flag instead.")
             builtin_tools.append(
                 Tool(
                     google_search=GoogleSearchRetrieval(
