@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from agno.db.base import BaseDb
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.knowledge.content import Content, ContentAuthorization, ContentStatus, FileData
+from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
 from agno.knowledge.reader.pdf_reader import PDFReader, PDFUrlReader
@@ -199,7 +199,7 @@ class Knowledge:
         upsert: bool = False,
         skip_if_exists: bool = False,
         reader: Optional[Reader] = None,
-        authorization: Optional[ContentAuthorization] = None,
+        auth: Optional[ContentAuth] = None,
     ) -> None: ...
 
     @overload
@@ -220,7 +220,7 @@ class Knowledge:
         exclude: Optional[List[str]] = None,
         upsert: bool = True,
         skip_if_exists: bool = True,
-        authorization: Optional[ContentAuthorization] = None,
+        auth: Optional[ContentAuth] = None,
     ) -> None:
         # Validation: At least one of the parameters must be provided
         if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
@@ -247,7 +247,7 @@ class Knowledge:
             topics=topics,
             remote_content=remote_content,
             reader=reader,
-            authorization=authorization,
+            auth=auth,
         )
 
         await self._load_content(content, upsert, skip_if_exists, include, exclude)
@@ -265,7 +265,7 @@ class Knowledge:
         upsert: bool = False,
         skip_if_exists: bool = False,
         reader: Optional[Reader] = None,
-        authorization: Optional[ContentAuthorization] = None,
+        auth: Optional[ContentAuth] = None,
     ) -> None: ...
 
     @overload
@@ -286,7 +286,7 @@ class Knowledge:
         exclude: Optional[List[str]] = None,
         upsert: bool = True,
         skip_if_exists: bool = True,
-        authorization: Optional[ContentAuthorization] = None,
+        auth: Optional[ContentAuth] = None,
     ) -> None:
         """
         Synchronously add content to the knowledge base.
@@ -321,7 +321,7 @@ class Knowledge:
                 exclude=exclude,
                 upsert=upsert,
                 skip_if_exists=skip_if_exists,
-                authorization=authorization,
+                auth=auth,
             )
         )
 
@@ -355,8 +355,8 @@ class Knowledge:
                 if content.reader:
                     # TODO: We will refactor this to eventually pass authorization to all readers
                     if isinstance(content.reader, (PDFReader, PDFUrlReader)):
-                        if content.authorization and content.authorization.password:
-                            content.reader.password = content.authorization.password
+                        if content.auth and content.auth.password:
+                            content.reader.password = content.auth.password
 
                     name = content.name or path.name
                     read_documents = content.reader.read(path, name=name)
@@ -366,8 +366,8 @@ class Knowledge:
                     if reader:
                         # TODO: We will refactor this to eventually pass authorization to all readers
                         if isinstance(reader, (PDFReader, PDFUrlReader)):
-                            if content.authorization and content.authorization.password:
-                                reader.password = content.authorization.password
+                            if content.auth and content.auth.password:
+                                reader.password = content.auth.password
 
                         name = content.name or path.name
                         read_documents = reader.read(path, name=name)
@@ -454,8 +454,8 @@ class Knowledge:
                 if reader is not None:
                     # TODO: We will refactor this to eventually pass authorization to all readers
                     if isinstance(reader, (PDFReader, PDFUrlReader)):
-                        if content.authorization and content.authorization.password:
-                            reader.password = content.authorization.password
+                        if content.auth and content.auth.password:
+                            reader.password = content.auth.password
 
                     read_documents = reader.read(content.url, name=content.name)
 
@@ -469,8 +469,8 @@ class Knowledge:
                         log_info(f"Selected reader: {reader.__class__.__name__}")
                         # TODO: We will refactor this to eventually pass authorization to all readers
                         if isinstance(reader, (PDFReader, PDFUrlReader)):
-                            if content.authorization and content.authorization.password:
-                                reader.password = content.authorization.password
+                            if content.auth and content.auth.password:
+                                reader.password = content.auth.password
 
                         read_documents = reader.read(content.url, name=content.name)
                     else:
@@ -485,8 +485,8 @@ class Knowledge:
                     log_info(f"Selected reader: {reader.__class__.__name__}")
                     # TODO: We will refactor this to eventually pass authorization to all readers
                     if isinstance(reader, (PDFReader, PDFUrlReader)):
-                        if content.authorization and content.authorization.password:
-                            reader.password = content.authorization.password
+                        if content.auth and content.auth.password:
+                            reader.password = content.auth.password
 
                     read_documents = reader.read(content.url, name=content.name)
                 else:

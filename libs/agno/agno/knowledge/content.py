@@ -23,7 +23,7 @@ class FileData:
 
 
 @dataclass
-class ContentAuthorization:
+class ContentAuth:
     password: Optional[str] = None
 
 
@@ -34,7 +34,7 @@ class Content:
     description: Optional[str] = None
     path: Optional[str] = None
     url: Optional[str] = None
-    authorization: Optional[ContentAuthorization] = None
+    auth: Optional[ContentAuth] = None
     file_data: Optional[FileData] = None
     upload_file: Optional[UploadFile] = None
     metadata: Optional[Dict[str, Any]] = None

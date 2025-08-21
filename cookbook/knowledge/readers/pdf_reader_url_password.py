@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.knowledge.content import ContentAuthorization
+from agno.knowledge.content import ContentAuth
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.pgvector import PgVector
 
@@ -15,7 +15,7 @@ knowledge = Knowledge(
 
 knowledge.add_content_sync(
     url="https://agno-public.s3.us-east-1.amazonaws.com/recipes/ThaiRecipes_protected.pdf",
-    authorization=ContentAuthorization(password="ThaiRecipes"),
+    auth=ContentAuth(password="ThaiRecipes"),
 )
 
 

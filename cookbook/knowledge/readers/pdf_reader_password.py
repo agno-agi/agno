@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.knowledge.content import ContentAuthorization
+from agno.knowledge.content import ContentAuth
 from agno.knowledge.knowledge import Knowledge
 from agno.utils.media import download_file
 from agno.vectordb.pgvector import PgVector
@@ -20,7 +20,7 @@ knowledge = Knowledge(
 
 knowledge.add_content_sync(
     path="ThaiRecipes_protected.pdf",
-    authorization=ContentAuthorization(password="ThaiRecipes"),
+    auth=ContentAuth(password="ThaiRecipes"),
 )
 
 # Create an agent with the knowledge base
