@@ -49,6 +49,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn"]
 
+os = ["fastapi", "uvicorn"]
+
 # Models integration test dependencies
 integration-tests = [
     "exa_py",
@@ -87,7 +89,7 @@ portkey = ["portkey-ai"]
 agentql = ["agentql"]
 apify = ["apify-client"]
 arxiv = ["arxiv"]
-brave = ["brave-search"]
+# brave = ["brave-search"]
 browserbase = ["browserbase", "playwright"]
 cartesia = ["cartesia"]
 confluence = ["atlassian-python-api"]
@@ -164,12 +166,12 @@ performance = ["memory_profiler"]
 cookbooks = ["inquirer", "email_validator"]
 
 # Dependencies for Docker
-docker = ["agno-os[docker]"]
+docker = ["agno-infra[docker]"]
 
 # Dependencies for AWS
-aws = ["agno-os[aws]", "agno-os[docker]"]
+aws = ["agno-infra[aws]", "agno-infra[docker]"]
 
-os = ["agno-os"]
+infra = ["agno-infra"]
 
 # All models
 models = [

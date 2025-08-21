@@ -353,7 +353,7 @@ class PDFReader(BasePDFReader):
             return []
 
         documents = []
-        for page_number, page in enumerate(doc_reader.pages, start=1):
+        for page_number, page in enumerate(pdf_reader.pages, start=1):
             page_text = self._extract_text_with_error_handling(page, page_number, doc_name)
 
             documents.append(

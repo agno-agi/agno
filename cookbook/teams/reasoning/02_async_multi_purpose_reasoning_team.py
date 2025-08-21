@@ -7,7 +7,6 @@ specialist agents asynchronously, showcasing coordination and intelligent task r
 
 import asyncio
 from pathlib import Path
-from textwrap import dedent
 
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
@@ -22,6 +21,7 @@ from agno.tools.knowledge import KnowledgeTools
 from agno.tools.pubmed import PubmedTools
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
+from agno.utils.print_response.team import aprint_response
 from agno.vectordb.lancedb.lance_db import LanceDb
 from agno.vectordb.search import SearchType
 
@@ -94,7 +94,7 @@ agno_assist_knowledge = Knowledge(
 )
 
 # Add Agno documentation content
-agno_assist_knowledge.add_content(url="https://docs.agno.com/llms-full.txt")
+agno_assist_knowledge.add_content_sync(url="https://docs.agno.com/llms-full.txt")
 
 # Agno framework assistant
 agno_assist = Agent(
@@ -160,7 +160,7 @@ async def main():
     # Example interactions:
 
     # 1. General capability query
-    await agent_team.aprint_response("Hi! What are you capable of doing?")
+    await aprint_response(input="Hi! What are you capable of doing?", team=agent_team)
 
     # 2. Technical code question
     # await agent_team.aprint_response(dedent("""

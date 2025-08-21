@@ -1,8 +1,11 @@
 from agno.agent.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai.chat import OpenAIChat
 from agno.team.team import Team
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
+
+db = SqliteDb(db_file="tmp/workflow.db")
 
 
 # === TEAM TOOLS FOR STEP MANAGEMENT ===
@@ -162,6 +165,7 @@ update_status_step = Step(
 # === CREATE WORKFLOW ===
 project_workflow = Workflow(
     name="Project Management Workflow",
+    db=db,
     steps=[manage_steps_step, update_status_step],
     session_state={"steps": []},
 )
@@ -171,14 +175,13 @@ project_workflow = Workflow(
 
 def print_current_steps(workflow):
     """Helper function to display current workflow state"""
-    if (
-        not workflow.workflow_session_state
-        or "steps" not in workflow.workflow_session_state
-    ):
+
+    session_state = workflow.get_session_state()
+    if not session_state or "steps" not in session_state:
         print("📋 No steps in workflow")
         return
 
-    steps = workflow.workflow_session_state["steps"]
+    steps = session_state["steps"]
     if not steps:
         print("📋 Step list is empty")
         return
@@ -207,7 +210,6 @@ def print_current_steps(workflow):
 
 if __name__ == "__main__":
     print("🚀 Starting Project Management Workflow Tests")
-    print_current_steps(project_workflow)
 
     # Example 1: Add multiple steps with different priorities
     print("=" * 60)

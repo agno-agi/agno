@@ -1,5 +1,3 @@
-import asyncio
-
 from agents import run_research
 from mcp.server.fastmcp import FastMCP
 

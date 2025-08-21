@@ -51,7 +51,7 @@ def test_team_metrics_basic(shared_db):
     assert session_from_db.session_data["session_metrics"]["total_tokens"] is not None
 
 
-def test_team_metrics_streaming():
+def test_team_metrics_streaming(shared_db):
     """Test team metrics with streaming."""
 
     stock_agent = Agent(
@@ -66,6 +66,8 @@ def test_team_metrics_streaming():
         mode="route",
         model=OpenAIChat("gpt-4o"),
         members=[stock_agent],
+        db=shared_db,
+        store_member_responses=True,
     )
 
     # Run with streaming

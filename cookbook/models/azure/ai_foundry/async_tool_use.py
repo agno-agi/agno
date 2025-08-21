@@ -3,11 +3,9 @@ Async example using Claude with tool calls.
 """
 
 import asyncio
-from pprint import pprint
 
 from agno.agent import Agent
 from agno.models.azure import AzureAIFoundry
-from agno.run.response import RunOutput
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(

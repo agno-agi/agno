@@ -43,8 +43,8 @@ async def test_vegetarian_recipe_agent():
 
 
 # Example agent implementation
-from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.agent import Agent  # noqa: E402
+from agno.models.openai import OpenAIChat  # noqa: E402
 
 
 class VegetarianRecipeAgent:

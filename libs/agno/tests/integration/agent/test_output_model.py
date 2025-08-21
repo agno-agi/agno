@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
-from agno.run.response import IntermediateRunResponseContentEvent, RunResponseContentEvent
+from agno.run.agent import IntermediateRunResponseContentEvent, RunResponseContentEvent
 
 
 def test_claude_with_openai_output_model():

@@ -15,8 +15,6 @@ Setup:
 3. Run this script to see coordinated reasoning RAG in action
 """
 
-import asyncio
-
 from agno.agent import Agent
 from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.knowledge import Knowledge

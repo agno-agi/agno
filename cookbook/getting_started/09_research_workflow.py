@@ -27,7 +27,7 @@ from typing import Dict, Iterator, Optional
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.run.response import RunOutputEvent
+from agno.run.agent import RunOutputEvent
 from agno.run.workflow import WorkflowCompletedEvent
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.newspaper4k import Newspaper4kTools

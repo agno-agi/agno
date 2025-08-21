@@ -12,7 +12,7 @@ from agno.models.base import MessageData, Model
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
-from agno.run.response import RunOutput
+from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.openai_responses import images_to_message
 from agno.utils.models.schema_utils import get_response_schema_for_provider
@@ -45,6 +45,8 @@ class OpenAIResponses(Model):
     metadata: Optional[Dict[str, Any]] = None
     parallel_tool_calls: Optional[bool] = None
     reasoning: Optional[Dict[str, Any]] = None
+    verbosity: Optional[Literal["low", "medium", "high"]] = None
+    reasoning_effort: Optional[Literal["minimal", "medium", "high"]] = None
     store: Optional[bool] = None
     temperature: Optional[float] = None
     top_p: Optional[float] = None
@@ -179,7 +181,6 @@ class OpenAIResponses(Model):
             "max_tool_calls": self.max_tool_calls,
             "metadata": self.metadata,
             "parallel_tool_calls": self.parallel_tool_calls,
-            "reasoning": self.reasoning,
             "store": self.store,
             "temperature": self.temperature,
             "top_p": self.top_p,
@@ -187,21 +188,37 @@ class OpenAIResponses(Model):
             "user": self.user,
             "service_tier": self.service_tier,
         }
+
+        # Handle reasoning parameter - convert reasoning_effort to reasoning format
+        if self.reasoning is not None:
+            base_params["reasoning"] = self.reasoning
+        elif self.reasoning_effort is not None:
+            base_params["reasoning"] = {"effort": self.reasoning_effort}
+
+        # Build text parameter
+        text_params: Dict[str, Any] = {}
+
+        # Add verbosity if specified
+        if self.verbosity is not None:
+            text_params["verbosity"] = self.verbosity
+
         # Set the response format
         if response_format is not None:
             if isinstance(response_format, type) and issubclass(response_format, BaseModel):
                 schema = get_response_schema_for_provider(response_format, "openai")
-                base_params["text"] = {
-                    "format": {
-                        "type": "json_schema",
-                        "name": response_format.__name__,
-                        "schema": schema,
-                        "strict": True,
-                    }
+                text_params["format"] = {
+                    "type": "json_schema",
+                    "name": response_format.__name__,
+                    "schema": schema,
+                    "strict": True,
                 }
             else:
                 # JSON mode
-                base_params["text"] = {"format": {"type": "json_object"}}
+                text_params["format"] = {"type": "json_object"}
+
+        # Add text parameter if there are any text-level params
+        if text_params:
+            base_params["text"] = text_params
 
         # Filter out None values
         request_params: Dict[str, Any] = {k: v for k, v in base_params.items() if v is not None}

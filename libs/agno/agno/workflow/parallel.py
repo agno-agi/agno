@@ -5,7 +5,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List
 from uuid import uuid4
 
 from agno.models.metrics import Metrics
-from agno.run.response import RunOutputEvent
+from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import (
     ParallelExecutionCompletedEvent,

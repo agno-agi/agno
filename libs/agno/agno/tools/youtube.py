@@ -140,6 +140,7 @@ class YouTubeTools(Toolkit):
                 return " ".join(line.text for line in captions)
             return "No captions found for video"
         except Exception as e:
+            # log_info(f"Error getting captions for video {video_id}: {e}")
             return f"Error getting captions for video: {e}"
 
     def get_video_timestamps(self, url: str) -> str:

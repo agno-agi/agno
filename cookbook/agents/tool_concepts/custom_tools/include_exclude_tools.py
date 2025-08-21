@@ -3,7 +3,7 @@ import json
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.tools.toolkit import Toolkit
+from agno.tools import Toolkit
 from agno.utils.log import logger
 
 

@@ -2,8 +2,6 @@
 Gemini Tutor: Advanced Educational AI Assistant with Multimodal Learning
 """
 
-import os
-
 import nest_asyncio
 import streamlit as st
 from agents import TutorAppAgent
@@ -24,7 +22,6 @@ st.set_page_config(
 # --- Constants ---
 MODEL_OPTIONS = {
     "Gemini 2.5 Pro Experimental (Recommended)": "gemini-2.5-pro-exp-03-25",
-    "Gemini 2.0 Pro": "gemini-2.0-pro",
     "Gemini 2.0 Pro": "gemini-2.0-pro",
     "Gemini 1.5 Pro": "gemini-1.5-pro",
 }

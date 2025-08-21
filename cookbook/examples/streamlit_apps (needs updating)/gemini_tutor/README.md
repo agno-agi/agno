@@ -62,7 +62,7 @@ source ~/.venvs/aienv/bin/activate
 ### 2. Install requirements
 
 ```shell
-pip install -r cookbook/examples/streamlit_apps/gemini-tutor/requirements.txt
+pip install -r cookbook/examples/streamlit_apps/gemini_tutor/requirements.txt
 ```
 
 ### 3. Export `GOOGLE_API_KEY`
@@ -74,7 +74,7 @@ export GOOGLE_API_KEY=***
 ### 4. Run Streamlit App
 
 ```shell
-streamlit run cookbook/examples/streamlit_apps/gemini-tutor/app.py
+streamlit run cookbook/examples/streamlit_apps/gemini_tutor/app.py
 ```
 
 ---

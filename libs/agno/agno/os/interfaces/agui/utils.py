@@ -24,7 +24,7 @@ from ag_ui.core import (
 from ag_ui.core.types import Message as AGUIMessage
 
 from agno.models.message import Message
-from agno.run.response import RunContentEvent, RunEvent, RunOutputEvent, RunPausedEvent
+from agno.run.agent import RunContentEvent, RunEvent, RunOutputEvent, RunPausedEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent
 

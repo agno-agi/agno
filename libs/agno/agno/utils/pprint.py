@@ -3,7 +3,7 @@ from typing import AsyncIterable, Iterable, Union, get_args
 
 from pydantic import BaseModel
 
-from agno.run.response import RunOutput, RunOutputEvent
+from agno.run.agent import RunOutput, RunOutputEvent
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent
 from agno.utils.log import logger
