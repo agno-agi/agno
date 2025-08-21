@@ -171,6 +171,11 @@ class AccuracyEval:
     # The database to store Evaluation results
     db: Optional[BaseDb] = None
 
+    # Telemetry settings
+    # telemetry=True logs minimal telemetry for analytics
+    # This helps us improve our Evals and provide better support
+    telemetry: bool = True
+
     def get_evaluator_agent(self) -> Agent:
         """Return the evaluator agent. If not provided, build it based on the evaluator fields and default instructions."""
         if self.evaluator_agent is not None:
@@ -436,6 +441,13 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 eval_input=log_eval_input,
             )
 
+        if self.telemetry:
+            from agno.api.evals import EvalRunCreate, create_eval_run
+
+            create_eval_run(
+                eval_run=EvalRunCreate(run_id=self.eval_id, eval_type=EvalType.ACCURACY),
+            )
+
         logger.debug(f"*********** Evaluation {self.eval_id} Finished ***********")
         return self.result
 
@@ -568,6 +580,13 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 eval_input=log_eval_input,
             )
 
+        if self.telemetry:
+            from agno.api.evals import EvalRunCreate, async_create_eval_run
+
+            await async_create_eval_run(
+                eval_run=EvalRunCreate(run_id=self.eval_id, eval_type=EvalType.ACCURACY),
+            )
+
         logger.debug(f"*********** Evaluation {self.eval_id} Finished ***********")
         return self.result
 
@@ -671,6 +690,13 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 evaluated_component_name=evaluated_component_name,
                 workflow_id=None,
                 eval_input=log_eval_input,
+            )
+
+        if self.telemetry:
+            from agno.api.evals import EvalRunCreate, create_eval_run
+
+            create_eval_run(
+                eval_run=EvalRunCreate(run_id=self.eval_id, eval_type=EvalType.ACCURACY),
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")

@@ -41,6 +41,7 @@ class AgentOS:
         apps: Optional[List[BaseApp]] = None,
         settings: Optional[AgnoAPISettings] = None,
         fastapi_app: Optional[FastAPI] = None,
+        telemetry: bool = True,
     ):
         if not agents and not workflows and not teams:
             raise ValueError("Either agents, teams or workflows must be provided.")
@@ -57,6 +58,8 @@ class AgentOS:
 
         self.os_id: Optional[str] = os_id
         self.description = description
+
+        self.telemetry = telemetry
 
         self.interfaces_loaded: List[Tuple[str, str]] = []
         self.apps_loaded: List[Tuple[str, str]] = []
@@ -90,6 +93,12 @@ class AgentOS:
             for workflow in self.workflows:
                 if not workflow.id:
                     workflow.id = generate_id(workflow.name)
+
+        if self.telemetry:
+            from agno.api.os import OSLaunch, log_os_launch
+
+            # TODO: the id should be required
+            log_os_launch(launch=OSLaunch(os_id=self.os_id))
 
     def _auto_discover_apps(self) -> List[BaseApp]:
         """Auto-discover apps from agents, teams, and workflows."""

@@ -786,7 +786,8 @@ class Team:
         # 6. Save session to storage
         self.save_session(session=session)
 
-        # TODO: Log team run
+        # Log Team Run
+        self._log_team_run(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -901,7 +902,8 @@ class Team:
         if yield_run_response:
             yield run_response
 
-        # TODO: Log team run
+        # Log Team Run
+        self._log_team_run(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1239,7 +1241,7 @@ class Team:
         self.save_session(session=session)
 
         # 8. Log Team Run
-        await self._alog_team_run(session_id=session.session_id, user_id=user_id)
+        await self._alog_team_run(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1358,7 +1360,7 @@ class Team:
             yield run_response
 
         # 7. Log Team Run
-        await self._alog_team_run(session_id=session.session_id, user_id=user_id)
+        await self._alog_team_run(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -6487,46 +6489,32 @@ class Team:
     # Api functions
     ###########################################################################
 
-    def _log_team_run(self, session_id: str, user_id: Optional[str] = None) -> None:
-        self.set_telemetry()
+    def _log_team_run(self, session_id: str, run_id: Optional[str] = None) -> None:
+        """Send a telemetry event to the API for a created Team run"""
 
+        self.set_telemetry()
         if not self.telemetry:
             return
 
-        # from agno.api.team import TeamRunCreate, create_team_run
-        #
-        # try:
-        #     team_session: TeamSession = self.team_session or self._read_or_create_session(
-        #         session_id=session_id, user_id=user_id
-        #     )
-        #
-        #     create_team_run(
-        #         run=TeamRunCreate(
-        #             session_id=team_session.session_id,
-        #             team_data=team_session.telemetry_data(),
-        #         ),
-        #     )
-        # except Exception as e:
-        #     log_debug(f"Could not create agent event: {e}")
+        from agno.api.team import TeamRunCreate, create_team_run
 
-    async def _alog_team_run(self, session_id: str, user_id: Optional[str] = None) -> None:
+        try:
+            create_team_run(
+                run=TeamRunCreate(session_id=session_id, run_id=run_id),
+            )
+        except Exception as e:
+            log_debug(f"Could not create Team run telemetry event: {e}")
+
+    async def _alog_team_run(self, session_id: str, run_id: Optional[str] = None) -> None:
+        """Send a telemetry event to the API for a created Team async run"""
+
         self.set_telemetry()
-
         if not self.telemetry:
             return
 
-        # from agno.api.team import TeamRunCreate, acreate_team_run
-        #
-        # try:
-        #     team_session: TeamSession = self.team_session or self._read_or_create_session(
-        #         session_id=session_id, user_id=user_id
-        #     )
-        #
-        #     await acreate_team_run(
-        #         run=TeamRunCreate(
-        #             session_id=team_session.session_id,
-        #             team_data=team_session.telemetry_data(),
-        #         ),
-        #     )
-        # except Exception as e:
-        #     log_debug(f"Could not create agent event: {e}")
+        from agno.api.team import TeamRunCreate, acreate_team_run
+
+        try:
+            await acreate_team_run(run=TeamRunCreate(session_id=session_id, run_id=run_id))
+        except Exception as e:
+            log_debug(f"Could not create Team run telemetry event: {e}")

@@ -65,6 +65,11 @@ class ReliabilityEval:
     # The database to store Evaluation results
     db: Optional[BaseDb] = None
 
+    # Telemetry settings
+    # telemetry=True logs minimal telemetry for analytics
+    # This helps us improve our Evals and provide better support
+    telemetry: bool = True
+
     def run(self, *, print_results: bool = False) -> Optional[ReliabilityResult]:
         if self.agent_response is None and self.team_response is None:
             raise ValueError("You need to provide 'agent_response' or 'team_response' to run the evaluation.")
@@ -164,6 +169,13 @@ class ReliabilityEval:
                 eval_input=eval_input,
             )
 
+        if self.telemetry:
+            from agno.api.evals import EvalRunCreate, create_eval_run
+
+            create_eval_run(
+                eval_run=EvalRunCreate(run_id=self.eval_id, eval_type=EvalType.RELIABILITY),
+            )
+
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
         return self.result
 
@@ -261,6 +273,13 @@ class ReliabilityEval:
                 model_id=model_id,
                 model_provider=model_provider,
                 eval_input=eval_input,
+            )
+
+        if self.telemetry:
+            from agno.api.evals import EvalRunCreate, async_create_eval_run
+
+            await async_create_eval_run(
+                eval_run=EvalRunCreate(run_id=self.eval_id, eval_type=EvalType.RELIABILITY),
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
