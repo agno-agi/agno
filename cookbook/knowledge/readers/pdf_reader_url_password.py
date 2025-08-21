@@ -1,14 +1,9 @@
 from agno.agent import Agent
 from agno.knowledge.content import ContentAuthorization
 from agno.knowledge.knowledge import Knowledge
-from agno.utils.media import download_file
 from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-download_file(
-    "https://agno-public.s3.us-east-1.amazonaws.com/recipes/ThaiRecipes_protected.pdf",
-    "ThaiRecipes_protected.pdf",
-)
 
 # Create a knowledge base with simplified password handling
 knowledge = Knowledge(
@@ -19,11 +14,12 @@ knowledge = Knowledge(
 )
 
 knowledge.add_content_sync(
-    path="ThaiRecipes_protected.pdf",
+    url="https://agno-public.s3.us-east-1.amazonaws.com/recipes/ThaiRecipes_protected.pdf",
     authorization=ContentAuthorization(password="ThaiRecipes"),
 )
 
-# Create an agent with the knowledge base
+
+# Create an agent with the knowledge
 agent = Agent(
     knowledge=knowledge,
     search_knowledge=True,

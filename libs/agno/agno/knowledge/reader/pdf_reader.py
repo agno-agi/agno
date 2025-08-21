@@ -306,7 +306,12 @@ class BasePDFReader(Reader):
 class PDFReader(BasePDFReader):
     """Reader for PDF files"""
 
-    def read(self, name: Optional[str], pdf: Optional[Union[str, Path, IO[Any]]] = None, password: Optional[str] = None) -> List[Document]:
+    def read(
+        self,
+        pdf: Optional[Union[str, Path, IO[Any]]] = None,
+        name: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> List[Document]:
         if pdf is None:
             log_error("No pdf provided")
             return []
@@ -334,7 +339,12 @@ class PDFReader(BasePDFReader):
         # Read and chunk.
         return self._pdf_reader_to_documents(pdf_reader, doc_name, use_uuid_for_id=True)
 
-    async def async_read(self, name: Optional[str], pdf: Optional[Union[str, Path, IO[Any]]] = None, password: Optional[str] = None) -> List[Document]:
+    async def async_read(
+        self,
+        pdf: Optional[Union[str, Path, IO[Any]]] = None,
+        name: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> List[Document]:
         if pdf is None:
             log_error("No pdf provided")
             return []
@@ -370,7 +380,7 @@ class PDFUrlReader(BasePDFReader):
         super().__init__(password=password, **kwargs)
         self.proxy = proxy
 
-    def read(self, url: str, password: Optional[str] = None) -> List[Document]:
+    def read(self, url: str, name: Optional[str] = None, password: Optional[str] = None) -> List[Document]:
         if not url:
             raise ValueError("No url provided")
 
@@ -381,7 +391,7 @@ class PDFUrlReader(BasePDFReader):
         # Retry the request up to 3 times with exponential backoff
         response = fetch_with_retry(url, proxy=self.proxy)
 
-        doc_name = url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
+        doc_name = name or url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
         pdf_reader = DocumentReader(BytesIO(response.content))
 
         # Handle PDF decryption
@@ -391,7 +401,7 @@ class PDFUrlReader(BasePDFReader):
         # Read and chunk.
         return self._pdf_reader_to_documents(pdf_reader, doc_name, use_uuid_for_id=False)
 
-    async def async_read(self, url: str, password: Optional[str] = None) -> List[Document]:
+    async def async_read(self, url: str, name: Optional[str] = None, password: Optional[str] = None) -> List[Document]:
         if not url:
             raise ValueError("No url provided")
 
@@ -405,7 +415,7 @@ class PDFUrlReader(BasePDFReader):
         async with httpx.AsyncClient(**client_args) as client:  # type: ignore
             response = await async_fetch_with_retry(url, client=client)
 
-        doc_name = url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
+        doc_name = name or url.split("/")[-1].split(".")[0].replace("/", "_").replace(" ", "_")
         pdf_reader = DocumentReader(BytesIO(response.content))
 
         # Handle PDF decryption
@@ -419,13 +429,15 @@ class PDFUrlReader(BasePDFReader):
 class PDFImageReader(BasePDFReader):
     """Reader for PDF files with text and images extraction"""
 
-    def read(self, pdf: Union[str, Path, IO[Any]], password: Optional[str] = None) -> List[Document]:
+    def read(
+        self, pdf: Union[str, Path, IO[Any]], name: Optional[str] = None, password: Optional[str] = None
+    ) -> List[Document]:
         if not pdf:
             raise ValueError("No pdf provided")
 
         try:
             if isinstance(pdf, str):
-                doc_name = pdf.split("/")[-1].split(".")[0].replace(" ", "_")
+                doc_name = name or pdf.split("/")[-1].split(".")[0].replace(" ", "_")
             else:
                 doc_name = pdf.name.split(".")[0]
         except Exception:
@@ -441,13 +453,15 @@ class PDFImageReader(BasePDFReader):
         # Read and chunk.
         return self._pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
 
-    async def async_read(self, pdf: Union[str, Path, IO[Any]], password: Optional[str] = None) -> List[Document]:
+    async def async_read(
+        self, pdf: Union[str, Path, IO[Any]], name: Optional[str] = None, password: Optional[str] = None
+    ) -> List[Document]:
         if not pdf:
             raise ValueError("No pdf provided")
 
         try:
             if isinstance(pdf, str):
-                doc_name = pdf.split("/")[-1].split(".")[0].replace(" ", "_")
+                doc_name = name or pdf.split("/")[-1].split(".")[0].replace(" ", "_")
             else:
                 doc_name = pdf.name.split(".")[0]
         except Exception:
@@ -471,7 +485,7 @@ class PDFUrlImageReader(BasePDFReader):
         super().__init__(password=password, **kwargs)
         self.proxy = proxy
 
-    def read(self, url: str, password: Optional[str] = None) -> List[Document]:
+    def read(self, url: str, name: Optional[str] = None, password: Optional[str] = None) -> List[Document]:
         if not url:
             raise ValueError("No url provided")
 
@@ -483,7 +497,7 @@ class PDFUrlImageReader(BasePDFReader):
         log_info(f"Reading: {url}")
         response = httpx.get(url, proxy=self.proxy) if self.proxy else httpx.get(url)
 
-        doc_name = url.split("/")[-1].split(".")[0].replace(" ", "_")
+        doc_name = name or url.split("/")[-1].split(".")[0].replace(" ", "_")
         pdf_reader = DocumentReader(BytesIO(response.content))
 
         # Handle PDF decryption
@@ -493,7 +507,7 @@ class PDFUrlImageReader(BasePDFReader):
         # Read and chunk.
         return self._pdf_reader_to_documents(pdf_reader, doc_name, read_images=True, use_uuid_for_id=False)
 
-    async def async_read(self, url: str, password: Optional[str] = None) -> List[Document]:
+    async def async_read(self, url: str, name: Optional[str] = None, password: Optional[str] = None) -> List[Document]:
         if not url:
             raise ValueError("No url provided")
 
@@ -508,7 +522,7 @@ class PDFUrlImageReader(BasePDFReader):
             response = await client.get(url)
             response.raise_for_status()
 
-        doc_name = url.split("/")[-1].split(".")[0].replace(" ", "_")
+        doc_name = name or url.split("/")[-1].split(".")[0].replace(" ", "_")
         pdf_reader = DocumentReader(BytesIO(response.content))
 
         # Handle PDF decryption
