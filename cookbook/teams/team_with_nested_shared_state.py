@@ -22,7 +22,7 @@ from agno.team import Team
 
 
 # Define tools to manage our shopping list
-def add_item(agent: Agent, item: str) -> str:
+def add_item(session_state, item: str) -> str:
     """Add an item to the shopping list and return confirmation.
 
     Args:
@@ -30,39 +30,39 @@ def add_item(agent: Agent, item: str) -> str:
     """
     # Add the item if it's not already in the list
     if item.lower() not in [
-        i.lower() for i in agent.team_session_state["shopping_list"]
+        i.lower() for i in session_state["shopping_list"]
     ]:
-        agent.team_session_state["shopping_list"].append(item)
+        session_state["shopping_list"].append(item)
         return f"Added '{item}' to the shopping list"
     else:
         return f"'{item}' is already in the shopping list"
 
 
-def remove_item(agent: Agent, item: str) -> str:
+def remove_item(session_state, item: str) -> str:
     """Remove an item from the shopping list by name.
 
     Args:
         item (str): The item to remove from the shopping list.
     """
     # Case-insensitive search
-    for i, list_item in enumerate(agent.team_session_state["shopping_list"]):
+    for i, list_item in enumerate(session_state["shopping_list"]):
         if list_item.lower() == item.lower():
-            agent.team_session_state["shopping_list"].pop(i)
+            session_state["shopping_list"].pop(i)
             return f"Removed '{list_item}' from the shopping list"
 
-    return f"'{item}' was not found in the shopping list. Current shopping list: {agent.team_session_state['shopping_list']}"
+    return f"'{item}' was not found in the shopping list. Current shopping list: {session_state['shopping_list']}"
 
 
-def remove_all_items(agent: Agent) -> str:
+def remove_all_items(session_state) -> str:
     """Remove all items from the shopping list."""
-    agent.team_session_state["shopping_list"] = []
+    session_state["shopping_list"] = []
     return "All items removed from the shopping list"
 
 
 shopping_list_agent = Agent(
     name="Shopping List Agent",
     role="Manage the shopping list",
-    agent_id="shopping_list_manager",
+    id="shopping_list_manager",
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[add_item, remove_item, remove_all_items],
     instructions=[
@@ -77,7 +77,7 @@ shopping_list_agent = Agent(
 shopping_mgmt_team = Team(
     name="Shopping Management Team",
     role="Execute shopping list operations",
-    team_id="shopping_management",
+    id="shopping_management",
     mode="coordinate",
     model=OpenAIChat(id="gpt-4o-mini"),
     show_tool_calls=True,
@@ -89,13 +89,10 @@ shopping_mgmt_team = Team(
 )
 
 
-def get_ingredients(agent: Agent) -> str:
+def get_ingredients(session_state) -> str:
     """Retrieve ingredients from the shopping list to use for recipe suggestions.
-
-    Args:
-        meal_type (str): Type of meal to suggest (breakfast, lunch, dinner, snack, or any)
     """
-    shopping_list = agent.team_session_state["shopping_list"]
+    shopping_list = session_state["shopping_list"]
 
     if not shopping_list:
         return "The shopping list is empty. Add some ingredients first to get recipe suggestions."
@@ -106,7 +103,7 @@ def get_ingredients(agent: Agent) -> str:
 
 recipe_agent = Agent(
     name="Recipe Suggester",
-    agent_id="recipe_suggester",
+    id="recipe_suggester",
     role="Suggest recipes based on available ingredients",
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[get_ingredients],
@@ -123,9 +120,9 @@ recipe_agent = Agent(
 )
 
 
-def list_items(team: Team) -> str:
+def list_items(session_state) -> str:
     """List all items in the shopping list."""
-    shopping_list = team.team_session_state["shopping_list"]
+    shopping_list = session_state["shopping_list"]
 
     if not shopping_list:
         return "The shopping list is empty."
@@ -138,7 +135,7 @@ def list_items(team: Team) -> str:
 meal_planning_team = Team(
     name="Meal Planning Team",
     role="Plan meals based on shopping list items",
-    team_id="meal_planning",
+    id="meal_planning",
     mode="coordinate",
     model=OpenAIChat(id="gpt-4o-mini"),
     members=[recipe_agent],
@@ -151,7 +148,7 @@ meal_planning_team = Team(
 )
 
 
-def add_chore(team: Team, chore: str, priority: str = "medium") -> str:
+def add_chore(session_state, chore: str, priority: str = "medium") -> str:
     """Add a chore to the list with priority level.
 
     Args:
@@ -162,8 +159,8 @@ def add_chore(team: Team, chore: str, priority: str = "medium") -> str:
         str: Confirmation message
     """
     # Initialize chores list if it doesn't exist
-    if "chores" not in team.session_state:
-        team.session_state["chores"] = []
+    if "chores" not in session_state:
+        session_state["chores"] = []
 
     # Validate priority
     valid_priorities = ["low", "medium", "high"]
@@ -179,7 +176,7 @@ def add_chore(team: Team, chore: str, priority: str = "medium") -> str:
         "added_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
     }
 
-    team.session_state["chores"].append(chore_entry)
+    session_state["chores"].append(chore_entry)
 
     return f"Added chore: '{chore}' with {priority} priority"
 
@@ -190,10 +187,9 @@ shopping_team = Team(
     role="Orchestrate shopping list management and meal planning",
     mode="coordinate",
     model=OpenAIChat(id="gpt-4o-mini"),
-    team_session_state={"shopping_list": []},
+    session_state={"shopping_list": [], "chores": []},
     tools=[list_items, add_chore],
-    session_state={"chores": []},
-    team_id="shopping_list_team",
+    id="shopping_list_team",
     members=[
         shopping_mgmt_team,
         meal_planning_team,
@@ -223,14 +219,14 @@ print("-" * 50)
 shopping_team.print_response(
     "Add milk, eggs, and bread to the shopping list", stream=True
 )
-print(f"Session state: {shopping_team.team_session_state}")
+print(f"Session state: {shopping_team.session_state}")
 print()
 
 # Example 2: Item consumption and removal
 print("Example 2: Item Consumption & Removal")
 print("-" * 50)
 shopping_team.print_response("I got bread from the store", stream=True)
-print(f"Session state: {shopping_team.team_session_state}")
+print(f"Session state: {shopping_team.session_state}")
 print()
 
 # Example 3: Adding more ingredients
@@ -239,21 +235,21 @@ print("-" * 50)
 shopping_team.print_response(
     "I need apples and oranges for my fruit salad", stream=True
 )
-print(f"Session state: {shopping_team.team_session_state}")
+print(f"Session state: {shopping_team.session_state}")
 print()
 
 # Example 4: Listing current items
 print("Example 4: Viewing Current Shopping List")
 print("-" * 50)
 shopping_team.print_response("What's on my shopping list right now?", stream=True)
-print(f"Session state: {shopping_team.team_session_state}")
+print(f"Session state: {shopping_team.session_state}")
 print()
 
 # Example 5: Recipe suggestions (demonstrates culinary expertise role)
 print("Example 5: Recipe Suggestions from Culinary Team")
 print("-" * 50)
 shopping_team.print_response("What can I make with these ingredients?", stream=True)
-print(f"Session state: {shopping_team.team_session_state}")
+print(f"Session state: {shopping_team.session_state}")
 print()
 
 # Example 6: Complete list management
@@ -263,7 +259,7 @@ shopping_team.print_response(
     "Clear everything from my list and start over with just bananas and yogurt",
     stream=True,
 )
-print(f"Shared Session state: {shopping_team.team_session_state}")
+print(f"Shared Session state: {shopping_team.session_state}")
 print()
 
 # Example 7: Quick recipe check with new ingredients
@@ -272,4 +268,4 @@ print("-" * 50)
 shopping_team.print_response("What healthy breakfast can I make now?", stream=True)
 print()
 
-print(f"Team Session State: {shopping_team.team_session_state}")
+print(f"Team Session State: {shopping_team.session_state}")

@@ -44,7 +44,7 @@ team_id = str(uuid4())
 multi_language_team = Team(
     name="Multi Language Team",
     mode="route",
-    team_id=team_id,
+    id=team_id,
     model=OpenAIChat("gpt-4o"),
     members=[
         french_agent,
