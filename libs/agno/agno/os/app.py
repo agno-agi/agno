@@ -97,7 +97,6 @@ class AgentOS:
         if self.telemetry:
             from agno.api.os import OSLaunch, log_os_launch
 
-            # TODO: the id should be required
             log_os_launch(launch=OSLaunch(os_id=self.os_id))
 
     def _auto_discover_apps(self) -> List[BaseApp]:

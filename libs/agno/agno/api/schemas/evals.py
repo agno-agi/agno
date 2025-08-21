@@ -1,5 +1,6 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from agno.api.schemas.utils import get_sdk_version
 from agno.db.schemas.evals import EvalType
 
 
@@ -8,3 +9,5 @@ class EvalRunCreate(BaseModel):
 
     run_id: str
     eval_type: EvalType
+
+    sdk_version: str = Field(default_factory=get_sdk_version)

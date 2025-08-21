@@ -16,7 +16,6 @@ class AgnoAPISettings(BaseSettings):
     api_runtime: str = "prd"
     alpha_features: bool = False
 
-    # TODO: is this still the api?
     api_url: str = "https://api.agno.com"
 
     model_config = SettingsConfigDict(env_prefix="AGNO_")
