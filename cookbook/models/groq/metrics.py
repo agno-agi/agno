@@ -1,5 +1,3 @@
-from typing import Iterator
-
 from agno.agent import Agent, RunOutput
 from agno.models.groq import Groq
 from agno.tools.yfinance import YFinanceTools

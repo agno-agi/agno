@@ -325,28 +325,6 @@ class Weaviate(VectorDb):
             self._delete_by_content_hash(content_hash)
         self.insert(content_hash=content_hash, documents=documents, filters=filters)
 
-        _docs_to_insert = []
-        for document in documents:
-            assert document.name is not None, "Document name must be set for upsert operation."
-
-            if self.name_exists(document.name):
-                if self.doc_content_changed(document, check_existing=False):
-                    log_debug(
-                        f"Document already exists, but content changed. Document will be deleted and added again: {document.name}"
-                    )
-
-                    is_first_or_only_chunk = ("chunk" in document.meta_data and document.meta_data["chunk"] == 1) or (
-                        "chunk" not in document.meta_data
-                    )
-                    if is_first_or_only_chunk:
-                        self.doc_delete(document.name)
-                    _docs_to_insert.append(document)
-                else:
-                    log_debug(f"Document skipped, content is unchanged: {document.name}")
-            else:
-                _docs_to_insert.append(document)
-        self.insert(_docs_to_insert)
-
     async def async_upsert(
         self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
     ) -> None:

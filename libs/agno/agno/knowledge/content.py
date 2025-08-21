@@ -58,7 +58,7 @@ class Content:
             description=data.get("description"),
             path=data.get("path"),
             url=data.get("url"),
-            authorization=data.get("authorization"),
+            auth=data.get("auth"),
             file_data=data.get("file_data"),
             upload_file=data.get("upload_file"),
             metadata=data.get("metadata"),
