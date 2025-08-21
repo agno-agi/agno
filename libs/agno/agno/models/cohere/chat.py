@@ -326,6 +326,14 @@ class Cohere(Model):
         ):
             model_response.content = response.delta.message.content.text  # type: ignore
 
+        if (
+            response.type == "tool-plan-delta"
+            and response.delta is not None
+            and response.delta.message is not None
+            and response.delta.message.tool_plan is not None
+        ):
+            model_response.content = response.delta.message.tool_plan
+
         elif response.type == "tool-call-start" and response.delta is not None:
             if response.delta.message is not None and response.delta.message.tool_calls is not None:
                 tool_use = response.delta.message.tool_calls.model_dump()

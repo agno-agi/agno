@@ -56,7 +56,7 @@ def test_thinking_tools_streaming(shared_db):
     # Consume all streaming responses
     _ = list(agent.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True))
 
-    run_response = agent.get_last_run_response()
+    run_response = agent.get_last_run_output()
 
     # Check the agent's run_response directly after streaming is complete
     assert run_response is not None, "Agent's run_response should not be None"

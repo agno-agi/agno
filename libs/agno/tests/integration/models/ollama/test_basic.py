@@ -86,13 +86,13 @@ def test_with_memory():
     _assert_metrics(response2)
 
 
-def test_response_model():
+def test_output_schema():
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
         plot: str = Field(..., description="Brief plot summary")
 
-    agent = Agent(model=Ollama(id="llama3.2:latest"), markdown=True, telemetry=False, response_model=MovieScript)
+    agent = Agent(model=Ollama(id="llama3.2:latest"), markdown=True, telemetry=False, output_schema=MovieScript)
 
     response = agent.run("Create a movie about time travel")
 
@@ -113,7 +113,7 @@ def test_json_response_mode():
         model=Ollama(id="llama3.2:latest"),
         use_json_mode=True,
         telemetry=False,
-        response_model=MovieScript,
+        output_schema=MovieScript,
     )
 
     response = agent.run("Create a movie about time travel. Be brief.")

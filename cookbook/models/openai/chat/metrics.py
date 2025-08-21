@@ -1,5 +1,3 @@
-from typing import Iterator
-
 from agno.agent import Agent, RunOutput
 from agno.models.openai import OpenAIChat
 from agno.tools.yfinance import YFinanceTools

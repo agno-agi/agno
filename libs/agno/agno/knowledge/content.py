@@ -23,12 +23,18 @@ class FileData:
 
 
 @dataclass
+class ContentAuth:
+    password: Optional[str] = None
+
+
+@dataclass
 class Content:
     id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
     path: Optional[str] = None
     url: Optional[str] = None
+    auth: Optional[ContentAuth] = None
     file_data: Optional[FileData] = None
     upload_file: Optional[UploadFile] = None
     metadata: Optional[Dict[str, Any]] = None
@@ -52,6 +58,7 @@ class Content:
             description=data.get("description"),
             path=data.get("path"),
             url=data.get("url"),
+            auth=data.get("auth"),
             file_data=data.get("file_data"),
             upload_file=data.get("upload_file"),
             metadata=data.get("metadata"),

@@ -100,7 +100,7 @@ def test_structured_output():
 
     agent = Agent(
         model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
-        response_model=MovieScript,
+        output_schema=MovieScript,
         telemetry=False,
     )
 

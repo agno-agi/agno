@@ -147,7 +147,7 @@ async def run_team():
                 "Finally, plan an itinerary for the trip.",
                 "Continue asking individual team members until you have ALL the information you need.",
             ],
-            response_model=TravelPlan,
+            output_schema=TravelPlan,
             markdown=True,
             show_members_responses=True,
             add_datetime_to_context=True,

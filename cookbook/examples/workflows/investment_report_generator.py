@@ -113,7 +113,7 @@ stock_analyst = Agent(
        - Identify potential red flags
     Note: This analysis is for educational purposes only.\
     """),
-    response_model=StockAnalysisResult,
+    output_schema=StockAnalysisResult,
 )
 
 research_analyst = Agent(
@@ -145,7 +145,7 @@ research_analyst = Agent(
        - Consider risk-adjusted returns
        - Explain competitive advantages\
     """),
-    response_model=InvestmentRanking,
+    output_schema=InvestmentRanking,
 )
 
 investment_lead = Agent(
@@ -177,7 +177,7 @@ investment_lead = Agent(
        - Provide actionable insights
        - Include risk considerations\
     """),
-    response_model=PortfolioAllocation,
+    output_schema=PortfolioAllocation,
 )
 
 

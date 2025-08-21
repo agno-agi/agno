@@ -1,6 +1,4 @@
-from typing import Iterator
-
-from agno.agent import Agent, RunOutputEvent
+from agno.agent import Agent, RunOutput
 from agno.models.groq import Groq
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.pprint import pprint_run_response
@@ -12,14 +10,12 @@ agent = Agent(
     markdown=True,
 )
 
-run_stream: Iterator[RunOutputEvent] = agent.run(
-    "What is the stock price of NVDA", stream=True
-)
-pprint_run_response(run_stream, markdown=True)
+run_output: RunOutput = agent.run("What is the stock price of NVDA")
+pprint_run_response(run_output)
 
 # Print metrics per message
-if agent.run_response and agent.run_response.messages:
-    for message in agent.run_response.messages:  # type: ignore
+if run_output.messages:
+    for message in run_output.messages:  # type: ignore
         if message.role == "assistant":
             if message.content:
                 print(f"Message: {message.content}")
@@ -31,7 +27,4 @@ if agent.run_response and agent.run_response.messages:
 
 # Print the metrics
 print("---" * 5, "Collected Metrics", "---" * 5)
-pprint(agent.run_response.metrics)  # type: ignore
-# Print the session metrics
-print("---" * 5, "Session Metrics", "---" * 5)
-pprint(agent.session_metrics)
+pprint(run_output.metrics)  # type: ignore

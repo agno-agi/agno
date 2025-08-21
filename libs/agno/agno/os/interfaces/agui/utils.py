@@ -208,7 +208,7 @@ def _create_events_from_chunk(
                         role="tool",
                         message_id=str(uuid.uuid4()),
                     )
-                    events_to_emit.append(result_event)
+                    events_to_emit.append(result_event)  # type: ignore
 
     # Handle reasoning
     elif chunk.event == RunEvent.reasoning_started:
@@ -285,20 +285,20 @@ def _create_completion_events(
                 tool_call_name=tool.tool_name,
                 parent_message_id=message_id,
             )
-            events_to_emit.append(start_event)
+            events_to_emit.append(start_event)  # type: ignore
 
             args_event = ToolCallArgsEvent(
                 type=EventType.TOOL_CALL_ARGS,
                 tool_call_id=tool.tool_call_id,
                 delta=json.dumps(tool.tool_args),
             )
-            events_to_emit.append(args_event)
+            events_to_emit.append(args_event)  # type: ignore
 
             end_event = ToolCallEndEvent(
                 type=EventType.TOOL_CALL_END,
                 tool_call_id=tool.tool_call_id,
             )
-            events_to_emit.append(end_event)
+            events_to_emit.append(end_event)  # type: ignore
 
     run_finished_event = RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)
     events_to_emit.append(run_finished_event)  # type: ignore

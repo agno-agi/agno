@@ -32,7 +32,7 @@ structured_output_agent = Agent(
     ),
     tools=[DuckDuckGoTools()],
     description="You help people write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 # Get the response in a variable

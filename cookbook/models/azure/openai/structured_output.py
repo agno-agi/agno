@@ -28,7 +28,7 @@ class MovieScript(BaseModel):
 agent = Agent(
     model=AzureOpenAI(id="gpt-4o-mini"),
     description="You help people write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 # Get the response in a variable

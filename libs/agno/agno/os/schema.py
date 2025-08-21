@@ -290,7 +290,7 @@ class AgentResponse(BaseModel):
             "retries": agent.retries,
             "delay_between_retries": agent.delay_between_retries,
             "exponential_backoff": agent.exponential_backoff,
-            "response_model_name": agent.response_model.__name__ if agent.response_model else None,
+            "output_schema_name": agent.output_schema.__name__ if agent.output_schema else None,
             "parser_model_prompt": agent.parser_model_prompt,
             "parse_response": agent.parse_response,
             "structured_outputs": agent.structured_outputs,
@@ -505,7 +505,7 @@ class TeamResponse(BaseModel):
         }
 
         response_settings_info: Dict[str, Any] = {
-            "response_model_name": team.response_model.__name__ if team.response_model else None,
+            "output_schema_name": team.output_schema.__name__ if team.output_schema else None,
             "parser_model_prompt": team.parser_model_prompt,
             "parse_response": team.parse_response,
             "use_json_mode": team.use_json_mode,

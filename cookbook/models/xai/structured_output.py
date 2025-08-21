@@ -30,7 +30,7 @@ class MovieScript(BaseModel):
 structured_output_agent = Agent(
     model=xAI(id="grok-2-latest"),
     description="You write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 # Run the agent synchronously

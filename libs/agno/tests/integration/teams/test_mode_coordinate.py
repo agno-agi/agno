@@ -121,7 +121,7 @@ def test_coordinator_team_with_structured_output():
             "Then, ask the web searcher to search for each story to get more information.",
             "Finally, provide a thoughtful and engaging summary.",
         ],
-        response_model=Article,
+        output_schema=Article,
     )
 
     response = team.run("Write an article about the top story on hackernews")

@@ -24,7 +24,7 @@ researcher = Agent(
         "- Return the information in a structured format"
     ],
     tools=[DuckDuckGoTools()],
-    response_model=Person,
+    output_schema=Person,
     add_datetime_to_context=True,
 )
 

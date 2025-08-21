@@ -10,7 +10,7 @@ from agno.tools.calculator import CalculatorTools
 
 # Setup the database
 db_url = "postgresql+psycopg://ai:ai@localhost:5432/ai"
-db = PostgresDb(db_url=db_url, eval_table="eval_runs")
+db = PostgresDb(db_url=db_url, eval_table="eval_runs_cookbook")
 
 
 evaluation = AccuracyEval(

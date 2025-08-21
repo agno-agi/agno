@@ -82,7 +82,7 @@ def get_default_reasoning_agent(
         - Only create a single instance of ReasoningSteps for your response.\
         """),
         tools=tools,
-        response_model=ReasoningSteps,
+        output_schema=ReasoningSteps,
         use_json_mode=use_json_mode,
         telemetry=telemetry,
         debug_mode=debug_mode,

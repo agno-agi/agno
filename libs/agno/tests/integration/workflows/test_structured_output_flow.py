@@ -201,21 +201,21 @@ def test_structured_output_agent_flow_sync(shared_db):
     research_agent = Agent(
         name="Research Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=ResearchData,
+        output_schema=ResearchData,
         instructions=["Provide research data in structured format"],
     )
 
     analysis_agent = Agent(
         name="Analysis Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=AnalysisResult,
+        output_schema=AnalysisResult,
         instructions=["Analyze the research data and provide structured results"],
     )
 
     final_agent = Agent(
         name="Final Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=FinalReport,
+        output_schema=FinalReport,
         instructions=["Create a final report based on the analysis"],
     )
 
@@ -251,14 +251,14 @@ def test_structured_output_agent_flow_streaming(shared_db):
     research_agent = Agent(
         name="Research Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=ResearchData,
+        output_schema=ResearchData,
         instructions=["Provide research data in structured format"],
     )
 
     analysis_agent = Agent(
         name="Analysis Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=AnalysisResult,
+        output_schema=AnalysisResult,
         instructions=["Analyze the research data and provide structured results"],
     )
 
@@ -291,14 +291,14 @@ async def test_structured_output_agent_flow_async(shared_db):
     research_agent = Agent(
         name="Research Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=ResearchData,
+        output_schema=ResearchData,
         instructions=["Provide research data in structured format"],
     )
 
     analysis_agent = Agent(
         name="Analysis Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=AnalysisResult,
+        output_schema=AnalysisResult,
         instructions=["Analyze the research data and provide structured results"],
     )
 
@@ -331,14 +331,14 @@ async def test_structured_output_agent_flow_async_streaming(shared_db):
     research_agent = Agent(
         name="Research Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=ResearchData,
+        output_schema=ResearchData,
         instructions=["Provide research data in structured format"],
     )
 
     analysis_agent = Agent(
         name="Analysis Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=AnalysisResult,
+        output_schema=AnalysisResult,
         instructions=["Analyze the research data and provide structured results"],
     )
 
@@ -379,7 +379,7 @@ def test_structured_output_team_flow_sync(shared_db):
         name="Research Team",
         members=[researcher],
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=ResearchData,
+        output_schema=ResearchData,
         instructions=["Provide structured research data"],
     )
 
@@ -412,7 +412,7 @@ def test_structured_output_team_flow_streaming(shared_db):
         name="Research Team",
         members=[researcher],
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=ResearchData,
+        output_schema=ResearchData,
         instructions=["Provide structured research data"],
     )
 
@@ -451,7 +451,7 @@ async def test_structured_output_team_flow_async(shared_db):
         name="Research Team",
         members=[researcher],
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=ResearchData,
+        output_schema=ResearchData,
         instructions=["Provide structured research data"],
     )
 
@@ -485,7 +485,7 @@ async def test_structured_output_team_flow_async_streaming(shared_db):
         name="Research Team",
         members=[researcher],
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=ResearchData,
+        output_schema=ResearchData,
         instructions=["Provide structured research data"],
     )
 
@@ -518,7 +518,7 @@ def test_mixed_structured_output_flow(shared_db):
     analysis_agent = Agent(
         name="Analysis Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=AnalysisResult,
+        output_schema=AnalysisResult,
         instructions=["Analyze briefly"],
     )
 
@@ -533,7 +533,7 @@ def test_mixed_structured_output_flow(shared_db):
         name="Final Team",
         members=[final_member],
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=FinalReport,
+        output_schema=FinalReport,
         instructions=["Create brief structured report"],
     )
 

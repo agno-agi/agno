@@ -390,13 +390,14 @@ class Groq(Model):
 
             assistant_message.metrics.start_timer()
 
-            async for chunk in self.get_async_client().chat.completions.create(
+            async_stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self.format_message(m) for m in messages],  # type: ignore
                 stream=True,
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
-            ):
-                yield self._parse_provider_response_delta(chunk)
+            )
+            async for chunk in async_stream:
+                yield self._parse_provider_response_delta(chunk)  # type: ignore
 
             assistant_message.metrics.stop_timer()
 

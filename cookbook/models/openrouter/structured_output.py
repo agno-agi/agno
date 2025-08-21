@@ -29,7 +29,7 @@ class MovieScript(BaseModel):
 json_mode_agent = Agent(
     model=OpenRouter(id="gpt-4o"),
     description="You write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
     use_json_mode=True,
 )
 
@@ -37,7 +37,7 @@ json_mode_agent = Agent(
 structured_output_agent = Agent(
     model=OpenRouter(id="gpt-4o-2024-08-06"),
     description="You write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 

@@ -52,7 +52,7 @@ agent = Agent(
 agent.print_response(
     "What is the recipe for a Thai curry?",
 )
-response = agent.get_last_run_response()
+response = agent.get_last_run_output()
 
 if response.images:
     download_image(response.images[0].url, Path("tmp/recipe_image.png"))

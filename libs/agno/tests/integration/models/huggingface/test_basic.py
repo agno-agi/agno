@@ -106,7 +106,7 @@ def test_structured_output():
 
     agent = Agent(
         model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct"),
-        response_model=MovieScript,
+        output_schema=MovieScript,
         telemetry=False,
     )
 
@@ -128,7 +128,7 @@ def test_json_response_mode():
         model=HuggingFace(id="Qwen/Qwen2.5-Coder-32B-Instruct"),
         use_json_mode=True,
         telemetry=False,
-        response_model=MovieScript,
+        output_schema=MovieScript,
     )
 
     response = agent.run("Create a movie about time travel")

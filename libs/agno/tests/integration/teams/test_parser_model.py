@@ -24,7 +24,7 @@ def test_team_with_parser_model():
     team = Team(
         name="National Park Expert",
         members=[],
-        response_model=ParkGuide,
+        output_schema=ParkGuide,
         parser_model=OpenAIChat(id="gpt-4o-mini"),
         instructions="You have no members, answer directly",
         description="You are an expert on national parks and provide concise guides.",
@@ -44,7 +44,7 @@ def test_team_with_parser_model_stream(shared_db):
     team = Team(
         name="National Park Expert",
         members=[],
-        response_model=ParkGuide,
+        output_schema=ParkGuide,
         parser_model=OpenAIChat(id="gpt-4o-mini"),
         instructions="You have no members, answer directly",
         description="You are an expert on national parks and provide concise guides.",
@@ -63,7 +63,7 @@ def test_team_with_parser_model_stream(shared_db):
 
     # Fallback: try to get from database if events didn't capture it
     if final_content is None:
-        run_response = team.get_last_run_response()
+        run_response = team.get_last_run_output()
         if run_response:
             final_content = run_response.content
 
