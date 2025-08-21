@@ -786,8 +786,8 @@ class Team:
         # 6. Save session to storage
         self.save_session(session=session)
 
-        # Log Team Run
-        self._log_team_run(session_id=session.session_id, run_id=run_response.run_id)
+        # Log Team Telemetry
+        self._log_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -902,8 +902,8 @@ class Team:
         if yield_run_response:
             yield run_response
 
-        # Log Team Run
-        self._log_team_run(session_id=session.session_id, run_id=run_response.run_id)
+        # Log Team Telemetry
+        self._log_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1240,8 +1240,8 @@ class Team:
         # 7. Save session to storage
         self.save_session(session=session)
 
-        # 8. Log Team Run
-        await self._alog_team_run(session_id=session.session_id, run_id=run_response.run_id)
+        # 8. Log Team Telemetry
+        await self._alog_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1359,8 +1359,8 @@ class Team:
         if yield_run_response:
             yield run_response
 
-        # 7. Log Team Run
-        await self._alog_team_run(session_id=session.session_id, run_id=run_response.run_id)
+        # 7. Log Team Telemetry
+        await self._alog_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -6489,7 +6489,7 @@ class Team:
     # Api functions
     ###########################################################################
 
-    def _log_team_run(self, session_id: str, run_id: Optional[str] = None) -> None:
+    def _log_team_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
         """Send a telemetry event to the API for a created Team run"""
 
         self.set_telemetry()
@@ -6505,7 +6505,7 @@ class Team:
         except Exception as e:
             log_debug(f"Could not create Team run telemetry event: {e}")
 
-    async def _alog_team_run(self, session_id: str, run_id: Optional[str] = None) -> None:
+    async def _alog_team_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
         """Send a telemetry event to the API for a created Team async run"""
 
         self.set_telemetry()

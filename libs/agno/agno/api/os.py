@@ -4,7 +4,7 @@ from agno.api.schemas.os import OSLaunch
 from agno.utils.log import log_debug
 
 
-def log_os_launch(launch: OSLaunch) -> None:
+def log_os_telemetry(launch: OSLaunch) -> None:
     """Telemetry recording for OS launches"""
     with api.Client() as api_client:
         try:

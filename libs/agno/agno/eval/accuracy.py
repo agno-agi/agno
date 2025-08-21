@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent
 from agno.db.base import BaseDb
 from agno.db.schemas.evals import EvalType
-from agno.eval.utils import async_log_eval_run, log_eval_run, store_result_in_file
+from agno.eval.utils import async_log_eval_telemetry, log_eval_run, store_result_in_file
 from agno.exceptions import EvalError
 from agno.models.base import Model
 from agno.team.team import Team
@@ -565,7 +565,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 "expected_output": self.expected_output,
                 "input": self.input,
             }
-            await async_log_eval_run(
+            await async_log_eval_telemetry(
                 db=self.db,
                 run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),
@@ -783,7 +783,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 "input": self.input,
             }
 
-            await async_log_eval_run(
+            await async_log_eval_telemetry(
                 db=self.db,
                 run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),

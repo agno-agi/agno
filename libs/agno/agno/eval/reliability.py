@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 from agno.agent import RunOutput
 from agno.db.schemas.evals import EvalType
-from agno.eval.utils import async_log_eval_run, log_eval_run, store_result_in_file
+from agno.eval.utils import async_log_eval_telemetry, log_eval_run, store_result_in_file
 from agno.run.team import TeamRunOutput
 from agno.utils.log import logger
 
@@ -262,7 +262,7 @@ class ReliabilityEval:
                 "expected_tool_calls": self.expected_tool_calls,
             }
 
-            await async_log_eval_run(
+            await async_log_eval_telemetry(
                 db=self.db,
                 run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),

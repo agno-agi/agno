@@ -9,7 +9,7 @@ def test_accuracy_evals_telemetry():
     agent = Agent()
 
     # Mock the API call that gets made when telemetry is enabled
-    with patch("agno.api.os.log_os_launch") as mock_create:
+    with patch("agno.api.os.log_os_telemetry") as mock_create:
         os = AgentOS(os_id="test", agents=[agent])
 
         # Assert telemetry is active by default

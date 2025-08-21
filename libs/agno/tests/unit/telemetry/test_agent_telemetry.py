@@ -13,7 +13,7 @@ def test_agent_telemetry():
     assert agent.telemetry
 
     # Mock the telemetry logging method
-    with patch.object(agent, "_log_agent_run") as mock_log:
+    with patch.object(agent, "_log_agent_telemetry") as mock_log:
         agent.run("This is a test run")
 
         # Assert the telemetry logging func was called
@@ -36,7 +36,7 @@ async def test_agent_telemetry_async():
     assert agent.telemetry
 
     # Mock the async telemetry logging method
-    with patch.object(agent, "_alog_agent_run") as mock_alog:
+    with patch.object(agent, "_alog_agent_telemetry") as mock_alog:
         await agent.arun("This is a test run")
 
         # Assert the telemetry logging func was called

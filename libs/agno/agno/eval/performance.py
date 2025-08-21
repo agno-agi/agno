@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from agno.db.base import BaseDb
 from agno.db.schemas.evals import EvalType
-from agno.eval.utils import async_log_eval_run, log_eval_run, store_result_in_file
+from agno.eval.utils import async_log_eval_telemetry, log_eval_run, store_result_in_file
 from agno.utils.log import log_debug, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.timer import Timer
 
@@ -730,7 +730,7 @@ class PerformanceEval:
                 "warmup_runs": self.warmup_runs,
             }
 
-            await async_log_eval_run(
+            await async_log_eval_telemetry(
                 db=self.db,
                 run_id=self.eval_id,  # type: ignore
                 run_data=self._parse_eval_run_data(),

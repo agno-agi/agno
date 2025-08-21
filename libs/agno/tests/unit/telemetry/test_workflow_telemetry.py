@@ -13,7 +13,7 @@ def test_workflow_telemetry():
     assert workflow.telemetry
 
     # Mock the telemetry logging method
-    with patch.object(workflow, "_log_workflow_run") as mock_log:
+    with patch.object(workflow, "_log_workflow_telemetry") as mock_log:
         workflow.run("This is a test run")
 
         # Assert the telemetry logging func was called
@@ -36,7 +36,7 @@ async def test_workflow_telemetry_async():
     assert workflow.telemetry
 
     # Mock the async telemetry logging method
-    with patch.object(workflow, "_alog_workflow_run") as mock_alog:
+    with patch.object(workflow, "_alog_workflow_telemetry") as mock_alog:
         await workflow.arun("This is a test run")
 
         # Assert the telemetry logging func was called

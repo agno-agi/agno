@@ -15,7 +15,7 @@ def test_team_telemetry():
     assert team.telemetry
 
     # Mock the telemetry logging method
-    with patch.object(team, "_log_team_run") as mock_log:
+    with patch.object(team, "_log_team_telemetry") as mock_log:
         team.run("This is a test run")
 
         # Assert the telemetry logging func was called
@@ -39,7 +39,7 @@ async def test_team_telemetry_async():
     assert team.telemetry
 
     # Mock the async telemetry logging method
-    with patch.object(team, "_alog_team_run") as mock_alog:
+    with patch.object(team, "_alog_team_telemetry") as mock_alog:
         await team.arun("This is a test run")
 
         # Assert the telemetry logging func was called

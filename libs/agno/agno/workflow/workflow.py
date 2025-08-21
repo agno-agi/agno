@@ -938,9 +938,9 @@ class Workflow:
                 session.upsert_run(run=workflow_run_response)
                 self.save_session(session=session)
 
-        # Log Workflow Run
+        # Log Workflow Telemetry
         if self.telemetry:
-            self._log_workflow_run(session_id=session.session_id, run_id=workflow_run_response.run_id)
+            self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
 
         return workflow_run_response
 
@@ -1137,9 +1137,9 @@ class Workflow:
         session.upsert_run(run=workflow_run_response)
         self.save_session(session=session)
 
-        # Log Workflow Run
+        # Log Workflow Telemetry
         if self.telemetry:
-            self._log_workflow_run(session_id=session.session_id, run_id=workflow_run_response.run_id)
+            self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
 
     async def _acall_custom_function(
         self, func: Callable, execution_input: WorkflowExecutionInput, **kwargs: Any
@@ -1312,9 +1312,9 @@ class Workflow:
         session.upsert_run(run=workflow_run_response)
         self.save_session(session=session)
 
-        # Log Workflow Run
+        # Log Workflow Telemetry
         if self.telemetry:
-            await self._alog_workflow_run(session_id=session.session_id, run_id=workflow_run_response.run_id)
+            await self._alog_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
 
         return workflow_run_response
 
@@ -1518,9 +1518,9 @@ class Workflow:
         session.upsert_run(run=workflow_run_response)
         self.save_session(session=session)
 
-        # Log Workflow Run
+        # Log Workflow Telemetry
         if self.telemetry:
-            await self._alog_workflow_run(session_id=session.session_id, run_id=workflow_run_response.run_id)
+            await self._alog_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
 
     async def _arun_background(
         self,
@@ -2305,7 +2305,7 @@ class Workflow:
     # Telemetry functions
     ###########################################################################
 
-    def _log_workflow_run(self, session_id: str, run_id: Optional[str] = None) -> None:
+    def _log_workflow_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
         """Send a telemetry event to the API for a created Workflow run"""
 
         self._set_telemetry()
@@ -2321,7 +2321,7 @@ class Workflow:
         except Exception as e:
             log_debug(f"Could not create Workflow run telemetry event: {e}")
 
-    async def _alog_workflow_run(self, session_id: str, run_id: Optional[str] = None) -> None:
+    async def _alog_workflow_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
         """Send a telemetry event to the API for a created Workflow async run"""
 
         self._set_telemetry()

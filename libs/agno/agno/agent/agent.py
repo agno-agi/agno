@@ -784,8 +784,8 @@ class Agent:
         # 8. Save session to memory
         self.save_session(session=session)
 
-        # Log Agent Run
-        self._log_agent_run(session_id=session.session_id, run_id=run_response.run_id)
+        # Log Agent Telemetry
+        self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -912,8 +912,8 @@ class Agent:
         if yield_run_response:
             yield run_response
 
-        # Log Agent Run
-        self._log_agent_run(session_id=session.session_id, run_id=run_response.run_id)
+        # Log Agent Telemetry
+        self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1225,8 +1225,8 @@ class Agent:
         # 8. Save session to storage
         self.save_session(session=session)
 
-        # Log Agent Run
-        await self._alog_agent_run(session_id=session.session_id, run_id=run_response.run_id)
+        # Log Agent Telemetry
+        await self._alog_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1361,8 +1361,8 @@ class Agent:
         if yield_run_response:
             yield run_response
 
-        # Log Agent Run
-        await self._alog_agent_run(session_id=session.session_id, run_id=run_response.run_id)
+        # Log Agent Telemetry
+        await self._alog_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1874,8 +1874,8 @@ class Agent:
         # 7. Save session to storage
         self.save_session(session=session)
 
-        # Log Agent Run
-        self._log_agent_run(session_id=session.session_id, run_id=run_response.run_id)
+        # Log Agent Telemetry
+        self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         return run_response
 
@@ -1953,8 +1953,8 @@ class Agent:
         if stream_intermediate_steps:
             yield completed_event
 
-        # Log Agent Run
-        self._log_agent_run(session_id=session.session_id, run_id=run_response.run_id)
+        # Log Agent Telemetry
+        self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -2241,8 +2241,8 @@ class Agent:
         # 6. Save session to storage
         self.save_session(session=session)
 
-        # Log Agent Run
-        await self._alog_agent_run(session_id=session.session_id, run_id=run_response.run_id)
+        # Log Agent Telemetry
+        await self._alog_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -2331,8 +2331,8 @@ class Agent:
         if stream_intermediate_steps:
             yield completed_event
 
-        # Log Agent Run
-        await self._alog_agent_run(session_id=session.session_id, run_id=run_response.run_id)
+        # Log Agent Telemetry
+        await self._alog_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -6671,7 +6671,7 @@ class Agent:
     # Api functions
     ###########################################################################
 
-    def _log_agent_run(self, session_id: str, run_id: Optional[str] = None) -> None:
+    def _log_agent_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
         """Send a telemetry event to the API for a created Agent run"""
 
         self.set_telemetry()
@@ -6687,7 +6687,7 @@ class Agent:
         except Exception as e:
             log_debug(f"Could not create Agent run telemetry event: {e}")
 
-    async def _alog_agent_run(self, session_id: str, run_id: Optional[str] = None) -> None:
+    async def _alog_agent_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
         """Send a telemetry event to the API for a created Agent async run"""
 
         self.set_telemetry()

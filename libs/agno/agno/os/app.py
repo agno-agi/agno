@@ -95,9 +95,9 @@ class AgentOS:
                     workflow.id = generate_id(workflow.name)
 
         if self.telemetry:
-            from agno.api.os import OSLaunch, log_os_launch
+            from agno.api.os import OSLaunch, log_os_telemetry
 
-            log_os_launch(launch=OSLaunch(os_id=self.os_id))
+            log_os_telemetry(launch=OSLaunch(os_id=self.os_id))
 
     def _auto_discover_apps(self) -> List[BaseApp]:
         """Auto-discover apps from agents, teams, and workflows."""
