@@ -268,8 +268,10 @@ class Agent:
     exponential_backoff: bool = False
 
     # --- Agent Response Model Settings ---
+    # Provide an input schema to validate the input
+    input_schema: Optional[Type[BaseModel]] = None
     # Provide a response model to get the response as a Pydantic model
-    response_model: Optional[Type[BaseModel]] = None
+    output_schema: Optional[Type[BaseModel]] = None
     # Provide a secondary model to parse the response from the primary model
     parser_model: Optional[Model] = None
     # Provide a prompt for the parser model
@@ -278,12 +280,12 @@ class Agent:
     output_model: Optional[Model] = None
     # Provide a prompt for the output model
     output_model_prompt: Optional[str] = None
-    # If True, the response from the Model is converted into the response_model
+    # If True, the response from the Model is converted into the output_schema
     # Otherwise, the response is returned as a JSON string
     parse_response: bool = True
     # Use model enforced structured_outputs if supported (e.g. OpenAIChat)
     structured_outputs: Optional[bool] = None
-    # If `response_model` is set, sets the response mode of the model, i.e. if the model should explicitly respond with a JSON object instead of a Pydantic model
+    # If `output_schema` is set, sets the response mode of the model, i.e. if the model should explicitly respond with a JSON object instead of a Pydantic model
     use_json_mode: bool = False
     # Save the response to a file
     save_response_to_file: Optional[str] = None
@@ -390,7 +392,8 @@ class Agent:
         exponential_backoff: bool = False,
         parser_model: Optional[Model] = None,
         parser_model_prompt: Optional[str] = None,
-        response_model: Optional[Type[BaseModel]] = None,
+        input_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         parse_response: bool = True,
         output_model: Optional[Model] = None,
         output_model_prompt: Optional[str] = None,
@@ -486,7 +489,8 @@ class Agent:
         self.exponential_backoff = exponential_backoff
         self.parser_model = parser_model
         self.parser_model_prompt = parser_model_prompt
-        self.response_model = response_model
+        self.input_schema = input_schema
+        self.output_schema = output_schema
         self.parse_response = parse_response
         self.output_model = output_model
         self.output_model_prompt = output_model_prompt
@@ -567,6 +571,44 @@ class Agent:
             log_info("Setting default model to OpenAI Chat")
             self.model = OpenAIChat(id="gpt-4o")
 
+    def _validate_input(
+        self, input: Union[str, List, Dict, Message, BaseModel]
+    ) -> Union[str, List, Dict, Message, BaseModel]:
+        """Parse and validate input against input_schema if provided, otherwise return input as-is"""
+        if self.input_schema is None:
+            return input  # Return input unchanged if no schema is set
+
+        # Handle Message objects - extract content
+        if isinstance(input, Message):
+            input = input.content
+
+        # Case 1: Message is already a BaseModel instance
+        if isinstance(input, BaseModel):
+            if isinstance(input, self.input_schema):
+                try:
+                    # Re-validate to catch any field validation errors
+                    input.model_validate(input.model_dump())
+                    return input
+                except Exception as e:
+                    raise ValueError(f"BaseModel validation failed: {str(e)}")
+            else:
+                # Different BaseModel types
+                raise ValueError(f"Expected {self.input_schema.__name__} but got {type(input).__name__}")
+
+        # Case 2: Message is a dict
+        elif isinstance(input, dict):
+            try:
+                validated_model = self.input_schema(**input)
+                return validated_model
+            except Exception as e:
+                raise ValueError(f"Failed to parse dict into {self.input_schema.__name__}: {str(e)}")
+
+        # Case 3: Other types not supported for structured input
+        else:
+            raise ValueError(
+                f"Cannot validate {type(input)} against input_schema. Expected dict or {self.input_schema.__name__} instance."
+            )
+
     def _set_memory_manager(self) -> None:
         if self.db is None:
             log_warning("Database not provided. Memories will not be stored.")
@@ -613,7 +655,7 @@ class Agent:
 
     @property
     def should_parse_structured_output(self) -> bool:
-        return self.response_model is not None and self.parse_response and self.parser_model is None
+        return self.output_schema is not None and self.parse_response and self.parser_model is None
 
     def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
         if not self.tools:
@@ -940,6 +982,9 @@ class Agent:
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
+        # Validate input against input_schema if provided
+        validated_input = self._validate_input(input)
+
         session_id, user_id, session_state = self._initialize_session(
             run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
         )
@@ -1024,7 +1069,7 @@ class Agent:
                 # Prepare run messages
                 run_messages: RunMessages = self.get_run_messages(
                     run_response=run_response,
-                    input=input,
+                    input=validated_input,
                     session=agent_session,
                     user_id=user_id,
                     audio=audio,
@@ -1385,6 +1430,9 @@ class Agent:
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
+        # Validate input against input_schema if provided
+        validated_input = self._validate_input(input)
+
         session_id, user_id, session_state = self._initialize_session(
             run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
         )
@@ -1463,7 +1511,7 @@ class Agent:
                 # Prepare run messages
                 run_messages: RunMessages = self.get_run_messages(
                     run_response=run_response,
-                    input=input,
+                    input=validated_input,
                     session=agent_session,
                     user_id=user_id,
                     audio=audio,
@@ -2352,18 +2400,18 @@ class Agent:
 
     def _convert_response_to_structured_format(self, run_response: Union[RunOutput, ModelResponse]):
         # Convert the response to the structured format if needed
-        if self.response_model is not None and not isinstance(run_response.content, self.response_model):
+        if self.output_schema is not None and not isinstance(run_response.content, self.output_schema):
             if isinstance(run_response.content, str) and self.parse_response:
                 try:
-                    structured_output = parse_response_model_str(run_response.content, self.response_model)
+                    structured_output = parse_response_model_str(run_response.content, self.output_schema)
 
                     # Update RunOutput
                     if structured_output is not None:
                         run_response.content = structured_output
                         if isinstance(run_response, RunOutput):
-                            run_response.content_type = self.response_model.__name__
+                            run_response.content_type = self.output_schema.__name__
                     else:
-                        log_warning("Failed to convert response to response_model")
+                        log_warning("Failed to convert response to output_schema")
                 except Exception as e:
                     log_warning(f"Failed to convert response to output model: {e}")
             else:
@@ -2656,13 +2704,13 @@ class Agent:
             run_response.formatted_tool_calls = format_tool_calls(model_response.tool_executions)
 
         # Handle structured outputs
-        if self.response_model is not None and model_response.parsed is not None:
+        if self.output_schema is not None and model_response.parsed is not None:
             # We get native structured outputs from the model
             if self._model_should_return_structured_output():
                 # Update the run_response content with the structured output
                 run_response.content = model_response.parsed
                 # Update the run_response content_type with the structured output class name
-                run_response.content_type = self.response_model.__name__
+                run_response.content_type = self.output_schema.__name__
         else:
             # Update the run_response content with the model response content
             run_response.content = model_response.content
@@ -2906,7 +2954,7 @@ class Agent:
                         model_response.content = model_response_event.content
                         self._convert_response_to_structured_format(model_response)
 
-                        content_type = self.response_model.__name__  # type: ignore
+                        content_type = self.output_schema.__name__  # type: ignore
                         run_response.content = model_response.content
                         run_response.content_type = content_type
                     else:
@@ -3435,7 +3483,7 @@ class Agent:
                 # Check if we need strict mode for the functions for the model
                 strict = False
                 if (
-                    self.response_model is not None
+                    self.output_schema is not None
                     and (self.structured_outputs or (not self.use_json_mode))
                     and model.supports_native_structured_outputs
                 ):
@@ -3508,21 +3556,21 @@ class Agent:
         self.model = cast(Model, self.model)
         return bool(
             self.model.supports_native_structured_outputs
-            and self.response_model is not None
+            and self.output_schema is not None
             and (not self.use_json_mode or self.structured_outputs)
         )
 
     def _get_response_format(self, model: Optional[Model] = None) -> Optional[Union[Dict, Type[BaseModel]]]:
         model = cast(Model, model or self.model)
-        if self.response_model is None:
+        if self.output_schema is None:
             return None
         else:
             json_response_format = {"type": "json_object"}
 
             if model.supports_native_structured_outputs:
                 if not self.use_json_mode or self.structured_outputs:
-                    log_debug("Setting Model.response_format to Agent.response_model")
-                    return self.response_model
+                    log_debug("Setting Model.response_format to Agent.output_schema")
+                    return self.output_schema
                 else:
                     log_debug(
                         "Model supports native structured outputs but it is not enabled. Using JSON mode instead."
@@ -3535,8 +3583,8 @@ class Agent:
                     return {
                         "type": "json_schema",
                         "json_schema": {
-                            "name": self.response_model.__name__,
-                            "schema": self.response_model.model_json_schema(),
+                            "name": self.output_schema.__name__,
+                            "schema": self.output_schema.model_json_schema(),
                         },
                     }
                 else:
@@ -3949,7 +3997,7 @@ class Agent:
         # 3.2 Build a list of additional information for the system message
         additional_information: List[str] = []
         # 3.2.1 Add instructions for using markdown
-        if self.markdown and self.response_model is None:
+        if self.markdown and self.output_schema is None:
             additional_information.append("Use markdown to format your answers.")
         # 3.2.2 Add the current datetime
         if self.add_datetime_to_context:
@@ -4109,21 +4157,21 @@ class Agent:
         if system_message_from_model is not None:
             system_message_content += system_message_from_model
 
-        # 3.3.13 Add the JSON output prompt if response_model is provided and the model does not support native structured outputs or JSON schema outputs
+        # 3.3.13 Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs or JSON schema outputs
         # or if use_json_mode is True
         if (
-            self.response_model is not None
+            self.output_schema is not None
             and self.parser_model is None
             and not (
                 (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
                 and (not self.use_json_mode or self.structured_outputs is True)
             )
         ):
-            system_message_content += f"{get_json_output_prompt(self.response_model)}"  # type: ignore
+            system_message_content += f"{get_json_output_prompt(self.output_schema)}"  # type: ignore
 
-        # 3.3.14 Add the response model format prompt if response_model is provided
-        if self.response_model is not None and self.parser_model is not None:
-            system_message_content += f"{get_response_model_format_prompt(self.response_model)}"
+        # 3.3.14 Add the response model format prompt if output_schema is provided
+        if self.output_schema is not None and self.parser_model is not None:
+            system_message_content += f"{get_response_model_format_prompt(self.output_schema)}"
 
         # Return the system message
         return (
@@ -4549,8 +4597,8 @@ class Agent:
             else "You are tasked with creating a structured output from the provided user message."
         )
 
-        if response_format == {"type": "json_object"} and self.response_model is not None:
-            system_content += f"{get_json_output_prompt(self.response_model)}"  # type: ignore
+        if response_format == {"type": "json_object"} and self.output_schema is not None:
+            system_content += f"{get_json_output_prompt(self.output_schema)}"  # type: ignore
 
         return [
             Message(role="system", content=system_content),
@@ -4567,8 +4615,8 @@ class Agent:
             else "You are tasked with creating a structured output from the provided data."
         )
 
-        if response_format == {"type": "json_object"} and self.response_model is not None:
-            system_content += f"{get_json_output_prompt(self.response_model)}"  # type: ignore
+        if response_format == {"type": "json_object"} and self.output_schema is not None:
+            system_content += f"{get_json_output_prompt(self.output_schema)}"  # type: ignore
 
         return [
             Message(role="system", content=system_content),
@@ -5316,9 +5364,9 @@ class Agent:
                 return
             # Ensure the reasoning agent response model is ReasoningSteps
             if (
-                reasoning_agent.response_model is not None
-                and not isinstance(reasoning_agent.response_model, type)
-                and not issubclass(reasoning_agent.response_model, ReasoningSteps)
+                reasoning_agent.output_schema is not None
+                and not isinstance(reasoning_agent.output_schema, type)
+                and not issubclass(reasoning_agent.output_schema, ReasoningSteps)
             ):
                 log_warning("Reasoning agent response model should be `ReasoningSteps`, continuing regular session...")
                 return
@@ -5543,9 +5591,9 @@ class Agent:
                 return
             # Ensure the reasoning agent response model is ReasoningSteps
             if (
-                reasoning_agent.response_model is not None
-                and not isinstance(reasoning_agent.response_model, type)
-                and not issubclass(reasoning_agent.response_model, ReasoningSteps)
+                reasoning_agent.output_schema is not None
+                and not isinstance(reasoning_agent.output_schema, type)
+                and not issubclass(reasoning_agent.output_schema, ReasoningSteps)
             ):
                 log_warning("Reasoning agent response model should be `ReasoningSteps`, continuing regular session...")
                 return
@@ -5659,7 +5707,7 @@ class Agent:
         if self.parser_model is None:
             return
 
-        if self.response_model is not None:
+        if self.output_schema is not None:
             parser_response_format = self._get_response_format(self.parser_model)
             messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
             parser_model_response: ModelResponse = self.parser_model.response(
@@ -5679,7 +5727,7 @@ class Agent:
         if self.parser_model is None:
             return
 
-        if self.response_model is not None:
+        if self.output_schema is not None:
             parser_response_format = self._get_response_format(self.parser_model)
             messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
             parser_model_response: ModelResponse = await self.parser_model.aresponse(
@@ -5697,7 +5745,7 @@ class Agent:
     ):
         """Parse the model response using the parser model"""
         if self.parser_model is not None:
-            if self.response_model is not None:
+            if self.output_schema is not None:
                 if stream_intermediate_steps:
                     yield self._handle_event(create_parser_model_response_started_event(run_response), run_response)
 
@@ -5742,7 +5790,7 @@ class Agent:
     ):
         """Parse the model response using the parser model stream."""
         if self.parser_model is not None:
-            if self.response_model is not None:
+            if self.output_schema is not None:
                 if stream_intermediate_steps:
                     yield self._handle_event(create_parser_model_response_started_event(run_response), run_response)
 
@@ -6229,7 +6277,7 @@ class Agent:
         if markdown is None:
             markdown = self.markdown
 
-        if self.response_model is not None:
+        if self.output_schema is not None:
             markdown = False
 
         if stream is None:
@@ -6314,7 +6362,7 @@ class Agent:
         if markdown is None:
             markdown = self.markdown
 
-        if self.response_model is not None:
+        if self.output_schema is not None:
             markdown = False
 
         if stream is None:

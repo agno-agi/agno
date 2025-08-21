@@ -241,8 +241,10 @@ class Team:
     tool_hooks: Optional[List[Callable]] = None
 
     # --- Structured output ---
-    # Response model for the team response
-    response_model: Optional[Type[BaseModel]] = None
+    # Input schema for validating input
+    input_schema: Optional[Type[BaseModel]] = None
+    # Output schema for the team response
+    output_schema: Optional[Type[BaseModel]] = None
     # Provide a secondary model to parse the response from the primary model
     parser_model: Optional[Model] = None
     # Provide a prompt for the parser model
@@ -251,7 +253,7 @@ class Team:
     output_model: Optional[Model] = None
     # Provide a prompt for the output model
     output_model_prompt: Optional[str] = None
-    # If `response_model` is set, sets the response mode of the model, i.e. if the model should explicitly respond with a JSON object instead of a Pydantic model
+    # If `output_schema` is set, sets the response mode of the model, i.e. if the model should explicitly respond with a JSON object instead of a Pydantic model
     use_json_mode: bool = False
     # If True, parse the response
     parse_response: bool = True
@@ -364,7 +366,8 @@ class Team:
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
-        response_model: Optional[Type[BaseModel]] = None,
+        input_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         parser_model: Optional[Model] = None,
         parser_model_prompt: Optional[str] = None,
         output_model: Optional[Model] = None,
@@ -448,7 +451,8 @@ class Team:
         self.tool_call_limit = tool_call_limit
         self.tool_hooks = tool_hooks
 
-        self.response_model = response_model
+        self.input_schema = input_schema
+        self.output_schema = output_schema
         self.parser_model = parser_model
         self.parser_model_prompt = parser_model_prompt
         self.output_model = output_model
@@ -520,7 +524,7 @@ class Team:
 
     @property
     def should_parse_structured_output(self) -> bool:
-        return self.response_model is not None and self.parse_response and self.parser_model is None
+        return self.output_schema is not None and self.parse_response and self.parser_model is None
 
     def set_id(self) -> None:
         """Set the ID of the team if not set yet.
@@ -546,6 +550,44 @@ class Team:
         telemetry_env = getenv("AGNO_TELEMETRY")
         if telemetry_env is not None:
             self.telemetry = telemetry_env.lower() == "true"
+
+    def _validate_input(
+        self, input: Union[str, List, Dict, Message, BaseModel]
+    ) -> Union[str, List, Dict, Message, BaseModel]:
+        """Parse and validate input against input_schema if provided, otherwise return input as-is"""
+        if self.input_schema is None:
+            return input  # Return input unchanged if no schema is set
+
+        # Handle Message objects - extract content
+        if isinstance(input, Message):
+            input = input.content
+
+        # Case 1: Message is already a BaseModel instance
+        if isinstance(input, BaseModel):
+            if isinstance(input, self.input_schema):
+                try:
+                    # Re-validate to catch any field validation errors
+                    input.model_validate(input.model_dump())
+                    return input
+                except Exception as e:
+                    raise ValueError(f"BaseModel validation failed: {str(e)}")
+            else:
+                # Different BaseModel types
+                raise ValueError(f"Expected {self.input_schema.__name__} but got {type(input).__name__}")
+
+        # Case 2: Message is a dict
+        elif isinstance(input, dict):
+            try:
+                validated_model = self.input_schema(**input)
+                return validated_model
+            except Exception as e:
+                raise ValueError(f"Failed to parse dict into {self.input_schema.__name__}: {str(e)}")
+
+        # Case 3: Other types not supported for structured input
+        else:
+            raise ValueError(
+                f"Cannot validate {type(input)} against input_schema. Expected dict or {self.input_schema.__name__} instance."
+            )
 
     def _initialize_member(self, member: Union["Team", Agent], debug_mode: Optional[bool] = None) -> None:
         # Set debug mode for all members
@@ -928,6 +970,9 @@ class Team:
     ) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         """Run the Team and return the response."""
 
+        # Validate input against input_schema if provided
+        validated_input = self._validate_input(input)
+
         if store_member_responses is not None:
             self.store_member_responses = store_member_responses
 
@@ -1038,7 +1083,7 @@ class Team:
                         run_response=run_response,
                         session=team_session,
                         user_id=user_id,
-                        input_message=input,
+                        input_message=validated_input,
                         audio=audio,
                         images=images,
                         videos=videos,
@@ -1051,7 +1096,7 @@ class Team:
                         run_response=run_response,
                         session=team_session,
                         user_id=user_id,
-                        input_message=input,
+                        input_message=validated_input,
                         audio=audio,
                         images=images,
                         videos=videos,
@@ -1382,6 +1427,9 @@ class Team:
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         """Run the Team asynchronously and return the response."""
 
+        # Validate input against input_schema if provided
+        validated_input = self._validate_input(input)
+
         if store_member_responses is not None:
             self.store_member_responses = store_member_responses
 
@@ -1486,7 +1534,7 @@ class Team:
                         session=team_session,  # type: ignore
                         run_response=run_response,
                         user_id=user_id,
-                        input_message=input,
+                        input_message=validated_input,
                         audio=audio,
                         images=images,
                         videos=videos,
@@ -1499,7 +1547,7 @@ class Team:
                         session=team_session,  # type: ignore
                         run_response=run_response,
                         user_id=user_id,
-                        input_message=input,
+                        input_message=validated_input,
                         audio=audio,
                         images=images,
                         videos=videos,
@@ -1566,11 +1614,11 @@ class Team:
         self, model_response: ModelResponse, run_response: TeamRunOutput, run_messages: RunMessages
     ):
         # Handle structured outputs
-        if (self.response_model is not None) and not self.use_json_mode and (model_response.parsed is not None):
+        if (self.output_schema is not None) and not self.use_json_mode and (model_response.parsed is not None):
             # Update the run_response content with the structured output
             run_response.content = model_response.parsed
             # Update the run_response content_type with the structured output class name
-            run_response.content_type = self.response_model.__name__
+            run_response.content_type = self.output_schema.__name__
         else:
             # Update the run_response content with the model response content
             if not run_response.content:
@@ -1745,7 +1793,7 @@ class Team:
                 yield chunk
 
         # Handle structured outputs
-        if (self.response_model is not None) and not self.use_json_mode and (full_model_response.parsed is not None):
+        if (self.output_schema is not None) and not self.use_json_mode and (full_model_response.parsed is not None):
             # Update the run_response content with the structured output
             run_response.content = full_model_response.parsed
 
@@ -1815,7 +1863,7 @@ class Team:
                     if parse_structured_output:
                         full_model_response.content = model_response_event.content
                         self._convert_response_to_structured_format(full_model_response)
-                        content_type = self.response_model.__name__  # type: ignore
+                        content_type = self.output_schema.__name__  # type: ignore
                         run_response.content_type = content_type
                     elif self._member_response_model is not None:
                         full_model_response.content = model_response_event.content
@@ -1988,18 +2036,18 @@ class Team:
 
     def _convert_response_to_structured_format(self, run_response: Union[TeamRunOutput, RunOutput, ModelResponse]):
         # Convert the response to the structured format if needed
-        if self.response_model is not None and not isinstance(run_response.content, self.response_model):
+        if self.output_schema is not None and not isinstance(run_response.content, self.output_schema):
             if isinstance(run_response.content, str) and self.parse_response:
                 try:
-                    parsed_response_content = parse_response_model_str(run_response.content, self.response_model)
+                    parsed_response_content = parse_response_model_str(run_response.content, self.output_schema)
 
                     # Update TeamRunOutput
                     if parsed_response_content is not None:
                         run_response.content = parsed_response_content
                         if hasattr(run_response, "content_type"):
-                            run_response.content_type = self.response_model.__name__
+                            run_response.content_type = self.output_schema.__name__
                     else:
-                        log_warning("Failed to convert response to response_model")
+                        log_warning("Failed to convert response to output_schema")
                 except Exception as e:
                     log_warning(f"Failed to convert response to output model: {e}")
             else:
@@ -2018,7 +2066,7 @@ class Team:
                         if hasattr(run_response, "content_type"):
                             run_response.content_type = self._member_response_model.__name__
                     else:
-                        log_warning("Failed to convert response to response_model")
+                        log_warning("Failed to convert response to output_schema")
                 except Exception as e:
                     log_warning(f"Failed to convert response to output model: {e}")
             else:
@@ -2116,15 +2164,15 @@ class Team:
 
     def _get_response_format(self, model: Optional[Model] = None) -> Optional[Union[Dict, Type[BaseModel]]]:
         model = cast(Model, model or self.model)
-        if self.response_model is None:
+        if self.output_schema is None:
             return None
         else:
             json_response_format = {"type": "json_object"}
 
             if model.supports_native_structured_outputs:
                 if not self.use_json_mode:
-                    log_debug("Setting Model.response_format to Agent.response_model")
-                    return self.response_model
+                    log_debug("Setting Model.response_format to Agent.output_schema")
+                    return self.output_schema
                 else:
                     log_debug(
                         "Model supports native structured outputs but it is not enabled. Using JSON mode instead."
@@ -2137,8 +2185,8 @@ class Team:
                     return {
                         "type": "json_schema",
                         "json_schema": {
-                            "name": self.response_model.__name__,
-                            "schema": self.response_model.model_json_schema(),
+                            "name": self.output_schema.__name__,
+                            "schema": self.output_schema.model_json_schema(),
                         },
                     }
                 else:
@@ -2174,7 +2222,7 @@ class Team:
         if self.parser_model is None:
             return
 
-        if self.response_model is not None:
+        if self.output_schema is not None:
             parser_response_format = self._get_response_format(self.parser_model)
             messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
             parser_model_response: ModelResponse = self.parser_model.response(
@@ -2194,7 +2242,7 @@ class Team:
         if self.parser_model is None:
             return
 
-        if self.response_model is not None:
+        if self.output_schema is not None:
             parser_response_format = self._get_response_format(self.parser_model)
             messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
             parser_model_response: ModelResponse = await self.parser_model.aresponse(
@@ -2212,7 +2260,7 @@ class Team:
     ):
         """Parse the model response using the parser model"""
         if self.parser_model is not None:
-            if self.response_model is not None:
+            if self.output_schema is not None:
                 if stream_intermediate_steps:
                     yield self._handle_event(
                         create_team_parser_model_response_started_event(run_response), run_response
@@ -2263,7 +2311,7 @@ class Team:
     ):
         """Parse the model response using the parser model stream."""
         if self.parser_model is not None:
-            if self.response_model is not None:
+            if self.output_schema is not None:
                 if stream_intermediate_steps:
                     yield self._handle_event(
                         create_team_parser_model_response_started_event(run_response), run_response
@@ -2476,7 +2524,7 @@ class Team:
         if markdown is None:
             markdown = self.markdown
 
-        if self.response_model is not None:
+        if self.output_schema is not None:
             markdown = False
 
         if stream is None:
@@ -2555,7 +2603,7 @@ class Team:
         if markdown is None:
             markdown = self.markdown
 
-        if self.response_model is not None:
+        if self.output_schema is not None:
             markdown = False
 
         if stream is None:
@@ -2904,9 +2952,9 @@ class Team:
                 return
             # Ensure the reasoning agent response model is ReasoningSteps
             if (
-                reasoning_agent.response_model is not None
-                and not isinstance(reasoning_agent.response_model, type)
-                and not issubclass(reasoning_agent.response_model, ReasoningSteps)
+                reasoning_agent.output_schema is not None
+                and not isinstance(reasoning_agent.output_schema, type)
+                and not issubclass(reasoning_agent.output_schema, ReasoningSteps)
             ):
                 log_warning("Reasoning agent response model should be `ReasoningSteps`, continuing regular session...")
                 return
@@ -3129,9 +3177,9 @@ class Team:
                 return
             # Ensure the reasoning agent response model is ReasoningSteps
             if (
-                reasoning_agent.response_model is not None
-                and not isinstance(reasoning_agent.response_model, type)
-                and not issubclass(reasoning_agent.response_model, ReasoningSteps)
+                reasoning_agent.output_schema is not None
+                and not isinstance(reasoning_agent.output_schema, type)
+                and not issubclass(reasoning_agent.output_schema, ReasoningSteps)
             ):
                 log_warning("Reasoning agent response model should be `ReasoningSteps`, continuing regular session...")
                 return
@@ -3420,7 +3468,7 @@ class Team:
 
         # Check if we need strict mode for the model
         strict = False
-        if self.response_model is not None and not self.use_json_mode and model.supports_native_structured_outputs:
+        if self.output_schema is not None and not self.use_json_mode and model.supports_native_structured_outputs:
             strict = True
 
         for tool in _tools:
@@ -3580,7 +3628,7 @@ class Team:
         # 1.3 Build a list of additional information for the system message
         additional_information: List[str] = []
         # 1.3.1 Add instructions for using markdown
-        if self.markdown and self.response_model is None:
+        if self.markdown and self.output_schema is None:
             additional_information.append("Use markdown to format your answers.")
         # 1.3.2 Add the current datetime
         if self.add_datetime_to_context:
@@ -3782,9 +3830,9 @@ class Team:
                 f"<additional_context>\n{self.additional_context.strip()}\n</additional_context>\n\n"
             )
 
-        # Add the JSON output prompt if response_model is provided and structured_outputs is False
+        # Add the JSON output prompt if output_schema is provided and structured_outputs is False
         if (
-            self.response_model is not None
+            self.output_schema is not None
             and self.use_json_mode
             and self.model
             and self.model.supports_native_structured_outputs
@@ -4064,8 +4112,8 @@ class Team:
             else "You are tasked with creating a structured output from the provided user message."
         )
 
-        if response_format == {"type": "json_object"} and self.response_model is not None:
-            system_content += f"{get_json_output_prompt(self.response_model)}"  # type: ignore
+        if response_format == {"type": "json_object"} and self.output_schema is not None:
+            system_content += f"{get_json_output_prompt(self.output_schema)}"  # type: ignore
 
         return [
             Message(role="system", content=system_content),
@@ -4084,8 +4132,8 @@ class Team:
             else "You are tasked with creating a structured output from the provided data."
         )
 
-        if response_format == {"type": "json_object"} and self.response_model is not None:
-            system_content += f"{get_json_output_prompt(self.response_model)}"  # type: ignore
+        if response_format == {"type": "json_object"} and self.output_schema is not None:
+            system_content += f"{get_json_output_prompt(self.output_schema)}"  # type: ignore
 
         return [
             Message(role="system", content=system_content),
@@ -4182,22 +4230,22 @@ class Team:
     def _get_json_output_prompt(self) -> str:
         """Return the JSON output prompt for the Agent.
 
-        This is added to the system prompt when the response_model is set and structured_outputs is False.
+        This is added to the system prompt when the output_schema is set and structured_outputs is False.
         """
         import json
 
         json_output_prompt = "Provide your output as a JSON containing the following fields:"
-        if self.response_model is not None:
-            if isinstance(self.response_model, str):
+        if self.output_schema is not None:
+            if isinstance(self.output_schema, str):
                 json_output_prompt += "\n<json_fields>"
-                json_output_prompt += f"\n{self.response_model}"
+                json_output_prompt += f"\n{self.output_schema}"
                 json_output_prompt += "\n</json_fields>"
-            elif isinstance(self.response_model, list):
+            elif isinstance(self.output_schema, list):
                 json_output_prompt += "\n<json_fields>"
-                json_output_prompt += f"\n{json.dumps(self.response_model)}"
+                json_output_prompt += f"\n{json.dumps(self.output_schema)}"
                 json_output_prompt += "\n</json_fields>"
-            elif issubclass(self.response_model, BaseModel):
-                json_schema = self.response_model.model_json_schema()
+            elif issubclass(self.output_schema, BaseModel):
+                json_schema = self.output_schema.model_json_schema()
                 if json_schema is not None:
                     response_model_properties = {}
                     json_schema_properties = json_schema.get("properties")
@@ -4237,7 +4285,7 @@ class Team:
                         json_output_prompt += f"\n{json.dumps(response_model_properties, indent=2)}"
                         json_output_prompt += "\n</json_field_properties>"
             else:
-                log_warning(f"Could not build json schema for {self.response_model}")
+                log_warning(f"Could not build json schema for {self.output_schema}")
         else:
             json_output_prompt += "Provide the output as JSON."
 
@@ -5229,12 +5277,12 @@ class Team:
             self._initialize_member(member_agent)
 
             # Since we return the response directly from the member agent, we need to set the response model from the team down.
-            if not member_agent.response_model and self.response_model:
-                member_agent.response_model = self.response_model
+            if not member_agent.output_schema and self.output_schema:
+                member_agent.output_schema = self.output_schema
 
             # If the member will produce structured output, we need to parse the response
-            if member_agent.response_model is not None:
-                self._member_response_model = member_agent.response_model
+            if member_agent.output_schema is not None:
+                self._member_response_model = member_agent.output_schema
 
             # Make sure for the member agent, we are using the agent logger
             use_agent_logger()
@@ -5389,8 +5437,8 @@ class Team:
             self._initialize_member(member_agent)
 
             # If the member will produce structured output, we need to parse the response
-            if member_agent.response_model is not None:
-                self._member_response_model = member_agent.response_model
+            if member_agent.output_schema is not None:
+                self._member_response_model = member_agent.output_schema
 
             # Make sure for the member agent, we are using the agent logger
             use_agent_logger()

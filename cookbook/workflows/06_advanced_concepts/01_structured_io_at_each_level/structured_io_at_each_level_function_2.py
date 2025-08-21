@@ -206,7 +206,7 @@ research_agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[HackerNewsTools(), DuckDuckGoTools()],
     role="Research AI trends and extract structured insights",
-    response_model=ResearchFindings,
+    output_schema=ResearchFindings,
     instructions=[
         "Research the given topic thoroughly using available tools",
         "Provide structured findings with confidence scores",
@@ -219,7 +219,7 @@ strategy_agent = Agent(
     name="Content Strategy Expert",
     model=OpenAIChat(id="gpt-4o-mini"),
     role="Create content strategies based on research findings",
-    response_model=ContentStrategy,
+    output_schema=ContentStrategy,
     instructions=[
         "Analyze the research findings provided from the previous step",
         "Create a comprehensive content strategy based on the structured research data",
@@ -232,7 +232,7 @@ planning_agent = Agent(
     name="Content Planning Specialist",
     model=OpenAIChat(id="gpt-4o"),
     role="Create detailed content plans and calendars",
-    response_model=FinalContentPlan,
+    output_schema=FinalContentPlan,
     instructions=[
         "Use the content strategy from the previous step to create a detailed implementation plan",
         "Include specific timelines and success metrics",

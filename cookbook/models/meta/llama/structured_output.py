@@ -28,7 +28,7 @@ class MovieScript(BaseModel):
 # Agent that uses a JSON schema output
 json_schema_output_agent = Agent(
     model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8", temperature=0.1),
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 json_schema_output_agent.print_response("New York")

@@ -342,7 +342,7 @@ def test_intermediate_steps_with_structured_output(shared_db):
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[],
         db=shared_db,
-        response_model=Person,
+        output_schema=Person,
         instructions="You have no members, answer directly",
         telemetry=False,
     )
@@ -388,7 +388,7 @@ def test_intermediate_steps_with_parser_model(shared_db):
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[],
         db=shared_db,
-        response_model=Person,
+        output_schema=Person,
         parser_model=OpenAIChat(id="gpt-4o-mini"),
         instructions="You have no members, answer directly",
         telemetry=False,

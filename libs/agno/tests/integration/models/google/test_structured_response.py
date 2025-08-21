@@ -31,7 +31,7 @@ def test_structured_response_with_dict_fields():
     structured_output_agent = Agent(
         model=Gemini(id="gemini-2.0-flash"),
         description="You help people write movie scripts.",
-        response_model=MovieScript,
+        output_schema=MovieScript,
     )
     response = structured_output_agent.run("New York")
     assert response.content is not None
@@ -60,7 +60,7 @@ def test_structured_response_with_enum_fields():
     structured_output_agent = Agent(
         model=Gemini(id="gemini-2.0-flash"),
         description="You help generate recipe names and ratings.",
-        response_model=Recipe,
+        output_schema=Recipe,
     )
     response = structured_output_agent.run("Generate a recipe name and rating.")
     assert response.content is not None

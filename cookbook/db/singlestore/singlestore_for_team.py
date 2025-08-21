@@ -61,7 +61,7 @@ hn_team = Team(
         "Then, ask the web searcher to search for each story to get more information.",
         "Finally, provide a thoughtful and engaging summary.",
     ],
-    response_model=Article,
+    output_schema=Article,
     markdown=True,
     show_members_responses=True,
 )

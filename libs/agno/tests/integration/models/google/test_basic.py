@@ -142,7 +142,7 @@ def test_structured_output():
         model=Gemini(id="gemini-1.5-flash"),
         exponential_backoff=True,
         delay_between_retries=5,
-        response_model=MovieScript,
+        output_schema=MovieScript,
         telemetry=False,
     )
 
@@ -165,7 +165,7 @@ def test_json_response_mode():
         model=Gemini(id="gemini-1.5-flash"),
         exponential_backoff=True,
         delay_between_retries=5,
-        response_model=MovieScript,
+        output_schema=MovieScript,
         use_json_mode=True,
         telemetry=False,
     )

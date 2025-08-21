@@ -94,11 +94,11 @@ def print_response(
                     member_markdown[member.id] = True
             team_markdown = True
 
-        if team.response_model is not None:
+        if team.output_schema is not None:
             team_markdown = False
 
         for member in team.members:
-            if member.response_model is not None and member.id is not None:
+            if member.output_schema is not None and member.id is not None:
                 member_markdown[member.id] = False  # type: ignore
 
         # Handle reasoning
@@ -398,14 +398,14 @@ def print_response_stream(
                 else:
                     team_markdown = False
 
-                if team.response_model is not None:
+                if team.output_schema is not None:
                     team_markdown = False
 
             if isinstance(resp, tuple(get_args(TeamRunOutputEvent))):
                 if resp.event == TeamRunEvent.run_content:
                     if isinstance(resp.content, str):
                         _response_content += resp.content
-                    elif team.response_model is not None and isinstance(resp.content, BaseModel):
+                    elif team.output_schema is not None and isinstance(resp.content, BaseModel):
                         try:
                             _response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
                         except Exception as e:
@@ -640,7 +640,7 @@ def print_response_stream(
                     member_markdown[member.id] = True
 
         for member in team.members:
-            if member.response_model is not None and member.id is not None:
+            if member.output_schema is not None and member.id is not None:
                 member_markdown[member.id] = False  # type: ignore
 
         # Final panels assembly - we'll recreate the panels from scratch to ensure correct order
@@ -891,11 +891,11 @@ async def aprint_response(
                     member_markdown[member.id] = True
             team_markdown = True
 
-        if team.response_model is not None:
+        if team.output_schema is not None:
             team_markdown = False
 
         for member in team.members:
-            if member.response_model is not None and member.id is not None:
+            if member.output_schema is not None and member.id is not None:
                 member_markdown[member.id] = False  # type: ignore
 
         # Handle reasoning
@@ -1189,14 +1189,14 @@ async def aprint_response_stream(
                 else:
                     team_markdown = False
 
-                if team.response_model is not None:
+                if team.output_schema is not None:
                     team_markdown = False
 
             if isinstance(resp, tuple(get_args(TeamRunOutputEvent))):
                 if resp.event == TeamRunEvent.run_content:
                     if isinstance(resp.content, str):
                         _response_content += resp.content
-                    elif team.response_model is not None and isinstance(resp.content, BaseModel):
+                    elif team.output_schema is not None and isinstance(resp.content, BaseModel):
                         try:
                             _response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
                         except Exception as e:
@@ -1367,7 +1367,7 @@ async def aprint_response_stream(
                     member_markdown[member.id] = True  # type: ignore
 
         for member in team.members:
-            if member.response_model is not None and member.id is not None:
+            if member.output_schema is not None and member.id is not None:
                 member_markdown[member.id] = False  # type: ignore
 
         # Final panels assembly - we'll recreate the panels from scratch to ensure correct order

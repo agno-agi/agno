@@ -59,7 +59,7 @@ class NationalParkAdventure(BaseModel):
 agent = Agent(
     model=OpenAIChat(id="o3"),
     description="You help people plan amazing national park adventures and provide detailed park guides.",
-    response_model=NationalParkAdventure,
+    output_schema=NationalParkAdventure,
     parser_model=Ollama(id="Osmosis/Osmosis-Structure-0.6B"),
 )
 

@@ -29,7 +29,7 @@ agent = Agent(
         id="NousResearch/Nous-Hermes-2-Mistral-7B-DPO", top_k=20, enable_thinking=False
     ),
     description="You write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 agent.print_response("Llamas ruling the world")

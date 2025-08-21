@@ -6,8 +6,8 @@ from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
 
 
-def test_route_team_multiple_response_models():
-    """Test route team with different response models for each agent."""
+def test_route_team_multiple_output_schemas():
+    """Test route team with different output schemas for each agent."""
 
     class StockAnalysis(BaseModel):
         symbol: str
@@ -21,7 +21,7 @@ def test_route_team_multiple_response_models():
     stock_searcher = Agent(
         name="Stock Searcher",
         model=OpenAIChat("gpt-4o"),
-        response_model=StockAnalysis,
+        output_schema=StockAnalysis,
         role="Searches for information on stocks and provides price analysis.",
         tools=[
             YFinanceTools(
@@ -35,7 +35,7 @@ def test_route_team_multiple_response_models():
         name="Company Info Searcher",
         model=OpenAIChat("gpt-4o"),
         role="Searches for general information about companies and recent news.",
-        response_model=CompanyAnalysis,
+        output_schema=CompanyAnalysis,
         tools=[
             YFinanceTools(
                 stock_price=False,
@@ -87,7 +87,7 @@ def test_route_team_mixed_structured_output():
         name="Stock Agent",
         model=OpenAIChat("gpt-4o"),
         role="Get stock information",
-        response_model=StockInfo,
+        output_schema=StockInfo,
         tools=[YFinanceTools(stock_price=True)],
     )
 
