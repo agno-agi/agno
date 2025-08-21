@@ -6,8 +6,8 @@ from agno.agent import Agent
 from agno.media import ImageArtifact
 from agno.team.team import Team
 from agno.tools import Toolkit
+from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, logger
-from agno.tools.function import FunctionExecutionResult
 
 try:
     from openai import OpenAI
@@ -61,20 +61,17 @@ class DalleTools(Toolkit):
         # - Add support for saving images
         # - Add support for editing images
 
-    def create_image(self, agent: Union[Agent, Team], prompt: str) -> FunctionExecutionResult:
+    def create_image(self, agent: Union[Agent, Team], prompt: str) -> ToolResult:
         """Use this function to generate an image for a prompt.
 
         Args:
             prompt (str): A text description of the desired image.
 
         Returns:
-            FunctionExecutionResult: Result containing the message and generated images.
+            ToolResult: Result containing the message and generated images.
         """
         if not self.api_key:
-            return FunctionExecutionResult(
-                status="failure",
-                error="Please set the OPENAI_API_KEY"
-            )
+            return ToolResult(content="Please set the OPENAI_API_KEY")
 
         try:
             client = OpenAI(api_key=self.api_key)
@@ -95,22 +92,15 @@ class DalleTools(Toolkit):
                 for img in response.data:
                     if img.url:
                         image_artifact = ImageArtifact(
-                            id=str(uuid4()), 
-                            url=img.url, 
-                            original_prompt=prompt, 
-                            revised_prompt=img.revised_prompt
+                            id=str(uuid4()), url=img.url, original_prompt=prompt, revised_prompt=img.revised_prompt
                         )
                         generated_images.append(image_artifact)
                         response_str += f"Image has been generated at the URL {img.url}\n"
 
-            return FunctionExecutionResult(
-                status="success",
-                result=response_str or "No images were generated",
-                images=generated_images if generated_images else None
+            return ToolResult(
+                content=response_str or "No images were generated",
+                images=generated_images if generated_images else None,
             )
         except Exception as e:
             logger.error(f"Failed to generate image: {e}")
-            return FunctionExecutionResult(
-                status="failure",
-                error=f"Error: {e}"
-            )
+            return ToolResult(content=f"Error: {e}")

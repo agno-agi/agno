@@ -7,8 +7,8 @@ from docstring_parser import parse
 from packaging.version import Version
 from pydantic import BaseModel, Field, validate_call
 
-from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.exceptions import AgentRunException
+from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.utils.log import log_debug, log_error, log_exception, log_warning
 
 T = TypeVar("T")
@@ -433,7 +433,7 @@ class FunctionExecutionResult(BaseModel):
     error: Optional[str] = None
 
     updated_session_state: Optional[Dict[str, Any]] = None
-    
+
     # New fields for media artifacts
     images: Optional[List[ImageArtifact]] = None
     videos: Optional[List[VideoArtifact]] = None
@@ -898,3 +898,12 @@ class FunctionCall(BaseModel):
         return FunctionExecutionResult(
             status="success", result=self.result, updated_session_state=updated_session_state
         )
+
+
+class ToolResult(BaseModel):
+    """Result from a tool that can include media artifacts."""
+
+    content: str
+    images: Optional[List[ImageArtifact]] = None
+    videos: Optional[List[VideoArtifact]] = None
+    audio: Optional[List[AudioArtifact]] = None

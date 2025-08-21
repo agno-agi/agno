@@ -4448,7 +4448,6 @@ class Agent:
                 )
             )
         ):
-            
             user_message = self._get_user_message(
                 run_response=run_response,
                 session=session,

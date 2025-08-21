@@ -131,6 +131,8 @@ class Model(ABC):
     # The role of the assistant message.
     assistant_message_role: str = "assistant"
 
+    supports_media_in_tool_messages: bool = False
+
     def __post_init__(self):
         if self.provider is None and self.name is not None:
             self.provider = f"{self.name} ({self.id})"
@@ -1030,43 +1032,46 @@ class Model(ABC):
         kwargs = {}
         if timer is not None:
             kwargs["metrics"] = Metrics(duration=timer.elapsed)
-        
+
         # Include media artifacts from function execution result in the tool message
         images = None
         videos = None
         audio = None
-        
+
         if success and function_execution_result:
             # Convert ImageArtifacts to Images for message compatibility
             if function_execution_result.images:
                 from agno.media import Image
+
                 images = []
                 for img_artifact in function_execution_result.images:
                     if img_artifact.url:
                         images.append(Image(url=img_artifact.url))
                     elif img_artifact.content:
                         images.append(Image(content=img_artifact.content))
-            
+
             # Convert VideoArtifacts to Videos for message compatibility
             if function_execution_result.videos:
                 from agno.media import Video
+
                 videos = []
                 for vid_artifact in function_execution_result.videos:
                     if vid_artifact.url:
                         videos.append(Video(url=vid_artifact.url))
                     elif vid_artifact.content:
                         videos.append(Video(content=vid_artifact.content))
-            
+
             # Convert AudioArtifacts to Audio for message compatibility
             if function_execution_result.audio:
                 from agno.media import Audio
+
                 audio = []
                 for aud_artifact in function_execution_result.audio:
                     if aud_artifact.url:
                         audio.append(Audio(url=aud_artifact.url))
                     elif aud_artifact.content:
                         audio.append(Audio(content=aud_artifact.content))
-        
+
         return Message(
             role=self.tool_message_role,
             content=output if success else function_call.error,
@@ -1158,17 +1163,33 @@ class Model(ABC):
                     if function_call.function.show_result:
                         yield ModelResponse(content=str(item))
         else:
-            function_call_output = str(function_execution_result.result)
+            from agno.tools.function import ToolResult
+
+            if isinstance(function_execution_result.result, ToolResult):
+                # Extract content and media from ToolResult
+                tool_result = function_execution_result.result
+                function_call_output = tool_result.content
+
+                # Transfer media from ToolResult to FunctionExecutionResult
+                if tool_result.images:
+                    function_execution_result.images = tool_result.images
+                if tool_result.videos:
+                    function_execution_result.videos = tool_result.videos
+                if tool_result.audio:
+                    function_execution_result.audio = tool_result.audio
+            else:
+                function_call_output = str(function_execution_result.result) if function_execution_result.result else ""
+
             if function_call.function.show_result:
                 yield ModelResponse(content=function_call_output)
 
         # Create and yield function call result
         function_call_result = self.create_function_call_result(
-            function_call, 
-            success=function_call_success, 
-            output=function_call_output, 
+            function_call,
+            success=function_call_success,
+            output=function_call_output,
             timer=function_call_timer,
-            function_execution_result=function_execution_result
+            function_execution_result=function_execution_result,
         )
         yield ModelResponse(
             content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s.",
@@ -1597,10 +1618,54 @@ class Model(ABC):
         self, messages: List[Message], function_call_results: List[Message], **kwargs
     ) -> None:
         """
-        Format function call results.
+        Format function call results and add follow-up user messages for generated media if needed.
         """
         if len(function_call_results) > 0:
             messages.extend(function_call_results)
+
+            if self.supports_media_in_tool_messages:
+                # Collect all media artifacts from function calls
+                all_images = []
+                all_videos = []
+                all_audio = []
+
+                for result_message in function_call_results:
+                    if result_message.images:
+                        all_images.extend(result_message.images)
+                        # Remove images from tool message to avoid the below OpenAI error
+                        """
+                        ERROR: API status error from OpenAI API: Error code: 400 - {'error': {'message': "Invalid 'messages[2]'. Image URLs are only allowed 
+                        for messages with role 'user', but this message with role 'tool' contains an image URL.", 'type': 'invalid_request_error',    
+                        'param': 'messages[2]', 'code': 'invalid_value'}}
+                        """
+                        result_message.images = None
+                    if result_message.videos:
+                        all_videos.extend(result_message.videos)
+                        result_message.videos = None
+                    if result_message.audio:
+                        all_audio.extend(result_message.audio)
+                        result_message.audio = None
+
+                # If we have media artifacts, add a follow-up "user" message instead of a "tool" message with the media artifacts which throws error for some models
+                if all_images or all_videos or all_audio:
+                    # Get all tool contents directly from function_call_results
+                    tool_contents = [msg.content for msg in function_call_results if msg.content and msg.role == "tool"]
+
+                    content = "Here is the content generated by the tools:\n\n"
+                    if tool_contents:
+                        content += "\n".join(tool_contents)
+                        content += "\n\nPlease analyze the generated content and include the URLs and details in your response."
+                    else:
+                        content += "Please analyze the generated content."
+
+                    media_message = Message(
+                        role="user",
+                        content=content,
+                        images=all_images if all_images else None,
+                        videos=all_videos if all_videos else None,
+                        audio=all_audio if all_audio else None,
+                    )
+                    messages.append(media_message)
 
     def get_system_message_for_model(self, tools: Optional[List[Any]] = None) -> Optional[str]:
         return self.system_prompt
