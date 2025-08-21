@@ -29,6 +29,7 @@ class Content:
     description: Optional[str] = None
     path: Optional[str] = None
     url: Optional[str] = None
+    password: Optional[str] = None
     file_data: Optional[FileData] = None
     upload_file: Optional[UploadFile] = None
     metadata: Optional[Dict[str, Any]] = None
@@ -52,6 +53,7 @@ class Content:
             description=data.get("description"),
             path=data.get("path"),
             url=data.get("url"),
+            password=data.get("password"),
             file_data=data.get("file_data"),
             upload_file=data.get("upload_file"),
             metadata=data.get("metadata"),

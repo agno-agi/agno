@@ -198,6 +198,7 @@ class Knowledge:
         upsert: bool = False,
         skip_if_exists: bool = False,
         reader: Optional[Reader] = None,
+        password: Optional[str] = None,
     ) -> None: ...
 
     @overload
@@ -218,6 +219,7 @@ class Knowledge:
         exclude: Optional[List[str]] = None,
         upsert: bool = True,
         skip_if_exists: bool = True,
+        password: Optional[str] = None,
     ) -> None:
         # Validation: At least one of the parameters must be provided
         if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
@@ -244,6 +246,7 @@ class Knowledge:
             topics=topics,
             remote_content=remote_content,
             reader=reader,
+            password=password,
         )
 
         await self._load_content(content, upsert, skip_if_exists, include, exclude)
@@ -281,6 +284,7 @@ class Knowledge:
         exclude: Optional[List[str]] = None,
         upsert: bool = True,
         skip_if_exists: bool = True,
+        password: Optional[str] = None,
     ) -> None:
         """
         Synchronously add content to the knowledge base.
@@ -315,6 +319,7 @@ class Knowledge:
                 exclude=exclude,
                 upsert=upsert,
                 skip_if_exists=skip_if_exists,
+                password=password,
             )
         )
 
