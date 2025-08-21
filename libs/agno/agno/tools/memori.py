@@ -1,6 +1,7 @@
 import json
 from typing import Any, Dict, Optional
 
+from agno.agent import Agent
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -48,7 +49,7 @@ class MemoriTools(Toolkit):
         self,
         database_connect: Optional[str] = None,
         namespace: Optional[str] = None,
-        conscious_ingest: bool = False,
+        conscious_ingest: bool = True,
         auto_ingest: bool = True,
         verbose: bool = False,
         config: Optional[Dict[str, Any]] = None,
@@ -117,6 +118,7 @@ class MemoriTools(Toolkit):
 
     def search_memory(
         self,
+        agent: Agent,
         query: str,
         limit: Optional[int] = None,
     ) -> str:
@@ -174,7 +176,7 @@ class MemoriTools(Toolkit):
             log_error(f"Error searching memory: {e}")
             return json.dumps({"success": False, "error": f"Memory search error: {str(e)}"})
 
-    def record_conversation(self, content: str) -> str:
+    def record_conversation(self, agent: Agent, content: str) -> str:
         """
         Add important information or facts to memory.
 
@@ -214,7 +216,10 @@ class MemoriTools(Toolkit):
             log_error(f"Error adding memory: {e}")
             return json.dumps({"success": False, "error": f"Failed to add memory: {str(e)}"})
 
-    def get_memory_stats(self) -> str:
+    def get_memory_stats(
+        self,
+        agent: Agent,
+    ) -> str:
         """
         Get statistics about the memory system.
 
