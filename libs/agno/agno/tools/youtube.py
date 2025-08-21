@@ -162,6 +162,9 @@ class YouTubeTools(Toolkit):
         except Exception:
             return "Error getting video ID from URL, please provide a valid YouTube url"
 
+        if video_id is None:
+            return "No video ID found"
+
         try:
             kwargs: Dict = {}
             if self.languages:

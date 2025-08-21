@@ -1,13 +1,13 @@
 import time
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, Union
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 import httpx
 from pydantic import BaseModel
 from typing_extensions import Literal
 
 from agno.exceptions import ModelProviderError
-from agno.media import AudioResponse, File
+from agno.media import File
 from agno.models.base import MessageData, Model
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
@@ -19,7 +19,8 @@ from agno.utils.models.schema_utils import get_response_schema_for_provider
 
 try:
     from openai import APIConnectionError, APIStatusError, AsyncOpenAI, OpenAI, RateLimitError
-    from openai.resources.responses.responses import Response, ResponseStreamEvent
+    from openai.types.responses.response import Response
+    from openai.types.responses.response_stream_event import ResponseStreamEvent
     from openai.types.responses.response_usage import ResponseUsage
 except (ImportError, ModuleNotFoundError) as e:
     raise ImportError("`openai` not installed. Please install using `pip install openai -U`") from e
@@ -621,6 +622,7 @@ class OpenAIResponses(Model):
             request_params = self.get_request_params(
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
+            tool_use: Dict[str, Any] = {}
 
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
@@ -633,7 +635,8 @@ class OpenAIResponses(Model):
                 stream=True,
                 **request_params,
             ):
-                yield self._parse_provider_response_delta(chunk)  # type: ignore
+                model_response, tool_use = self._parse_provider_response_delta(stream_event=chunk, assistant_message=assistant_message, tool_use=tool_use)  # type: ignore
+                yield model_response
 
             assistant_message.metrics.stop_timer()
 
@@ -688,6 +691,7 @@ class OpenAIResponses(Model):
             request_params = self.get_request_params(
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
+            tool_use: Dict[str, Any] = {}
 
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
@@ -701,7 +705,8 @@ class OpenAIResponses(Model):
                 **request_params,
             )
             async for chunk in async_stream:  # type: ignore
-                yield self._parse_provider_response_delta(chunk)  # type: ignore
+                model_response, tool_use = self._parse_provider_response_delta(chunk, assistant_message, tool_use)  # type: ignore
+                yield model_response
 
             assistant_message.metrics.stop_timer()
 
@@ -755,6 +760,63 @@ class OpenAIResponses(Model):
             for _fc_message_index, _fc_message in enumerate(function_call_results):
                 _fc_message.tool_call_id = tool_call_ids[_fc_message_index]
                 messages.append(_fc_message)
+
+    def process_response_stream(
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        stream_data: MessageData,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
+    ) -> Iterator[ModelResponse]:
+        """Process the synchronous response stream."""
+        for model_response_delta in self.invoke_stream(
+            messages=messages,
+            assistant_message=assistant_message,
+            tools=tools,
+            response_format=response_format,
+            tool_choice=tool_choice,
+            run_response=run_response,
+        ):
+            yield from self._populate_stream_data_and_assistant_message(
+                stream_data=stream_data,
+                assistant_message=assistant_message,
+                model_response_delta=model_response_delta,
+            )
+
+        # Add final metrics to assistant message
+        self._populate_assistant_message(assistant_message=assistant_message, provider_response=model_response_delta)
+
+    async def aprocess_response_stream(
+        self,
+        messages: List[Message],
+        assistant_message: Message,
+        stream_data: MessageData,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
+    ) -> AsyncIterator[ModelResponse]:
+        """Process the asynchronous response stream."""
+        async for model_response_delta in self.ainvoke_stream(
+            messages=messages,
+            assistant_message=assistant_message,
+            tools=tools,
+            response_format=response_format,
+            tool_choice=tool_choice,
+            run_response=run_response,
+        ):
+            for model_response in self._populate_stream_data_and_assistant_message(
+                stream_data=stream_data,
+                assistant_message=assistant_message,
+                model_response_delta=model_response_delta,
+            ):
+                yield model_response
+
+        # Add final metrics to assistant message
+        self._populate_assistant_message(assistant_message=assistant_message, provider_response=model_response_delta)
 
     def _parse_provider_response(self, response: Response, **kwargs) -> ModelResponse:
         """
@@ -827,66 +889,9 @@ class OpenAIResponses(Model):
 
         return model_response
 
-    def process_response_stream(
-        self,
-        messages: List[Message],
-        assistant_message: Message,
-        stream_data: MessageData,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
-    ) -> Iterator[ModelResponse]:
-        """Process the synchronous response stream."""
-        for model_response_delta in self.invoke_stream(
-            messages=messages,
-            assistant_message=assistant_message,
-            tools=tools,
-            response_format=response_format,
-            tool_choice=tool_choice,
-            run_response=run_response,
-        ):
-            yield from self._populate_stream_data_and_assistant_message(
-                stream_data=stream_data,
-                assistant_message=assistant_message,
-                model_response_delta=model_response_delta,
-            )
-
-        # Add final metrics to assistant message
-        self._populate_assistant_message(assistant_message=assistant_message, provider_response=model_response_delta)
-
-    async def aprocess_response_stream(
-        self,
-        messages: List[Message],
-        assistant_message: Message,
-        stream_data: MessageData,
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-        run_response: Optional[RunOutput] = None,
-    ) -> AsyncIterator[ModelResponse]:
-        """Process the asynchronous response stream."""
-        async for model_response_delta in self.ainvoke_stream(
-            messages=messages,
-            assistant_message=assistant_message,
-            tools=tools,
-            response_format=response_format,
-            tool_choice=tool_choice,
-            run_response=run_response,
-        ):
-            for model_response in self._populate_stream_data_and_assistant_message(
-                stream_data=stream_data,
-                assistant_message=assistant_message,
-                model_response_delta=model_response_delta,
-            ):
-                yield model_response
-
-        # Add final metrics to assistant message
-        self._populate_assistant_message(assistant_message=assistant_message, provider_response=model_response_delta)
-
-    def _parse_provider_response_delta(self, response: ResponseStreamEvent) -> ModelResponse:
+    def _parse_provider_response_delta(self, stream_event: ResponseStreamEvent, assistant_message: Message, tool_use: Dict[str, Any]) -> Tuple[ModelResponse, Dict[str, Any]]:
         """
-        Parse the streaming response from the model provider into ModelResponse objects.
+        Parse the streaming response from the model provider into a ModelResponse object.
 
         Args:
             response: Raw response chunk from the model provider
@@ -896,47 +901,81 @@ class OpenAIResponses(Model):
         """
         model_response = ModelResponse()
 
-        if hasattr(response, "choices") and response.choices and len(response.choices) > 0:  # type: ignore
-            choice_delta = response.choices[0].delta  # type: ignore
+        # 1. Add response ID
+        if stream_event.type == "response.created":
+            if stream_event.response.id:
+                if model_response.provider_data is None:
+                    model_response.provider_data = {}
+                model_response.provider_data["response_id"] = stream_event.response.id
+            if not assistant_message.metrics.time_to_first_token:
+                assistant_message.metrics.set_time_to_first_token()
 
-            if choice_delta:
-                # Add content
-                if choice_delta.content is not None:
-                    model_response.content = choice_delta.content
+        # 2. Add citations
+        elif stream_event.type == "response.output_text.annotation.added":
+            if model_response.citations is None:
+                model_response.citations = Citations(raw=[stream_event.annotation])
+            else:
+                model_response.citations.raw.append(stream_event.annotation) # type: ignore
 
-                # Add tool calls
-                if choice_delta.tool_calls is not None:
-                    model_response.tool_calls = choice_delta.tool_calls  # type: ignore
+            if isinstance(stream_event.annotation, dict):
+                if stream_event.annotation.get("type") == "url_citation":
+                    if model_response.citations.urls is None:
+                        model_response.citations.urls = []
+                    model_response.citations.urls.append(
+                        UrlCitation(url=stream_event.annotation.get("url"), title=stream_event.annotation.get("title"))
+                    )
+            else:
+                if stream_event.annotation.type == "url_citation":  # type: ignore
+                    if model_response.citations.urls is None:
+                        model_response.citations.urls = []
+                    model_response.citations.urls.append(
+                        UrlCitation(url=stream_event.annotation.url, title=stream_event.annotation.title)  # type: ignore
+                    )
 
-                # Add audio if present
-                if hasattr(choice_delta, "audio") and choice_delta.audio is not None:
-                    try:
-                        if isinstance(choice_delta.audio, dict):
-                            model_response.audio = AudioResponse(
-                                id=choice_delta.audio.get("id"),
-                                content=choice_delta.audio.get("data"),
-                                expires_at=choice_delta.audio.get("expires_at"),
-                                transcript=choice_delta.audio.get("transcript"),
-                                sample_rate=24000,
-                                mime_type="pcm16",
-                            )
-                        else:
-                            model_response.audio = AudioResponse(
-                                id=choice_delta.audio.id,
-                                content=choice_delta.audio.data,
-                                expires_at=choice_delta.audio.expires_at,
-                                transcript=choice_delta.audio.transcript,
-                                sample_rate=24000,
-                                mime_type="pcm16",
-                            )
-                    except Exception as e:
-                        log_warning(f"Error processing audio: {e}")
+        # 3. Add content
+        elif stream_event.type == "response.output_text.delta":
+            model_response.content = stream_event.delta
+            if self.reasoning is not None:
+                model_response.reasoning_content = stream_event.delta
 
-        # Add usage metrics if present
-        if hasattr(response, "usage") and response.usage is not None:  # type: ignore
-            model_response.response_usage = self._get_metrics(response.usage)  # type: ignore
+        # 4. Add tool calls information
 
-        return model_response
+        # 4.1 Add starting tool call
+        elif stream_event.type == "response.output_item.added":
+            item = stream_event.item
+            if item.type == "function_call":
+                tool_use = {
+                    "id": getattr(item, "id", None),
+                    "call_id": getattr(item, "call_id", None) or getattr(item, "id", None),
+                    "type": "function",
+                    "function": {
+                        "name": item.name,
+                        "arguments": item.arguments,
+                    },
+                }
+
+        # 4.2 Add tool call arguments
+        elif stream_event.type == "response.function_call_arguments.delta":
+            tool_use["function"]["arguments"] += stream_event.delta
+
+        # 4.3 Add tool call completion data
+        elif stream_event.type == "response.output_item.done" and tool_use:
+            model_response.tool_calls = [tool_use]
+            if assistant_message.tool_calls is None:
+                assistant_message.tool_calls = []
+            assistant_message.tool_calls.append(tool_use)
+
+            model_response.extra = model_response.extra or {}
+            model_response.extra.setdefault("tool_call_ids", []).append(tool_use["call_id"])
+            tool_use = {}
+
+        # 5. Add metrics
+        elif stream_event.type == "response.completed":
+            if stream_event.response.usage is not None:
+                model_response.response_usage = self._get_metrics(stream_event.response.usage)
+
+
+        return model_response, tool_use
 
     def _get_metrics(self, response_usage: ResponseUsage) -> Metrics:
         """
