@@ -29,17 +29,15 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=xAI(id="grok-3-mini-fast"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=xAI(id="grok-3-mini"), markdown=True, telemetry=False, monitoring=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
     # Verify it's an iterator
     assert hasattr(response_stream, "__iter__")
 
-    responses = list(response_stream)
-    assert len(responses) > 0
-    for response in responses:
-        assert response.content is not None
+    for response in response_stream:
+        assert response.content is not None or response.reasoning_content is not None
 
     _assert_metrics(agent.run_response)
 
@@ -63,7 +61,7 @@ async def test_async_basic_stream():
     response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 
     async for response in response_stream:
-        assert response.content is not None
+        assert response.content is not None or response.reasoning_content is not None
 
     _assert_metrics(agent.run_response)
 

@@ -15,6 +15,7 @@ memory = Memory(db=memory_db)
 
 StudyBuddy = Agent(
     name="StudyBuddy",
+    agent_id="study_friend",
     memory=memory,
     model=OpenAIChat("gpt-4o-mini"),
     enable_user_memories=True,
@@ -93,4 +94,4 @@ fastapi_app = FastAPIApp(
 app = fastapi_app.get_app()
 
 if __name__ == "__main__":
-    fastapi_app.serve(app="study_friend:app", port=8001, reload=True)
+    fastapi_app.serve(app="study_friend:app", port=8001, workers=4, reload=True)
