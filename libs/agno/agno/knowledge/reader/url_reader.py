@@ -21,6 +21,7 @@ class URLReader(Reader):
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
         self.proxy = proxy
 
+    @classmethod
     def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for URL readers."""
         return [
@@ -31,6 +32,7 @@ class URLReader(Reader):
             ChunkingStrategyType.SEMANTIC_CHUNKING,
         ]
 
+    @classmethod
     def get_supported_content_types(self) -> List[ContentType]:
         return [ContentType.URL]
 

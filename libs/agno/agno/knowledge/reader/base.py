@@ -64,7 +64,6 @@ class Reader:
         return []
 
     def chunk_document(self, document: Document) -> List[Document]:
-        print(f"chunk_document: {self.chunking_strategy}")
         if self.chunking_strategy is None:
             self.chunking_strategy = FixedSizeChunking(chunk_size=self.chunk_size)
         return self.chunking_strategy.chunk(document)  # type: ignore

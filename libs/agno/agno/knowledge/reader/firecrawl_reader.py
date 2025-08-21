@@ -42,6 +42,7 @@ class FirecrawlReader(Reader):
         self.params = params
         self.mode = mode
 
+    @classmethod
     def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Firecrawl readers."""
         return [
@@ -52,6 +53,7 @@ class FirecrawlReader(Reader):
             ChunkingStrategyType.RECURSIVE_CHUNKING,
         ]
 
+    @classmethod
     def get_supported_content_types(self) -> List[ContentType]:
         return [ContentType.URL]
 

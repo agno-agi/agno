@@ -48,6 +48,7 @@ class WebsiteReader(Reader):
         self._visited = set()
         self._urls_to_crawl = []
 
+    @classmethod
     def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Website readers."""
         return [
@@ -58,6 +59,7 @@ class WebsiteReader(Reader):
             ChunkingStrategyType.FIXED_SIZE_CHUNKING,
         ]
 
+    @classmethod
     def get_supported_content_types(self) -> List[ContentType]:
         return [ContentType.URL]
 

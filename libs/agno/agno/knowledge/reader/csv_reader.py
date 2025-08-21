@@ -28,6 +28,7 @@ class CSVReader(Reader):
     def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = RowChunking(), **kwargs):
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
+    @classmethod
     def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for CSV readers."""
         return [
@@ -38,8 +39,9 @@ class CSVReader(Reader):
             ChunkingStrategyType.RECURSIVE_CHUNKING,
         ]
 
+    @classmethod
     def get_supported_content_types(self) -> List[ContentType]:
-        return [ContentType.CSV, ContentType.XLSX, ContentType.XLS]
+        return [ContentType.FILE, ContentType.URL]
 
     def read(
         self, file: Union[Path, IO[Any]], delimiter: str = ",", quotechar: str = '"', name: Optional[str] = None

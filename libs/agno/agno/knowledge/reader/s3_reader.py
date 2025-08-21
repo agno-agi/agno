@@ -33,6 +33,7 @@ class S3Reader(Reader):
     def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = FixedSizeChunking(), **kwargs):
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
+    @classmethod
     def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for S3 readers."""
         return [
@@ -43,6 +44,7 @@ class S3Reader(Reader):
             ChunkingStrategyType.SEMANTIC_CHUNKING,
         ]
 
+    @classmethod
     def get_supported_content_types(self) -> List[ContentType]:
         return [ContentType.FILE, ContentType.URL, ContentType.TEXT]
 

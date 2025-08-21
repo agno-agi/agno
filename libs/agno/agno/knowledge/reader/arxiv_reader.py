@@ -16,6 +16,7 @@ except ImportError:
 class ArxivReader(Reader):
     sort_by: arxiv.SortCriterion = arxiv.SortCriterion.Relevance
 
+    @classmethod
     def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Arxiv readers."""
         return [
@@ -26,8 +27,9 @@ class ArxivReader(Reader):
             ChunkingStrategyType.SEMANTIC_CHUNKING,
         ]
 
+    @classmethod
     def get_supported_content_types(self) -> List[ContentType]:
-        return [ContentType.TEXT]
+        return [ContentType.TOPIC]
 
     def __init__(
         self,

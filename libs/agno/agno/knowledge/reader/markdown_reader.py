@@ -14,6 +14,7 @@ from agno.utils.log import log_info, logger
 class MarkdownReader(Reader):
     """Reader for Markdown files"""
 
+    @classmethod
     def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Markdown readers."""
         return [
@@ -25,6 +26,7 @@ class MarkdownReader(Reader):
             ChunkingStrategyType.FIXED_SIZE_CHUNKING,
         ]
 
+    @classmethod
     def get_supported_content_types(self) -> List[ContentType]:
         return [ContentType.MARKDOWN]
 

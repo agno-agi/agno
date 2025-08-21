@@ -1,0 +1,129 @@
+{
+    "readers": [
+    {
+      "id": "arxiv",
+      "name": "Arxiv Reader",
+      "description": "Reads arxiv files",
+      "chunking_strategies": [
+        "FixedSizeChunking",
+        "AgenticChunking",
+        "DocumentChunking",
+        "RecursiveChunking",
+        "SemanticChunking"
+      ]
+    },
+    {
+      "id": "csv",
+      "name": "Csv Reader",
+      "description": "Reads csv files",
+      "chunking_strategies": [
+        "RowChunking",
+        "FixedSizeChunking",
+        "AgenticChunking",
+        "DocumentChunking",
+        "RecursiveChunking"
+      ]
+    },
+    {
+      "id": "csv_url",
+      "name": "Csv Url Reader",
+      "description": "Reads csv_url files",
+      "chunking_strategies": [
+        "RowChunking",
+        "SemanticChunking",
+        "FixedSizeChunking",
+        "AgenticChunking",
+        "DocumentChunking"
+      ]
+    },
+    {
+      "id": "pdf_url",
+      "name": "Pdf Url Reader",
+      "description": "Reads pdf_url files",
+      "chunking_strategies": [
+        "DocumentChunking",
+        "FixedSizeChunking",
+        "AgenticChunking",
+        "SemanticChunking",
+        "RecursiveChunking"
+      ]
+    },
+    {
+      "id": "s3",
+      "name": "S3 Reader",
+      "description": "Reads s3 files",
+      "chunking_strategies": [
+        "FixedSizeChunking",
+        "AgenticChunking",
+        "DocumentChunking",
+        "RecursiveChunking",
+        "SemanticChunking"
+      ]
+    },
+    {
+      "id": "url",
+      "name": "Url Reader",
+      "description": "Reads url files",
+      "chunking_strategies": [
+        "FixedSizeChunking",
+        "AgenticChunking",
+        "DocumentChunking",
+        "RecursiveChunking",
+        "SemanticChunking"
+      ]
+    },
+    {
+      "id": "wikipedia",
+      "name": "Wikipedia Reader",
+      "description": "Reads wikipedia files",
+      "chunking_strategies": [
+        "FixedSizeChunking",
+        "AgenticChunking",
+        "DocumentChunking",
+        "RecursiveChunking",
+        "SemanticChunking"
+      ]
+    },
+    {
+      "id": "youtube",
+      "name": "Youtube Reader",
+      "description": "Reads youtube files",
+      "chunking_strategies": [
+        "RecursiveChunking",
+        "AgenticChunking",
+        "DocumentChunking",
+        "SemanticChunking",
+        "FixedSizeChunking"
+      ]
+    }
+  ],
+    "readersSelection": {
+      "topic": [ 
+        "arxiv",
+        "wikipedia"
+      ],
+      "url": [
+      "website_reader",
+      "firecrawl"
+      ],
+      "youtube": [
+        "youtube"
+      ],
+      "csv": [
+        "csv",
+        "docling"
+      ],
+      "pdf": [
+        "pdf",
+        "docling"
+      ],
+      "txt": [
+        "txt",
+        "docling"
+      ]
+    },
+    "filters": [
+      "filter_tag_1",
+      "filter_tag2"
+    ]
+  }

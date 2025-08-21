@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 from agno.knowledge.reader.reader_factory import ReaderFactory
 from agno.knowledge.types import ContentType
@@ -9,14 +9,14 @@ def get_reader_info(reader_key: str) -> Dict:
     """Get information about a reader without instantiating it."""
     # Try to create the reader to get its info, but don't cache it
     try:
-        reader_method = ReaderFactory._get_reader_method(reader_key)
-        reader = reader_method()
+        print("getting reader info", reader_key)
+        reader_class = ReaderFactory._get_reader_method(reader_key)
 
-        # Get supported chunking strategies for this reader
-        supported_strategies = reader.get_supported_chunking_strategies()
-
-        # Get supported content types for this reader
-        supported_content_types = reader.get_supported_content_types()
+        # Call class methods directly - no instantiation needed!
+        supported_strategies = reader_class.get_supported_chunking_strategies()
+        supported_content_types = reader_class.get_supported_content_types()
+        print("supported_strategies", supported_strategies)
+        print("supported_content_types", supported_content_types)
 
         return {
             "id": reader_key,
@@ -35,8 +35,10 @@ def get_reader_info(reader_key: str) -> Dict:
 def get_all_readers_info() -> List[Dict]:
     """Get information about all available readers."""
     readers_info = []
-    for key in ReaderFactory.get_all_reader_keys():
+    keys = ReaderFactory.get_all_reader_keys()
+    for key in keys:
         try:
+            print(key)
             reader_info = get_reader_info(key)
             readers_info.append(reader_info)
         except ValueError as e:

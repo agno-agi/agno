@@ -62,6 +62,7 @@ class WebSearchReader(Reader):
         super().__post_init__()
         self._url_reader = URLReader()
 
+    @classmethod
     def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Web Search readers."""
         return [
@@ -72,6 +73,7 @@ class WebSearchReader(Reader):
             ChunkingStrategyType.FIXED_SIZE_CHUNKING,
         ]
 
+    @classmethod
     def get_supported_content_types(self) -> List[ContentType]:
         return [ContentType.URL, ContentType.TEXT]
 

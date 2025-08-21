@@ -199,6 +199,7 @@ class BasePDFReader(Reader):
             self.chunking_strategy = DocumentChunking(chunk_size=5000)
         super().__init__(**kwargs)
 
+    @classmethod
     def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for PDF readers."""
         return [
@@ -323,6 +324,7 @@ class BasePDFReader(Reader):
 class PDFReader(BasePDFReader):
     """Reader for PDF files"""
 
+    @classmethod
     def get_supported_content_types(self) -> List[ContentType]:
         return [ContentType.PDF]
 
@@ -409,6 +411,7 @@ class PDFUrlReader(BasePDFReader):
         super().__init__(password=password, **kwargs)
         self.proxy = proxy
 
+    @classmethod
     def get_supported_content_types(self) -> List[ContentType]:
         return [ContentType.URL]
 

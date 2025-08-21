@@ -270,9 +270,10 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         # Get factory readers info
         readers_info = get_all_readers_info()
         reader_schemas = []
-
+        print("HERE")
         # Add factory readers
         for reader_info in readers_info:
+            print("reader_info", reader_info)
             reader_schemas.append(
                 ReaderSchema(
                     id=reader_info["id"],

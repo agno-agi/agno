@@ -1,6 +1,6 @@
 import inspect
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from agno.knowledge.reader.base import Reader
 from agno.utils.log import log_debug
@@ -171,7 +171,8 @@ class ReaderFactory:
         return WebSearchReader(**config)
 
     @classmethod
-    def _get_reader_method(cls, reader_key: str):
+    def _get_reader_method(cls, reader_key: str) -> Callable[[], Reader]:
+        print("getting reader method", reader_key)
         """Get the appropriate reader method for the given key."""
         method_name = f"_get_{reader_key}_reader"
         if not hasattr(cls, method_name):
