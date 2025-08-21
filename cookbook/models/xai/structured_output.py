@@ -2,7 +2,7 @@ from typing import List
 
 from agno.agent import Agent
 from agno.models.xai.xai import xAI
-from agno.run.response import RunOutput
+from agno.run.agent import RunOutput
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 

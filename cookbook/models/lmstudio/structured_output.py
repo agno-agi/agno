@@ -2,7 +2,7 @@ from typing import List
 
 from agno.agent import Agent
 from agno.models.lmstudio import LMStudio
-from agno.run.response import RunOutput
+from agno.run.agent import RunOutput
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 

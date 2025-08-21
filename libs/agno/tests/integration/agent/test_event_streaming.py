@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
 from agno.models.openai.chat import OpenAIChat
-from agno.run.response import RunEvent
+from agno.run.agent import RunEvent
 from agno.tools.decorator import tool
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools

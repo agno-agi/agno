@@ -180,7 +180,7 @@ def main():
             and str(st.session_state["last_extracted_image"]) != str(image_path)
         ):
             logger.info(
-                f"New image detected. Resetting chat history and reinitializing agents."
+                "New image detected. Resetting chat history and reinitializing agents."
             )
             clear_chat()
 

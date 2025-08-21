@@ -15,7 +15,7 @@ from agno.os.utils import (
     get_session_name,
     get_workflow_input_schema_dict,
 )
-from agno.run.response import RunOutput
+from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
@@ -423,8 +423,6 @@ class TeamResponse(BaseModel):
             model_provider = f"{model_name} {model_id}"
         elif model_id:
             model_provider = model_id
-        else:
-            model_provider = None
 
         session_table = team.db.session_table_name if team.db else None
         knowledge_table = team.db.knowledge_table_name if team.db and team.knowledge else None

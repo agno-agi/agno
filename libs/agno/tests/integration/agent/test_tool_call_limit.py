@@ -2,7 +2,7 @@ import pytest
 
 from agno.agent.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.run.response import RunEvent
+from agno.run.agent import RunEvent
 from agno.tools.yfinance import YFinanceTools
 
 

@@ -2,16 +2,11 @@
 Gemini Tutor: Advanced Educational AI Assistant powered by Gemini 2.5
 """
 
-import json
 import uuid
-from pathlib import Path
-from typing import Any, Dict, Optional
 
-from agno.agent import Agent, RunOutput
+from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.models.message import Message
-from agno.tools.file import FileTools
-from agno.tools.googlesearch import GoogleSearchTools
 from agno.utils.log import logger
 
 # Import prompt templates

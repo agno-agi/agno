@@ -26,8 +26,8 @@ os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = (
 
 os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = f"Authorization=Basic {LANGFUSE_AUTH}"
 
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-    OTLPSpanExporter,  # noqa: E402
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # noqa: E402
+    OTLPSpanExporter,
 )
 from opentelemetry.sdk.trace import TracerProvider  # noqa: E402
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor  # noqa: E402

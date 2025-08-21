@@ -9,8 +9,8 @@ from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifac
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
+from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, RunOutputMetaData, RunStatus
-from agno.run.response import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
 
 
 class TeamRunEvent(str, Enum):
@@ -386,7 +386,7 @@ class TeamRunOutput:
         for event in events or []:
             if "agent_id" in event:
                 # Use the factory from response.py for agent events
-                from agno.run.response import run_output_event_from_dict
+                from agno.run.agent import run_output_event_from_dict
 
                 event = run_output_event_from_dict(event)
             else:

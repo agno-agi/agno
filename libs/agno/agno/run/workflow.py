@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from pydantic import BaseModel
 
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
+from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
-from agno.run.response import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.utils.log import log_error
 
