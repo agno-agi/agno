@@ -30,9 +30,11 @@ try:
         GoogleSearch,
         GoogleSearchRetrieval,
         Part,
+        Retrieval,
         ThinkingConfig,
         Tool,
         UrlContext,
+        VertexAISearch,
     )
     from google.genai.types import (
         File as GeminiFile,
@@ -70,6 +72,8 @@ class Gemini(Model):
     grounding: bool = False
     grounding_dynamic_threshold: Optional[float] = None
     url_context: bool = False
+    vertex_ai_search: bool = False
+    vertex_ai_search_datastore: Optional[str] = None
 
     temperature: Optional[float] = None
     top_p: Optional[float] = None
@@ -222,6 +226,21 @@ class Gemini(Model):
         if self.url_context:
             log_info("URL context enabled.")
             builtin_tools.append(Tool(url_context=UrlContext()))
+
+        if self.vertex_ai_search:
+            log_info("Vertex AI Search enabled.")
+            if not self.vertex_ai_search_datastore:
+                log_error("vertex_ai_search_datastore must be provided when vertex_ai_search is enabled.")
+                raise ValueError("vertex_ai_search_datastore must be provided when vertex_ai_search is enabled.")
+            builtin_tools.append(
+                Tool(
+                    retrieval=Retrieval(
+                        vertex_ai_search=VertexAISearch(
+                            datastore=self.vertex_ai_search_datastore
+                        )
+                    )
+                )
+            )
 
         # Set tools in config
         if builtin_tools:
