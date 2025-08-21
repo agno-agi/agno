@@ -15,6 +15,8 @@ Remember to set your ModelsLabs API key in the environment variable `MODELS_LAB_
 """
 
 from textwrap import dedent
+import time
+import requests
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
@@ -52,7 +54,23 @@ video_agent.print_response(
 videos = video_agent.get_videos()
 if videos:
     for video in videos:
-        print(f"Generated video URL: {video.url}")
+        print("Video generated! Waiting for upload to complete...")
+        
+        # Wait for video to be ready
+        for attempt in range(24):  # 2 minutes max (24 * 5s)
+            try:
+                response = requests.head(video.url, timeout=10)
+                if response.status_code == 200:
+                    print(f"Video ready: {video.url}")
+                    break
+            except:
+                pass
+            
+            if attempt % 3 == 0:  # Update every 15 seconds
+                print(f"Still processing... ({(attempt + 1) * 5}s elapsed)")
+            time.sleep(5)
+        else:
+            print(f"Timeout waiting for video. Try this URL later: {video.url}")
 
 # More example prompts to try:
 """
