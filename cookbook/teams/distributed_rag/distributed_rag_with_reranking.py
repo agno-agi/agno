@@ -14,12 +14,15 @@ Setup:
 2. Run this script to see advanced reranking RAG in action
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.reranker.cohere import CohereReranker
 from agno.team.team import Team
+from agno.utils.print_response.team import aprint_response, print_response
 from agno.vectordb.lancedb import LanceDb, SearchType
 
 # Knowledge base with advanced reranking
@@ -44,10 +47,10 @@ validation_knowledge = Knowledge(
 )
 
 # Add content to knowledge bases
-reranked_knowledge.add_content(
+reranked_knowledge.add_content_sync(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
 )
-validation_knowledge.add_content(
+validation_knowledge.add_content_sync(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
 )
 
@@ -147,9 +150,7 @@ async def async_reranking_rag_demo():
     query = "What's the best way to prepare authentic Tom Kha Gai? I want traditional methods and modern variations."
 
     # Run async distributed reranking RAG
-    await distributed_reranking_team.aprint_response(
-        query, stream=True, stream_intermediate_steps=True
-    )
+    await aprint_response(input=query, team=distributed_reranking_team)
 
 
 def sync_reranking_rag_demo():
@@ -160,9 +161,7 @@ def sync_reranking_rag_demo():
     query = "What's the best way to prepare authentic Tom Kha Gai? I want traditional methods and modern variations."
 
     # Run distributed reranking RAG
-    distributed_reranking_team.print_response(
-        query, stream=True, stream_intermediate_steps=True
-    )
+    print_response(distributed_reranking_team, query)
 
 
 def advanced_culinary_demo():
@@ -177,16 +176,14 @@ def advanced_culinary_demo():
     - Best practices for storage and usage
     - How to adapt recipes for different dietary needs"""
 
-    distributed_reranking_team.print_response(
-        query, stream=True, stream_intermediate_steps=True
-    )
+    print_response(distributed_reranking_team, query)
 
 
 if __name__ == "__main__":
     # Choose which demo to run
 
-    # asyncio.run(async_reranking_rag_demo())
+    asyncio.run(async_reranking_rag_demo())
 
-    # advanced_culinary_demo()
+    advanced_culinary_demo()
 
     sync_reranking_rag_demo()

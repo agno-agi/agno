@@ -82,13 +82,20 @@ team = Team(
 
 async def test_structured_streaming():
     """Test async structured output streaming."""
-    await team.aprint_response(
+    # Run with streaming and consume the async generator to get the final response
+    async_stream = team.arun(
         "Give me a stock report for NVDA", stream=True, stream_intermediate_steps=True
     )
 
-    # Verify the response is properly structured
-    assert isinstance(team.run_response.content, StockReport)
-    print(f"\n✅ Response type verified: {type(team.run_response.content)}")
+    # Consume the async streaming events and get the final response
+    run_response = None
+    async for event_or_response in async_stream:
+        # The last item in the stream is the final TeamRunOutput
+        run_response = event_or_response
+
+    assert isinstance(run_response.content, StockReport)
+    print(f"✅ Stock Symbol: {run_response.content.symbol}")
+    print(f"✅ Company Name: {run_response.content.company_name}")
 
 
 async def test_structured_streaming_with_arun():

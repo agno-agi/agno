@@ -29,9 +29,7 @@ def add_item(session_state, item: str) -> str:
         item (str): The item to add to the shopping list.
     """
     # Add the item if it's not already in the list
-    if item.lower() not in [
-        i.lower() for i in session_state["shopping_list"]
-    ]:
+    if item.lower() not in [i.lower() for i in session_state["shopping_list"]]:
         session_state["shopping_list"].append(item)
         return f"Added '{item}' to the shopping list"
     else:
@@ -80,7 +78,6 @@ shopping_mgmt_team = Team(
     id="shopping_management",
     mode="coordinate",
     model=OpenAIChat(id="gpt-4o-mini"),
-    show_tool_calls=True,
     members=[shopping_list_agent],
     instructions=[
         "Manage adding and removing items from the shopping list using the Shopping List Agent",
@@ -90,8 +87,7 @@ shopping_mgmt_team = Team(
 
 
 def get_ingredients(session_state) -> str:
-    """Retrieve ingredients from the shopping list to use for recipe suggestions.
-    """
+    """Retrieve ingredients from the shopping list to use for recipe suggestions."""
     shopping_list = session_state["shopping_list"]
 
     if not shopping_list:
@@ -194,7 +190,6 @@ shopping_team = Team(
         shopping_mgmt_team,
         meal_planning_team,
     ],
-    show_tool_calls=True,
     markdown=True,
     instructions=[
         "You are the orchestration layer for a comprehensive shopping and meal planning ecosystem",

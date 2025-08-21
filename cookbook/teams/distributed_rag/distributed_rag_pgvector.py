@@ -15,11 +15,14 @@ Setup:
 3. Run this script to see distributed PgVector RAG in action
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
+from agno.utils.print_response.team import aprint_response, print_response
 from agno.vectordb.pgvector import PgVector, SearchType
 
 # Database connection URL
@@ -46,10 +49,10 @@ hybrid_knowledge = Knowledge(
 )
 
 # Add content to knowledge bases
-vector_knowledge.add_content(
+vector_knowledge.add_content_sync(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
 )
-hybrid_knowledge.add_content(
+hybrid_knowledge.add_content_sync(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
 )
 
@@ -144,9 +147,7 @@ async def async_pgvector_rag_demo():
 
     try:
         # Run async distributed PgVector RAG
-        await distributed_pgvector_team.aprint_response(
-            query, stream=True, stream_intermediate_steps=True
-        )
+        await aprint_response(input=query, team=distributed_pgvector_team)
     except Exception as e:
         print(f"❌ Error: {e}")
         print("💡 Make sure PostgreSQL with pgvector is running!")
@@ -162,9 +163,7 @@ def sync_pgvector_rag_demo():
 
     try:
         # Run distributed PgVector RAG
-        distributed_pgvector_team.print_response(
-            query, stream=True, stream_intermediate_steps=True
-        )
+        print_response(distributed_pgvector_team, query)
     except Exception as e:
         print(f"❌ Error: {e}")
         print("💡 Make sure PostgreSQL with pgvector is running!")
@@ -184,9 +183,7 @@ def complex_query_demo():
     - Any dietary considerations or alternatives"""
 
     try:
-        distributed_pgvector_team.print_response(
-            query, stream=True, stream_intermediate_steps=True
-        )
+        print_response(distributed_pgvector_team, query)
     except Exception as e:
         print(f"❌ Error: {e}")
         print("💡 Make sure PostgreSQL with pgvector is running!")

@@ -11,7 +11,6 @@ from uuid import uuid4
 
 from agno.agent.agent import Agent
 from agno.models.anthropic.claude import Claude
-from agno.models.mistral import MistralChat
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -50,7 +49,6 @@ reddit_agent = Agent(
     name="Reddit Agent",
     id="reddit-agent",
     role="Search reddit for information",
-    model=MistralChat(id="mistral-large-latest"),
     tools=[RedditTools(cache_results=True)],
     instructions=[
         "Find information about the company on Reddit",
