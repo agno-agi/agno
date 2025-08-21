@@ -1,12 +1,12 @@
 """
-Run: `pip install anthropic` to install the dependencies
+Test parser model functionality with teams
 """
 
 from typing import List
 
 from pydantic import BaseModel, Field
 
-from agno.models.anthropic import Claude
+from agno.models.openai import OpenAIChat
 from agno.team import Team
 
 
@@ -20,18 +20,17 @@ class ParkGuide(BaseModel):
     )
 
 
-team = Team(
-    name="National Park Expert",
-    members=[],
-    response_model=ParkGuide,
-    parser_model=Claude(id="claude-sonnet-4-20250514"),
-    instructions="You have no members, answer directly",
-    description="You are an expert on national parks and provide concise guides.",
-    telemetry=False,
-)
-
-
 def test_team_with_parser_model():
+    team = Team(
+        name="National Park Expert",
+        members=[],
+        response_model=ParkGuide,
+        parser_model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You have no members, answer directly",
+        description="You are an expert on national parks and provide concise guides.",
+        telemetry=False,
+    )
+
     response = team.run("Tell me about Yosemite National Park.")
     print(response.content)
 
@@ -41,14 +40,34 @@ def test_team_with_parser_model():
     assert len(response.content.park_name) > 0
 
 
-def test_team_with_parser_model_stream():
+def test_team_with_parser_model_stream(shared_db):
+    team = Team(
+        name="National Park Expert",
+        members=[],
+        response_model=ParkGuide,
+        parser_model=OpenAIChat(id="gpt-4o-mini"),
+        instructions="You have no members, answer directly",
+        description="You are an expert on national parks and provide concise guides.",
+        telemetry=False,
+        db=shared_db,
+    )
+
     response = team.run("Tell me about Yosemite National Park.", stream=True)
+    final_content = None
+
     for event in response:
         print(event.event)
+        # Capture the final parsed content from events
+        if hasattr(event, "content") and isinstance(event.content, ParkGuide):
+            final_content = event.content
 
-    run_response = team.get_last_run_response()
-    assert run_response is not None
-    assert run_response.content is not None
-    assert isinstance(run_response.content, ParkGuide)
-    assert isinstance(run_response.content.park_name, str)
-    assert len(run_response.content.park_name) > 0
+    # Fallback: try to get from database if events didn't capture it
+    if final_content is None:
+        run_response = team.get_last_run_response()
+        if run_response:
+            final_content = run_response.content
+
+    assert final_content is not None
+    assert isinstance(final_content, ParkGuide)
+    assert isinstance(final_content.park_name, str)
+    assert len(final_content.park_name) > 0

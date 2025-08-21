@@ -19,6 +19,7 @@ from agno.db.postgres import PostgresStorage
 from agno.memory.db.postgres import PostgresMemoryDb
 from agno.memory.memory import Memory
 from agno.models.vllm import vLLM
+from agno.utils.pprint import pprint
 
 # Change this if your Postgres container is running elsewhere
 DB_URL = "postgresql+psycopg://ai:ai@localhost:5532/ai"

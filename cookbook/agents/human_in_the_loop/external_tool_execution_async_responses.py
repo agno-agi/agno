@@ -49,13 +49,15 @@ run_response = asyncio.run(agent.arun("What files do I have in my current direct
 while (
     run_response.is_paused and len(run_response.tools_awaiting_external_execution) > 0
 ):
-    for tool in run_response.tools_awaiting_external_execution:
-        if tool.tool_name == execute_shell_command.name:
-            print(f"Executing {tool.tool_name} with args {tool.tool_args} externally")
-            result = execute_shell_command.entrypoint(**tool.tool_args)
-            tool.result = result
+    for external_tool in run_response.tools_awaiting_external_execution:
+        if external_tool.tool_name == execute_shell_command.name:
+            print(
+                f"Executing {external_tool.tool_name} with args {external_tool.tool_args} externally"
+            )
+            result = execute_shell_command.entrypoint(**external_tool.tool_args)
+            external_tool.result = result
         else:
-            print(f"Skipping unsupported external tool: {tool.tool_name}")
+            print(f"Skipping unsupported external tool: {external_tool.tool_name}")
 
     run_response = asyncio.run(agent.acontinue_run(run_response=run_response))
 

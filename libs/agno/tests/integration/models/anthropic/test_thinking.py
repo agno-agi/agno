@@ -8,7 +8,7 @@ from agno.agent import Agent
 from agno.db.json import JsonDb
 from agno.models.anthropic import Claude
 from agno.models.message import Message
-from agno.run.response import RunOutput
+from agno.run.agent import RunOutput
 from agno.tools.yfinance import YFinanceTools
 
 

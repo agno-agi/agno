@@ -12,7 +12,7 @@ def is_groq_reasoning_model(reasoning_model: Model) -> bool:
 
 
 def get_groq_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
-    from agno.run.response import RunOutput
+    from agno.run.agent import RunOutput
 
     # Update system message role to "system"
     for message in messages:
@@ -42,7 +42,7 @@ def get_groq_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Opt
 
 
 async def aget_groq_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
-    from agno.run.response import RunOutput
+    from agno.run.agent import RunOutput
 
     # Update system message role to "system"
     for message in messages:

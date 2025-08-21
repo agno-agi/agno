@@ -20,7 +20,7 @@ def get_github_agent(debug_mode: bool = True) -> Optional[Agent]:
             with a strong focus on detailed code reviews for Pull Requests.
             Use your tools to answer questions accurately and provide insightful analysis.
         """),
-        instructions=dedent(f"""\
+        instructions=dedent("""\
         **Core Task:** Analyze GitHub repositories and answer user questions based on the available tools and conversation history.
 
         **Repository Context Management:**

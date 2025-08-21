@@ -10,7 +10,7 @@ from agno.models.base import MessageData, Model
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
-from agno.run.response import RunOutput
+from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
@@ -536,81 +536,6 @@ class AwsBedrock(Model):
 
             assistant_message.metrics.stop_timer()
 
-        except ClientError as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(message=str(e.response), model_name=self.name, model_id=self.id) from e
-        except Exception as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
-
-    async def ainvoke(
-        self,
-        messages: List[Message],
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
-        """
-        Async invoke the Bedrock API.
-        """
-        try:
-            formatted_messages, system_message = self._format_messages(messages)
-
-            tool_config = None
-            if tools is not None and tools:
-                tool_config = {"tools": self._format_tools_for_request(tools)}
-
-            body = {
-                "system": system_message,
-                "toolConfig": tool_config,
-                "inferenceConfig": self._get_inference_config(),
-            }
-            body = {k: v for k, v in body.items() if v is not None}
-
-            if self.request_params:
-                log_debug(f"Calling {self.provider} with request parameters: {self.request_params}", log_level=2)
-                body.update(**self.request_params)
-
-            async with self.get_async_client() as client:
-                return await client.converse(modelId=self.id, messages=formatted_messages, **body)
-        except ClientError as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(message=str(e.response), model_name=self.name, model_id=self.id) from e
-        except Exception as e:
-            log_error(f"Unexpected error calling Bedrock API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
-
-    async def ainvoke_stream(
-        self,
-        messages: List[Message],
-        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
-    ):
-        """
-        Async invoke the Bedrock API with streaming.
-        """
-        try:
-            formatted_messages, system_message = self._format_messages(messages)
-
-            tool_config = None
-            if tools is not None and tools:
-                tool_config = {"tools": self._format_tools_for_request(tools)}
-
-            body = {
-                "system": system_message,
-                "toolConfig": tool_config,
-                "inferenceConfig": self._get_inference_config(),
-            }
-            body = {k: v for k, v in body.items() if v is not None}
-
-            if self.request_params:
-                body.update(**self.request_params)
-
-            async with self.get_async_client() as client:
-                response = await client.converse_stream(modelId=self.id, messages=formatted_messages, **body)
-                async for chunk in response["stream"]:
-                    yield chunk
         except ClientError as e:
             log_error(f"Unexpected error calling Bedrock API: {str(e)}")
             raise ModelProviderError(message=str(e.response), model_name=self.name, model_id=self.id) from e

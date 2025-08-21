@@ -32,8 +32,6 @@ class AzureOpenAITools(Toolkit):
         image_model: str = "dall-e-3",
         image_quality: Literal["standard", "hd"] = "standard",  # Note: "hd" quality is only available for dall-e-3.
     ):
-        super().__init__(name="azure_openai")
-
         # Set credentials from parameters or environment variables
         self.api_key = api_key or getenv("AZURE_OPENAI_API_KEY")
         self.azure_endpoint = azure_endpoint or getenv("AZURE_OPENAI_ENDPOINT")
@@ -49,14 +47,18 @@ class AzureOpenAITools(Toolkit):
         self.image_deployment = image_deployment or getenv("AZURE_OPENAI_IMAGE_DEPLOYMENT")
         self.image_model = image_model
 
+        # Build tools list based on available services
+        tools = []
+
         # Validate image generation parameters
         if self.image_deployment and self.image_model in self.VALID_MODELS:
             # Create and store the base URL
             self.image_base_url = f"{self.azure_endpoint}/openai/deployments/{self.image_deployment}/images/generations?api-version={self.api_version}"
-            # Register the image generation tool
-            self.register(self.generate_image)
+            tools.append(self.generate_image)
         else:
             logger.error("Missing required image generation parameters or invalid model")
+
+        super().__init__(name="azure_openai_tools", tools=tools)
 
         self.image_quality = image_quality
 

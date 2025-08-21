@@ -25,6 +25,7 @@ from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.newspaper4k import Newspaper4kTools
+from agno.utils.print_response.team import aprint_response
 from pydantic import BaseModel, Field
 
 
@@ -71,7 +72,6 @@ hn_team = Team(
         "Finally, provide a thoughtful and engaging summary.",
     ],
     response_model=Article,
-    add_member_tools_to_system_message=False,
     markdown=True,
     show_members_responses=True,
     enable_agentic_context=True,
@@ -80,8 +80,8 @@ hn_team = Team(
 
 async def main():
     """Main async function demonstrating coordinated team mode."""
-    await hn_team.aprint_response(
-        "Write an article about the top 2 stories on hackernews", stream=True
+    await aprint_response(
+        input="Write an article about the top 2 stories on hackernews", team=hn_team
     )
 
 

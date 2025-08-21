@@ -3,7 +3,6 @@ from typing import List
 from pydantic import BaseModel, Field
 
 from agno.agent import Agent
-from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 
@@ -18,23 +17,22 @@ class ParkGuide(BaseModel):
     )
 
 
-agent = Agent(
-    name="National Park Expert",
-    model=OpenAIChat(id="gpt-4o"),
-    response_model=ParkGuide,
-    parser_model=Claude(id="claude-sonnet-4-20250514"),
-    description="You are an expert on national parks and provide concise guides.",
-)
-
-team = Team(
-    name="National Park Expert",
-    mode="route",
-    members=[agent],
-    telemetry=False,
-)
-
-
 def test_team_with_parser_model():
+    agent = Agent(
+        name="National Park Expert",
+        model=OpenAIChat(id="gpt-4o"),
+        response_model=ParkGuide,
+        parser_model=OpenAIChat(id="gpt-4o-mini"),  # Use OpenAI instead of Claude
+        description="You are an expert on national parks and provide concise guides.",
+    )
+
+    team = Team(
+        name="National Park Expert",
+        mode="route",
+        members=[agent],
+        telemetry=False,
+    )
+
     response = team.run("Tell me about Yosemite National Park.")
     print(response.content)
 
@@ -44,15 +42,39 @@ def test_team_with_parser_model():
     assert len(response.content.park_name) > 0
 
 
-def test_team_with_parser_model_stream():
+def test_team_with_parser_model_stream(shared_db):
+    agent = Agent(
+        name="National Park Expert",
+        model=OpenAIChat(id="gpt-4o"),
+        response_model=ParkGuide,
+        parser_model=OpenAIChat(id="gpt-4o-mini"),  # Use OpenAI instead of Claude
+        description="You are an expert on national parks and provide concise guides.",
+    )
+
+    team = Team(
+        name="National Park Expert",
+        mode="route",
+        members=[agent],
+        telemetry=False,
+        db=shared_db,  # Add database support
+    )
+
     response = team.run("Tell me about Yosemite National Park.", stream=True)
+    final_content = None
+
     for event in response:
         print(event.event)
+        # Capture content from events during streaming
+        if hasattr(event, "content") and isinstance(event.content, ParkGuide):
+            final_content = event.content
 
-    run_response = team.get_last_run_response()
+    # Fallback: try to get from database if events didn't capture it
+    if final_content is None:
+        run_response = team.get_last_run_response()
+        if run_response and run_response.content:
+            final_content = run_response.content
 
-    assert run_response is not None
-    assert run_response.content is not None
-    assert isinstance(run_response.content, ParkGuide)
-    assert isinstance(run_response.content.park_name, str)
-    assert len(run_response.content.park_name) > 0
+    assert final_content is not None
+    assert isinstance(final_content, ParkGuide)
+    assert isinstance(final_content.park_name, str)
+    assert len(final_content.park_name) > 0

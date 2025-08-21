@@ -1,6 +1,6 @@
 from typing import Iterator
 
-from agno.agent import Agent, RunOutput
+from agno.agent import Agent, RunOutputEvent
 from agno.models.meta import LlamaOpenAI
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.pprint import pprint_run_response

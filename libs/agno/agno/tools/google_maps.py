@@ -6,7 +6,7 @@ Prerequisites:
   You can obtain the API key from the Google Cloud Console:
   https://console.cloud.google.com/projectselector2/google/maps-apis/credentials
 
-- You also need to activate the Address Validation API for your .
+- You also need to activate the Address Validation API for your project.
   https://console.developers.google.com/apis/api/addressvalidation.googleapis.com
 
 """

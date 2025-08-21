@@ -775,7 +775,7 @@ class Milvus(VectorDb):
         sparse_vector = self._get_sparse_vector(query)
 
         if dense_vector is None:
-            logger.error(f"Error getting dense embedding for Query: {query}")
+            log_error(f"Error getting dense embedding for Query: {query}")
             return []
 
         try:

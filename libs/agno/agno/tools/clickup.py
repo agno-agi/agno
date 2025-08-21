@@ -1,6 +1,6 @@
 import json
-import os
 import re
+from os import getenv
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
@@ -26,8 +26,8 @@ class ClickUpTools(Toolkit):
         list_lists: bool = True,
         **kwargs,
     ):
-        self.api_key = api_key or os.getenv("CLICKUP_API_KEY")
-        self.master_space_id = master_space_id or os.getenv("MASTER_SPACE_ID")
+        self.api_key = api_key or getenv("CLICKUP_API_KEY")
+        self.master_space_id = master_space_id or getenv("MASTER_SPACE_ID")
         self.base_url = "https://api.clickup.com/api/v2"
         self.headers = {"Authorization": self.api_key}
 

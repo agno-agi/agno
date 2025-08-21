@@ -16,7 +16,7 @@ agent = Agent(
 
 async def generate_image():
     # Print the response in the terminal - using arun instead of run
-    response = await agent.arun("Make me an image of a cat in a tree.")
+    _ = await agent.arun("Make me an image of a cat in a tree.")
 
     images = agent.get_images()
     if images and isinstance(images, list):

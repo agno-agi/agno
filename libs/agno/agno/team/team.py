@@ -1,9 +1,9 @@
 import asyncio
 import contextlib
 import json
-from collections import ChainMap, defaultdict, deque
+from collections import ChainMap, deque
 from copy import copy
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from os import getenv
 from textwrap import dedent
 from typing import (
@@ -40,13 +40,13 @@ from agno.models.message import Message, MessageReferences
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
+from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
 from agno.run.base import RunOutputMetaData, RunStatus
 from agno.run.messages import RunMessages
-from agno.run.response import RunEvent, RunOutput, RunOutputEvent
 from agno.run.team import TeamRunEvent, TeamRunOutput, TeamRunOutputEvent
 from agno.session import SessionSummaryManager, TeamSession
+from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.tools.toolkit import Toolkit
 from agno.utils.events import (
     create_team_memory_update_completed_event,
     create_team_memory_update_started_event,
@@ -140,8 +140,7 @@ class Team:
     session_state: Optional[Dict[str, Any]] = None
     # If True, the team can update the session state
     enable_agentic_state: bool = False
-
-    # If True, cache the session in memory
+    # If True, cache the current Team session in memory for faster access
     cache_session: bool = False
 
     # If True, add the session state variables in the user and system messages
@@ -334,7 +333,7 @@ class Team:
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         add_state_in_messages: bool = False,
-        cache_session: bool = True,
+        cache_session: bool = False,
         description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
         expected_output: Optional[str] = None,
@@ -412,7 +411,6 @@ class Team:
         self.session_id = session_id
         self.session_state = session_state
         self.add_state_in_messages = add_state_in_messages
-
         self.cache_session = cache_session
 
         self.description = description
@@ -550,9 +548,15 @@ class Team:
             self.telemetry = telemetry_env.lower() == "true"
 
     def _initialize_member(self, member: Union["Team", Agent], debug_mode: Optional[bool] = None) -> None:
+        # Set debug mode for all members
+        if debug_mode:
+            member.debug_mode = True
+            member.debug_level = self.debug_level
+
         if isinstance(member, Agent):
             member.team_id = self.id
             member.set_id()
+
         elif isinstance(member, Team):
             if member.id is None:
                 member.id = str(uuid4())
@@ -2359,7 +2363,7 @@ class Team:
         # Update the RunResponse messages
         run_response.messages = messages_for_run_response
         # Update the RunResponse metrics
-        run_response.metrics = self._aggregate_metrics_from_messages(messages_for_run_response)
+        run_response.metrics = self._calculate_metrics(messages_for_run_response)
 
     async def _agenerate_response_with_output_model(
         self, model_response: ModelResponse, run_messages: RunMessages
@@ -2417,7 +2421,7 @@ class Team:
         # Update the RunResponse messages
         run_response.messages = messages_for_run_response
         # Update the RunResponse metrics
-        run_response.metrics = self._aggregate_metrics_from_messages(messages_for_run_response)
+        run_response.metrics = self._calculate_metrics(messages_for_run_response)
 
     def _handle_event(
         self,
@@ -2731,20 +2735,6 @@ class Team:
 
         if session.session_data is not None:
             session.session_data["session_metrics"] = session_metrics
-
-    def _aggregate_metrics_from_messages(self, messages: List[Message]) -> Dict[str, Any]:
-        aggregated_metrics: Dict[str, Any] = defaultdict(list)
-        assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
-        for m in messages:
-            if m.role == assistant_message_role and m.metrics is not None:
-                for k, v in asdict(m.metrics).items():  # type: ignore
-                    if k == "timer":
-                        continue
-                    if v is not None:
-                        aggregated_metrics[k].append(v)
-        if aggregated_metrics is not None:
-            aggregated_metrics = dict(aggregated_metrics)
-        return aggregated_metrics
 
     def _get_reasoning_agent(self, reasoning_model: Model) -> Optional[Agent]:
         return Agent(
@@ -4504,12 +4494,11 @@ class Team:
                 member_session_state_copy = copy(session_state)
                 if stream:
                     member_agent_run_response_stream = member_agent.run(
-                        input=member_agent_task if history is None else None,
+                        input=member_agent_task if history is None else history,
                         user_id=user_id,
                         # All members have the same session_id
                         session_id=session.session_id,
                         session_state=member_session_state_copy,  # Send a copy to the agent
-                        messages=history if history is not None else None,
                         images=images,
                         videos=videos,
                         audio=audio,
@@ -4533,12 +4522,11 @@ class Team:
 
                 else:
                     member_agent_run_response = member_agent.run(  # type: ignore
-                        input=member_agent_task if history is None else None,
+                        input=member_agent_task if history is None else history,
                         user_id=user_id,
                         # All members have the same session_id
                         session_id=session.session_id,
                         session_state=member_session_state_copy,  # Send a copy to the agent
-                        messages=history if history is not None else None,
                         images=images,
                         videos=videos,
                         audio=audio,
@@ -4646,8 +4634,8 @@ class Team:
                     member_session_state_copy = copy(session_state)
 
                     # Stream events from the member
-                    member_stream = agent.arun(
-                        input=member_agent_task if history is None else None,
+                    member_stream = agent.arun(  # type: ignore
+                        input=member_agent_task if history is None else history,
                         user_id=user_id,
                         session_id=session.session_id,
                         session_state=member_session_state_copy,  # Send a copy to the agent
@@ -4680,15 +4668,15 @@ class Team:
                             team_run_context=team_run_context,
                             member_name=member_name,
                             task=task_description,
-                            run_response=member_agent_run_response,
+                            run_response=member_agent_run_response,  # type: ignore
                         )
 
                         # Add the member run to the team run response
                         if store_member_responses and run_response:
-                            run_response.add_member_run(member_agent_run_response)
+                            run_response.add_member_run(member_agent_run_response)  # type: ignore
 
                         # Add the member run to the team session
-                        session.upsert_run(member_agent_run_response)
+                        session.upsert_run(member_agent_run_response)  # type: ignore
 
                         # Update team session state
                         merge_dictionaries(session_state, member_session_state_copy)  # type: ignore
@@ -4947,12 +4935,11 @@ class Team:
                     yield member_agent_run_output_event
             else:
                 member_agent_run_response = member_agent.run(  # type: ignore
-                    input=member_agent_task if history is None else None,
+                    input=member_agent_task if history is None else history,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session.session_id,
                     session_state=member_session_state_copy,  # Send a copy to the agent
-                    messages=history if history is not None else None,
                     images=images,
                     videos=videos,
                     audio=audio,
@@ -5272,12 +5259,11 @@ class Team:
             member_session_state_copy = copy(session_state)
             if stream:
                 member_agent_run_response_stream = member_agent.run(
-                    input=member_agent_task if history is None else None,
+                    input=member_agent_task if history is None else history,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session.session_id,
                     session_state=member_session_state_copy,  # Send a copy to the agent
-                    messages=history if history is not None else None,
                     images=images,
                     videos=videos,
                     audio=audio,
@@ -5302,12 +5288,11 @@ class Team:
                     yield member_agent_run_response_chunk
             else:
                 member_agent_run_response = member_agent.run(  # type: ignore
-                    input=member_agent_task if history is None else None,
+                    input=member_agent_task if history is None else history,
                     user_id=user_id,
                     # All members have the same session_id
                     session_id=session.session_id,
                     session_state=member_session_state_copy,  # Send a copy to the agent
-                    messages=history if history is not None else None,
                     images=images,
                     videos=videos,
                     audio=audio,
@@ -5648,7 +5633,8 @@ class Team:
                 created_at=int(time()),
             )
 
-        if self.cache_session:
+        # Cache the session if relevant
+        if team_session is not None and self.cache_session:
             self._team_session = team_session
 
         return team_session
@@ -5666,13 +5652,23 @@ class Team:
             TeamSession: The TeamSession loaded from the database or created if it does not exist.
         """
         if not session_id and not self.session_id:
-            raise Exception("No session_id provided")
+            return None
 
         session_id_to_load = session_id or self.session_id
 
-        # Try to load from database
+        # If there is a cached session, return it
+        if self.cache_session and hasattr(self, "_team_session") and self._team_session is not None:
+            if self._team_session.session_id == session_id_to_load:
+                return self._team_session
+
+        # Load and return the session from the database
         if self.db is not None:
             team_session = cast(TeamSession, self._read_session(session_id=session_id_to_load))  # type: ignore
+
+            # Cache the session if relevant
+            if team_session is not None and self.cache_session:
+                self._team_session = team_session
+
             return team_session
 
         log_warning(f"TeamSession {session_id_to_load} not found in db")

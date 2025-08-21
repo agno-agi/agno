@@ -4,8 +4,8 @@ from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Mapping, Optional
 
 from agno.models.message import Message
+from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
-from agno.run.response import RunOutput
 from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug, log_warning
 

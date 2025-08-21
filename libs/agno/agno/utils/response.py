@@ -3,7 +3,7 @@ from typing import AsyncIterator, Iterator, List, Set, Union
 from agno.exceptions import RunCancelledException
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
-from agno.run.response import RunOutput, RunOutputEvent, RunPausedEvent
+from agno.run.agent import RunOutput, RunOutputEvent, RunPausedEvent
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent
 
 

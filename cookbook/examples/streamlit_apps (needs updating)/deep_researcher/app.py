@@ -1,6 +1,4 @@
 import base64
-import json
-import time
 from datetime import datetime
 from os import getenv
 

@@ -4,7 +4,7 @@ from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
-from agno.run.response import (
+from agno.run.agent import (
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
     OutputModelResponseCompletedEvent,
@@ -433,7 +433,6 @@ def create_output_model_response_started_event(from_run_response: RunOutput) -> 
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -443,7 +442,6 @@ def create_output_model_response_completed_event(from_run_response: RunOutput) -
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -455,7 +453,6 @@ def create_team_output_model_response_started_event(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -467,6 +464,5 @@ def create_team_output_model_response_completed_event(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
     )

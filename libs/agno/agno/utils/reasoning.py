@@ -6,7 +6,7 @@ from agno.reasoning.step import ReasoningStep
 from agno.run.base import RunOutputMetaData
 
 if TYPE_CHECKING:
-    from agno.run.response import RunOutput
+    from agno.run.agent import RunOutput
     from agno.team.team import TeamRunOutput
 
 
@@ -22,7 +22,7 @@ def add_reasoning_step_to_metadata(
     run_response: Union["RunOutput", "TeamRunOutput"], reasoning_step: ReasoningStep
 ) -> None:
     if run_response.metadata is None:
-        from agno.run.response import RunOutputMetaData
+        from agno.run.agent import RunOutputMetaData
 
         run_response.metadata = RunOutputMetaData()
 
@@ -37,7 +37,7 @@ def add_reasoning_metrics_to_metadata(
 ) -> None:
     try:
         if run_response.metadata is None:
-            from agno.run.response import RunOutputMetaData
+            from agno.run.agent import RunOutputMetaData
 
             run_response.metadata = RunOutputMetaData()
 

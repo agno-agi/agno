@@ -684,7 +684,7 @@ def display_move_history(move_history):
             if i < len(move_history):
                 try:
                     board.push(chess.Move.from_uci(move_history[i]["move"]))
-                except (chess.InvalidMoveError, ValueError) as e:
+                except (chess.InvalidMoveError, ValueError):
                     continue
 
         # Get the current move's from and to squares

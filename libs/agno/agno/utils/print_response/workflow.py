@@ -631,7 +631,7 @@ def print_response_stream(
                     elif isinstance(response, StepOutputEvent):
                         response_str = response.content or ""  # type: ignore
                     else:
-                        from agno.run.response import RunContentEvent
+                        from agno.run.agent import RunContentEvent
                         from agno.run.team import RunContentEvent as TeamRunContentEvent
 
                         current_step_executor_type = None
@@ -1364,7 +1364,7 @@ async def aprint_response_stream(
                         # Handle StepOutputEvent objects yielded from workflow
                         response_str = response.content or ""  # type: ignore
                     else:
-                        from agno.run.response import RunContentEvent
+                        from agno.run.agent import RunContentEvent
                         from agno.run.team import RunContentEvent as TeamRunContentEvent
 
                         current_step_executor_type = None

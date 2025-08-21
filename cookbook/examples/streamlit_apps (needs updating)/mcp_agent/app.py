@@ -77,7 +77,7 @@ async def main() -> None:
             logger.info("---*--- Creating new MCP Agent ---*---")
             mcp_agent = get_mcp_agent(
                 model_str=selected_model,
-                num_history_responses=num_history_responses,
+                num_history_runs=num_history_responses,
                 mcp_tools=[mcp_tools],
                 mcp_server_ids=[mcp_server_id],
             )
@@ -183,7 +183,7 @@ async def main() -> None:
         session_selector_widget(
             agent=mcp_agent,
             model_str=selected_model,
-            num_history_responses=num_history_responses,
+            num_history_runs=num_history_responses,
             mcp_tools=[mcp_tools],
             mcp_server_ids=[mcp_server_id],
         )

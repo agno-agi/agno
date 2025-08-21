@@ -37,17 +37,17 @@ from agno.models.message import Message, MessageReferences
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
-from agno.run.base import RunOutputMetaData, RunStatus
-from agno.run.messages import RunMessages
-from agno.run.response import (
+from agno.run.agent import (
     RunEvent,
     RunOutput,
     RunOutputEvent,
 )
+from agno.run.base import RunOutputMetaData, RunStatus
+from agno.run.messages import RunMessages
 from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager
+from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.tools.toolkit import Toolkit
 from agno.utils.events import (
     create_memory_update_completed_event,
     create_memory_update_started_event,
@@ -122,7 +122,7 @@ class Agent:
     session_state: Optional[Dict[str, Any]] = None
     # If True, the agent can update the session state
     enable_agentic_state: bool = False
-    # If True, cache the session in memory
+    # If True, cache the current Agent session in memory for faster access
     cache_session: bool = False
 
     search_session_history: Optional[bool] = False
@@ -333,9 +333,9 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        cache_session: bool = False,
         search_session_history: Optional[bool] = False,
         num_history_sessions: Optional[int] = None,
-        cache_session: bool = False,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
         db: Optional[BaseDb] = None,
@@ -414,11 +414,10 @@ class Agent:
 
         self.session_id = session_id
         self.session_state = session_state
+        self.cache_session = cache_session
 
         self.search_session_history = search_session_history
         self.num_history_sessions = num_history_sessions
-
-        self.cache_session = cache_session
 
         self.dependencies = dependencies
         self.add_dependencies_to_context = add_dependencies_to_context
@@ -793,7 +792,10 @@ class Agent:
             ):
                 yield event
         else:
-            from agno.run.response import IntermediateRunResponseContentEvent, RunResponseContentEvent
+            from agno.run.agent import (
+                IntermediateRunContentEvent,
+                RunContentEvent,
+            )  # type: ignore
 
             for event in self._handle_model_response_stream(
                 session=session,
@@ -803,9 +805,9 @@ class Agent:
                 stream_intermediate_steps=stream_intermediate_steps,
                 workflow_context=workflow_context,
             ):
-                if isinstance(event, RunResponseContentEvent):
+                if isinstance(event, RunContentEvent):
                     if stream_intermediate_steps:
-                        yield IntermediateRunResponseContentEvent(
+                        yield IntermediateRunContentEvent(
                             content=event.content,
                             content_type=event.content_type,
                         )
@@ -1232,7 +1234,10 @@ class Agent:
             ):
                 yield event
         else:
-            from agno.run.response import IntermediateRunResponseContentEvent, RunResponseContentEvent
+            from agno.run.agent import (
+                IntermediateRunContentEvent,
+                RunContentEvent,
+            )  # type: ignore
 
             async for event in self._ahandle_model_response_stream(
                 session=session,
@@ -1242,9 +1247,9 @@ class Agent:
                 stream_intermediate_steps=stream_intermediate_steps,
                 workflow_context=workflow_context,
             ):
-                if isinstance(event, RunResponseContentEvent):
+                if isinstance(event, RunContentEvent):
                     if stream_intermediate_steps:
-                        yield IntermediateRunResponseContentEvent(
+                        yield IntermediateRunContentEvent(
                             content=event.content,
                             content_type=event.content_type,
                         )
@@ -1493,7 +1498,6 @@ class Agent:
                         session=agent_session,
                         response_format=response_format,
                     )
-                    return response
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
@@ -2078,7 +2082,6 @@ class Agent:
                         session=agent_session,
                         response_format=response_format,
                     )
-                    return response
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 if isinstance(e, StopAgentRun):
@@ -3497,8 +3500,9 @@ class Agent:
                             log_warning(f"Could not add tool {tool}: {e}")
 
         # Update the session state for the functions
-        for func in self._functions_for_model.values():
-            func._session_state = session_state
+        if self._functions_for_model:
+            for func in self._functions_for_model.values():
+                func._session_state = session_state
 
     def _model_should_return_structured_output(self):
         self.model = cast(Model, self.model)
@@ -3620,9 +3624,6 @@ class Agent:
 
     def _update_session_state(self, session: AgentSession, session_state: Dict[str, Any]):
         """Load the existing Agent from an AgentSession (from the database)"""
-
-        if not hasattr(session, "memory"):
-            return
 
         from agno.utils.merge_dict import merge_dictionaries
 
@@ -3777,16 +3778,16 @@ class Agent:
 
         session_id_to_load = session_id or self.session_id
 
-        # First check cached session if caching is enabled
+        # If there is a cached session, return it
         if self.cache_session and hasattr(self, "_agent_session") and self._agent_session is not None:
             if self._agent_session.session_id == session_id_to_load:
                 return self._agent_session
 
-        # Try to load from database
+        # Load and return the session from the database
         if self.db is not None:
             agent_session = cast(AgentSession, self._read_session(session_id=session_id_to_load))  # type: ignore
 
-            # Cache the session if caching is enabled and we found it
+            # Cache the session if relevant
             if agent_session is not None and self.cache_session:
                 self._agent_session = agent_session
 
@@ -3808,7 +3809,7 @@ class Agent:
             and self.workflow_id is None
             and session.session_data is not None
         ):
-            if session.session_data.get("session_state") is not None:
+            if session.session_data is not None and "session_state" in session.session_data:
                 session.session_data["session_state"].pop("current_session_id", None)
                 session.session_data["session_state"].pop("current_user_id", None)
                 session.session_data["session_state"].pop("current_run_id", None)
@@ -3920,10 +3921,20 @@ class Agent:
                 import inspect
 
                 signature = inspect.signature(self.instructions)
+                instruction_args: Dict[str, Any] = {}
+
+                # Check for agent parameter
                 if "agent" in signature.parameters:
-                    _instructions = self.instructions(agent=self)
-                else:
-                    _instructions = self.instructions()
+                    instruction_args["agent"] = self
+
+                # Check for session_state parameter
+                if "session_state" in signature.parameters:
+                    session_state: Dict[str, Any] = {}
+                    if session.session_data and "session_state" in session.session_data:
+                        session_state = session.session_data["session_state"] or {}
+                    instruction_args["session_state"] = session_state
+
+                _instructions = self.instructions(**instruction_args)
 
             if isinstance(_instructions, str):
                 instructions.append(_instructions)
@@ -4699,7 +4710,7 @@ class Agent:
         from agno.knowledge.document import Document
 
         if num_documents is None and self.knowledge is not None:
-            num_documents = self.knowledge.num_documents
+            num_documents = self.knowledge.max_results
         # Validate the filters against known valid filter keys
         if self.knowledge is not None:
             valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
@@ -4764,7 +4775,7 @@ class Agent:
         from agno.knowledge.document import Document
 
         if num_documents is None and self.knowledge is not None:
-            num_documents = self.knowledge.num_documents
+            num_documents = self.knowledge.max_results
 
         # Validate the filters against known valid filter keys
         if self.knowledge is not None:
@@ -5203,8 +5214,8 @@ class Agent:
                 debug_mode=self.debug_mode,
                 debug_level=self.debug_level,
                 session_state=self.session_state,
-                context=self.context,
-                extra_data=self.extra_data,
+                dependencies=self.dependencies,
+                metadata=self.metadata,
             )
             is_deepseek = is_deepseek_reasoning_model(reasoning_model)
             is_groq = is_groq_reasoning_model(reasoning_model)
@@ -5295,8 +5306,8 @@ class Agent:
                     debug_mode=self.debug_mode,
                     debug_level=self.debug_level,
                     session_state=self.session_state,
-                    context=self.context,
-                    extra_data=self.extra_data,
+                    dependencies=self.dependencies,
+                    metadata=self.metadata,
                 )
 
             # Validate reasoning agent
@@ -5430,8 +5441,8 @@ class Agent:
                 debug_mode=self.debug_mode,
                 debug_level=self.debug_level,
                 session_state=self.session_state,
-                context=self.context,
-                extra_data=self.extra_data,
+                dependencies=self.dependencies,
+                metadata=self.metadata,
             )
             is_deepseek = is_deepseek_reasoning_model(reasoning_model)
             is_groq = is_groq_reasoning_model(reasoning_model)
@@ -5522,8 +5533,8 @@ class Agent:
                     debug_mode=self.debug_mode,
                     debug_level=self.debug_level,
                     session_state=self.session_state,
-                    context=self.context,
-                    extra_data=self.extra_data,
+                    dependencies=self.dependencies,
+                    metadata=self.metadata,
                 )
 
             # Validate reasoning agent
@@ -5823,7 +5834,7 @@ class Agent:
         # Update the RunResponse messages
         run_response.messages = messages_for_run_response
         # Update the RunResponse metrics
-        run_response.metrics = self.aggregate_metrics_from_messages(messages_for_run_response)
+        run_response.metrics = self._calculate_run_metrics(messages_for_run_response)
 
     async def _agenerate_response_with_output_model(self, model_response: ModelResponse, run_messages: RunMessages):
         """Parse the model response using the output model."""
@@ -5879,7 +5890,7 @@ class Agent:
         # Update the RunResponse messages
         run_response.messages = messages_for_run_response
         # Update the RunResponse metrics
-        run_response.metrics = self.aggregate_metrics_from_messages(messages_for_run_response)
+        run_response.metrics = self._calculate_run_metrics(messages_for_run_response)
 
     def _handle_event(self, event: RunOutputEvent, run_response: RunOutput, workflow_context: Optional[Dict] = None):
         if workflow_context:

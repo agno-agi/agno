@@ -133,7 +133,7 @@ class CartesiaTools(Toolkit):
         voice_id: Optional[str] = None,
     ) -> str:
         """
-        Convert text to speechß.
+        Convert text to speech.
         Args:
             transcript: The text to convert to speech
             voice_id (optional): The ID of the voice to use for the text-to-speech. If None, uses the default voice ID configured in the tool. Defaults to None.

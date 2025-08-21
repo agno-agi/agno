@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.media import Audio, AudioArtifact, Image, ImageArtifact, Video, VideoArtifact
 from agno.models.metrics import Metrics
-from agno.run.response import RunOutput
+from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import (
     StepCompletedEvent,

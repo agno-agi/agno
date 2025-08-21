@@ -95,9 +95,9 @@ def _clean_page_numbers(
     Notes:
         - The function scans for page numbers using a regular expression that matches digits at the start or end of a string.
         - It evaluates several potential starting points for numbering (-2, -1, 0, 1, 2 shifts) to determine the most consistent sequence.
-        - If at least a specified ratio of pages (defined by `PAGE_NUMBERING_CORRECTNESS_RATIO_FOR_REMOVAL`) has correct sequential numbering, 
+        - If at least a specified ratio of pages (defined by `PAGE_NUMBERING_CORRECTNESS_RATIO_FOR_REMOVAL`) has correct sequential numbering,
           the page numbers are processed.
-        - If page numbers are found, the function will add formatted page numbers to each page's content if `page_start_numbering_format` or 
+        - If page numbers are found, the function will add formatted page numbers to each page's content if `page_start_numbering_format` or
           `page_end_numbering_format` is provided.
     """
     assert len(extra_content) == 0 or len(extra_content) == len(page_content_list), (
@@ -353,7 +353,7 @@ class PDFReader(BasePDFReader):
             return []
 
         documents = []
-        for page_number, page in enumerate(doc_reader.pages, start=1):
+        for page_number, page in enumerate(pdf_reader.pages, start=1):
             page_text = self._extract_text_with_error_handling(page, page_number, doc_name)
 
             documents.append(

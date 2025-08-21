@@ -4,8 +4,6 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.os.interfaces.slack import Slack
-from agno.os.interfaces.whatsapp import Whatsapp
 from agno.team import Team
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
@@ -53,7 +51,6 @@ agent_os = AgentOS(
     agents=[basic_agent],
     teams=[basic_team],
     workflows=[basic_workflow],
-    interfaces=[Whatsapp(agent=basic_agent), Slack(agent=basic_agent)],
 )
 app = agent_os.get_app()
 

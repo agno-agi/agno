@@ -19,8 +19,6 @@ Setup:
 4. Run this script
 """
 
-import asyncio
-
 from agno.agent import Agent
 from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.knowledge import Knowledge

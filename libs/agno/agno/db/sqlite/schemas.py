@@ -20,7 +20,6 @@ SESSION_TABLE_SCHEMA = {
     "team_data": {"type": JSON, "nullable": True},
     "workflow_data": {"type": JSON, "nullable": True},
     "metadata": {"type": JSON, "nullable": True},
-    "chat_history": {"type": JSON, "nullable": True},
     "runs": {"type": JSON, "nullable": True},
     "summary": {"type": JSON, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
