@@ -4144,7 +4144,7 @@ class Agent:
 
         return self.memory_manager.get_user_memories(user_id=user_id)
     
-    def format_message_with_state_variables(
+    def _format_message_with_state_variables(
         self, 
         message: Any, 
         user_id: Optional[str] = None, 
@@ -4353,7 +4353,7 @@ class Agent:
 
         # Format the system message with the session state variables
         if self.add_state_in_messages:
-            system_message_content = self._format_message_with_state_variables(
+            system_message_content = self.__class__format_message_with_state_variables(
                 system_message_content,
                 user_id=user_id,
                 session_state=session.session_data.get("session_state") if session.session_data is not None else None,
