@@ -1,6 +1,6 @@
 from dataclasses import asdict, dataclass, field
 from os import getenv
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from uuid import uuid4
 
 from agno.db.base import BaseDb
@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 from agno.agent import RunOutput
 from agno.db.schemas.evals import EvalType
-from agno.eval.utils import async_log_eval_telemetry, log_eval_run, store_result_in_file
+from agno.eval.utils import async_log_eval, log_eval_run, store_result_in_file
 from agno.run.team import TeamRunOutput
 from agno.utils.log import logger
 
@@ -170,10 +170,14 @@ class ReliabilityEval:
             )
 
         if self.telemetry:
-            from agno.api.evals import EvalRunCreate, create_eval_run
+            from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
 
-            create_eval_run(
-                eval_run=EvalRunCreate(run_id=self.eval_id, eval_type=EvalType.RELIABILITY),
+            create_eval_run_telemetry(
+                eval_run=EvalRunCreate(
+                    run_id=self.eval_id,
+                    eval_type=EvalType.RELIABILITY,
+                    data=self._get_telemetry_data(),
+                ),
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
@@ -262,7 +266,7 @@ class ReliabilityEval:
                 "expected_tool_calls": self.expected_tool_calls,
             }
 
-            await async_log_eval_telemetry(
+            await async_log_eval(
                 db=self.db,
                 run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),
@@ -276,11 +280,24 @@ class ReliabilityEval:
             )
 
         if self.telemetry:
-            from agno.api.evals import EvalRunCreate, async_create_eval_run
+            from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
 
-            await async_create_eval_run(
-                eval_run=EvalRunCreate(run_id=self.eval_id, eval_type=EvalType.RELIABILITY),
+            await async_create_eval_run_telemetry(
+                eval_run=EvalRunCreate(
+                    run_id=self.eval_id,
+                    eval_type=EvalType.RELIABILITY,
+                    data=self._get_telemetry_data(),
+                ),
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
         return self.result
+
+    def _get_telemetry_data(self) -> Dict[str, Any]:
+        """Get the telemetry data for the evaluation"""
+        return {
+            "team_id": self.team_response.team_id if self.team_response else None,
+            "agent_id": self.agent_response.agent_id if self.agent_response else None,
+            "model_id": self.agent_response.model if self.agent_response else None,
+            "model_provider": self.agent_response.model_provider if self.agent_response else None,
+        }

@@ -2305,6 +2305,12 @@ class Workflow:
     # Telemetry functions
     ###########################################################################
 
+    def _get_telemetry_data(self) -> Dict[str, Any]:
+        """Get the telemetry data for the workflow"""
+        return {
+            # TODO:
+        }
+
     def _log_workflow_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
         """Send a telemetry event to the API for a created Workflow run"""
 
@@ -2316,7 +2322,7 @@ class Workflow:
 
         try:
             create_workflow_run(
-                workflow=WorkflowRunCreate(session_id=session_id, run_id=run_id),
+                workflow=WorkflowRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data()),
             )
         except Exception as e:
             log_debug(f"Could not create Workflow run telemetry event: {e}")
@@ -2331,6 +2337,8 @@ class Workflow:
         from agno.api.workflow import WorkflowRunCreate, acreate_workflow_run
 
         try:
-            await acreate_workflow_run(workflow=WorkflowRunCreate(session_id=session_id, run_id=run_id))
+            await acreate_workflow_run(
+                workflow=WorkflowRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data())
+            )
         except Exception as e:
             log_debug(f"Could not create Workflow run telemetry event: {e}")

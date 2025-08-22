@@ -1,7 +1,7 @@
 from dataclasses import asdict, dataclass, field
 from os import getenv
 from textwrap import dedent
-from typing import TYPE_CHECKING, Callable, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent
 from agno.db.base import BaseDb
 from agno.db.schemas.evals import EvalType
-from agno.eval.utils import async_log_eval_telemetry, log_eval_run, store_result_in_file
+from agno.eval.utils import async_log_eval, log_eval_run, store_result_in_file
 from agno.exceptions import EvalError
 from agno.models.base import Model
 from agno.team.team import Team
@@ -442,10 +442,14 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             )
 
         if self.telemetry:
-            from agno.api.evals import EvalRunCreate, create_eval_run
+            from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
 
-            create_eval_run(
-                eval_run=EvalRunCreate(run_id=self.eval_id, eval_type=EvalType.ACCURACY),
+            create_eval_run_telemetry(
+                eval_run=EvalRunCreate(
+                    run_id=self.eval_id,
+                    eval_type=EvalType.ACCURACY,
+                    data=self._get_telemetry_data(),
+                ),
             )
 
         logger.debug(f"*********** Evaluation {self.eval_id} Finished ***********")
@@ -565,7 +569,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 "expected_output": self.expected_output,
                 "input": self.input,
             }
-            await async_log_eval_telemetry(
+            await async_log_eval(
                 db=self.db,
                 run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),
@@ -581,9 +585,9 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             )
 
         if self.telemetry:
-            from agno.api.evals import EvalRunCreate, async_create_eval_run
+            from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
 
-            await async_create_eval_run(
+            await async_create_eval_run_telemetry(
                 eval_run=EvalRunCreate(run_id=self.eval_id, eval_type=EvalType.ACCURACY),
             )
 
@@ -693,10 +697,14 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             )
 
         if self.telemetry:
-            from agno.api.evals import EvalRunCreate, create_eval_run
+            from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
 
-            create_eval_run(
-                eval_run=EvalRunCreate(run_id=self.eval_id, eval_type=EvalType.ACCURACY),
+            create_eval_run_telemetry(
+                eval_run=EvalRunCreate(
+                    run_id=self.eval_id,
+                    eval_type=EvalType.ACCURACY,
+                    data=self._get_telemetry_data(),
+                ),
             )
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
@@ -783,7 +791,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 "input": self.input,
             }
 
-            await async_log_eval_telemetry(
+            await async_log_eval(
                 db=self.db,
                 run_id=self.eval_id,  # type: ignore
                 run_data=asdict(self.result),
@@ -800,3 +808,13 @@ Remember: You must only compare the agent_output to the expected_output. The exp
 
         logger.debug(f"*********** Evaluation End: {self.eval_id} ***********")
         return self.result
+
+    def _get_telemetry_data(self) -> Dict[str, Any]:
+        """Get the telemetry data for the evaluation"""
+        return {
+            "agent_id": self.agent.id if self.agent else None,
+            "team_id": self.team.id if self.team else None,
+            "model_id": self.agent.model.id if self.agent and self.agent.model else None,
+            "model_provider": self.agent.model.provider if self.agent and self.agent.model else None,
+            "num_iterations": self.num_iterations,
+        }

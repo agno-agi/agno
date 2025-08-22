@@ -6669,6 +6669,23 @@ class Agent:
     # Api functions
     ###########################################################################
 
+    def _get_telemetry_data(self) -> Dict[str, Any]:
+        """Get the telemetry data for the agent"""
+        return {
+            "agent_id": self.id,
+            "model_provider": self.model.provider if self.model else None,
+            "model_name": self.model.name if self.model else None,
+            "model_id": self.model.id if self.model else None,
+            "has_tools": self.tools is not None,
+            "has_memory": self.enable_user_memories is not None,
+            "has_reasoning": self.reasoning is not None,
+            "has_knowledge": self.knowledge is not None,
+            "has_input_schema": self.input_schema is not None,
+            "has_output_schema": self.output_schema is not None,
+            "has_parser_model": self.parser_model is not None,
+            "has_team": self.team_id is not None,
+        }
+
     def _log_agent_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
         """Send a telemetry event to the API for a created Agent run"""
 
@@ -6680,7 +6697,7 @@ class Agent:
 
         try:
             create_agent_run(
-                run=AgentRunCreate(session_id=session_id, run_id=run_id),
+                run=AgentRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data()),
             )
         except Exception as e:
             log_debug(f"Could not create Agent run telemetry event: {e}")
@@ -6695,7 +6712,9 @@ class Agent:
         from agno.api.agent import AgentRunCreate, acreate_agent_run
 
         try:
-            await acreate_agent_run(run=AgentRunCreate(session_id=session_id, run_id=run_id))
+            await acreate_agent_run(
+                run=AgentRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data())
+            )
 
         except Exception as e:
             log_debug(f"Could not create Agent run telemetry event: {e}")

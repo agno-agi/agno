@@ -1,3 +1,5 @@
+from typing import Any, Dict, Optional
+
 from pydantic import BaseModel, Field
 
 from agno.api.schemas.utils import get_sdk_version
@@ -9,5 +11,6 @@ class EvalRunCreate(BaseModel):
 
     run_id: str
     eval_type: EvalType
+    data: Optional[Dict[Any, Any]] = None
 
     sdk_version: str = Field(default_factory=get_sdk_version)
