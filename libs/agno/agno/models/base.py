@@ -131,8 +131,6 @@ class Model(ABC):
     # The role of the assistant message.
     assistant_message_role: str = "assistant"
 
-    supports_media_in_tool_messages: bool = False
-
     def __post_init__(self):
         if self.provider is None and self.name is not None:
             self.provider = f"{self.name} ({self.id})"

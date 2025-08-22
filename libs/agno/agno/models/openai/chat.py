@@ -92,8 +92,6 @@ class OpenAIChat(Model):
         "model": "assistant",
     }
 
-    supports_media_in_tool_messages: bool = True
-
     def _get_client_params(self) -> Dict[str, Any]:
         # Fetch API key from env if not already set
         if not self.api_key:
