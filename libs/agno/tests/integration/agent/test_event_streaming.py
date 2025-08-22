@@ -245,7 +245,7 @@ def test_intermediate_steps_with_user_confirmation(shared_db):
         if run_response_delta.event not in events:
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
-    run_response = agent.get_last_run_response()
+    run_response = agent.get_last_run_output()
     assert events.keys() == {RunEvent.run_started, RunEvent.run_paused}
     assert len(events[RunEvent.run_started]) == 1
     assert len(events[RunEvent.run_paused]) == 1
@@ -278,7 +278,7 @@ def test_intermediate_steps_with_user_confirmation(shared_db):
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
 
-    run_response = agent.get_last_run_response()
+    run_response = agent.get_last_run_output()
     assert run_response.tools[0].result == "It is currently 70 degrees and cloudy in Tokyo"
 
     assert events.keys() == {
@@ -366,7 +366,7 @@ def test_intermediate_steps_with_structured_output(shared_db):
         if run_response_delta.event not in events:
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
-    run_response = agent.get_last_run_response()
+    run_response = agent.get_last_run_output()
 
     assert events.keys() == {
         RunEvent.run_started,
@@ -416,7 +416,7 @@ def test_intermediate_steps_with_parser_model(shared_db):
         if run_response_delta.event not in events:
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
-    run_response = agent.get_last_run_response()
+    run_response = agent.get_last_run_output()
 
     assert events.keys() == {
         RunEvent.run_started,

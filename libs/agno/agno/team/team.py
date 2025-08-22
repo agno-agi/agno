@@ -544,7 +544,7 @@ class Team:
         else:
             set_log_level_to_info(source_type="team")
 
-    def set_telemetry(self) -> None:
+    def _set_telemetry(self) -> None:
         """Override telemetry settings based on environment variables."""
 
         telemetry_env = getenv("AGNO_TELEMETRY")
@@ -560,7 +560,7 @@ class Team:
 
         # Handle Message objects - extract content
         if isinstance(input, Message):
-            input = input.content
+            input = input.content  # type: ignore
 
         # Case 1: Message is already a BaseModel instance
         if isinstance(input, BaseModel):
@@ -776,7 +776,7 @@ class Team:
         deque(response_iterator, maxlen=0)
 
         # 5. Calculate session metrics
-        self.update_session_metrics(session=session)
+        self._update_session_metrics(session=session)
 
         run_response.status = RunStatus.completed
 
@@ -880,7 +880,7 @@ class Team:
         )
 
         # 5. Calculate session metrics
-        self.update_session_metrics(session=session)
+        self._update_session_metrics(session=session)
 
         run_response.status = RunStatus.completed
 
@@ -908,7 +908,7 @@ class Team:
     @overload
     def run(
         self,
-        input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
+        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         *,
         stream: Literal[False] = False,
         stream_intermediate_steps: Optional[bool] = None,
@@ -929,7 +929,7 @@ class Team:
     @overload
     def run(
         self,
-        input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
+        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         *,
         stream: Literal[True] = True,
         stream_intermediate_steps: Optional[bool] = None,
@@ -950,7 +950,7 @@ class Team:
 
     def run(
         self,
-        input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
+        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         *,
         stream: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
@@ -987,8 +987,8 @@ class Team:
         self.initialize_team(debug_mode=debug_mode)
 
         # Read existing session from database
-        team_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
-        self.update_metadata(session=team_session)
+        team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+        self._update_metadata(session=team_session)
 
         # Update session state from DB
         session_state = self.update_session_state(session=team_session, session_state=session_state)
@@ -1079,7 +1079,7 @@ class Team:
             try:
                 # Prepare run messages
                 if self.mode == "route":
-                    run_messages: RunMessages = self.get_run_messages(
+                    run_messages: RunMessages = self._get_run_messages(
                         run_response=run_response,
                         session=team_session,
                         user_id=user_id,
@@ -1092,7 +1092,7 @@ class Team:
                         **kwargs,
                     )
                 else:
-                    run_messages = self.get_run_messages(
+                    run_messages = self._get_run_messages(
                         run_response=run_response,
                         session=team_session,
                         user_id=user_id,
@@ -1228,7 +1228,7 @@ class Team:
             pass
 
         # 5. Calculate session metrics
-        self.update_session_metrics(session=session)
+        self._update_session_metrics(session=session)
 
         run_response.status = RunStatus.completed
 
@@ -1340,7 +1340,7 @@ class Team:
             yield event
 
         # 5. Calculate session metrics
-        self.update_session_metrics(session=session)
+        self._update_session_metrics(session=session)
 
         run_response.status = RunStatus.completed
 
@@ -1443,8 +1443,8 @@ class Team:
         # Initialize Team
         self.initialize_team(debug_mode=debug_mode)
 
-        team_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
-        self.update_metadata(session=team_session)
+        team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
+        self._update_metadata(session=team_session)
 
         # Update session state from DB
         session_state = self.update_session_state(session=team_session, session_state=session_state)
@@ -1530,7 +1530,7 @@ class Team:
                 # Prepare run messages
                 if self.mode == "route":
                     # In route mode the model shouldn't get images/audio/video
-                    run_messages: RunMessages = self.get_run_messages(
+                    run_messages: RunMessages = self._get_run_messages(
                         session=team_session,  # type: ignore
                         run_response=run_response,
                         user_id=user_id,
@@ -1543,7 +1543,7 @@ class Team:
                         **kwargs,
                     )
                 else:
-                    run_messages = self.get_run_messages(
+                    run_messages = self._get_run_messages(
                         session=team_session,  # type: ignore
                         run_response=run_response,
                         user_id=user_id,
@@ -1666,7 +1666,7 @@ class Team:
             tool_name = tool_call.get("tool_name", "")
             if tool_name.lower() in ["think", "analyze"]:
                 tool_args = tool_call.get("tool_args", {})
-                self.update_reasoning_content_from_tool_call(run_response, tool_name, tool_args)
+                self._update_reasoning_content_from_tool_call(run_response, tool_name, tool_args)
 
     def _handle_model_response_stream(
         self,
@@ -1995,7 +1995,7 @@ class Team:
                         if tool_name.lower() in ["think", "analyze"]:
                             tool_args = tool_call.tool_args or {}
 
-                            reasoning_step = self.update_reasoning_content_from_tool_call(
+                            reasoning_step = self._update_reasoning_content_from_tool_call(
                                 run_response, tool_name, tool_args
                             )
 
@@ -2224,7 +2224,7 @@ class Team:
 
         if self.output_schema is not None:
             parser_response_format = self._get_response_format(self.parser_model)
-            messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
+            messages_for_parser_model = self._get_messages_for_parser_model(model_response, parser_response_format)
             parser_model_response: ModelResponse = self.parser_model.response(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
@@ -2244,7 +2244,7 @@ class Team:
 
         if self.output_schema is not None:
             parser_response_format = self._get_response_format(self.parser_model)
-            messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
+            messages_for_parser_model = self._get_messages_for_parser_model(model_response, parser_response_format)
             parser_model_response: ModelResponse = await self.parser_model.aresponse(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
@@ -2268,7 +2268,7 @@ class Team:
 
                 parser_model_response = ModelResponse(content="")
                 parser_response_format = self._get_response_format(self.parser_model)
-                messages_for_parser_model = self.get_messages_for_parser_model_stream(
+                messages_for_parser_model = self._get_messages_for_parser_model_stream(
                     run_response, parser_response_format
                 )
                 for model_response_event in self.parser_model.response_stream(
@@ -2319,7 +2319,7 @@ class Team:
 
                 parser_model_response = ModelResponse(content="")
                 parser_response_format = self._get_response_format(self.parser_model)
-                messages_for_parser_model = self.get_messages_for_parser_model_stream(
+                messages_for_parser_model = self._get_messages_for_parser_model_stream(
                     run_response, parser_response_format
                 )
                 model_response_stream = self.parser_model.aresponse_stream(
@@ -2363,7 +2363,7 @@ class Team:
         if self.output_model is None:
             return
 
-        messages_for_output_model = self.get_messages_for_output_model(run_messages.messages)
+        messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
         output_model_response: ModelResponse = self.output_model.response(messages=messages_for_output_model)
         model_response.content = output_model_response.content
 
@@ -2387,7 +2387,7 @@ class Team:
         if stream_intermediate_steps:
             yield self._handle_event(create_team_output_model_response_started_event(run_response), run_response)
 
-        messages_for_output_model = self.get_messages_for_output_model(run_messages.messages)
+        messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
         model_response = ModelResponse(content="")
 
         for model_response_event in self.output_model.response_stream(messages=messages_for_output_model):
@@ -2420,7 +2420,7 @@ class Team:
         if self.output_model is None:
             return
 
-        messages_for_output_model = self.get_messages_for_output_model(run_messages.messages)
+        messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
         output_model_response: ModelResponse = await self.output_model.aresponse(messages=messages_for_output_model)
         model_response.content = output_model_response.content
 
@@ -2444,7 +2444,7 @@ class Team:
         if stream_intermediate_steps:
             yield self._handle_event(create_team_output_model_response_started_event(run_response), run_response)
 
-        messages_for_output_model = self.get_messages_for_output_model(run_messages.messages)
+        messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
         model_response = ModelResponse(content="")
 
         async for model_response_event in self.output_model.aresponse_stream(messages=messages_for_output_model):
@@ -2767,7 +2767,7 @@ class Team:
 
         return metrics
 
-    def update_session_metrics(self, session: TeamSession):
+    def _update_session_metrics(self, session: TeamSession):
         """Calculate session metrics"""
 
         session_messages: List[Message] = []
@@ -3341,10 +3341,10 @@ class Team:
                 _tools.append(tool)
 
         if self.read_team_history:
-            _tools.append(self.get_team_history_function(session=session))
+            _tools.append(self._get_team_history_function(session=session))
 
         if self.memory_manager is not None and self.enable_agentic_memory:
-            _tools.append(self.get_update_user_memory_function(user_id=user_id, async_mode=async_mode))
+            _tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=async_mode))
 
         if self.enable_agentic_state:
             _tools.append(self.update_session_state_tool)
@@ -3363,13 +3363,13 @@ class Team:
                 # Use async or sync search based on async_mode
                 if self.enable_agentic_knowledge_filters:
                     _tools.append(
-                        self.search_knowledge_base_with_agentic_filters_function(
+                        self._get_search_knowledge_base_with_agentic_filters_function(
                             run_response=run_response, knowledge_filters=knowledge_filters, async_mode=async_mode
                         )
                     )
                 else:
                     _tools.append(
-                        self.search_knowledge_base_function(
+                        self._get_search_knowledge_base_function(
                             run_response=run_response, knowledge_filters=knowledge_filters, async_mode=async_mode
                         )
                     )
@@ -3388,7 +3388,7 @@ class Team:
                 files=files,
                 user_id=user_id,
             )
-            forward_task_func: Function = self.get_forward_task_function(
+            forward_task_func: Function = self._get_forward_task_function(
                 input=user_message,
                 run_response=run_response,
                 session_state=session_state,
@@ -3413,7 +3413,7 @@ class Team:
 
         elif self.mode == "coordinate":
             _tools.append(
-                self.get_transfer_task_function(
+                self._get_transfer_task_function(
                     run_response=run_response,
                     session=session,
                     session_state=session_state,
@@ -3436,7 +3436,7 @@ class Team:
                 _tools.append(self.get_member_information)
 
         elif self.mode == "collaborate":
-            run_member_agents_func = self.get_run_member_agents_function(
+            run_member_agents_func = self._get_run_member_agents_function(
                 run_response=run_response,
                 session=session,
                 session_state=session_state,
@@ -3841,7 +3841,7 @@ class Team:
 
         return Message(role=self.system_message_role, content=system_message_content.strip())
 
-    def get_run_messages(
+    def _get_run_messages(
         self,
         *,
         run_response: TeamRunOutput,
@@ -4100,7 +4100,7 @@ class Team:
                     **kwargs,
                 )
 
-    def get_messages_for_parser_model(
+    def _get_messages_for_parser_model(
         self, model_response: ModelResponse, response_format: Optional[Union[Dict, Type[BaseModel]]]
     ) -> List[Message]:
         from agno.utils.prompts import get_json_output_prompt
@@ -4120,7 +4120,7 @@ class Team:
             Message(role="user", content=model_response.content),
         ]
 
-    def get_messages_for_parser_model_stream(
+    def _get_messages_for_parser_model_stream(
         self, run_response: TeamRunOutput, response_format: Optional[Union[Dict, Type[BaseModel]]]
     ) -> List[Message]:
         """Get the messages for the parser model."""
@@ -4140,7 +4140,7 @@ class Team:
             Message(role="user", content=run_response.content),
         ]
 
-    def get_messages_for_output_model(self, messages: List[Message]) -> List[Message]:
+    def _get_messages_for_output_model(self, messages: List[Message]) -> List[Message]:
         """Get the messages for the output model."""
 
         if self.output_model_prompt is not None:
@@ -4313,7 +4313,7 @@ class Team:
     # Built-in Tools
     ###########################################################################
 
-    def get_update_user_memory_function(self, user_id: Optional[str] = None, async_mode: bool = False) -> Function:
+    def _get_update_user_memory_function(self, user_id: Optional[str] = None, async_mode: bool = False) -> Function:
         def update_user_memory(task: str) -> str:
             """
             Use this function to submit a task to modify the Agent's memory.
@@ -4357,7 +4357,7 @@ class Team:
         """Get information about the members of the team, including their IDs, names, and roles."""
         return self.get_members_system_message_content(indent=0)
 
-    def get_team_history_function(self, session: TeamSession) -> Callable:
+    def _get_team_history_function(self, session: TeamSession) -> Callable:
         def get_team_history(num_chats: Optional[int] = None) -> str:
             """
             Use this function to get the team chat history.
@@ -4441,12 +4441,12 @@ class Team:
     ) -> Optional[str]:
         team_member_interactions_str = None
         if self.share_member_interactions:
-            team_member_interactions_str = self.get_team_member_interactions_str(team_run_context=team_run_context)  # type: ignore
-            if context_images := self.get_team_run_context_images(team_run_context=team_run_context):  # type: ignore
+            team_member_interactions_str = self._get_team_member_interactions_str(team_run_context=team_run_context)  # type: ignore
+            if context_images := self._get_team_run_context_images(team_run_context=team_run_context):  # type: ignore
                 images.extend([Image.from_artifact(img) for img in context_images])
-            if context_videos := self.get_team_run_context_videos(team_run_context=team_run_context):  # type: ignore
+            if context_videos := self._get_team_run_context_videos(team_run_context=team_run_context):  # type: ignore
                 videos.extend([Video.from_artifact(vid) for vid in context_videos])
-            if context_audio := self.get_team_run_context_audio(team_run_context=team_run_context):  # type: ignore
+            if context_audio := self._get_team_run_context_audio(team_run_context=team_run_context):  # type: ignore
                 audio.extend([Audio.from_artifact(aud) for aud in context_audio])
         return team_member_interactions_str
 
@@ -4477,7 +4477,7 @@ class Team:
 
         return None
 
-    def get_run_member_agents_function(
+    def _get_run_member_agents_function(
         self,
         run_response: TeamRunOutput,
         session: TeamSession,
@@ -4614,7 +4614,7 @@ class Team:
 
                 # Update the memory
                 member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
-                self.add_interaction_to_team_run_context(
+                self._add_interaction_to_team_run_context(
                     team_run_context=team_run_context,
                     member_name=member_name,
                     task=task_description,
@@ -4713,7 +4713,7 @@ class Team:
                             member_agent_run_response.parent_run_id = run_response.run_id  # type: ignore
 
                         member_name = agent.name if agent.name else f"agent_{idx}"
-                        self.add_interaction_to_team_run_context(
+                        self._add_interaction_to_team_run_context(
                             team_run_context=team_run_context,
                             member_name=member_name,
                             task=task_description,
@@ -4807,7 +4807,7 @@ class Team:
 
                         # Update the memory
                         member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
-                        self.add_interaction_to_team_run_context(
+                        self._add_interaction_to_team_run_context(
                             team_run_context=team_run_context,
                             member_name=member_name,
                             task=task_description,
@@ -4873,7 +4873,7 @@ class Team:
 
         return run_member_agents_func
 
-    def get_transfer_task_function(
+    def _get_transfer_task_function(
         self,
         run_response: TeamRunOutput,
         session: TeamSession,
@@ -5038,7 +5038,7 @@ class Team:
 
             # Update the memory
             member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
-            self.add_interaction_to_team_run_context(
+            self._add_interaction_to_team_run_context(
                 team_run_context=team_run_context,
                 member_name=member_name,
                 task=task_description,
@@ -5194,7 +5194,7 @@ class Team:
 
             # Update the memory
             member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
-            self.add_interaction_to_team_run_context(
+            self._add_interaction_to_team_run_context(
                 team_run_context=team_run_context,
                 member_name=member_name,
                 task=task_description,
@@ -5225,7 +5225,7 @@ class Team:
 
         return transfer_func
 
-    def get_forward_task_function(
+    def _get_forward_task_function(
         self,
         input: Message,
         run_response: TeamRunOutput,
@@ -5391,7 +5391,7 @@ class Team:
 
             # Update the memory
             member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
-            self.add_interaction_to_team_run_context(
+            self._add_interaction_to_team_run_context(
                 team_run_context=team_run_context,
                 member_name=member_name,
                 task=member_agent_task,
@@ -5542,7 +5542,7 @@ class Team:
 
             # Update the memory
             member_name = member_agent.name if member_agent.name else f"agent_{member_agent_index}"
-            self.add_interaction_to_team_run_context(
+            self._add_interaction_to_team_run_context(
                 team_run_context=team_run_context,
                 member_name=member_name,
                 task=member_agent_task,
@@ -5601,7 +5601,9 @@ class Team:
             log_warning(f"Error upserting session into db: {e}")
         return None
 
-    def get_run_response(self, run_id: str, session_id: Optional[str] = None) -> Optional[TeamRunOutput | RunOutput]:
+    def get_run_output(
+        self, run_id: str, session_id: Optional[str] = None
+    ) -> Optional[Union[TeamRunOutput, RunOutput]]:
         """
         Get a RunOutput from the database.
 
@@ -5626,7 +5628,7 @@ class Team:
                     log_warning(f"RunOutput {run_id} not found in AgentSession {session_id}")
         return None
 
-    def get_last_run_response(self, session_id: Optional[str] = None) -> Optional[TeamRunOutput]:
+    def get_last_run_output(self, session_id: Optional[str] = None) -> Optional[TeamRunOutput]:
         """
         Get the last run response from the database.
 
@@ -5650,7 +5652,7 @@ class Team:
                 log_warning(f"No run responses found in AgentSession {session_id}")
         return None
 
-    def read_or_create_session(self, session_id: str, user_id: Optional[str] = None) -> TeamSession:
+    def _read_or_create_session(self, session_id: str, user_id: Optional[str] = None) -> TeamSession:
         """Load the TeamSession from storage
 
         Returns:
@@ -5767,7 +5769,7 @@ class Team:
 
         return session_state
 
-    def update_metadata(self, session: TeamSession):
+    def _update_metadata(self, session: TeamSession):
         """Update the extra_data in the session"""
         from agno.utils.merge_dict import merge_dictionaries
 
@@ -5938,7 +5940,7 @@ class Team:
 
         return self.memory_manager.get_user_memories(user_id=user_id)
 
-    def add_interaction_to_team_run_context(
+    def _add_interaction_to_team_run_context(
         self,
         team_run_context: Dict[str, Any],
         member_name: str,
@@ -5956,7 +5958,7 @@ class Team:
         )
         log_debug(f"Updated team run context with member name: {member_name}")
 
-    def get_team_member_interactions_str(self, team_run_context: Dict[str, Any]) -> str:
+    def _get_team_member_interactions_str(self, team_run_context: Dict[str, Any]) -> str:
         if not team_run_context:
             return ""
         team_member_interactions_str = ""
@@ -5977,7 +5979,7 @@ class Team:
             team_member_interactions_str += "</member interactions>\n"
         return team_member_interactions_str
 
-    def get_team_run_context_images(self, team_run_context: Dict[str, Any]) -> List[ImageArtifact]:
+    def _get_team_run_context_images(self, team_run_context: Dict[str, Any]) -> List[ImageArtifact]:
         if not team_run_context:
             return []
         images = []
@@ -5987,7 +5989,7 @@ class Team:
                     images.extend(interaction["run_response"].images)
         return images
 
-    def get_team_run_context_videos(self, team_run_context: Dict[str, Any]) -> List[VideoArtifact]:
+    def _get_team_run_context_videos(self, team_run_context: Dict[str, Any]) -> List[VideoArtifact]:
         if not team_run_context:
             return []
         videos = []
@@ -5997,7 +5999,7 @@ class Team:
                     videos.extend(interaction["run_response"].videos)
         return videos
 
-    def get_team_run_context_audio(self, team_run_context: Dict[str, Any]) -> List[AudioArtifact]:
+    def _get_team_run_context_audio(self, team_run_context: Dict[str, Any]) -> List[AudioArtifact]:
         if not team_run_context:
             return []
         audio = []
@@ -6038,7 +6040,7 @@ class Team:
     def get_audio(self) -> Optional[List[AudioArtifact]]:
         return self.audio
 
-    def update_reasoning_content_from_tool_call(
+    def _update_reasoning_content_from_tool_call(
         self, run_response: TeamRunOutput, tool_name: str, tool_args: Dict[str, Any]
     ) -> Optional[ReasoningStep]:
         """Update reasoning_content based on tool calls that look like thinking or reasoning tools."""
@@ -6316,7 +6318,7 @@ class Team:
 
         return effective_filters
 
-    def search_knowledge_base_function(
+    def _get_search_knowledge_base_function(
         self,
         run_response: TeamRunOutput,
         knowledge_filters: Optional[Dict[str, Any]] = None,
@@ -6389,7 +6391,7 @@ class Team:
 
         return Function.from_callable(search_knowledge_base_function, name="search_knowledge_base")
 
-    def search_knowledge_base_with_agentic_filters_function(
+    def _get_search_knowledge_base_with_agentic_filters_function(
         self,
         run_response: TeamRunOutput,
         knowledge_filters: Optional[Dict[str, Any]] = None,
@@ -6489,7 +6491,7 @@ class Team:
     ###########################################################################
 
     def _log_team_run(self, session_id: str, user_id: Optional[str] = None) -> None:
-        self.set_telemetry()
+        self._set_telemetry()
 
         if not self.telemetry:
             return
@@ -6497,7 +6499,7 @@ class Team:
         # from agno.api.team import TeamRunCreate, create_team_run
         #
         # try:
-        #     team_session: TeamSession = self.team_session or self._read_or_create_session(
+        #     team_session: TeamSession = self.team_session or self.__read_or_create_session(
         #         session_id=session_id, user_id=user_id
         #     )
         #
@@ -6511,7 +6513,7 @@ class Team:
         #     log_debug(f"Could not create agent event: {e}")
 
     async def _alog_team_run(self, session_id: str, user_id: Optional[str] = None) -> None:
-        self.set_telemetry()
+        self._set_telemetry()
 
         if not self.telemetry:
             return
@@ -6519,7 +6521,7 @@ class Team:
         # from agno.api.team import TeamRunCreate, acreate_team_run
         #
         # try:
-        #     team_session: TeamSession = self.team_session or self._read_or_create_session(
+        #     team_session: TeamSession = self.team_session or self.__read_or_create_session(
         #         session_id=session_id, user_id=user_id
         #     )
         #

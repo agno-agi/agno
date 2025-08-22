@@ -1,11 +1,11 @@
 """Run `pip install duckduckgo-search` to install dependencies."""
 
 from agno.agent import Agent
-from agno.models.langdb import LangDB
+from agno.models.aws import Claude
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
-    model=LangDB(id="llama3-1-70b-instruct-v1.0"),
+    model=Claude(id="anthropic.claude-3-5-sonnet-20240620-v1:0"),
     tools=[DuckDuckGoTools()],
     markdown=True,
 )

@@ -11,9 +11,10 @@ from uuid import uuid4
 
 from agno.db.base import BaseDb
 from agno.db.schemas.knowledge import KnowledgeRow
-from agno.knowledge.content import Content, ContentStatus, FileData
+from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
+from agno.knowledge.reader.pdf_reader import PDFReader, PDFUrlReader
 from agno.knowledge.remote_content.remote_content import GCSContent, RemoteContent, S3Content
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb import VectorDb
@@ -198,6 +199,7 @@ class Knowledge:
         upsert: bool = False,
         skip_if_exists: bool = False,
         reader: Optional[Reader] = None,
+        auth: Optional[ContentAuth] = None,
     ) -> None: ...
 
     @overload
@@ -218,6 +220,7 @@ class Knowledge:
         exclude: Optional[List[str]] = None,
         upsert: bool = True,
         skip_if_exists: bool = True,
+        auth: Optional[ContentAuth] = None,
     ) -> None:
         # Validation: At least one of the parameters must be provided
         if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
@@ -244,6 +247,7 @@ class Knowledge:
             topics=topics,
             remote_content=remote_content,
             reader=reader,
+            auth=auth,
         )
 
         await self._load_content(content, upsert, skip_if_exists, include, exclude)
@@ -261,6 +265,7 @@ class Knowledge:
         upsert: bool = False,
         skip_if_exists: bool = False,
         reader: Optional[Reader] = None,
+        auth: Optional[ContentAuth] = None,
     ) -> None: ...
 
     @overload
@@ -281,6 +286,7 @@ class Knowledge:
         exclude: Optional[List[str]] = None,
         upsert: bool = True,
         skip_if_exists: bool = True,
+        auth: Optional[ContentAuth] = None,
     ) -> None:
         """
         Synchronously add content to the knowledge base.
@@ -315,6 +321,7 @@ class Knowledge:
                 exclude=exclude,
                 upsert=upsert,
                 skip_if_exists=skip_if_exists,
+                auth=auth,
             )
         )
 
@@ -346,12 +353,24 @@ class Knowledge:
                 self._add_to_contents_db(content)
 
                 if content.reader:
-                    read_documents = content.reader.read(path, name=content.name or path.name)
+                    # TODO: We will refactor this to eventually pass authorization to all readers
+                    if isinstance(content.reader, (PDFReader, PDFUrlReader)):
+                        if content.auth and content.auth.password:
+                            content.reader.password = content.auth.password
+
+                    name = content.name or path.name
+                    read_documents = content.reader.read(path, name=name)
                 else:
                     reader = ReaderFactory.get_reader_for_extension(path.suffix)
                     log_info(f"Using Reader: {reader.__class__.__name__}")
                     if reader:
-                        read_documents = reader.read(path, name=content.name or path.name)
+                        # TODO: We will refactor this to eventually pass authorization to all readers
+                        if isinstance(reader, (PDFReader, PDFUrlReader)):
+                            if content.auth and content.auth.password:
+                                reader.password = content.auth.password
+
+                        name = content.name or path.name
+                        read_documents = reader.read(path, name=name)
 
                 if not content.file_type:
                     content.file_type = path.suffix
@@ -433,6 +452,11 @@ class Knowledge:
                 log_info("Detected llms, using url reader")
                 reader = content.reader or self.url_reader
                 if reader is not None:
+                    # TODO: We will refactor this to eventually pass authorization to all readers
+                    if isinstance(reader, (PDFReader, PDFUrlReader)):
+                        if content.auth and content.auth.password:
+                            reader.password = content.auth.password
+
                     read_documents = reader.read(content.url, name=content.name)
 
             elif file_extension and file_extension is not None:
@@ -443,6 +467,11 @@ class Knowledge:
                     reader = self._select_url_file_reader(file_extension)
                     if reader is not None:
                         log_info(f"Selected reader: {reader.__class__.__name__}")
+                        # TODO: We will refactor this to eventually pass authorization to all readers
+                        if isinstance(reader, (PDFReader, PDFUrlReader)):
+                            if content.auth and content.auth.password:
+                                reader.password = content.auth.password
+
                         read_documents = reader.read(content.url, name=content.name)
                     else:
                         log_info(f"No reader found for file extension: {file_extension}")
@@ -454,6 +483,11 @@ class Knowledge:
                     reader = self._select_url_reader(content.url)  # type: ignore
                 if reader is not None:
                     log_info(f"Selected reader: {reader.__class__.__name__}")
+                    # TODO: We will refactor this to eventually pass authorization to all readers
+                    if isinstance(reader, (PDFReader, PDFUrlReader)):
+                        if content.auth and content.auth.password:
+                            reader.password = content.auth.password
+
                     read_documents = reader.read(content.url, name=content.name)
                 else:
                     log_info(f"No reader found for URL: {content.url}")

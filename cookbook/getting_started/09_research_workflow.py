@@ -370,7 +370,7 @@ class ResearchReportGenerator(Workflow):
         }
         # Run the writer and yield the response
         yield from self.writer.run(json.dumps(writer_input, indent=4), stream=True)
-        run_response = self.writer.get_last_run_response()
+        run_response = self.writer.get_last_run_output()
         # Save the research report in the cache
         self.add_report_to_cache(topic, run_response.content)
 

@@ -92,7 +92,7 @@ for event in step_workflow.run(
         print(
             f"Event: {event.event if hasattr(event, 'event') else type(event).__name__}"
         )
-run_response = step_workflow.get_last_run_response()
+run_response = step_workflow.get_last_run_output()
 
 print("\nStep workflow completed!")
 print(
@@ -140,7 +140,7 @@ for event in parallel_workflow.run(
             f"Event: {event.event if hasattr(event, 'event') else type(event).__name__}"
         )
 
-run_response = parallel_workflow.get_last_run_response()
+run_response = parallel_workflow.get_last_run_output()
 print(f"Parallel workflow stored {len(run_response.events)} events")
 print_stored_events(run_response, "Parallel Workflow")
 print()

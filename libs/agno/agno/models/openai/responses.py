@@ -635,7 +635,11 @@ class OpenAIResponses(Model):
                 stream=True,
                 **request_params,
             ):
-                model_response, tool_use = self._parse_provider_response_delta(stream_event=chunk, assistant_message=assistant_message, tool_use=tool_use)  # type: ignore
+                model_response, tool_use = self._parse_provider_response_delta(
+                    stream_event=chunk,  # type: ignore
+                    assistant_message=assistant_message,
+                    tool_use=tool_use,  # type: ignore
+                )
                 yield model_response
 
             assistant_message.metrics.stop_timer()
@@ -889,7 +893,9 @@ class OpenAIResponses(Model):
 
         return model_response
 
-    def _parse_provider_response_delta(self, stream_event: ResponseStreamEvent, assistant_message: Message, tool_use: Dict[str, Any]) -> Tuple[ModelResponse, Dict[str, Any]]:
+    def _parse_provider_response_delta(
+        self, stream_event: ResponseStreamEvent, assistant_message: Message, tool_use: Dict[str, Any]
+    ) -> Tuple[ModelResponse, Dict[str, Any]]:
         """
         Parse the streaming response from the model provider into a ModelResponse object.
 
@@ -915,7 +921,7 @@ class OpenAIResponses(Model):
             if model_response.citations is None:
                 model_response.citations = Citations(raw=[stream_event.annotation])
             else:
-                model_response.citations.raw.append(stream_event.annotation) # type: ignore
+                model_response.citations.raw.append(stream_event.annotation)  # type: ignore
 
             if isinstance(stream_event.annotation, dict):
                 if stream_event.annotation.get("type") == "url_citation":
@@ -973,7 +979,6 @@ class OpenAIResponses(Model):
         elif stream_event.type == "response.completed":
             if stream_event.response.usage is not None:
                 model_response.response_usage = self._get_metrics(stream_event.response.usage)
-
 
         return model_response, tool_use
 

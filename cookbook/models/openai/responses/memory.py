@@ -7,8 +7,8 @@ Steps:
 """
 
 from agno.agent import Agent
-from agno.db.postgres import PostgresDb
 from agno.db.base import SessionType
+from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
 from rich.pretty import pprint
 

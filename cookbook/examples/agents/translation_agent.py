@@ -41,7 +41,7 @@ agent = Agent(
 agent.print_response(
     "Convert this phrase 'hello! how are you? Tell me more about the weather in Paris?' to French and create a voice note"
 )
-response = agent.get_last_run_response()
+response = agent.get_last_run_output()
 
 print("\nChecking for Audio Artifacts on Agent...")
 if response.audio:

@@ -2,7 +2,7 @@ from agno.agent import Agent, RunOutput  # noqa
 from agno.models.langdb import LangDB
 
 agent = Agent(
-    model=LangDB(id="deepseek-chat", project_id="langdb-project-id"), markdown=True
+    model=LangDB(id="llama3-1-70b-instruct-v1.0"), markdown=True
 )
 
 # Get the response in a variable

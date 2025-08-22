@@ -1,7 +1,7 @@
 from agno.agent import Agent
+from agno.db.postgres import PostgresDb
 from agno.media import File
 from agno.models.openai.responses import OpenAIResponses
-from agno.db.postgres import PostgresDb
 
 # Setup the database for the Agent Session to be stored
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"

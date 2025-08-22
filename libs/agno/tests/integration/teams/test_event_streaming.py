@@ -96,7 +96,7 @@ def test_basic_intermediate_steps_events_persisted(shared_db):
 
     assert events.keys() == {TeamRunEvent.run_started, TeamRunEvent.run_content, TeamRunEvent.run_completed}
 
-    run_response_from_storage = team.get_last_run_response()
+    run_response_from_storage = team.get_last_run_output()
 
     assert run_response_from_storage is not None
     assert run_response_from_storage.events is not None
@@ -166,7 +166,7 @@ def test_intermediate_steps_with_tools_events_persisted(shared_db):
         TeamRunEvent.run_completed,
     }
 
-    run_response_from_storage = team.get_last_run_response()
+    run_response_from_storage = team.get_last_run_output()
 
     assert len(run_response_from_storage.events) >= 4
     # Check that we have the essential events (may have more due to member delegation)
@@ -402,7 +402,7 @@ def test_intermediate_steps_with_parser_model(shared_db):
             events[run_response_delta.event] = []
         events[run_response_delta.event].append(run_response_delta)
 
-    run_response = team.get_last_run_response()
+    run_response = team.get_last_run_output()
 
     assert events.keys() == {
         TeamRunEvent.run_started,
