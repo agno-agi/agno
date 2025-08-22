@@ -305,6 +305,7 @@ def get_base_router(
             os_id=os.os_id or "Unnamed OS",
             description=os.description,
             available_models=os.config.available_models,
+            databases=[db.id for db in os.dbs.values()],
             memory=os.config.memory,
             knowledge=os.config.knowledge,
             evals=os.config.evals,

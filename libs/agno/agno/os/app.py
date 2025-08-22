@@ -111,10 +111,14 @@ class AgentOS:
         for agent in self.agents or []:
             if agent.db:
                 dbs[agent.db.id] = agent.db
+            if agent.knowledge and agent.knowledge.contents_db:
+                dbs[agent.knowledge.contents_db.id] = agent.knowledge.contents_db
 
         for team in self.teams or []:
             if team.db:
                 dbs[team.db.id] = team.db
+            if team.knowledge and team.knowledge.contents_db:
+                dbs[team.knowledge.contents_db.id] = team.knowledge.contents_db
 
         for workflow in self.workflows or []:
             if workflow.db:

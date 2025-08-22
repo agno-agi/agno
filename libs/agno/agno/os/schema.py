@@ -73,6 +73,7 @@ class ConfigResponse(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     available_models: Optional[List[str]] = None
+    databases: List[str]
 
     memory: Optional[MemoryConfig] = None
     knowledge: Optional[KnowledgeConfig] = None
