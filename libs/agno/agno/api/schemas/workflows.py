@@ -1,12 +1,16 @@
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from agno.api.schemas.utils import TelemetryRunEventType, get_sdk_version
 
 
-class WorkflowCreate(BaseModel):
+class WorkflowRunCreate(BaseModel):
     """Data sent to API to create a Workflow Run"""
 
     session_id: str
     run_id: Optional[str] = None
-    run_data: Optional[Dict[str, Any]] = None
-    workflow_data: Optional[Dict[str, Any]] = None
+    data: Optional[Dict[Any, Any]] = None
+
+    sdk_version: str = Field(default_factory=get_sdk_version)
+    type: TelemetryRunEventType = TelemetryRunEventType.WORKFLOW

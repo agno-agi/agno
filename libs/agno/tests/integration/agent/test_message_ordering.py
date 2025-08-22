@@ -9,7 +9,6 @@ def test_message_ordering_run():
         user_id="test_user",
         session_id="test_session",
         telemetry=False,
-        monitoring=False,
     )
 
     # Historical messages that should come first
@@ -46,7 +45,6 @@ def test_message_ordering(agent_storage):
         model=OpenAIChat(id="gpt-4o-mini"),
         storage=agent_storage,
         telemetry=False,
-        monitoring=False,
     )
 
     # More realistic conversation history
@@ -89,7 +87,6 @@ def test_message_ordering_edge_cases():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         telemetry=False,
-        monitoring=False,
     )
 
     # Test with empty historical messages
@@ -114,7 +111,6 @@ def test_message_ordering_with_system_message():
         model=OpenAIChat(id="gpt-4o-mini"),
         description="You are a helpful math assistant.",
         telemetry=False,
-        monitoring=False,
     )
 
     historical_messages = [{"role": "user", "content": "What is 2 + 2?"}, {"role": "assistant", "content": "2 + 2 = 4"}]

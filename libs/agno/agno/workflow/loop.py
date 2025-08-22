@@ -130,7 +130,7 @@ class Loop:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
-        store_executor_responses: bool = True,
+        store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
     ) -> StepOutput:
         """Execute loop steps with iteration control - mirrors workflow execution logic"""
@@ -155,7 +155,7 @@ class Loop:
                     session_id=session_id,
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
-                    store_executor_responses=store_executor_responses,
+                    store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                 )
 
@@ -222,7 +222,7 @@ class Loop:
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
-        store_executor_responses: bool = True,
+        store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
@@ -294,7 +294,7 @@ class Loop:
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
                     step_index=composite_step_index,
-                    store_executor_responses=store_executor_responses,
+                    store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                     parent_step_id=loop_step_id,
                 ):
@@ -408,7 +408,7 @@ class Loop:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
-        store_executor_responses: bool = True,
+        store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
     ) -> StepOutput:
         """Execute loop steps asynchronously with iteration control - mirrors workflow execution logic"""
@@ -435,7 +435,7 @@ class Loop:
                     session_id=session_id,
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
-                    store_executor_responses=store_executor_responses,
+                    store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                 )
 
@@ -505,7 +505,7 @@ class Loop:
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
-        store_executor_responses: bool = True,
+        store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
@@ -577,7 +577,7 @@ class Loop:
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
                     step_index=composite_step_index,
-                    store_executor_responses=store_executor_responses,
+                    store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                     parent_step_id=loop_step_id,
                 ):

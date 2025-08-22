@@ -33,8 +33,7 @@ classifiers = [
 dependencies = [
   "docstring-parser",
   "gitpython",
-  # Required to avoid `SyncHttpxClientWrapper` error
-  "httpx==0.27.2",  
+  "httpx",  
   "packaging",
   "pydantic-settings",
   "pydantic",

@@ -170,7 +170,6 @@ async def test_thinking_with_storage():
             user_id="test_user",
             session_id="test_session",
             telemetry=False,
-            monitoring=False,
         )
 
         # Ask a question that should trigger thinking
@@ -214,7 +213,6 @@ async def test_thinking_with_streaming_storage():
             user_id="test_user_stream",
             session_id="test_session_stream",
             telemetry=False,
-            monitoring=False,
         )
 
         # Run with streaming
@@ -348,7 +346,6 @@ async def test_interleaved_thinking_with_storage():
             user_id="test_user_interleaved",
             session_id="test_session_interleaved",
             telemetry=False,
-            monitoring=False,
         )
 
         # Ask a question that should trigger interleaved thinking
@@ -396,7 +393,6 @@ async def test_interleaved_thinking_streaming_with_storage():
             user_id="test_user_interleaved_stream",
             session_id="test_session_interleaved_stream",
             telemetry=False,
-            monitoring=False,
         )
 
         # Run with streaming

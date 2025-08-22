@@ -81,13 +81,6 @@ class AgentSession:
             summary=summary,
         )
 
-    def telemetry_data(self) -> Dict[str, Any]:
-        return {
-            "model": self.agent_data.get("model") if self.agent_data else None,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-        }
-
     def upsert_run(self, run: RunOutput):
         """Adds a RunOutput, together with some calculated data, to the runs list."""
         messages = run.messages

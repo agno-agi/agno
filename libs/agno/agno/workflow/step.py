@@ -171,7 +171,7 @@ class Step:
         user_id: Optional[str] = None,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
-        store_executor_responses: bool = True,
+        store_executor_outputs: bool = True,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         log_debug(f"Executing step: {self.name}")
@@ -263,7 +263,7 @@ class Step:
                         # Update workflow session state
                         merge_dictionaries(session_state, session_state_copy)  # type: ignore
 
-                        if store_executor_responses and workflow_run_response is not None:
+                        if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, response)  # type: ignore
 
                         # Switch back to workflow logger after execution
@@ -299,7 +299,7 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         step_index: Optional[Union[int, tuple]] = None,
-        store_executor_responses: bool = True,
+        store_executor_outputs: bool = True,
         parent_step_id: Optional[str] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
@@ -424,7 +424,7 @@ class Step:
                         # Update workflow session state
                         merge_dictionaries(session_state, session_state_copy)  # type: ignore
 
-                        if store_executor_responses and workflow_run_response is not None:
+                        if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
 
                         final_response = self._process_step_output(active_executor_run_response)  # type: ignore
@@ -483,7 +483,7 @@ class Step:
         user_id: Optional[str] = None,
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
-        store_executor_responses: bool = True,
+        store_executor_outputs: bool = True,
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         logger.info(f"Executing async step (non-streaming): {self.name}")
@@ -592,7 +592,7 @@ class Step:
                         # Update workflow session state
                         merge_dictionaries(session_state, session_state_copy)  # type: ignore
 
-                        if store_executor_responses and workflow_run_response is not None:
+                        if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, response)  # type: ignore
 
                         # Switch back to workflow logger after execution
@@ -628,7 +628,7 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         step_index: Optional[Union[int, tuple]] = None,
-        store_executor_responses: bool = True,
+        store_executor_outputs: bool = True,
         parent_step_id: Optional[str] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
@@ -772,7 +772,7 @@ class Step:
                         # Update workflow session state
                         merge_dictionaries(session_state, session_state_copy)  # type: ignore
 
-                        if store_executor_responses and workflow_run_response is not None:
+                        if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
 
                         final_response = self._process_step_output(active_executor_run_response)  # type: ignore

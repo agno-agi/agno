@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, Union
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel
 
@@ -199,13 +199,18 @@ class Cohere(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
+            tool_use: Dict[str, Any] = {}
+
             assistant_message.metrics.start_timer()
+
             for response in self.get_client().chat_stream(
                 model=self.id,
                 messages=format_messages(messages),  # type: ignore
                 **request_kwargs,
             ):
-                yield self._parse_provider_response_delta(response)
+                model_response, tool_use = self._parse_provider_response_delta(response, tool_use=tool_use)
+                yield model_response
+
             assistant_message.metrics.stop_timer()
 
         except Exception as e:
@@ -264,13 +269,18 @@ class Cohere(Model):
             if run_response and run_response.metrics:
                 run_response.metrics.set_time_to_first_token()
 
+            tool_use: Dict[str, Any] = {}
+
             assistant_message.metrics.start_timer()
+
             async for response in self.get_async_client().chat_stream(
                 model=self.id,
                 messages=format_messages(messages),  # type: ignore
                 **request_kwargs,
             ):
-                yield self._parse_provider_response_delta(response)
+                model_response, tool_use = self._parse_provider_response_delta(response, tool_use=tool_use)
+                yield model_response
+
             assistant_message.metrics.stop_timer()
 
         except Exception as e:
@@ -304,7 +314,9 @@ class Cohere(Model):
 
         return model_response
 
-    def _parse_provider_response_delta(self, response: V2ChatStreamResponse) -> ModelResponse:  # type: ignore
+    def _parse_provider_response_delta(
+        self, response: V2ChatStreamResponse, tool_use: Dict[str, Any]
+    ) -> Tuple[ModelResponse, Dict[str, Any]]:  # type: ignore
         """
         Parse the streaming response from the model provider into ModelResponse objects.
 
@@ -315,8 +327,8 @@ class Cohere(Model):
             ModelResponse: Parsed response delta
         """
         model_response = ModelResponse()
-        tool_use: Dict[str, Any] = {}
 
+        # 1. Add content
         if (
             response.type == "content-delta"
             and response.delta is not None
@@ -324,20 +336,16 @@ class Cohere(Model):
             and response.delta.message.content is not None
             and response.delta.message.content.text is not None
         ):
-            model_response.content = response.delta.message.content.text  # type: ignore
+            model_response.content = response.delta.message.content.text
 
-        if (
-            response.type == "tool-plan-delta"
-            and response.delta is not None
-            and response.delta.message is not None
-            and response.delta.message.tool_plan is not None
-        ):
-            model_response.content = response.delta.message.tool_plan
+        # 2. Add tool calls information
 
+        # 2.1 Add starting tool call
         elif response.type == "tool-call-start" and response.delta is not None:
             if response.delta.message is not None and response.delta.message.tool_calls is not None:
                 tool_use = response.delta.message.tool_calls.model_dump()
 
+        # 2.2 Add tool call delta
         elif response.type == "tool-call-delta" and response.delta is not None:
             if (
                 response.delta.message is not None
@@ -347,9 +355,11 @@ class Cohere(Model):
             ):
                 tool_use["function"]["arguments"] += response.delta.message.tool_calls.function.arguments
 
+        # 2.3 Add ending tool call
         elif response.type == "tool-call-end":
             model_response.tool_calls = [tool_use]
 
+        # 3. Add metrics
         elif (
             response.type == "message-end"
             and response.delta is not None
@@ -358,7 +368,7 @@ class Cohere(Model):
         ):
             model_response.response_usage = self._get_metrics(response.delta.usage)  # type: ignore
 
-        return model_response
+        return model_response, tool_use
 
     def _get_metrics(self, response_usage) -> Metrics:
         """
