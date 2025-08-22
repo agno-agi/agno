@@ -23,8 +23,8 @@ datastore_id = "projects/your-project-id/locations/global/collections/default_co
 agent = Agent(
     model=Gemini(
         id="gemini-2.5-flash",
-        vertex_ai_search=True,
-        vertex_ai_search_datastore=datastore_id,
+        vertexai_search=True,
+        vertexai_search_datastore=datastore_id,
         vertexai=True,  # Use Vertex AI endpoint
     ),
     show_tool_calls=True,

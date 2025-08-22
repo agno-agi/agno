@@ -72,8 +72,8 @@ class Gemini(Model):
     grounding: bool = False
     grounding_dynamic_threshold: Optional[float] = None
     url_context: bool = False
-    vertex_ai_search: bool = False
-    vertex_ai_search_datastore: Optional[str] = None
+    vertexai_search: bool = False
+    vertexai_search_datastore: Optional[str] = None
 
     temperature: Optional[float] = None
     top_p: Optional[float] = None
@@ -227,16 +227,16 @@ class Gemini(Model):
             log_info("URL context enabled.")
             builtin_tools.append(Tool(url_context=UrlContext()))
 
-        if self.vertex_ai_search:
+        if self.vertexai_search:
             log_info("Vertex AI Search enabled.")
-            if not self.vertex_ai_search_datastore:
-                log_error("vertex_ai_search_datastore must be provided when vertex_ai_search is enabled.")
-                raise ValueError("vertex_ai_search_datastore must be provided when vertex_ai_search is enabled.")
+            if not self.vertexai_search_datastore:
+                log_error("vertexai_search_datastore must be provided when vertexai_search is enabled.")
+                raise ValueError("vertexai_search_datastore must be provided when vertexai_search is enabled.")
             builtin_tools.append(
                 Tool(
                     retrieval=Retrieval(
                         vertex_ai_search=VertexAISearch(
-                            datastore=self.vertex_ai_search_datastore
+                            datastore=self.vertexai_search_datastore
                         )
                     )
                 )
