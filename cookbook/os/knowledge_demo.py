@@ -7,7 +7,6 @@ from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
-
 vector_db = PgVector(
     table_name="vectors",
     # Can inspect database via psql e.g. "psql -h localhost -p 5432 -U ai -d ai"

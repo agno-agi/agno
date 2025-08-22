@@ -342,7 +342,7 @@ class Knowledge:
 
                 # Handle LightRAG special case - read file and upload directly
                 if self.vector_db.__class__.__name__ == "LightRag":
-                    self._process_lightrag_content(content, KnowledgeContentOrigin.PATH)
+                    await self._process_lightrag_content(content, KnowledgeContentOrigin.PATH)
                     return
 
                 content.content_hash = self._build_content_hash(content)
@@ -419,7 +419,7 @@ class Knowledge:
         content.file_type = "url"
 
         if self.vector_db.__class__.__name__ == "LightRag":
-            self._process_lightrag_content(content, KnowledgeContentOrigin.URL)
+            await self._process_lightrag_content(content, KnowledgeContentOrigin.URL)
             return
 
         content.content_hash = self._build_content_hash(content)
@@ -535,8 +535,8 @@ class Knowledge:
 
         log_info(f"Adding content from {content.name}")
 
-        if content.upload_file and self.vector_db.__class__.__name__ == "LightRag":
-            self._process_lightrag_content(content, KnowledgeContentOrigin.CONTENT)
+        if content.file_data and self.vector_db.__class__.__name__ == "LightRag":
+            await self._process_lightrag_content(content, KnowledgeContentOrigin.CONTENT)
             return
 
         content.content_hash = self._build_content_hash(content)
@@ -634,7 +634,7 @@ class Knowledge:
             )
 
             if self.vector_db.__class__.__name__ == "LightRag":
-                self._process_lightrag_content(content, KnowledgeContentOrigin.TOPIC)
+                await self._process_lightrag_content(content, KnowledgeContentOrigin.TOPIC)
                 return
 
             content.content_hash = self._build_content_hash(content)
@@ -830,7 +830,7 @@ class Knowledge:
         if content.url:
             await self._load_from_url(content, upsert, skip_if_exists)
 
-        if content.file_data or content.upload_file:
+        if content.file_data:
             await self._load_from_content(content, upsert, skip_if_exists)
 
         if content.topics:
@@ -939,7 +939,7 @@ class Knowledge:
             log_warning(f"Contents DB not found for knowledge base: {self.name}")
             return None
 
-    def _process_lightrag_content(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
+    async def _process_lightrag_content(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
         self._add_to_contents_db(content)
         if content_type == KnowledgeContentOrigin.PATH:
             if content.file_data is None:
@@ -961,14 +961,13 @@ class Knowledge:
                 file_type = content.file_type or path.suffix
 
                 if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
-                    result = asyncio.run(
-                        self.vector_db.insert_file_bytes(
-                            file_content=file_content,
-                            filename=path.name,  # Use the original filename with extension
-                            content_type=file_type,
-                            send_metadata=True,  # Enable metadata so server knows the file type
-                        )
+                    result = await self.vector_db.insert_file_bytes(
+                        file_content=file_content,
+                        filename=path.name,  # Use the original filename with extension
+                        content_type=file_type,
+                        send_metadata=True,  # Enable metadata so server knows the file type
                     )
+
                 else:
                     log_error("Vector database does not support file insertion")
                     content.status = ContentStatus.FAILED
@@ -1009,11 +1008,9 @@ class Knowledge:
                     return
 
                 if self.vector_db and hasattr(self.vector_db, "insert_text"):
-                    result = asyncio.run(
-                        self.vector_db.insert_text(
-                            file_source=content.url,
-                            text=read_documents[0].content,
-                        )
+                    result = await self.vector_db.insert_text(
+                        file_source=content.url,
+                        text=read_documents[0].content,
                     )
                 else:
                     log_error("Vector database does not support text insertion")
@@ -1034,19 +1031,19 @@ class Knowledge:
                 return
 
         elif content_type == KnowledgeContentOrigin.CONTENT:
-            filename = content.upload_file.filename if content.upload_file else "uploaded_file"
+            filename = (
+                content.file_data.filename if content.file_data and content.file_data.filename else "uploaded_file"
+            )
             log_info(f"Uploading file to LightRAG: {filename}")
 
-            # Use the already-read content from file_data instead of the closed upload_file
+            # Use the content from file_data
             if content.file_data and content.file_data.content:
                 if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
-                    result = asyncio.run(
-                        self.vector_db.insert_file_bytes(
-                            file_content=content.file_data.content,
-                            filename=filename,
-                            content_type=content.file_data.type,
-                            send_metadata=True,  # Enable metadata so server knows the file type
-                        )
+                    result = await self.vector_db.insert_file_bytes(
+                        file_content=content.file_data.content,
+                        filename=filename,
+                        content_type=content.file_data.type,
+                        send_metadata=True,  # Enable metadata so server knows the file type
                     )
                 else:
                     log_error("Vector database does not support file insertion")
@@ -1081,11 +1078,9 @@ class Knowledge:
                 print("READ DOCUMENTS: ", read_documents[0])
 
                 if self.vector_db and hasattr(self.vector_db, "insert_text"):
-                    result = asyncio.run(
-                        self.vector_db.insert_text(
-                            file_source=content.topics[0],
-                            text=read_documents[0].content,
-                        )
+                    result = await self.vector_db.insert_text(
+                        file_source=content.topics[0],
+                        text=read_documents[0].content,
                     )
                 else:
                     log_error("Vector database does not support text insertion")
