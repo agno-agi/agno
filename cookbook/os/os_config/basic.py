@@ -10,7 +10,7 @@ from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
 # Setup the database
-db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", id="basic-db")
+db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 # Setup basic agents, teams and workflows
 basic_agent = Agent(
@@ -70,7 +70,11 @@ agent_os = AgentOS(
         ],
         chat=ChatConfig(
             quick_prompts={
-                "basic-agent": ["What can you do?"],
+                "basic-agent": [
+                    "What can you do?",
+                    "What tools do you have?",
+                    "Tell me about AgentOS",
+                ],
                 "basic-team": ["Which members are in the team?"],
                 "basic-workflow": ["What are the steps in the workflow?"],
             },

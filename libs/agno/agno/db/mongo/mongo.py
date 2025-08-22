@@ -32,7 +32,6 @@ except ImportError:
 class MongoDb(BaseDb):
     def __init__(
         self,
-        id: Optional[str] = None,
         db_client: Optional[MongoClient] = None,
         db_name: Optional[str] = None,
         db_url: Optional[str] = None,
@@ -46,7 +45,6 @@ class MongoDb(BaseDb):
         Interface for interacting with a MongoDB database.
 
         Args:
-            id (Optional[str]): The ID of the database.
             db_client (Optional[MongoClient]): The MongoDB client to use.
             db_name (Optional[str]): The name of the database to use.
             db_url (Optional[str]): The database URL to connect to.
@@ -60,7 +58,6 @@ class MongoDb(BaseDb):
             ValueError: If neither db_url nor db_client is provided.
         """
         super().__init__(
-            id=id,
             session_table=session_collection,
             memory_table=memory_collection,
             metrics_table=metrics_collection,

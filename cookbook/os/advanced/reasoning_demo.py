@@ -188,7 +188,6 @@ reasoning_finance_team = Team(
 # Setup our AgentOS app
 agent_os = AgentOS(
     description="Example OS setup",
-    os_id="basic-app",
     agents=[
         finance_agent,
         cot_agent,

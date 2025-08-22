@@ -10,6 +10,8 @@ chat:
   quick_prompts:
     basic-agent:
       - "What can you do?"
+      - "What tools do you have?"
+      - "Tell me about AgentOS"
     basic-team:
       - "Which members are in the team?"
     basic-workflow:

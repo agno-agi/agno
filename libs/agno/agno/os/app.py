@@ -123,6 +123,12 @@ class AgentOS:
             if workflow.db:
                 dbs[workflow.db.id] = workflow.db
 
+        for interface in self.interfaces or []:
+            if interface.agent and interface.agent.db:
+                dbs[interface.agent.db.id] = interface.agent.db
+            elif interface.team and interface.team.db:
+                dbs[interface.team.db.id] = interface.team.db
+
         self.dbs = dbs
 
     def _setup_routers(self) -> None:

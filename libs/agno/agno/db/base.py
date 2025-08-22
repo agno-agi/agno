@@ -19,19 +19,18 @@ class SessionType(str, Enum):
 class BaseDb(ABC):
     def __init__(
         self,
-        id: Optional[str] = None,
         session_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
     ):
+        self.id = str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
-        self.id = id or str(uuid4())
 
     # --- Sessions ---
     @abstractmethod
