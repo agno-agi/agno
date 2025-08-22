@@ -1,35 +1,25 @@
 from typing import Any, Dict, List, Optional
 
 from agno.knowledge.document import Document
-from agno.reranker.base import Reranker
+from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import logger
 
 try:
-    from cohere import Client as CohereClient
+    from sentence_transformers import CrossEncoder
 except ImportError:
-    raise ImportError("cohere not installed, please run pip install cohere")
+    raise ImportError("`sentence-transformers` not installed, please run `pip install sentence-transformers`")
 
 
-class CohereReranker(Reranker):
-    model: str = "rerank-multilingual-v3.0"
-    api_key: Optional[str] = None
-    cohere_client: Optional[CohereClient] = None
+class SentenceTransformerReranker(Reranker):
+    model: str = "BAAI/bge-reranker-v2-m3"
+    model_kwargs: Optional[Dict[str, Any]] = None
     top_n: Optional[int] = None
 
-    @property
-    def client(self) -> CohereClient:
-        if self.cohere_client:
-            return self.cohere_client
-
-        _client_params: Dict[str, Any] = {}
-        if self.api_key:
-            _client_params["api_key"] = self.api_key
-        return CohereClient(**_client_params)
-
     def _rerank(self, query: str, documents: List[Document]) -> List[Document]:
-        # Validate input documents and top_n
         if not documents:
             return []
+
+        sentence_transformer_client = CrossEncoder(model_name_or_path=self.model, model_kwargs=self.model_kwargs)
 
         top_n = self.top_n
         if top_n and not (0 < top_n):
@@ -37,20 +27,20 @@ class CohereReranker(Reranker):
             top_n = None
 
         compressed_docs: list[Document] = []
-        _docs = [doc.content for doc in documents]
-        response = self.client.rerank(query=query, documents=_docs, model=self.model)
-        for r in response.results:
-            doc = documents[r.index]
-            doc.reranking_score = r.relevance_score
+
+        sentence_pairs = [[query, doc.content] for doc in documents]
+
+        scores = sentence_transformer_client.predict(sentence_pairs).tolist()
+        for index, score in enumerate(scores):
+            doc = documents[index]
+            doc.reranking_score = score
             compressed_docs.append(doc)
 
-        # Order by relevance score
         compressed_docs.sort(
             key=lambda x: x.reranking_score if x.reranking_score is not None else float("-inf"),
             reverse=True,
         )
 
-        # Limit to top_n if specified
         if top_n:
             compressed_docs = compressed_docs[:top_n]
 

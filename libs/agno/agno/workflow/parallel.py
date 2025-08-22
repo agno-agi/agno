@@ -196,7 +196,7 @@ class Parallel:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
-        store_executor_responses: bool = True,
+        store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
     ) -> StepOutput:
         """Execute all steps in parallel and return aggregated result"""
@@ -214,7 +214,7 @@ class Parallel:
                     session_id=session_id,
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
-                    store_executor_responses=store_executor_responses,
+                    store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                 )  # type: ignore[union-attr]
                 return idx, step_result
@@ -293,7 +293,7 @@ class Parallel:
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
-        store_executor_responses: bool = True,
+        store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
@@ -341,7 +341,7 @@ class Parallel:
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
                     step_index=sub_step_index,
-                    store_executor_responses=store_executor_responses,
+                    store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                     parent_step_id=parallel_step_id,
                 ):
@@ -447,7 +447,7 @@ class Parallel:
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
-        store_executor_responses: bool = True,
+        store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
     ) -> StepOutput:
         """Execute all steps in parallel using asyncio and return aggregated result"""
@@ -465,7 +465,7 @@ class Parallel:
                     session_id=session_id,
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
-                    store_executor_responses=store_executor_responses,
+                    store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                 )  # type: ignore[union-attr]
                 return idx, inner_step_result
@@ -542,7 +542,7 @@ class Parallel:
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
-        store_executor_responses: bool = True,
+        store_executor_outputs: bool = True,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
@@ -590,7 +590,7 @@ class Parallel:
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
                     step_index=sub_step_index,
-                    store_executor_responses=store_executor_responses,
+                    store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                     parent_step_id=parallel_step_id,
                 ):  # type: ignore[union-attr]

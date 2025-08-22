@@ -2,13 +2,13 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.groq import Groq
-from agno.tools.thinking import ThinkingTools
+from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 
 thinking_llama = Agent(
     model=Groq(id="meta-llama/llama-4-scout-17b-16e-instruct"),
     tools=[
-        ThinkingTools(),
+        ReasoningTools(),
         YFinanceTools(
             stock_price=True,
             analyst_recommendations=True,

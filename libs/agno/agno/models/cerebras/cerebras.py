@@ -445,7 +445,7 @@ class Cerebras(Model):
 
         # Get the first choice (assuming single response)
         if response.choices is not None:
-            choice: ChatChunkResponseChoice | ChatCompletionResponseChoice = response.choices[0]
+            choice: Union[ChatChunkResponseChoice, ChatCompletionResponseChoice] = response.choices[0]
             choice_delta: ChatChunkResponseChoiceDelta = choice.delta  # type: ignore
 
             if choice_delta:

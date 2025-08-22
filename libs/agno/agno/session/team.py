@@ -48,13 +48,6 @@ class TeamSession:
 
         return session_dict
 
-    def telemetry_data(self) -> Dict[str, Any]:
-        return {
-            "model": self.team_data.get("model") if self.team_data else None,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-        }
-
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Optional[TeamSession]:
         if data is None or data.get("session_id") is None:

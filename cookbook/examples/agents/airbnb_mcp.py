@@ -13,7 +13,7 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.models.groq import Groq
 from agno.tools.mcp import MCPTools
-from agno.tools.thinking import ThinkingTools
+from agno.tools.reasoning import ReasoningTools
 
 
 async def run_agent(message: str) -> None:
@@ -22,7 +22,7 @@ async def run_agent(message: str) -> None:
     ) as mcp_tools:
         agent = Agent(
             model=Groq(id="meta-llama/llama-4-scout-17b-16e-instruct"),
-            tools=[ThinkingTools(), mcp_tools],
+            tools=[ReasoningTools(add_instructions=True), mcp_tools],
             instructions=dedent("""\
             ## General Instructions
             - Always start by using the think tool to map out the steps needed to complete the task.

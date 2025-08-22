@@ -179,7 +179,7 @@ def test_team_with_state_on_team_stream(shared_db):
     ):
         pass
 
-    run_response = team.get_last_run_response()
+    run_response = team.get_last_run_output()
     assert run_response is not None
     assert run_response.messages is not None
     assert (
@@ -259,7 +259,7 @@ def test_team_with_state_on_run_stream(shared_db):
     ):
         pass
 
-    run_response = team.get_last_run_response(session_id="session_1")
+    run_response = team.get_last_run_output(session_id="session_1")
     assert run_response is not None
     assert run_response.messages is not None
     assert (
@@ -339,7 +339,7 @@ async def test_team_with_state_on_run_stream_async(shared_db):
     ):
         pass
 
-    run_response = team.get_last_run_response(session_id="session_1")
+    run_response = team.get_last_run_output(session_id="session_1")
     assert run_response is not None
     assert run_response.messages is not None
     assert (

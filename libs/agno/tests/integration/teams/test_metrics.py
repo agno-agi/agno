@@ -78,7 +78,7 @@ def test_team_metrics_streaming(shared_db):
     responses = list(run_stream)
     assert len(responses) > 0
 
-    run_response = team.get_last_run_response()
+    run_response = team.get_last_run_output()
 
     # Verify metrics exist after stream completion
     assert run_response is not None
@@ -136,7 +136,7 @@ def test_team_metrics_with_history(shared_db):
     )
 
     team.run("Hi")
-    run_response = team.get_last_run_response()
+    run_response = team.get_last_run_output()
     assert run_response is not None
     assert run_response.metrics is not None
     assert run_response.metrics.input_tokens is not None
@@ -151,7 +151,7 @@ def test_team_metrics_with_history(shared_db):
 
     # Checking metrics aggregation works with multiple runs
     team.run("Hi")
-    run_response = team.get_last_run_response()
+    run_response = team.get_last_run_output()
     assert run_response is not None
     assert run_response.metrics is not None
     assert run_response.metrics.input_tokens is not None

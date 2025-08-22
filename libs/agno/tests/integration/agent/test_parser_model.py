@@ -107,7 +107,7 @@ def test_parser_model_stream(shared_db):
     for event in response:
         pass
 
-    run_response = park_agent.get_last_run_response()
+    run_response = park_agent.get_last_run_output()
 
     assert run_response.content is not None
     assert isinstance(run_response.content.get("park_name"), str)
