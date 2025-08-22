@@ -27,7 +27,7 @@ from typing import Dict, Iterator, Optional
 from agno.agent import Agent
 from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.run.response import RunOutputEvent
+from agno.run.agent import RunOutputEvent
 from agno.run.workflow import WorkflowCompletedEvent
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.newspaper4k import Newspaper4kTools
@@ -84,7 +84,7 @@ class ResearchReportGenerator(Workflow):
         - Diverse perspectives from recognized experts
         Avoid opinion pieces and non-authoritative sources.\
         """),
-        response_model=SearchResults,
+        output_schema=SearchResults,
     )
 
     article_scraper: Agent = Agent(
@@ -104,7 +104,7 @@ class ResearchReportGenerator(Workflow):
            - Handle paywalled content gracefully
         Format everything in clean markdown for optimal readability.\
         """),
-        response_model=ScrapedArticle,
+        output_schema=ScrapedArticle,
     )
 
     writer: Agent = Agent(
@@ -370,7 +370,7 @@ class ResearchReportGenerator(Workflow):
         }
         # Run the writer and yield the response
         yield from self.writer.run(json.dumps(writer_input, indent=4), stream=True)
-        run_response = self.writer.get_last_run_response()
+        run_response = self.writer.get_last_run_output()
         # Save the research report in the cache
         self.add_report_to_cache(topic, run_response.content)
 

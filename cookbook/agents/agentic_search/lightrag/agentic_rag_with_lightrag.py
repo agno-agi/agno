@@ -20,7 +20,7 @@ knowledge = Knowledge(
 asyncio.run(
     knowledge.add_content(
         name="Recipes",
-        path="cookbook/knowledge/data/filters/cv_4.pdf",
+        path="cookbook/knowledge/testing_resources/cv_1.pdf",
         metadata={"doc_type": "recipe_book"},
     )
 )

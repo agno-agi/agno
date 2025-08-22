@@ -130,13 +130,13 @@ def _clean_json_content(content: str) -> str:
     return content
 
 
-def _parse_individual_json(content: str, response_model: Type[BaseModel]) -> Optional[BaseModel]:
+def _parse_individual_json(content: str, output_schema: Type[BaseModel]) -> Optional[BaseModel]:
     """Parse individual JSON objects from content and merge them based on response model fields."""
     candidate_jsons = _extract_json_objects(content)
     merged_data: dict = {}
 
     # Get the expected fields from the response model
-    model_fields = response_model.model_fields if hasattr(response_model, "model_fields") else {}
+    model_fields = output_schema.model_fields if hasattr(output_schema, "model_fields") else {}
 
     for candidate in candidate_jsons:
         try:
@@ -161,13 +161,13 @@ def _parse_individual_json(content: str, response_model: Type[BaseModel]) -> Opt
         return None
 
     try:
-        return response_model.model_validate(merged_data)
+        return output_schema.model_validate(merged_data)
     except ValidationError as e:
         logger.warning("Validation failed on merged data: %s", e)
         return None
 
 
-def parse_response_model_str(content: str, response_model: Type[BaseModel]) -> Optional[BaseModel]:
+def parse_response_model_str(content: str, output_schema: Type[BaseModel]) -> Optional[BaseModel]:
     structured_output = None
 
     # Clean content first to simplify all parsing attempts
@@ -175,12 +175,12 @@ def parse_response_model_str(content: str, response_model: Type[BaseModel]) -> O
 
     try:
         # First attempt: direct JSON validation on cleaned content
-        structured_output = response_model.model_validate_json(cleaned_content)
+        structured_output = output_schema.model_validate_json(cleaned_content)
     except (ValidationError, json.JSONDecodeError):
         try:
             # Second attempt: Parse as Python dict
             data = json.loads(cleaned_content)
-            structured_output = response_model.model_validate(data)
+            structured_output = output_schema.model_validate(data)
         except (ValidationError, json.JSONDecodeError) as e:
             logger.warning(f"Failed to parse cleaned JSON: {e}")
 
@@ -191,13 +191,13 @@ def parse_response_model_str(content: str, response_model: Type[BaseModel]) -> O
                 # Single JSON object - try to parse it directly
                 try:
                     data = json.loads(candidate_jsons[0])
-                    structured_output = response_model.model_validate(data)
+                    structured_output = output_schema.model_validate(data)
                 except (ValidationError, json.JSONDecodeError):
                     pass
 
             if structured_output is None:
                 # Final attempt: Handle concatenated JSON objects with field merging
-                structured_output = _parse_individual_json(cleaned_content, response_model)
+                structured_output = _parse_individual_json(cleaned_content, output_schema)
                 if structured_output is None:
                     logger.warning("All parsing attempts failed.")
 

@@ -15,7 +15,7 @@ from agno.os.utils import (
     get_session_name,
     get_workflow_input_schema_dict,
 )
-from agno.run.response import RunOutput
+from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
@@ -290,7 +290,7 @@ class AgentResponse(BaseModel):
             "retries": agent.retries,
             "delay_between_retries": agent.delay_between_retries,
             "exponential_backoff": agent.exponential_backoff,
-            "response_model_name": agent.response_model.__name__ if agent.response_model else None,
+            "output_schema_name": agent.output_schema.__name__ if agent.output_schema else None,
             "parser_model_prompt": agent.parser_model_prompt,
             "parse_response": agent.parse_response,
             "structured_outputs": agent.structured_outputs,
@@ -423,8 +423,6 @@ class TeamResponse(BaseModel):
             model_provider = f"{model_name} {model_id}"
         elif model_id:
             model_provider = model_id
-        else:
-            model_provider = None
 
         session_table = team.db.session_table_name if team.db else None
         knowledge_table = team.db.knowledge_table_name if team.db and team.knowledge else None
@@ -507,7 +505,7 @@ class TeamResponse(BaseModel):
         }
 
         response_settings_info: Dict[str, Any] = {
-            "response_model_name": team.response_model.__name__ if team.response_model else None,
+            "output_schema_name": team.output_schema.__name__ if team.output_schema else None,
             "parser_model_prompt": team.parser_model_prompt,
             "parse_response": team.parse_response,
             "use_json_mode": team.use_json_mode,

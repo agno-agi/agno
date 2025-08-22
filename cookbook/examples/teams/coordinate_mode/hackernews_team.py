@@ -55,7 +55,7 @@ hn_team = Team(
         "Then, ask the web searcher to search for each story to get more information.",
         "Finally, provide a thoughtful and engaging summary.",
     ],
-    response_model=Article,
+    output_schema=Article,
     enable_agentic_context=True,
     share_member_interactions=True,
     markdown=True,

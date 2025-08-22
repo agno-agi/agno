@@ -350,7 +350,7 @@ class MongoDb(BaseDb):
             if not deserialize:
                 return sessions_raw, total_count
 
-            sessions: List[AgentSession | TeamSession | WorkflowSession] = []
+            sessions: List[Union[AgentSession, TeamSession, WorkflowSession]] = []
             for record in sessions_raw:
                 if session_type == SessionType.AGENT.value:
                     agent_session = AgentSession.from_dict(record)

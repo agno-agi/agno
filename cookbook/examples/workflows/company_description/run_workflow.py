@@ -9,7 +9,7 @@ from agents import (
 )
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.run.response import RunOutput
+from agno.run.agent import RunOutput
 from agno.utils.log import log_error, log_info
 from agno.workflow import Parallel, Step, Workflow
 from agno.workflow.types import StepInput, StepOutput

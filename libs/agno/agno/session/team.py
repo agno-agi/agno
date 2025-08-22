@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Mapping, Optional, Union
 
 from agno.models.message import Message
-from agno.run.response import RunOutput, RunStatus
+from agno.run.agent import RunOutput, RunStatus
 from agno.run.team import TeamRunOutput
 from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug, log_warning
@@ -47,13 +47,6 @@ class TeamSession:
         session_dict["summary"] = self.summary.to_dict() if self.summary else None
 
         return session_dict
-
-    def telemetry_data(self) -> Dict[str, Any]:
-        return {
-            "model": self.team_data.get("model") if self.team_data else None,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-        }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Optional[TeamSession]:

@@ -123,7 +123,7 @@ def test_structured_output_json_mode():
 
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        response_model=MovieScript,
+        output_schema=MovieScript,
         use_json_mode=True,
         telemetry=False,
     )
@@ -148,7 +148,7 @@ def test_structured_output():
 
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        response_model=MovieScript,
+        output_schema=MovieScript,
         telemetry=False,
     )
 

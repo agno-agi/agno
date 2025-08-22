@@ -28,7 +28,7 @@ class MovieScript(BaseModel):
 movie_agent = Agent(
     model=WatsonX(id="ibm/granite-20b-code-instruct"),
     description="You help people write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 # Get the response in a variable

@@ -389,7 +389,7 @@ class Workflow:
         # -*- Delete session
         self.db.delete_session(session_id=session_id)
 
-    def get_run_response(self, run_id: str, session_id: Optional[str] = None) -> Optional[WorkflowRunOutput]:
+    def get_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[WorkflowRunOutput]:
         """Get a RunOutput from the database."""
         if self._workflow_session is not None:
             run_response = self._workflow_session.get_run(run_id=run_id)
@@ -408,7 +408,7 @@ class Workflow:
                     log_warning(f"RunOutput {run_id} not found in AgentSession {session_id}")
         return None
 
-    def get_last_run_response(self, session_id: Optional[str] = None) -> Optional[WorkflowRunOutput]:
+    def get_last_run_output(self, session_id: Optional[str] = None) -> Optional[WorkflowRunOutput]:
         """Get the last run response from the database."""
         if (
             self._workflow_session is not None

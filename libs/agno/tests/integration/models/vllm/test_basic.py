@@ -91,7 +91,7 @@ def test_with_memory():
     _assert_metrics(response2)
 
 
-def test_response_model():
+def test_output_schema():
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
@@ -99,7 +99,7 @@ def test_response_model():
 
     agent = Agent(
         model=vLLM(id=VLLM_MODEL_ID),
-        response_model=MovieScript,
+        output_schema=MovieScript,
         telemetry=False,
     )
 
@@ -120,7 +120,7 @@ def test_json_response_mode():
 
     agent = Agent(
         model=vLLM(id=VLLM_MODEL_ID),
-        response_model=MovieScript,
+        output_schema=MovieScript,
         use_json_mode=True,
         telemetry=False,
     )

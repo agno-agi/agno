@@ -95,7 +95,7 @@ def test_structured_output():
 
     agent = Agent(
         model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
-        response_model=MovieScript,
+        output_schema=MovieScript,
         telemetry=False,
     )
 
@@ -116,7 +116,7 @@ def test_json_response_mode():
 
     agent = Agent(
         model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
-        response_model=MovieScript,
+        output_schema=MovieScript,
         use_json_mode=True,
         telemetry=False,
     )

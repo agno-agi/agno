@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union, cast
 from pydantic import BaseModel, Field
 
 from agno.models.base import Model
-from agno.run.response import Message
+from agno.run.agent import Message
 from agno.utils.log import log_debug, log_warning
 
 # TODO: Look into moving all managers into a separate dir

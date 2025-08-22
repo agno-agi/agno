@@ -1,4 +1,4 @@
-"""Run `pip install openai crewai crewai[tools]` to install dependencies."""
+"""Run `pip install openai crewai` to install dependencies."""
 
 from typing import Literal
 

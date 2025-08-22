@@ -86,7 +86,7 @@ research_agent = Agent(
        - Gather both mainstream and expert opinions
        - Find supporting data and statistics
     """),
-    response_model=SearchResults,
+    output_schema=SearchResults,
 )
 
 content_scraper_agent = Agent(
@@ -118,7 +118,7 @@ content_scraper_agent = Agent(
        - Ensure accurate extraction
        - Maintain readability
     """),
-    response_model=ScrapedArticle,
+    output_schema=ScrapedArticle,
 )
 
 blog_writer_agent = Agent(

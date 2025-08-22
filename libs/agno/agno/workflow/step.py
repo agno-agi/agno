@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.media import Audio, AudioArtifact, Image, ImageArtifact, Video, VideoArtifact
 from agno.models.metrics import Metrics
-from agno.run.response import RunOutput
+from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import (
     StepCompletedEvent,
@@ -249,8 +249,8 @@ class Step:
                             kwargs["store_member_responses"] = True
 
                         session_state_copy = copy(session_state)
-                        response = self.active_executor.run(  # type: ignore[misc]
-                            input=message,
+                        response = self.active_executor.run(  # type: ignore
+                            input=message,  # type: ignore
                             images=images,
                             videos=videos,
                             audio=audios,
@@ -579,7 +579,7 @@ class Step:
 
                         session_state_copy = copy(session_state)
                         response = await self.active_executor.arun(  # type: ignore
-                            input=message,
+                            input=message,  # type: ignore
                             images=images,
                             videos=videos,
                             audio=audios,

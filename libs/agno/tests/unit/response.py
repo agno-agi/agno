@@ -1,7 +1,7 @@
 import json
 
 from agno.models.message import Message, Metrics
-from agno.run.response import RunOutput
+from agno.run.agent import RunOutput
 
 
 def test_timer_serialization():

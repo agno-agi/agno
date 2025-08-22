@@ -33,7 +33,7 @@ agent = Agent(
     ),
     tools=[DuckDuckGoTools()],
     description="You help people write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
     debug_mode=True,
 )
 

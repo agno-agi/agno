@@ -33,8 +33,9 @@ async for event in agent.arun(...):
 ```
 
 2. The `RunResponse` class is now `RunOutput`. This is the type of the results you get when running an Agent:
+
 ```python v2_run_output.py
-from agno.run.response import RunOutput
+from agno.run.agent import RunOutput
 
 run_output: RunOutput = agent.run(...)
 ```

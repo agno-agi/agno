@@ -151,7 +151,7 @@ async def run_team():
                 "Think about the best way to tackle the task.",
             ],
             tools=[ReasoningTools(add_instructions=True)],
-            response_model=TravelPlan,
+            output_schema=TravelPlan,
             markdown=True,
             debug_mode=True,
             show_members_responses=True,

@@ -72,8 +72,6 @@ class AgentOS:
 
         if self.teams:
             for team in self.teams:
-                if not team.os_id:
-                    team.os_id = self.os_id
                 team.initialize_team()
 
                 # Required for the built-in routes to work

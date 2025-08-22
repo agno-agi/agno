@@ -1,5 +1,3 @@
-from typing import Optional
-
 import streamlit as st
 from agents import World, get_world_builder
 from agno.agent import Agent
@@ -97,7 +95,6 @@ def main() -> None:
         with st.chat_message("assistant"):
             # Create container for tool calls
             tool_calls_container = st.empty()
-            resp_container = st.empty()
             with st.spinner("🤔 Generating world..."):
                 try:
                     # Run the agent and get response

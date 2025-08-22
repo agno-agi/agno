@@ -132,7 +132,7 @@ research_team = Team(
     mode="route",
     model=OpenAIChat(id="gpt-4o"),
     description="A collaborative team that researches AI trends and extracts structured insights",
-    response_model=ResearchFindings,
+    output_schema=ResearchFindings,
     instructions=[
         "Work together to research the given topic thoroughly",
         "Combine research findings with data analysis",
@@ -147,7 +147,7 @@ strategy_team = Team(
     mode="coordinate",
     model=OpenAIChat(id="gpt-4o"),
     description="A strategic team that creates comprehensive content strategies",
-    response_model=ContentStrategy,
+    output_schema=ContentStrategy,
     instructions=[
         "Analyze the research findings from the previous step",
         "Collaborate to create a comprehensive content strategy",
@@ -162,7 +162,7 @@ planning_team = Team(
     mode="collaborate",
     model=OpenAIChat(id="gpt-4o"),
     description="A planning team that creates detailed implementation plans",
-    response_model=FinalContentPlan,
+    output_schema=FinalContentPlan,
     instructions=[
         "Use the content strategy to create a detailed implementation plan",
         "Combine project management with budget analysis",

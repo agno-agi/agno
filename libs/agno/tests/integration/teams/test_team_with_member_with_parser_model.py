@@ -21,7 +21,7 @@ def test_team_with_parser_model():
     agent = Agent(
         name="National Park Expert",
         model=OpenAIChat(id="gpt-4o"),
-        response_model=ParkGuide,
+        output_schema=ParkGuide,
         parser_model=OpenAIChat(id="gpt-4o-mini"),  # Use OpenAI instead of Claude
         description="You are an expert on national parks and provide concise guides.",
     )
@@ -46,7 +46,7 @@ def test_team_with_parser_model_stream(shared_db):
     agent = Agent(
         name="National Park Expert",
         model=OpenAIChat(id="gpt-4o"),
-        response_model=ParkGuide,
+        output_schema=ParkGuide,
         parser_model=OpenAIChat(id="gpt-4o-mini"),  # Use OpenAI instead of Claude
         description="You are an expert on national parks and provide concise guides.",
     )
@@ -70,7 +70,7 @@ def test_team_with_parser_model_stream(shared_db):
 
     # Fallback: try to get from database if events didn't capture it
     if final_content is None:
-        run_response = team.get_last_run_response()
+        run_response = team.get_last_run_output()
         if run_response and run_response.content:
             final_content = run_response.content
 

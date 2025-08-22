@@ -27,17 +27,17 @@ class MovieScript(BaseModel):
 
 # Agent that uses JSON mode
 json_mode_agent = Agent(
-    model=LangDB(id="gpt-4o"),
+    model=LangDB(id="llama3-1-70b-instruct-v1.0"),
     description="You write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
     use_json_mode=True,
 )
 
 # Agent that uses structured outputs
 structured_output_agent = Agent(
-    model=LangDB(id="gpt-4o", project_id="langdb-project-id"),
+    model=LangDB(id="llama3-1-70b-instruct-v1.0"),
     description="You write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 
