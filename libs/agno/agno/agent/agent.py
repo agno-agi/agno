@@ -1023,7 +1023,7 @@ class Agent:
             from copy import deepcopy
 
             run_dependencies = deepcopy(run_dependencies)
-            self.resolve_run_dependencies(run_dependencies)
+            self._resolve_run_dependencies(run_dependencies)
 
         # Extract workflow context from kwargs if present
         workflow_context = kwargs.pop("workflow_context", None)
@@ -1504,7 +1504,7 @@ class Agent:
             from copy import deepcopy
 
             run_dependencies = deepcopy(run_dependencies)
-            self.resolve_run_dependencies(run_dependencies)
+            self._resolve_run_dependencies(run_dependencies)
 
         # Extract workflow context from kwargs if present
         workflow_context = kwargs.pop("workflow_context", None)
@@ -3673,7 +3673,7 @@ class Agent:
                 log_debug("Model does not support structured or JSON schema outputs.")
                 return json_response_format
 
-    def resolve_run_dependencies(self, dependencies_to_resolve: Optional[Dict[str, Any]] = None) -> None:
+    def _resolve_run_dependencies(self, dependencies_to_resolve: Optional[Dict[str, Any]] = None) -> None:
         from inspect import signature
 
         # Use provided dependencies or fall back to instance dependencies
