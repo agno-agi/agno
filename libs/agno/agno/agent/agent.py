@@ -1039,7 +1039,6 @@ class Agent:
             session_id=session_id,
             agent_id=self.id,
             agent_name=self.name,
-            metadata=self.metadata,  # Add agent metadata as tags
         )
 
         run_response.model = self.model.id if self.model is not None else None
@@ -1482,7 +1481,6 @@ class Agent:
             session_id=session_id,
             agent_id=self.id,
             agent_name=self.name,
-            metadata=self.metadata,  # Add agent metadata as tags
         )
 
         run_response.model = self.model.id if self.model is not None else None

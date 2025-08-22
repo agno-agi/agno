@@ -1037,7 +1037,6 @@ class Team:
             session_id=session_id,
             team_id=self.id,
             team_name=self.name,
-            metadata=self.metadata,  # Add team metadata as tags
         )
 
         run_response.model = self.model.id if self.model is not None else None
@@ -1490,7 +1489,6 @@ class Team:
             session_id=session_id,
             team_id=self.id,
             team_name=self.name,
-            metadata=self.metadata,  # Add team metadata as tags
         )
 
         run_response.model = self.model.id if self.model is not None else None
