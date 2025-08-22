@@ -560,7 +560,7 @@ class Team:
 
         # Handle Message objects - extract content
         if isinstance(input, Message):
-            input = input.content
+            input = input.content if input.content is not None else ""
 
         # Case 1: Message is already a BaseModel instance
         if isinstance(input, BaseModel):
@@ -983,7 +983,7 @@ class Team:
         """Run the Team and return the response."""
 
         # Validate input against input_schema if provided
-        validated_input = self._validate_input(input)
+        validated_input = self._validate_input(input) if input is not None else input
 
         if store_member_responses is not None:
             self.store_member_responses = store_member_responses
@@ -1481,7 +1481,7 @@ class Team:
         """Run the Team asynchronously and return the response."""
 
         # Validate input against input_schema if provided
-        validated_input = self._validate_input(input)
+        validated_input = self._validate_input(input) if input is not None else input
 
         if store_member_responses is not None:
             self.store_member_responses = store_member_responses
@@ -4170,6 +4170,7 @@ class Team:
                         session_state=session.session_data.get("session_state")
                         if session.session_data is not None
                         else None,
+                        dependencies=run_dependencies,
                     )
 
                 # Convert to string for concatenation operations
@@ -4270,7 +4271,11 @@ class Team:
         return messages
 
     def _format_message_with_state_variables(
-        self, message: Any, user_id: Optional[str] = None, session_state: Optional[Dict[str, Any]] = None
+        self, 
+        message: Any, 
+        user_id: Optional[str] = None, 
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None
     ) -> Any:
         """Format a message with the session state variables."""
         import re
@@ -4278,6 +4283,8 @@ class Team:
 
         if not isinstance(message, str):
             return message
+
+        run_dependencies = dependencies if dependencies is not None else self.dependencies
 
         format_variables = ChainMap(
             session_state or {},

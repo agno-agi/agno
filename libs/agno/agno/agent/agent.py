@@ -580,7 +580,7 @@ class Agent:
 
         # Handle Message objects - extract content
         if isinstance(input, Message):
-            input = input.content
+            input = input.content if input.content is not None else ""
 
         # Case 1: Message is already a BaseModel instance
         if isinstance(input, BaseModel):
@@ -995,7 +995,7 @@ class Agent:
         run_id = str(uuid4())
 
         # Validate input against input_schema if provided
-        validated_input = self._validate_input(input)
+        validated_input = self._validate_input(input) if input is not None else input
 
         session_id, user_id, session_state = self._initialize_session(
             run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
@@ -1010,6 +1010,9 @@ class Agent:
 
         # Update session state from DB
         session_state = self._update_session_state(session=agent_session, session_state=session_state)
+
+        # Store original dependencies for restoration later
+        original_dependencies = self.dependencies
 
         # Determine runtime dependencies
         run_dependencies = dependencies if dependencies is not None else self.dependencies
@@ -1473,7 +1476,7 @@ class Agent:
         run_id = str(uuid4())
 
         # Validate input against input_schema if provided
-        validated_input = self._validate_input(input)
+        validated_input = self._validate_input(input) if input is not None else input
 
         session_id, user_id, session_state = self._initialize_session(
             run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
@@ -1488,6 +1491,9 @@ class Agent:
 
         # Update session state from DB
         session_state = self._update_session_state(session=agent_session, session_state=session_state)
+
+        # Store original dependencies for restoration later
+        original_dependencies = self.dependencies
 
         # Determine run dependencies
         run_dependencies = dependencies if dependencies is not None else self.dependencies
@@ -3963,7 +3969,11 @@ class Agent:
         return session.get_chat_history()
 
     def format_message_with_state_variables(
-        self, message: Any, user_id: Optional[str] = None, session_state: Optional[Dict[str, Any]] = None
+        self, 
+        message: Any, 
+        user_id: Optional[str] = None, 
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None
     ) -> Any:
         """Format a message with the session state variables."""
         import re
@@ -3973,9 +3983,12 @@ class Agent:
         if not isinstance(message, str):
             return message
 
+        # Use provided dependencies or fall back to agent dependencies
+        effective_dependencies = dependencies if dependencies is not None else self.dependencies
+
         format_variables = ChainMap(
             session_state or {},
-            run_dependencies or {},
+            effective_dependencies or {},
             self.metadata or {},
             {"user_id": user_id} if user_id is not None else {},
         )
@@ -4300,6 +4313,7 @@ class Agent:
                     session_state=session.session_data.get("session_state")
                     if session.session_data is not None
                     else None,
+                    dependencies=run_dependencies,
                 )
 
             return Message(
@@ -4419,6 +4433,7 @@ class Agent:
                         session_state=session.session_data.get("session_state")
                         if session.session_data is not None
                         else None,
+                        dependencies=run_dependencies,
                     )
 
                 # Convert to string for concatenation operations
