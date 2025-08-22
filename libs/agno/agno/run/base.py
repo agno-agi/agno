@@ -164,6 +164,7 @@ class RunOutputMetaData:
     additional_input: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_messages: Optional[List[Message]] = None
+    custom_metadata: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {}
@@ -177,6 +178,8 @@ class RunOutputMetaData:
             _dict["reasoning_steps"] = [rs.model_dump() for rs in self.reasoning_steps]
         if self.references is not None:
             _dict["references"] = [r.model_dump() for r in self.references]
+        if self.custom_metadata is not None:
+            _dict["custom_metadata"] = self.custom_metadata
         return _dict
 
     @classmethod
@@ -200,11 +203,14 @@ class RunOutputMetaData:
         if references is not None:
             references = [MessageReferences.model_validate(reference) for reference in references]
 
+        custom_metadata = data.pop("custom_metadata", None)
+
         return cls(
             additional_input=additional_input,
             reasoning_steps=reasoning_steps,
             reasoning_messages=reasoning_messages,
             references=references,
+            custom_metadata=custom_metadata,
         )
 
 

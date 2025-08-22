@@ -924,6 +924,9 @@ class Team:
         store_member_responses: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> TeamRunOutput: ...
 
@@ -946,6 +949,9 @@ class Team:
         store_member_responses: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         yield_run_response: bool = False,
         **kwargs: Any,
     ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
@@ -968,6 +974,9 @@ class Team:
         knowledge_filters: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         yield_run_response: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
@@ -996,9 +1005,16 @@ class Team:
         # Update session state from DB
         session_state = self.update_session_state(session=team_session, session_state=session_state)
 
-        # Resolve dependencies
-        if self.dependencies is not None:
-            self._resolve_run_dependencies()
+        # Determine runtime dependencies
+        run_dependencies = dependencies if dependencies is not None else self.dependencies
+
+        # Resolve callable dependencies if present
+        if run_dependencies is not None:
+            # Always make a copy so we don't modify the original dependencies
+            from copy import deepcopy
+
+            run_dependencies = deepcopy(run_dependencies)
+            self._resolve_run_dependencies(run_dependencies)
 
         # Extract workflow context from kwargs if present
         workflow_context = kwargs.pop("workflow_context", None)
@@ -1043,6 +1059,14 @@ class Team:
             team_name=self.name,
         )
 
+        # Add user-provided metadata if provided
+        if metadata is not None:
+            from agno.run.base import RunOutputMetaData
+
+            if run_response.metadata is None:
+                run_response.metadata = RunOutputMetaData()
+            run_response.metadata.custom_metadata = metadata
+
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
 
@@ -1067,6 +1091,7 @@ class Team:
             store_member_responses=store_member_responses,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
+            dependencies=run_dependencies,
         )
 
         retries = retries or 3
@@ -1095,6 +1120,8 @@ class Team:
                         files=files,
                         knowledge_filters=effective_filters,
                         add_history_to_context=add_history_to_context,
+                        run_dependencies=run_dependencies,
+                        add_dependencies_to_context=add_dependencies_to_context,
                         **kwargs,
                     )
                 else:
@@ -1109,6 +1136,8 @@ class Team:
                         files=files,
                         knowledge_filters=effective_filters,
                         add_history_to_context=add_history_to_context,
+                        run_dependencies=run_dependencies,
+                        add_dependencies_to_context=add_dependencies_to_context,
                         **kwargs,
                     )
                 if len(run_messages.messages) == 0:
@@ -1182,6 +1211,7 @@ class Team:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         workflow_context: Optional[Dict] = None,
+        run_dependencies: Optional[Dict[str, Any]] = None,
     ) -> TeamRunOutput:
         """Run the Team and return the response.
 
@@ -1194,9 +1224,14 @@ class Team:
         7. Log the team run
         """
         self.model = cast(Model, self.model)
+
         # Resolving here for async requirement
-        if self.dependencies is not None:
-            await self._aresolve_run_dependencies()
+        if run_dependencies is not None:
+            # Always make a copy so we don't modify the original dependencies
+            from copy import deepcopy
+
+            run_dependencies = deepcopy(run_dependencies)
+            await self._aresolve_run_dependencies(run_dependencies)
 
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
@@ -1262,6 +1297,7 @@ class Team:
         stream_intermediate_steps: bool = False,
         workflow_context: Optional[Dict] = None,
         yield_run_response: bool = False,
+        run_dependencies: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
         """Run the Team and return the response.
 
@@ -1272,9 +1308,7 @@ class Team:
         4. Save session to storage
         5. Log Team Run
         """
-        # Resolving here for async requirement
-        if self.dependencies is not None:
-            await self._aresolve_run_dependencies()
+        # Dependencies should be resolved by the calling method
 
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
@@ -1388,6 +1422,9 @@ class Team:
         store_member_responses: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> TeamRunOutput: ...
 
@@ -1410,6 +1447,9 @@ class Team:
         knowledge_filters: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         yield_run_response: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
@@ -1432,6 +1472,9 @@ class Team:
         store_member_responses: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         yield_run_response: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
@@ -1458,6 +1501,17 @@ class Team:
 
         # Update session state from DB
         session_state = self.update_session_state(session=team_session, session_state=session_state)
+
+        # Determine run dependencies (runtime override takes priority)
+        run_dependencies = dependencies if dependencies is not None else self.dependencies
+
+        # Resolve callable dependencies if present
+        if run_dependencies is not None:
+            # Always make a copy so we don't modify the original dependencies
+            from copy import deepcopy
+
+            run_dependencies = deepcopy(run_dependencies)
+            self._resolve_run_dependencies(run_dependencies)
 
         # Extract workflow context from kwargs if present
         workflow_context = kwargs.pop("workflow_context", None)
@@ -1502,6 +1556,14 @@ class Team:
             team_name=self.name,
         )
 
+        # Add user-provided metadata if provided
+        if metadata is not None:
+            from agno.run.base import RunOutputMetaData
+
+            if run_response.metadata is None:
+                run_response.metadata = RunOutputMetaData()
+            run_response.metadata.custom_metadata = metadata
+
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
 
@@ -1526,6 +1588,7 @@ class Team:
             store_member_responses=store_member_responses,
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
+            dependencies=dependencies,
         )
 
         retries = retries or 3
@@ -1553,6 +1616,8 @@ class Team:
                         files=files,
                         knowledge_filters=effective_filters,
                         add_history_to_context=add_history_to_context,
+                        run_dependencies=run_dependencies,
+                        add_dependencies_to_context=add_dependencies_to_context,
                         **kwargs,
                     )
                 else:
@@ -1567,6 +1632,8 @@ class Team:
                         files=files,
                         knowledge_filters=effective_filters,
                         add_history_to_context=add_history_to_context,
+                        run_dependencies=run_dependencies,
+                        add_dependencies_to_context=add_dependencies_to_context,
                         **kwargs,
                     )
 
@@ -1580,6 +1647,7 @@ class Team:
                         stream_intermediate_steps=stream_intermediate_steps,
                         workflow_context=workflow_context,
                         yield_run_response=yield_run_response,
+                        run_dependencies=run_dependencies,
                     )
                     return response_iterator  # type: ignore
                 else:
@@ -1589,6 +1657,7 @@ class Team:
                         session=team_session,  # type: ignore
                         user_id=user_id,
                         response_format=response_format,
+                        run_dependencies=run_dependencies,
                     )
 
             except ModelProviderError as e:
@@ -3282,38 +3351,44 @@ class Team:
                     run_response,
                 )
 
-    def _resolve_run_dependencies(self) -> None:
+    def _resolve_run_dependencies(self, dependencies_to_resolve: Optional[Dict[str, Any]] = None) -> None:
         from inspect import signature
 
+        # Use provided dependencies or fall back to instance dependencies
+        deps = dependencies_to_resolve if dependencies_to_resolve is not None else self.dependencies
+
         log_debug("Resolving dependencies")
-        if not isinstance(self.dependencies, dict):
+        if not isinstance(deps, dict):
             log_warning("Dependencies is not a dict")
             return
 
-        for key, value in self.dependencies.items():
+        for key, value in deps.items():
             if not callable(value):
-                self.dependencies[key] = value
+                deps[key] = value
                 continue
 
             try:
                 sig = signature(value)
                 resolved_value = value(agent=self) if "agent" in sig.parameters else value()
 
-                self.dependencies[key] = resolved_value
+                deps[key] = resolved_value
             except Exception as e:
                 log_warning(f"Failed to resolve dependencies for {key}: {e}")
 
-    async def _aresolve_run_dependencies(self) -> None:
+    async def _aresolve_run_dependencies(self, dependencies_to_resolve: Optional[Dict[str, Any]] = None) -> None:
         from inspect import iscoroutine, signature
 
+        # Use provided dependencies or fall back to instance dependencies
+        deps = dependencies_to_resolve if dependencies_to_resolve is not None else self.dependencies
+
         log_debug("Resolving context (async)")
-        if not isinstance(self.dependencies, dict):
+        if not isinstance(deps, dict):
             log_warning("Dependencies is not a dict")
             return
 
-        for key, value in self.dependencies.items():
+        for key, value in deps.items():
             if not callable(value):
-                self.dependencies[key] = value
+                deps[key] = value
                 continue
 
             try:
@@ -3323,7 +3398,7 @@ class Team:
                 if iscoroutine(resolved_value):
                     resolved_value = await resolved_value
 
-                self.dependencies[key] = resolved_value
+                deps[key] = resolved_value
             except Exception as e:
                 log_warning(f"Failed to resolve context for '{key}': {e}")
 
@@ -3346,6 +3421,7 @@ class Team:
         store_member_responses: bool = False,
         debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> None:
         # Prepare tools
         _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
@@ -3421,6 +3497,8 @@ class Team:
                 workflow_context=workflow_context,
                 store_member_responses=store_member_responses,
                 debug_mode=debug_mode,
+                add_history_to_context=add_history_to_context,
+                dependencies=dependencies,
             )
             _tools.append(forward_task_func)
             if self.get_member_information_tool:
@@ -3445,6 +3523,8 @@ class Team:
                     workflow_context=workflow_context,
                     store_member_responses=store_member_responses,
                     debug_mode=debug_mode,
+                    add_history_to_context=add_history_to_context,
+                    dependencies=dependencies,
                 )
             )
             if self.get_member_information_tool:
@@ -3468,6 +3548,7 @@ class Team:
                 store_member_responses=store_member_responses,
                 debug_mode=debug_mode,
                 add_history_to_context=add_history_to_context,
+                dependencies=dependencies,
             )
             _tools.append(run_member_agents_func)
 
@@ -3870,6 +3951,8 @@ class Team:
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
+        run_dependencies: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunMessages:
         """This function returns a RunMessages object with the following attributes:
@@ -3926,7 +4009,9 @@ class Team:
                         run_response.metadata.additional_input.extend(messages_to_add_to_run_response)
 
         # 3. Add history to run_messages
-        should_add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+        should_add_history = (
+            add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+        )
         if should_add_history:
             from copy import deepcopy
 
@@ -3962,6 +4047,8 @@ class Team:
             videos=videos,
             files=files,
             knowledge_filters=knowledge_filters,
+            run_dependencies=run_dependencies,
+            add_dependencies_to_context=add_dependencies_to_context,
             **kwargs,
         )
         # Add user message to run_messages
@@ -3983,6 +4070,8 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        run_dependencies: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
         **kwargs,
     ):
         # Get references from the knowledge base to use in the user message
@@ -4098,9 +4187,14 @@ class Team:
                     user_msg_content_str += self._convert_documents_to_string(references.references) + "\n"
                     user_msg_content_str += "</references>"
                 # 4.2 Add context to user message
-                if self.add_dependencies_to_context and self.dependencies is not None:
+                should_add_dependencies = (
+                    add_dependencies_to_context
+                    if add_dependencies_to_context is not None
+                    else self.add_dependencies_to_context
+                )
+                if should_add_dependencies and run_dependencies is not None:
                     user_msg_content_str += "\n\n<additional context>\n"
-                    user_msg_content_str += self._convert_dependencies_to_string(self.dependencies) + "\n"
+                    user_msg_content_str += self._convert_dependencies_to_string(run_dependencies) + "\n"
                     user_msg_content_str += "</additional context>"
 
                 # Use the string version for the final content
@@ -4187,7 +4281,7 @@ class Team:
 
         format_variables = ChainMap(
             session_state or {},
-            self.dependencies or {},
+            run_dependencies or {},
             self.metadata or {},
             {"user_id": user_id} if user_id is not None else {},
         )
@@ -4553,7 +4647,11 @@ class Team:
 
                 # Add history for the member if enabled
                 history = None
-                should_add_member_history = add_history_to_context if add_history_to_context is not None else member_agent.add_history_to_context
+                should_add_member_history = (
+                    add_history_to_context
+                    if add_history_to_context is not None
+                    else member_agent.add_history_to_context
+                )
                 if should_add_member_history:
                     history = self._get_history_for_member_agent(session, member_agent)
                     if history:
@@ -4912,6 +5010,8 @@ class Team:
         workflow_context: Optional[Dict] = None,
         store_member_responses: bool = False,
         debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> Function:
         if not images:
             images = []
@@ -4959,7 +5059,9 @@ class Team:
             )
 
             # 4. Add history for the member if enabled
-            should_add_member_history = add_history_to_context if add_history_to_context is not None else member_agent.add_history_to_context
+            should_add_member_history = (
+                add_history_to_context if add_history_to_context is not None else member_agent.add_history_to_context
+            )
             if should_add_member_history:
                 history = self._get_history_for_member_agent(session, member_agent)
                 if history:
@@ -5122,7 +5224,9 @@ class Team:
             )
 
             # 4. Add history for the member if enabled
-            should_add_member_history = add_history_to_context if add_history_to_context is not None else member_agent.add_history_to_context
+            should_add_member_history = (
+                add_history_to_context if add_history_to_context is not None else member_agent.add_history_to_context
+            )
             if should_add_member_history:
                 history = self._get_history_for_member_agent(session, member_agent)
                 if history:
@@ -5271,6 +5375,8 @@ class Team:
         workflow_context: Optional[Dict] = None,
         store_member_responses: bool = False,
         debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> Function:
         if not images:
             images = []
@@ -5318,7 +5424,9 @@ class Team:
             member_agent_task = input.get_content_string() if input is not None else ""
 
             # Add history for the member if enabled
-            should_add_member_history = add_history_to_context if add_history_to_context is not None else member_agent.add_history_to_context
+            should_add_member_history = (
+                add_history_to_context if add_history_to_context is not None else member_agent.add_history_to_context
+            )
             if should_add_member_history:
                 history = self._get_history_for_member_agent(session, member_agent)
                 if history:
@@ -5477,7 +5585,9 @@ class Team:
             member_agent_task = input.get_content_string() if input is not None else ""
 
             # Add history for the member if enabled
-            should_add_member_history = add_history_to_context if add_history_to_context is not None else member_agent.add_history_to_context
+            should_add_member_history = (
+                add_history_to_context if add_history_to_context is not None else member_agent.add_history_to_context
+            )
             if should_add_member_history:
                 history = self._get_history_for_member_agent(session, member_agent)
                 if history:
