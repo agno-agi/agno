@@ -123,7 +123,6 @@ class RunCompletedEvent(BaseTeamRunEvent):
     videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
     audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
     response_audio: Optional[AudioResponse] = None  # Model audio response
-    # Fields moved from RunOutputMetaData
     references: Optional[List[MessageReferences]] = None
     additional_input: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
@@ -295,15 +294,10 @@ class TeamRunOutput:
 
     citations: Optional[Citations] = None
 
-    # Fields moved from RunOutputMetaData
     references: Optional[List[MessageReferences]] = None
     additional_input: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_messages: Optional[List[Message]] = None
-
-    # Team metadata (tags-like metadata from the team)
-    metadata: Optional[Dict[str, Any]] = None
-
     created_at: int = field(default_factory=lambda: int(time()))
 
     events: Optional[List[Union[RunOutputEvent, TeamRunOutputEvent]]] = None
@@ -438,7 +432,6 @@ class TeamRunOutput:
                 else:
                     parsed_member_responses.append(cls.from_dict(response))
 
-        # Handle new fields moved from RunOutputMetaData
         additional_input = data.pop("additional_input", None)
         if additional_input is not None:
             additional_input = [Message.model_validate(message) for message in additional_input]

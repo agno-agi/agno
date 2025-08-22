@@ -1056,7 +1056,6 @@ class Team:
             session_id=session_id,
             team_id=self.id,
             team_name=self.name,
-            metadata=self.metadata,  # Add team metadata as tags
         )
 
         # Add user-provided metadata if provided
@@ -1554,7 +1553,6 @@ class Team:
             session_id=session_id,
             team_id=self.id,
             team_name=self.name,
-            metadata=self.metadata,  # Add team metadata as tags
         )
 
         # Add user-provided metadata if provided

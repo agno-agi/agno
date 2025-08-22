@@ -312,10 +312,7 @@ class RunOutput:
     additional_input: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_messages: Optional[List[Message]] = None
-
-    # Agent metadata (tags-like metadata from the agent)
     metadata: Optional[Dict[str, Any]] = None
-
     created_at: int = field(default_factory=lambda: int(time()))
 
     events: Optional[List[RunOutputEvent]] = None
