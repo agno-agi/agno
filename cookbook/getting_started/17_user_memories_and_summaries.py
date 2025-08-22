@@ -105,29 +105,14 @@ def print_agent_memory(agent):
     # Print user memories
     user_memories = agent.get_user_memories(user_id=agent.user_id)
     if user_memories:
-        try:
-            memories_data = []
-            for memory in user_memories:
-                try:
-                    memories_data.append(memory.to_dict())
-                except AttributeError:
-                    # Handle serialization issues by creating a simple dict
-                    memories_data.append({
-                        "memory": memory.memory,
-                        "memory_id": memory.memory_id,
-                        "topics": memory.topics,
-                        "user_id": memory.user_id,
-                    })
-            
-            console.print(
-                Panel(
-                    JSON(json.dumps(memories_data, indent=4)),
-                    title=f"Memories for user_id: {agent.user_id}",
-                    expand=True,
-                )
+        memories_data = [memory.to_dict() for memory in user_memories]
+        console.print(
+            Panel(
+                JSON(json.dumps(memories_data, indent=4)),
+                title=f"Memories for user_id: {agent.user_id}",
+                expand=True,
             )
-        except Exception as e:
-            console.print(f"Error displaying memories: {e}")
+        )
 
     # Print session summaries
     try:
