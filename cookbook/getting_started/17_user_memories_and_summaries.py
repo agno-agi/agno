@@ -103,7 +103,7 @@ def print_agent_memory(agent):
     )
 
     # Print user memories
-    user_memories = agent.memory_manager.get_user_memories(user_id=agent.user_id)
+    user_memories = agent.get_user_memories(user_id=agent.user_id)
     if user_memories:
         try:
             memories_data = []
