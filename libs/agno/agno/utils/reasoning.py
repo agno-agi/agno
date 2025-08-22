@@ -3,7 +3,6 @@ from typing import TYPE_CHECKING, List, Union
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.reasoning.step import ReasoningStep
-from agno.run.base import RunOutputMetaData
 
 if TYPE_CHECKING:
     from agno.run.agent import RunOutput
@@ -21,38 +20,28 @@ def append_to_reasoning_content(run_response: Union["RunOutput", "TeamRunOutput"
 def add_reasoning_step_to_metadata(
     run_response: Union["RunOutput", "TeamRunOutput"], reasoning_step: ReasoningStep
 ) -> None:
-    if run_response.metadata is None:
-        from agno.run.agent import RunOutputMetaData
+    if run_response.reasoning_steps is None:
+        run_response.reasoning_steps = []
 
-        run_response.metadata = RunOutputMetaData()
-
-    if run_response.metadata.reasoning_steps is None:
-        run_response.metadata.reasoning_steps = []
-
-    run_response.metadata.reasoning_steps.append(reasoning_step)
+    run_response.reasoning_steps.append(reasoning_step)
 
 
 def add_reasoning_metrics_to_metadata(
     run_response: Union["RunOutput", "TeamRunOutput"], reasoning_time_taken: float
 ) -> None:
     try:
-        if run_response.metadata is None:
-            from agno.run.agent import RunOutputMetaData
+        # Initialize reasoning_messages if it doesn't exist
+        if run_response.reasoning_messages is None:
+            run_response.reasoning_messages = []
 
-            run_response.metadata = RunOutputMetaData()
+        metrics_message = Message(
+            role="assistant",
+            content=run_response.reasoning_content,
+            metrics=Metrics(duration=reasoning_time_taken),
+        )
 
-            # Initialize reasoning_messages if it doesn't exist
-            if run_response.metadata.reasoning_messages is None:
-                run_response.metadata.reasoning_messages = []
-
-            metrics_message = Message(
-                role="assistant",
-                content=run_response.reasoning_content,
-                metrics=Metrics(duration=reasoning_time_taken),
-            )
-
-            # Add the metrics message to the reasoning_messages
-            run_response.metadata.reasoning_messages.append(metrics_message)
+        # Add the metrics message to the reasoning_messages
+        run_response.reasoning_messages.append(metrics_message)
 
     except Exception as e:
         # Log the error but don't crash
@@ -66,22 +55,17 @@ def update_run_output_with_reasoning(
     reasoning_steps: List[ReasoningStep],
     reasoning_agent_messages: List[Message],
 ) -> None:
-    if run_response.metadata is None:
-        run_response.metadata = RunOutputMetaData()
-
-    metadata = run_response.metadata
-
     # Update reasoning_steps
-    if metadata.reasoning_steps is None:
-        metadata.reasoning_steps = reasoning_steps
+    if run_response.reasoning_steps is None:
+        run_response.reasoning_steps = reasoning_steps
     else:
-        metadata.reasoning_steps.extend(reasoning_steps)
+        run_response.reasoning_steps.extend(reasoning_steps)
 
     # Update reasoning_messages
-    if metadata.reasoning_messages is None:
-        metadata.reasoning_messages = reasoning_agent_messages
+    if run_response.reasoning_messages is None:
+        run_response.reasoning_messages = reasoning_agent_messages
     else:
-        metadata.reasoning_messages.extend(reasoning_agent_messages)
+        run_response.reasoning_messages.extend(reasoning_agent_messages)
 
     # Create and store reasoning_content
     reasoning_content = ""

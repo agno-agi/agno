@@ -42,7 +42,7 @@ from agno.run.agent import (
     RunOutput,
     RunOutputEvent,
 )
-from agno.run.base import RunOutputMetaData, RunStatus
+from agno.run.base import RunStatus
 from agno.run.messages import RunMessages
 from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager
@@ -2897,8 +2897,8 @@ class Agent:
         # Determine reasoning completed
         if stream_intermediate_steps and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
-            if run_response and run_response.metadata and hasattr(run_response.metadata, "reasoning_steps"):
-                all_reasoning_steps = cast(List[ReasoningStep], run_response.metadata.reasoning_steps)
+            if run_response and run_response.reasoning_steps:
+                all_reasoning_steps = cast(List[ReasoningStep], run_response.reasoning_steps)
 
             if all_reasoning_steps:
                 add_reasoning_metrics_to_metadata(
@@ -2975,8 +2975,8 @@ class Agent:
 
         if stream_intermediate_steps and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
-            if run_response and run_response.metadata and hasattr(run_response.metadata, "reasoning_steps"):
-                all_reasoning_steps = cast(List[ReasoningStep], run_response.metadata.reasoning_steps)
+            if run_response and run_response.reasoning_steps:
+                all_reasoning_steps = cast(List[ReasoningStep], run_response.reasoning_steps)
 
             if all_reasoning_steps:
                 add_reasoning_metrics_to_metadata(
@@ -4592,11 +4592,9 @@ class Agent:
                                 time=round(retrieval_timer.elapsed, 4),
                             )
                             # Add the references to the run_response
-                            if run_response.metadata is None:
-                                run_response.metadata = RunOutputMetaData()
-                            if run_response.metadata.references is None:
-                                run_response.metadata.references = []
-                            run_response.metadata.references.append(references)
+                            if run_response.references is None:
+                                run_response.references = []
+                            run_response.references.append(references)
                         retrieval_timer.stop()
                         log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
                     except Exception as e:
@@ -4723,13 +4721,10 @@ class Agent:
             # Add the extra messages to the run_response
             if len(messages_to_add_to_run_response) > 0:
                 log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
-                if run_response.metadata is None:
-                    run_response.metadata = RunOutputMetaData(additional_input=messages_to_add_to_run_response)
+                if run_response.additional_input is None:
+                    run_response.additional_input = messages_to_add_to_run_response
                 else:
-                    if run_response.metadata.additional_input is None:
-                        run_response.metadata.additional_input = messages_to_add_to_run_response
-                    else:
-                        run_response.metadata.additional_input.extend(messages_to_add_to_run_response)
+                    run_response.additional_input.extend(messages_to_add_to_run_response)
 
         # 3. Add history to run_messages
         should_add_history = (
@@ -6199,11 +6194,9 @@ class Agent:
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
                 # Add the references to the run_response
-                if run_response.metadata is None:
-                    run_response.metadata = RunOutputMetaData()
-                if run_response.metadata.references is None:
-                    run_response.metadata.references = []
-                run_response.metadata.references.append(references)
+                if run_response.references is None:
+                    run_response.references = []
+                run_response.references.append(references)
             retrieval_timer.stop()
             from agno.utils.log import log_debug
 
@@ -6229,11 +6222,9 @@ class Agent:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
-                if run_response.metadata is None:
-                    run_response.metadata = RunOutputMetaData()
-                if run_response.metadata.references is None:
-                    run_response.metadata.references = []
-                run_response.metadata.references.append(references)
+                if run_response.references is None:
+                    run_response.references = []
+                run_response.references.append(references)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 
@@ -6274,11 +6265,9 @@ class Agent:
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
                 # Add the references to the run_response
-                if run_response.metadata is None:
-                    run_response.metadata = RunOutputMetaData()
-                if run_response.metadata.references is None:
-                    run_response.metadata.references = []
-                run_response.metadata.references.append(references)
+                if run_response.references is None:
+                    run_response.references = []
+                run_response.references.append(references)
             retrieval_timer.stop()
             from agno.utils.log import log_debug
 
@@ -6307,11 +6296,9 @@ class Agent:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
-                if run_response.metadata is None:
-                    run_response.metadata = RunOutputMetaData()
-                if run_response.metadata.references is None:
-                    run_response.metadata.references = []
-                run_response.metadata.references.append(references)
+                if run_response.references is None:
+                    run_response.references = []
+                run_response.references.append(references)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 

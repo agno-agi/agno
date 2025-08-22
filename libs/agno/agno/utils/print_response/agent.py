@@ -121,12 +121,8 @@ def print_response_stream(
                                 log_warning(f"Failed to convert response to JSON: {e}")
                     if hasattr(response_event, "thinking") and response_event.thinking is not None:
                         _response_thinking += response_event.thinking
-                if (
-                    hasattr(response_event, "metadata")
-                    and response_event.metadata is not None
-                    and response_event.metadata.reasoning_steps is not None
-                ):
-                    reasoning_steps = response_event.metadata.reasoning_steps
+                if hasattr(response_event, "reasoning_steps") and response_event.reasoning_steps is not None:
+                    reasoning_steps = response_event.reasoning_steps
 
             # Escape special tags before markdown conversion
             if markdown:
@@ -295,12 +291,8 @@ async def aprint_response_stream(
                     if resp.thinking is not None:  # type: ignore
                         _response_thinking += resp.thinking  # type: ignore
 
-                if (
-                    hasattr(resp, "metadata")
-                    and resp.metadata is not None
-                    and resp.metadata.reasoning_steps is not None
-                ):
-                    reasoning_steps = resp.metadata.reasoning_steps
+                if hasattr(resp, "reasoning_steps") and resp.reasoning_steps is not None:
+                    reasoning_steps = resp.reasoning_steps
 
             response_content_stream: str = _response_content
 
@@ -667,12 +659,8 @@ def build_panels(
         panels.append(response_panel)
         return panels
 
-    if (
-        isinstance(run_response, RunOutput)
-        and run_response.metadata is not None
-        and run_response.metadata.reasoning_steps is not None
-    ):
-        reasoning_steps = run_response.metadata.reasoning_steps
+    if isinstance(run_response, RunOutput) and run_response.reasoning_steps is not None:
+        reasoning_steps = run_response.reasoning_steps
 
     if len(reasoning_steps) > 0 and show_reasoning:
         # Create panels for reasoning steps
