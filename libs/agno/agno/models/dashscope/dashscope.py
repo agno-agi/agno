@@ -31,7 +31,6 @@ class DashScope(OpenAILike):
 
     # Thinking parameters
     enable_thinking: Optional[bool] = False
-    include_thoughts: Optional[bool] = None
 
     # DashScope supports structured outputs
     supports_native_structured_outputs: bool = True
