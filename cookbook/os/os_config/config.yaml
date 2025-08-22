@@ -1,0 +1,16 @@
+chat:
+  quick_prompts:
+    basic-agent:
+      - "What can you do?"
+      - "What tools do you have?"
+      - "Tell me about AgentOS"
+    basic-team:
+      - "Which members are in the team?"
+    basic-workflow:
+      - "What are the steps in the workflow?"
+memory:
+  display_name: Default Memory Page Name
+  dbs:
+    - db_id: db-0001
+      domain_config:
+        display_name: Postgres Memory

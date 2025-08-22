@@ -1,21 +1,34 @@
+import logging
 from typing import List, Optional, Union
 
-from fastapi import APIRouter, Body, HTTPException, Path, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 
 from agno.db.base import BaseDb, SessionType
-from agno.os.apps.utils import PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     AgentSessionDetailSchema,
     DeleteSessionRequest,
+    PaginatedResponse,
+    PaginationInfo,
     RunSchema,
     SessionSchema,
+    SortOrder,
     TeamRunSchema,
     TeamSessionDetailSchema,
     WorkflowSessionDetailSchema,
 )
+from agno.os.settings import AgnoAPISettings
+from agno.os.utils import get_db
+
+logger = logging.getLogger(__name__)
 
 
-def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
+def get_session_router(dbs: dict[str, BaseDb], settings: AgnoAPISettings = AgnoAPISettings()) -> APIRouter:
+    session_router = APIRouter(dependencies=[Depends(get_authentication_dependency(settings))])
+    return attach_routes(router=session_router, dbs=dbs)
+
+
+def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
     @router.get("/sessions", response_model=PaginatedResponse[SessionSchema], status_code=200)
     async def get_sessions(
         session_type: SessionType = Query(default=SessionType.AGENT, alias="type"),
@@ -26,7 +39,9 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         page: Optional[int] = Query(default=1, description="Page number"),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> PaginatedResponse[SessionSchema]:
+        db = get_db(dbs, db_id)
         sessions, total_count = db.get_sessions(
             session_type=session_type,
             component_id=component_id,
@@ -57,7 +72,9 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
     async def get_session_by_id(
         session_id: str = Path(...),
         session_type: SessionType = Query(default=SessionType.AGENT, description="Session type filter", alias="type"),
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
+        db = get_db(dbs, db_id)
         session = db.get_session(session_id=session_id, session_type=session_type)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id '{session_id}' not found")
@@ -75,7 +92,9 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
     async def get_session_runs(
         session_id: str = Path(..., description="Session ID", alias="session_id"),
         session_type: SessionType = Query(default=SessionType.AGENT, description="Session type filter", alias="type"),
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> Union[List[RunSchema], List[TeamRunSchema]]:
+        db = get_db(dbs, db_id)
         session = db.get_session(session_id=session_id, session_type=session_type, deserialize=False)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with ID {session_id} not found")
@@ -94,14 +113,22 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             return [RunSchema.from_dict(run) for run in runs]
 
     @router.delete("/sessions/{session_id}", status_code=204)
-    async def delete_session(session_id: str = Path(...)) -> None:
+    async def delete_session(
+        session_id: str = Path(...),
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ) -> None:
+        db = get_db(dbs, db_id)
         db.delete_session(session_id=session_id)
 
     @router.delete("/sessions", status_code=204)
-    async def delete_sessions(request: DeleteSessionRequest) -> None:
+    async def delete_sessions(
+        request: DeleteSessionRequest,
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ) -> None:
         if len(request.session_ids) != len(request.session_types):
             raise HTTPException(status_code=400, detail="Session IDs and session types must have the same length")
 
+        db = get_db(dbs, db_id)
         db.delete_sessions(session_ids=request.session_ids)
 
     @router.post(
@@ -112,7 +139,9 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         session_id: str = Path(...),
         session_type: SessionType = Query(default=SessionType.AGENT, description="Session type filter", alias="type"),
         session_name: str = Body(embed=True),
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
+        db = get_db(dbs, db_id)
         session = db.rename_session(session_id=session_id, session_type=session_type, session_name=session_name)
         if not session:
             raise HTTPException(status_code=404, detail=f"Session with id '{session_id}' not found")

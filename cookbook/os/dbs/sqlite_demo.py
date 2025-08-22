@@ -52,7 +52,6 @@ evaluation = AccuracyEval(
 # evaluation.run(print_results=True)
 
 agent_os = AgentOS(
-    os_id="basic-app",
     description="Example OS setup",
     agents=[basic_agent],
     teams=[team_agent],

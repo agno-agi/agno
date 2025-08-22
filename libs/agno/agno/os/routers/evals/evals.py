@@ -1,3 +1,4 @@
+import logging
 from copy import deepcopy
 from typing import List, Optional
 
@@ -7,32 +8,34 @@ from agno.agent.agent import Agent
 from agno.db.base import BaseDb
 from agno.db.schemas.evals import EvalFilterType, EvalType
 from agno.models.utils import get_model
-from agno.os.apps.eval.schemas import (
+from agno.os.auth import get_authentication_dependency
+from agno.os.routers.evals.schemas import (
     DeleteEvalRunsRequest,
     EvalRunInput,
     EvalSchema,
     UpdateEvalRunRequest,
 )
-from agno.os.apps.eval.utils import run_accuracy_eval, run_performance_eval, run_reliability_eval
-from agno.os.apps.utils import PaginatedResponse, PaginationInfo, SortOrder
-from agno.os.utils import get_agent_by_id, get_team_by_id
+from agno.os.routers.evals.utils import run_accuracy_eval, run_performance_eval, run_reliability_eval
+from agno.os.schema import PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.settings import AgnoAPISettings
+from agno.os.utils import get_agent_by_id, get_db, get_team_by_id
 from agno.team.team import Team
 
+logger = logging.getLogger(__name__)
 
-def parse_eval_types_filter(
-    eval_types: Optional[str] = Query(default=None, description="Comma-separated eval types"),
-) -> Optional[List[EvalType]]:
-    """Parse a comma-separated string of eval types into a list of EvalType enums"""
-    if not eval_types:
-        return None
-    try:
-        return [EvalType(item.strip()) for item in eval_types.split(",")]
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=f"Invalid eval_type: {e}")
+
+def get_eval_router(
+    dbs: dict[str, BaseDb],
+    agents: Optional[List[Agent]] = None,
+    teams: Optional[List[Team]] = None,
+    settings: AgnoAPISettings = AgnoAPISettings(),
+) -> APIRouter:
+    router = APIRouter(dependencies=[Depends(get_authentication_dependency(settings))])
+    return attach_routes(router=router, dbs=dbs, agents=agents, teams=teams)
 
 
 def attach_routes(
-    router: APIRouter, db: BaseDb, agents: Optional[List[Agent]] = None, teams: Optional[List[Team]] = None
+    router: APIRouter, dbs: dict[str, BaseDb], agents: Optional[List[Agent]] = None, teams: Optional[List[Team]] = None
 ) -> APIRouter:
     @router.get("/eval-runs", response_model=PaginatedResponse[EvalSchema], status_code=200)
     async def get_eval_runs(
@@ -46,7 +49,9 @@ def attach_routes(
         page: Optional[int] = Query(default=1, description="Page number"),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> PaginatedResponse[EvalSchema]:
+        db = get_db(dbs, db_id)
         eval_runs, total_count = db.get_eval_runs(
             limit=limit,
             page=page,
@@ -72,7 +77,11 @@ def attach_routes(
         )
 
     @router.get("/eval-runs/{eval_run_id}", response_model=EvalSchema, status_code=200)
-    async def get_eval_run(eval_run_id: str) -> EvalSchema:
+    async def get_eval_run(
+        eval_run_id: str,
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ) -> EvalSchema:
+        db = get_db(dbs, db_id)
         eval_run = db.get_eval_run(eval_run_id=eval_run_id, deserialize=False)
         if not eval_run:
             raise HTTPException(status_code=404, detail=f"Eval run with id '{eval_run_id}' not found")
@@ -80,15 +89,24 @@ def attach_routes(
         return EvalSchema.from_dict(eval_run)  # type: ignore
 
     @router.delete("/eval-runs", status_code=204)
-    async def delete_eval_runs(request: DeleteEvalRunsRequest) -> None:
+    async def delete_eval_runs(
+        request: DeleteEvalRunsRequest,
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ) -> None:
         try:
+            db = get_db(dbs, db_id)
             db.delete_eval_runs(eval_run_ids=request.eval_run_ids)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to delete eval runs: {e}")
 
     @router.patch("/eval-runs/{eval_run_id}", response_model=EvalSchema, status_code=200)
-    async def update_eval_run(eval_run_id: str, request: UpdateEvalRunRequest) -> EvalSchema:
+    async def update_eval_run(
+        eval_run_id: str,
+        request: UpdateEvalRunRequest,
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ) -> EvalSchema:
         try:
+            db = get_db(dbs, db_id)
             eval_run = db.rename_eval_run(eval_run_id=eval_run_id, name=request.name, deserialize=False)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to rename eval run: {e}")
@@ -99,7 +117,12 @@ def attach_routes(
         return EvalSchema.from_dict(eval_run)  # type: ignore
 
     @router.post("/eval-runs", response_model=EvalSchema, status_code=200)
-    async def run_eval(eval_run_input: EvalRunInput) -> Optional[EvalSchema]:
+    async def run_eval(
+        eval_run_input: EvalRunInput,
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ) -> Optional[EvalSchema]:
+        db = get_db(dbs, db_id)
+
         if eval_run_input.agent_id and eval_run_input.team_id:
             raise HTTPException(status_code=400, detail="Only one of agent_id or team_id must be provided")
 
@@ -167,3 +190,15 @@ def attach_routes(
             )
 
     return router
+
+
+def parse_eval_types_filter(
+    eval_types: Optional[str] = Query(default=None, description="Comma-separated eval types"),
+) -> Optional[List[EvalType]]:
+    """Parse a comma-separated string of eval types into a list of EvalType enums"""
+    if not eval_types:
+        return None
+    try:
+        return [EvalType(item.strip()) for item in eval_types.split(",")]
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Invalid eval_type: {e}")

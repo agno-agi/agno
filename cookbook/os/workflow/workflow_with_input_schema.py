@@ -80,7 +80,6 @@ content_creation_workflow = Workflow(
 # Initialize the Playground with the workflows
 agent_os = AgentOS(
     description="Example OS setup",
-    os_id="basic-app",
     workflows=[content_creation_workflow],
 )
 app = agent_os.get_app()

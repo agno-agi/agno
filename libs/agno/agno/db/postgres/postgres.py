@@ -43,6 +43,7 @@ class PostgresDb(BaseDb):
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
+        id: Optional[str] = None,
     ):
         """
         Interface for interacting with a PostgreSQL database.
@@ -61,12 +62,14 @@ class PostgresDb(BaseDb):
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
             knowledge_table (Optional[str]): Name of the table to store knowledge content.
+            id (Optional[str]): ID of the database.
 
         Raises:
             ValueError: If neither db_url nor db_engine is provided.
             ValueError: If none of the tables are provided.
         """
         super().__init__(
+            id=id,
             session_table=session_table,
             memory_table=memory_table,
             metrics_table=metrics_table,

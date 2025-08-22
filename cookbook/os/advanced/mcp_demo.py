@@ -73,7 +73,6 @@ agent = Agent(
 # Setup our AgentOS app
 agent_os = AgentOS(
     description="Example OS setup",
-    os_id="basic-app",
     agents=[agent],
 )
 app = agent_os.get_app()

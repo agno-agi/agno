@@ -1,3 +1,4 @@
+import logging
 import math
 from typing import List, Optional
 from uuid import uuid4
@@ -7,30 +8,32 @@ from fastapi.routing import APIRouter
 
 from agno.db.base import BaseDb
 from agno.db.schemas import UserMemory
-from agno.os.apps.memory.schemas import (
+from agno.os.auth import get_authentication_dependency
+from agno.os.routers.memory.schemas import (
     DeleteMemoriesRequest,
     UserMemoryCreateSchema,
     UserMemorySchema,
     UserStatsSchema,
 )
-from agno.os.apps.utils import PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.schema import PaginatedResponse, PaginationInfo, SortOrder
+from agno.os.settings import AgnoAPISettings
+from agno.os.utils import get_db
+
+logger = logging.getLogger(__name__)
 
 
-def parse_topics(topics: Optional[List[str]] = Query(default=None)) -> Optional[List[str]]:
-    """Parse a comma-separated string of topics into a list of topics"""
-    if not topics:
-        return None
-
-    try:
-        return [topic.strip() for topic in topics[0].split(",") if topic.strip()]
-
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Invalid topics: {e}")
+def get_memory_router(dbs: dict[str, BaseDb], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs) -> APIRouter:
+    router = APIRouter(dependencies=[Depends(get_authentication_dependency(settings))])
+    return attach_routes(router=router, dbs=dbs)
 
 
-def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
+def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
     @router.post("/memories", response_model=UserMemorySchema, status_code=200)
-    async def create_memory(payload: UserMemoryCreateSchema) -> UserMemorySchema:
+    async def create_memory(
+        payload: UserMemoryCreateSchema,
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ) -> UserMemorySchema:
+        db = get_db(dbs, db_id)
         user_memory = db.upsert_user_memory(
             memory=UserMemory(
                 memory_id=str(uuid4()),
@@ -46,11 +49,18 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         return UserMemorySchema.from_dict(user_memory)  # type: ignore
 
     @router.delete("/memories/{memory_id}", status_code=204)
-    async def delete_memory(memory_id: str = Path()) -> None:
+    async def delete_memory(
+        memory_id: str = Path(), db_id: Optional[str] = Query(default=None, description="The ID of the database to use")
+    ) -> None:
+        db = get_db(dbs, db_id)
         db.delete_user_memory(memory_id=memory_id)
 
     @router.delete("/memories", status_code=204)
-    async def delete_memories(request: DeleteMemoriesRequest) -> None:
+    async def delete_memories(
+        request: DeleteMemoriesRequest,
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ) -> None:
+        db = get_db(dbs, db_id)
         db.delete_user_memories(memory_ids=request.memory_ids)
 
     @router.get("/memories", response_model=PaginatedResponse[UserMemorySchema], status_code=200)
@@ -64,7 +74,9 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         page: Optional[int] = Query(default=1, description="Page number"),
         sort_by: Optional[str] = Query(default="updated_at", description="Field to sort by"),
         sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> PaginatedResponse[UserMemorySchema]:
+        db = get_db(dbs, db_id)
         user_memories, total_count = db.get_user_memories(
             limit=limit,
             page=page,
@@ -88,7 +100,11 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         )
 
     @router.get("/memories/{memory_id}", response_model=UserMemorySchema, status_code=200)
-    async def get_memory(memory_id: str = Path()) -> UserMemorySchema:
+    async def get_memory(
+        memory_id: str = Path(),
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ) -> UserMemorySchema:
+        db = get_db(dbs, db_id)
         user_memory = db.get_user_memory(memory_id=memory_id, deserialize=False)
         if not user_memory:
             raise HTTPException(status_code=404, detail=f"Memory with ID {memory_id} not found")
@@ -96,11 +112,19 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
         return UserMemorySchema.from_dict(user_memory)  # type: ignore
 
     @router.get("/topics", response_model=List[str], status_code=200)
-    async def get_topics() -> List[str]:
+    async def get_topics(
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ) -> List[str]:
+        db = get_db(dbs, db_id)
         return db.get_all_memory_topics()
 
     @router.patch("/memories/{memory_id}", response_model=UserMemorySchema, status_code=200)
-    async def update_memory(payload: UserMemoryCreateSchema, memory_id: str = Path()) -> UserMemorySchema:
+    async def update_memory(
+        payload: UserMemoryCreateSchema,
+        memory_id: str = Path(),
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
+    ) -> UserMemorySchema:
+        db = get_db(dbs, db_id)
         user_memory = db.upsert_user_memory(
             memory=UserMemory(
                 memory_id=memory_id,
@@ -119,7 +143,9 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
     async def get_user_memory_stats(
         limit: Optional[int] = Query(default=20, description="Number of items to return"),
         page: Optional[int] = Query(default=1, description="Page number"),
+        db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> PaginatedResponse[UserStatsSchema]:
+        db = get_db(dbs, db_id)
         try:
             user_stats, total_count = db.get_user_memory_stats(
                 limit=limit,
@@ -139,3 +165,15 @@ def attach_routes(router: APIRouter, db: BaseDb) -> APIRouter:
             raise HTTPException(status_code=500, detail=f"Failed to get user statistics: {str(e)}")
 
     return router
+
+
+def parse_topics(topics: Optional[List[str]] = Query(default=None)) -> Optional[List[str]]:
+    """Parse a comma-separated string of topics into a list of topics"""
+    if not topics:
+        return None
+
+    try:
+        return [topic.strip() for topic in topics[0].split(",") if topic.strip()]
+
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Invalid topics: {e}")

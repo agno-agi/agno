@@ -1,9 +1,14 @@
-"""Minimal example for AgentOS."""
-
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
+from agno.os.config import (
+    AgentOSConfig,
+    ChatConfig,
+    DatabaseConfig,
+    MemoryConfig,
+    MemoryDomainConfig,
+)
 from agno.os.interfaces.slack import Slack
 from agno.os.interfaces.whatsapp import Whatsapp
 from agno.team import Team
@@ -11,12 +16,12 @@ from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
 # Setup the database
-db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", id="db-0001")
 
 # Setup basic agents, teams and workflows
 basic_agent = Agent(
-    name="Basic Agent",
     id="basic-agent",
+    name="Basic Agent",
     db=db,
     enable_session_summaries=True,
     enable_user_memories=True,
@@ -49,12 +54,37 @@ basic_workflow = Workflow(
 
 # Setup our AgentOS app
 agent_os = AgentOS(
-    description="Example OS setup",
-    os_id="demo-app",
+    description="Example AgentOS",
+    os_id="basic-os",
     agents=[basic_agent],
     teams=[basic_team],
     workflows=[basic_workflow],
     interfaces=[Whatsapp(agent=basic_agent), Slack(agent=basic_agent)],
+    # Configuration for the AgentOS
+    config=AgentOSConfig(
+        chat=ChatConfig(
+            quick_prompts={
+                "basic-agent": [
+                    "What can you do?",
+                    "What tools do you have?",
+                    "Tell me about AgentOS",
+                ],
+                "basic-team": ["Which members are in the team?"],
+                "basic-workflow": ["What are the steps in the workflow?"],
+            },
+        ),
+        memory=MemoryConfig(
+            display_name="Default Memory Page Name",
+            dbs=[
+                DatabaseConfig(
+                    db_id=db.id,
+                    domain_config=MemoryDomainConfig(
+                        display_name="Postgres Memory",
+                    ),
+                )
+            ],
+        ),
+    ),
 )
 app = agent_os.get_app()
 
@@ -62,8 +92,7 @@ app = agent_os.get_app()
 if __name__ == "__main__":
     """Run our AgentOS.
 
-    You can see the configuration and available apps at:
+    You can see the configuration and available endpoints at:
     http://localhost:7777/config
-
     """
-    agent_os.serve(app="os:app", reload=True)
+    agent_os.serve(app="basic:app", reload=True)
