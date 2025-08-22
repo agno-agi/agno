@@ -11,7 +11,7 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
-from agno.run.response import RunOutput
+from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
@@ -445,7 +445,7 @@ class Cerebras(Model):
 
         # Get the first choice (assuming single response)
         if response.choices is not None:
-            choice: ChatChunkResponseChoice | ChatCompletionResponseChoice = response.choices[0]
+            choice: Union[ChatChunkResponseChoice, ChatCompletionResponseChoice] = response.choices[0]
             choice_delta: ChatChunkResponseChoiceDelta = choice.delta  # type: ignore
 
             if choice_delta:

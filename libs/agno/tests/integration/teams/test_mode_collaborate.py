@@ -64,7 +64,7 @@ def test_collaborate_team_with_structured_output():
             "Synthesize their views into a balanced conclusion.",
             "Only ask the members once for their perspectives.",
         ],
-        response_model=DebateResult,
+        output_schema=DebateResult,
     )
 
     response = team.run("Is artificial general intelligence possible in the next decade?")

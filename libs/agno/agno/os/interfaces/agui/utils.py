@@ -24,7 +24,7 @@ from ag_ui.core import (
 from ag_ui.core.types import Message as AGUIMessage
 
 from agno.models.message import Message
-from agno.run.response import RunContentEvent, RunEvent, RunOutputEvent, RunPausedEvent
+from agno.run.agent import RunContentEvent, RunEvent, RunOutputEvent, RunPausedEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunEvent, TeamRunOutputEvent
 
@@ -200,6 +200,16 @@ def _create_events_from_chunk(
                     )
                     events_to_emit.append(result_event)  # type: ignore
 
+                if tool_call.result is not None:
+                    result_event = ToolCallResultEvent(
+                        type=EventType.TOOL_CALL_RESULT,
+                        tool_call_id=tool_call.tool_call_id,  # type: ignore
+                        content=str(tool_call.result),
+                        role="tool",
+                        message_id=str(uuid.uuid4()),
+                    )
+                    events_to_emit.append(result_event)  # type: ignore
+
     # Handle reasoning
     elif chunk.event == RunEvent.reasoning_started:
         step_event = StepStartedEvent(type=EventType.STEP_STARTED, step_name="reasoning")  # type: ignore
@@ -262,6 +272,33 @@ def _create_completion_events(
                 tool_call_id=tool.tool_call_id,
             )
             events_to_emit.append(end_event)
+
+    # emit frontend tool calls, i.e. external_execution=True
+    if isinstance(chunk, RunPausedEvent) and chunk.tools is not None:
+        for tool in chunk.tools:
+            if tool.tool_call_id is None or tool.tool_name is None:
+                continue
+
+            start_event = ToolCallStartEvent(
+                type=EventType.TOOL_CALL_START,
+                tool_call_id=tool.tool_call_id,
+                tool_call_name=tool.tool_name,
+                parent_message_id=message_id,
+            )
+            events_to_emit.append(start_event)  # type: ignore
+
+            args_event = ToolCallArgsEvent(
+                type=EventType.TOOL_CALL_ARGS,
+                tool_call_id=tool.tool_call_id,
+                delta=json.dumps(tool.tool_args),
+            )
+            events_to_emit.append(args_event)  # type: ignore
+
+            end_event = ToolCallEndEvent(
+                type=EventType.TOOL_CALL_END,
+                tool_call_id=tool.tool_call_id,
+            )
+            events_to_emit.append(end_event)  # type: ignore
 
     run_finished_event = RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)
     events_to_emit.append(run_finished_event)  # type: ignore

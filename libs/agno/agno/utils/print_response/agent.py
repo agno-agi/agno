@@ -13,7 +13,7 @@ from rich.text import Text
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.reasoning.step import ReasoningStep
-from agno.run.response import RunEvent, RunOutput, RunOutputEvent, RunPausedEvent
+from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, RunPausedEvent
 from agno.utils.log import log_warning
 from agno.utils.message import get_text_from_message
 from agno.utils.response import create_panel, create_paused_run_output_panel, escape_markdown_tags, format_tool_calls
@@ -48,6 +48,7 @@ def print_response_stream(
     _response_thinking: str = ""
     response_content_batch: Union[str, JSON, Markdown] = ""
     reasoning_steps: List[ReasoningStep] = []
+    accumulated_tool_calls: List = []
 
     with Live(console=console) as live_log:
         status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
@@ -94,11 +95,19 @@ def print_response_stream(
                     panels.append(response_panel)
                     live_log.update(Group(*panels))
                     return
+
+                if (
+                    response_event.event == RunEvent.tool_call_started  # type: ignore
+                    and hasattr(response_event, "tool")
+                    and response_event.tool is not None
+                ):
+                    accumulated_tool_calls.append(response_event.tool)
+
                 if response_event.event == RunEvent.run_content:  # type: ignore
                     if hasattr(response_event, "content"):
                         if isinstance(response_event.content, str):
                             _response_content += response_event.content
-                        elif agent.response_model is not None and isinstance(response_event.content, BaseModel):
+                        elif agent.output_schema is not None and isinstance(response_event.content, BaseModel):
                             try:
                                 response_content_batch = JSON(  # type: ignore
                                     response_event.content.model_dump_json(exclude_none=True), indent=2
@@ -156,6 +165,7 @@ def print_response_stream(
                 reasoning_steps=reasoning_steps,
                 show_reasoning=show_reasoning,
                 show_full_reasoning=show_full_reasoning,
+                accumulated_tool_calls=accumulated_tool_calls,
             )
             panels.extend(additional_panels)
             if panels:
@@ -213,6 +223,7 @@ async def aprint_response_stream(
     _response_thinking: str = ""
     reasoning_steps: List[ReasoningStep] = []
     response_content_batch: Union[str, JSON, Markdown] = ""
+    accumulated_tool_calls: List = []
 
     with Live(console=console) as live_log:
         status = Status("Thinking...", spinner="aesthetic", speed=0.4, refresh_per_second=10)
@@ -261,10 +272,17 @@ async def aprint_response_stream(
                     live_log.update(Group(*panels))
                     break
 
+                if (
+                    resp.event == RunEvent.tool_call_started  # type: ignore
+                    and hasattr(resp, "tool")
+                    and resp.tool is not None
+                ):
+                    accumulated_tool_calls.append(resp.tool)
+
                 if resp.event == RunEvent.run_content:  # type: ignore
                     if isinstance(resp.content, str):
                         _response_content += resp.content
-                    elif agent.response_model is not None and isinstance(resp.content, BaseModel):
+                    elif agent.output_schema is not None and isinstance(resp.content, BaseModel):
                         try:
                             response_content_batch = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
                         except Exception as e:
@@ -323,6 +341,7 @@ async def aprint_response_stream(
                 reasoning_steps=reasoning_steps,
                 show_reasoning=show_reasoning,
                 show_full_reasoning=show_full_reasoning,
+                accumulated_tool_calls=accumulated_tool_calls,
             )
             panels.extend(additional_panels)
             if panels:
@@ -363,6 +382,7 @@ def build_panels_stream(
     reasoning_steps: List[ReasoningStep],
     show_reasoning: bool = True,
     show_full_reasoning: bool = False,
+    accumulated_tool_calls: Optional[List] = None,
 ):
     panels = []
 
@@ -396,16 +416,12 @@ def build_panels_stream(
         )
         panels.append(thinking_panel)
 
-    # Add tool calls panel if available
-    if (
-        hasattr(response_event, "tool")
-        and response_event.tool is not None
-        and response_event.event == RunEvent.tool_call_started
-    ):
+    if accumulated_tool_calls:  # Use accumulated tool calls instead of just current event
         # Create bullet points for each tool call
         tool_calls_content = Text()
-        formatted_tool_call = format_tool_calls([response_event.tool])
-        tool_calls_content.append(f"• {formatted_tool_call}\n")
+        formatted_tool_calls = format_tool_calls(accumulated_tool_calls)
+        for formatted_tool_call in formatted_tool_calls:
+            tool_calls_content.append(f"• {formatted_tool_call}\n")
 
         tool_calls_panel = create_panel(
             content=tool_calls_content.plain.rstrip(),
@@ -505,7 +521,7 @@ def print_response(
 
         additional_panels = build_panels(
             run_response=run_response,
-            response_model=agent.response_model,  # type: ignore
+            output_schema=agent.output_schema,  # type: ignore
             response_timer=response_timer,
             show_reasoning=show_reasoning,
             show_full_reasoning=show_full_reasoning,
@@ -599,7 +615,7 @@ async def aprint_response(
 
         additional_panels = build_panels(
             run_response=run_response,
-            response_model=agent.response_model,  # type: ignore
+            output_schema=agent.output_schema,  # type: ignore
             response_timer=response_timer,
             show_reasoning=show_reasoning,
             show_full_reasoning=show_full_reasoning,
@@ -636,7 +652,7 @@ async def aprint_response(
 def build_panels(
     run_response: RunOutput,
     response_timer: Timer,
-    response_model: Optional[BaseModel] = None,
+    output_schema: Optional[BaseModel] = None,
     show_reasoning: bool = True,
     show_full_reasoning: bool = False,
     tags_to_include_in_markdown: Optional[Set[str]] = None,
@@ -710,7 +726,7 @@ def build_panels(
                 response_content_batch = Markdown(escaped_content)
             else:
                 response_content_batch = run_response.get_content_as_string(indent=4)
-        elif response_model is not None and isinstance(run_response.content, BaseModel):
+        elif output_schema is not None and isinstance(run_response.content, BaseModel):
             try:
                 response_content_batch = JSON(run_response.content.model_dump_json(exclude_none=True), indent=2)
             except Exception as e:

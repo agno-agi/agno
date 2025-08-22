@@ -1,7 +1,7 @@
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
 
 from agno.db.base import BaseDb, SessionType
@@ -558,7 +558,6 @@ class SqliteDb(BaseDb):
                         session_data=serialized_session.get("session_data"),
                         metadata=serialized_session.get("metadata"),
                         runs=serialized_session.get("runs"),
-                        chat_history=serialized_session.get("chat_history"),
                         summary=serialized_session.get("summary"),
                         created_at=serialized_session.get("created_at"),
                         updated_at=serialized_session.get("created_at"),
@@ -569,7 +568,6 @@ class SqliteDb(BaseDb):
                             agent_id=serialized_session.get("agent_id"),
                             user_id=serialized_session.get("user_id"),
                             runs=serialized_session.get("runs"),
-                            chat_history=serialized_session.get("chat_history"),
                             summary=serialized_session.get("summary"),
                             agent_data=serialized_session.get("agent_data"),
                             session_data=serialized_session.get("session_data"),
@@ -594,7 +592,6 @@ class SqliteDb(BaseDb):
                         team_id=serialized_session.get("team_id"),
                         user_id=serialized_session.get("user_id"),
                         runs=serialized_session.get("runs"),
-                        chat_history=serialized_session.get("chat_history"),
                         summary=serialized_session.get("summary"),
                         created_at=serialized_session.get("created_at"),
                         updated_at=serialized_session.get("created_at"),
@@ -608,7 +605,6 @@ class SqliteDb(BaseDb):
                         set_=dict(
                             team_id=serialized_session.get("team_id"),
                             user_id=serialized_session.get("user_id"),
-                            chat_history=serialized_session.get("chat_history"),
                             summary=serialized_session.get("summary"),
                             runs=serialized_session.get("runs"),
                             team_data=serialized_session.get("team_data"),
@@ -634,7 +630,6 @@ class SqliteDb(BaseDb):
                         workflow_id=serialized_session.get("workflow_id"),
                         user_id=serialized_session.get("user_id"),
                         runs=serialized_session.get("runs"),
-                        chat_history=serialized_session.get("chat_history"),
                         summary=serialized_session.get("summary"),
                         created_at=serialized_session.get("created_at") or int(time.time()),
                         updated_at=serialized_session.get("updated_at") or int(time.time()),
@@ -647,7 +642,6 @@ class SqliteDb(BaseDb):
                         set_=dict(
                             workflow_id=serialized_session.get("workflow_id"),
                             user_id=serialized_session.get("user_id"),
-                            chat_history=serialized_session.get("chat_history"),
                             summary=serialized_session.get("summary"),
                             runs=serialized_session.get("runs"),
                             workflow_data=serialized_session.get("workflow_data"),
@@ -1587,7 +1581,7 @@ class SqliteDb(BaseDb):
 
         # Parse the content into the new format
         memories: List[UserMemory] = []
-        sessions: List[AgentSession] | List[TeamSession] | List[WorkflowSession] = []
+        sessions: Sequence[Union[AgentSession, TeamSession, WorkflowSession]] = []
         if v1_table_type == "agent_sessions":
             sessions = parse_agent_sessions(old_content)
         elif v1_table_type == "team_sessions":

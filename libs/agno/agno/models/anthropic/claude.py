@@ -11,7 +11,7 @@ from agno.models.base import Model
 from agno.models.message import Citations, DocumentCitation, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
-from agno.run.response import RunOutput
+from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.claude import MCPServerConfiguration, format_messages
 
@@ -490,7 +490,7 @@ class Claude(Model):
 
     def get_system_message_for_model(self, tools: Optional[List[Any]] = None) -> Optional[str]:
         if tools is not None and len(tools) > 0:
-            tool_call_prompt = "Do not reflect on the quality of the returned search results in your response"
+            tool_call_prompt = "Do not reflect on the quality of the returned search results in your response\n\n"
             return tool_call_prompt
         return None
 
@@ -609,8 +609,16 @@ class Claude(Model):
                 }
 
         elif isinstance(response, ContentBlockStopEvent):
+            # Handle completed thinking content
+            if response.content_block.type == "thinking":  # type: ignore
+                model_response.thinking = response.content_block.thinking  # type: ignore
+                # Store signature if available
+                if hasattr(response.content_block, "signature"):  # type: ignore
+                    model_response.provider_data = {
+                        "signature": response.content_block.signature,  # type: ignore
+                    }
             # Handle tool calls
-            if response.content_block.type == "tool_use":  # type: ignore
+            elif response.content_block.type == "tool_use":  # type: ignore
                 tool_use = response.content_block  # type: ignore
                 tool_name = tool_use.name
                 tool_input = tool_use.input

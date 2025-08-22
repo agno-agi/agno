@@ -4,7 +4,7 @@ import json
 from typing import Any, Callable, Dict
 
 from agno.agent import Agent
-from agno.tools.toolkit import Toolkit
+from agno.tools import Toolkit
 from agno.utils.log import logger
 
 

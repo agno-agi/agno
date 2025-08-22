@@ -35,7 +35,7 @@ class MarkdownReader(Reader):
                 file.seek(0)
                 file_contents = file.read().decode("utf-8")
 
-            documents = [Document(name=file_name, id=str({uuid.uuid4()}), content=file_contents)]
+            documents = [Document(name=file_name, id=str(uuid.uuid4()), content=file_contents)]
             if self.chunk:
                 chunked_documents = []
                 for document in documents:

@@ -55,7 +55,7 @@ agent = Agent(knowledge=knowledge)
 if __name__ == "__main__":
     # Comment out after the first run
     asyncio.run(
-        knowledge.async_add_content(
+        knowledge.add_content(
             url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
         )
     )

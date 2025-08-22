@@ -2,6 +2,9 @@
 AgentOS Demo
 
 Set the OS_SECURITY_KEY environment variable to your OS security key to enable authentication.
+
+Prerequisites:
+pip install -U fastapi uvicorn sqlalchemy pgvector psycopg openai duckduckgo-search yfinance
 """
 
 from agno.agent import Agent
@@ -10,7 +13,6 @@ from agno.eval.accuracy import AccuracyEval
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
-from agno.os.interfaces.whatsapp import Whatsapp
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
@@ -108,7 +110,6 @@ agent_os = AgentOS(
     os_id="agentos-demo",
     agents=[agno_agent, finance_agent],
     teams=[research_team],
-    interfaces=[Whatsapp(agent=agno_agent)],
 )
 app = agent_os.get_app()
 

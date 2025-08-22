@@ -12,7 +12,7 @@ except ImportError:
 client = MemoryClient()
 
 user_id = "agno"
-input = [
+messages = [
     {"role": "user", "content": "My name is John Billings."},
     {"role": "user", "content": "I live in NYC."},
     {"role": "user", "content": "I'm going to a concert tomorrow."},

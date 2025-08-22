@@ -7,7 +7,7 @@ import pytest
 
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.run.response import Message, RunOutput
+from agno.run.agent import Message, RunOutput
 from agno.session.agent import AgentSession
 from agno.session.summary import SessionSummary, SessionSummaryManager, SessionSummaryResponse
 

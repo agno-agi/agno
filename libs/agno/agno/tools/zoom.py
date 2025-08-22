@@ -6,7 +6,7 @@ from typing import Any, List, Optional
 
 import requests
 
-from agno.tools.toolkit import Toolkit
+from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
 
 

@@ -26,7 +26,7 @@ class MovieScript(BaseModel):
 
 agent = Agent(
     model=Portkey(id="gpt-4o-mini"),
-    response_model=MovieScript,
+    output_schema=MovieScript,
     markdown=True,
 )
 

@@ -9,7 +9,7 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
-from agno.run.response import RunOutput
+from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error
 from agno.utils.models.mistral import format_messages
 
@@ -29,7 +29,6 @@ try:
     )
     from mistralai.models.chatcompletionresponse import (  # type: ignore
         ChatCompletionResponse,  # type: ignore
-        ChatCompletionResponseUsage,  # type: ignore
     )
     from mistralai.models.deltamessage import DeltaMessage  # type: ignore
     from mistralai.types.basemodel import Unset  # type: ignore
@@ -415,7 +414,7 @@ class MistralChat(Model):
 
         return model_response
 
-    def _get_metrics(self, response_usage: ChatCompletionResponseUsage) -> Metrics:
+    def _get_metrics(self, response_usage: Any) -> Metrics:
         """
         Parse the given Mistral usage into an Agno Metrics object.
 

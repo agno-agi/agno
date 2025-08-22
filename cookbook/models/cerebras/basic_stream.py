@@ -1,5 +1,4 @@
-from agno.agent import Agent, RunOutput  # noqa
-import asyncio
+from agno.agent import Agent  # noqa
 from agno.models.cerebras import Cerebras
 
 agent = Agent(

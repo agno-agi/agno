@@ -1,5 +1,3 @@
-import os
-
 from agno.agent import Agent
 from agno.db.json import JsonDb  # noqa: F401
 from agno.knowledge.knowledge import Knowledge
@@ -8,7 +6,6 @@ from agno.os import AgentOS
 from agno.vectordb.pgvector import PgVector
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
-
 
 vector_db = PgVector(
     table_name="vectors",

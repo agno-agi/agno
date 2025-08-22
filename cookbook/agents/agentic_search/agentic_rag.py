@@ -4,11 +4,13 @@
 3. Run: `python cookbook/agent_concepts/agentic_search/agentic_rag.py` to run the agent
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.reranker import CohereReranker
 from agno.models.anthropic import Claude
-from agno.reranker.cohere import CohereReranker
 from agno.vectordb.lancedb import LanceDb, SearchType
 
 knowledge = Knowledge(
@@ -22,7 +24,9 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_contents(urls=["https://docs.agno.com/introduction/agents.md"])
+asyncio.run(
+    knowledge.add_contents(urls=["https://docs.agno.com/introduction/agents.md"])
+)
 
 agent = Agent(
     model=Claude(id="claude-3-7-sonnet-latest"),

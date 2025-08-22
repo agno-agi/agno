@@ -27,9 +27,9 @@ run_response = agent.run(
 )
 pprint_run_response(run_response)
 # Showing input audio, output audio and total audio tokens metrics
-print(f"Input audio tokens: {run_response.metrics.input_audio_tokens}")
-print(f"Output audio tokens: {run_response.metrics.output_audio_tokens}")
-print(f"Audio tokens: {run_response.metrics.audio_tokens}")
+print(f"Input audio tokens: {run_response.metrics.audio_input_tokens}")
+print(f"Output audio tokens: {run_response.metrics.audio_output_tokens}")
+print(f"Audio tokens: {run_response.metrics.audio_total_tokens}")
 
 agent = Agent(
     model=OpenAIChat(id="o3-mini"),
@@ -43,8 +43,7 @@ run_response = agent.run(
 )
 pprint_run_response(run_response)
 # Showing reasoning tokens metrics
-print(f"Reasoning tokens: {run_response.metrics['reasoning_tokens']}")
-
+print(f"Reasoning tokens: {run_response.metrics.reasoning_tokens}")
 
 agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False)
 agent.run("Share a 2 sentence horror story" * 150)

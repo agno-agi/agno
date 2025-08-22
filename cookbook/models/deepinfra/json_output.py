@@ -29,7 +29,7 @@ class MovieScript(BaseModel):
 agent = Agent(
     model=DeepInfra(id="microsoft/phi-4"),
     description="You write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 # Get the response in a variable

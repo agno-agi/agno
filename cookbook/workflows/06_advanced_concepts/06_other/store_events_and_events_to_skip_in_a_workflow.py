@@ -1,12 +1,12 @@
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.run.response import (
+from agno.run.agent import (
     RunContentEvent,
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
-from agno.run.workflow import WorkflowRunEvent, WorkflowRunResponse
+from agno.run.workflow import WorkflowRunEvent, WorkflowRunOutput
 from agno.tools.googlesearch import GoogleSearchTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.workflow.parallel import Parallel
@@ -51,7 +51,7 @@ search_step = Step(
 )
 
 
-def print_stored_events(run_response: WorkflowRunResponse, example_name):
+def print_stored_events(run_response: WorkflowRunOutput, example_name):
     """Helper function to print stored events in a nice format"""
     print(f"\n--- {example_name} - Stored Events ---")
     if run_response.events:
@@ -67,7 +67,7 @@ print("=== Simple Step Workflow with Event Storage ===")
 step_workflow = Workflow(
     name="Simple Step Workflow",
     description="Basic workflow demonstrating step event storage",
-    storage=SqliteDb(
+    db=SqliteDb(
         session_table="workflow_session",
         db_file="tmp/workflow.db",
     ),
@@ -92,7 +92,7 @@ for event in step_workflow.run(
         print(
             f"Event: {event.event if hasattr(event, 'event') else type(event).__name__}"
         )
-run_response = step_workflow.get_last_run_response()
+run_response = step_workflow.get_last_run_output()
 
 print("\nStep workflow completed!")
 print(
@@ -140,7 +140,7 @@ for event in parallel_workflow.run(
             f"Event: {event.event if hasattr(event, 'event') else type(event).__name__}"
         )
 
-run_response = parallel_workflow.get_last_run_response()
+run_response = parallel_workflow.get_last_run_output()
 print(f"Parallel workflow stored {len(run_response.events)} events")
 print_stored_events(run_response, "Parallel Workflow")
 print()

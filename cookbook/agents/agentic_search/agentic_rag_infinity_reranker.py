@@ -45,11 +45,13 @@ python cookbook/agent_concepts/agentic_search/agentic_rag_infinity_reranker.py
 - More deployment options: https://michaelfeil.eu/infinity/0.0.76/deploy/
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.reranker import InfinityReranker
 from agno.models.anthropic import Claude
-from agno.reranker.infinity import InfinityReranker
 from agno.vectordb.lancedb import LanceDb, SearchType
 
 knowledge = Knowledge(
@@ -69,12 +71,14 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_contents(
-    urls=[
-        "https://docs.agno.com/introduction/agents.md",
-        "https://docs.agno.com/agents/tools.md",
-        "https://docs.agno.com/agents/knowledge.md",
-    ]
+asyncio.run(
+    knowledge.add_contents(
+        urls=[
+            "https://docs.agno.com/introduction/agents.md",
+            "https://docs.agno.com/agents/tools.md",
+            "https://docs.agno.com/agents/knowledge.md",
+        ]
+    )
 )
 
 agent = Agent(

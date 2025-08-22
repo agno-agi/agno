@@ -7,7 +7,7 @@ Steps:
 """
 
 from agno.agent import Agent
-from agno.db.postgres import PostgresDb, SessionType
+from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from rich.pretty import pprint
 
@@ -35,9 +35,7 @@ agent.print_response("My name is john billings?", stream=True)
 if agent.db:
     pprint(agent.db.get_user_memories(user_id="test_user"))
     pprint(
-        agent.db.get_session(
-            session_id="test_session", session_type=SessionType.AGENT
-        ).summary  # type: ignore
+        agent.get_session(session_id="test_session").summary  # type: ignore
     )
 
 # -*- Share personal information
@@ -46,9 +44,7 @@ agent.print_response("I live in nyc?", stream=True)
 if agent.db:
     pprint(agent.db.get_user_memories(user_id="test_user"))
     pprint(
-        agent.db.get_session(
-            session_id="test_session", session_type=SessionType.AGENT
-        ).summary  # type: ignore
+        agent.get_session(session_id="test_session").summary  # type: ignore
     )
 
 # -*- Share personal information
@@ -57,9 +53,7 @@ agent.print_response("I'm going to a concert tomorrow?", stream=True)
 if agent.db:
     pprint(agent.db.get_user_memories(user_id="test_user"))
     pprint(
-        agent.db.get_session(
-            session_id="test_session", session_type=SessionType.AGENT
-        ).summary  # type: ignore
+        agent.get_session(session_id="test_session").summary  # type: ignore
     )
 
 # Ask about the conversation

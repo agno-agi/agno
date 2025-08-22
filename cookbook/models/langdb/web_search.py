@@ -5,7 +5,7 @@ from agno.models.langdb import LangDB
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
-    model=LangDB(id="claude-3-5-sonnet-20240620", project_id="langdb-project-id"),
+    model=LangDB(id="llama3-1-70b-instruct-v1.0"),
     tools=[DuckDuckGoTools()],
     markdown=True,
 )

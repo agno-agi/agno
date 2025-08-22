@@ -42,7 +42,7 @@ def attach_routes(router: APIRouter, agent: Optional[Agent] = None, team: Option
     async def _process_slack_event(event: dict):
         if event.get("type") == "message":
             user = None
-            message_text = event.get("text")
+            message_text = event.get("text", "")
             channel_id = event.get("channel", "")
             user = event.get("user")
             if event.get("thread_ts"):

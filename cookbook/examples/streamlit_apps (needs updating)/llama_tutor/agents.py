@@ -17,17 +17,17 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 # Importing the Agent and model classes
-from agno.agent import Agent
+from agno.agent import Agent  # noqa: E402
 
 # Importing storage and tool classes
-from agno.db.agent.sqlite import SqliteAgentStorage
-from agno.models.groq import Groq
-from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.exa import ExaTools
-from agno.tools.file import FileTools
+from agno.db.agent.sqlite import SqliteAgentStorage  # noqa: E402
+from agno.models.groq import Groq  # noqa: E402
+from agno.tools.duckduckgo import DuckDuckGoTools  # noqa: E402
+from agno.tools.exa import ExaTools  # noqa: E402
+from agno.tools.file import FileTools  # noqa: E402
 
 # Import the Agent template
-from prompts import EXPECTED_OUTPUT_TEMPLATE
+from prompts import EXPECTED_OUTPUT_TEMPLATE  # noqa: E402
 
 # ************* Setup Paths *************
 # Define the current working directory and output directory for saving files
@@ -179,7 +179,7 @@ def tutor_agent(
         read_tool_call_history=True,
         # Append previous conversation responses into the new messages for context.
         add_history_to_context=True,
-        num_history_responses=num_history_responses,
+        num_history_runs=num_history_responses,
         add_datetime_to_context=True,
         add_name_to_context=True,
         description=tutor_description,

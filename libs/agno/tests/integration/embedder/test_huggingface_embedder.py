@@ -12,7 +12,7 @@ def test_embedder_initialization(embedder):
     """Test that the embedder initializes correctly"""
     assert embedder is not None
     assert embedder.id == "intfloat/multilingual-e5-large"
-    assert embedder.api_key is not None
+    assert embedder.api_key is not None, "HUGGINGFACE_API_KEY env variable is not set"
 
 
 def test_get_embedding(embedder):

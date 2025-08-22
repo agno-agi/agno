@@ -72,7 +72,7 @@ weather_expert = Agent(
 national_park_expert = Team(
     model=OpenAIChat(id="gpt-4.1"),
     members=[itinerary_planner, weather_expert],
-    response_model=NationalParkAdventure,
+    output_schema=NationalParkAdventure,
     parser_model=OpenAIChat(id="gpt-4o"),
 )
 

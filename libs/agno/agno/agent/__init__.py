@@ -5,7 +5,7 @@ from agno.agent.agent import (
     Message,
     Toolkit,
 )
-from agno.run.response import (
+from agno.run.agent import (
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
     ReasoningCompletedEvent,

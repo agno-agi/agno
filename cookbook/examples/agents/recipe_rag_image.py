@@ -5,12 +5,14 @@ An agent that uses Llama 4 for multi-modal RAG and OpenAITools to create a visua
 Run: `pip install openai agno groq cohere` to install the dependencies
 """
 
+import asyncio
 from pathlib import Path
 
 from agno.agent import Agent
 from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.models.groq import Groq
+
+# from agno.models.groq import Groq
 from agno.tools.openai import OpenAITools
 from agno.utils.media import download_image
 from agno.vectordb.pgvector import PgVector
@@ -25,13 +27,15 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_content(
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+asyncio.run(
+    knowledge.add_content(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+    )
 )
 
 agent = Agent(
     name="EmbedVisionRAGAgent",
-    model=Groq(id="meta-llama/llama-4-scout-17b-16e-instruct"),
+    # model=Groq(id="meta-llama/llama-4-scout-17b-16e-instruct"),
     tools=[OpenAITools()],
     knowledge=knowledge,
     instructions=[
@@ -43,13 +47,12 @@ agent = Agent(
         "4. Present the recipe text clearly and mention that you have generated an accompanying image manual. Add instructions while generating the image.",
     ],
     markdown=True,
-    debug_mode=True,
 )
 
 agent.print_response(
     "What is the recipe for a Thai curry?",
 )
-response = agent.get_last_run_response()
+response = agent.get_last_run_output()
 
 if response.images:
     download_image(response.images[0].url, Path("tmp/recipe_image.png"))

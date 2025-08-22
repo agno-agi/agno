@@ -123,6 +123,7 @@ EVAL_TABLE_SCHEMA = {
     "AttributeDefinitions": [
         {"AttributeName": "run_id", "AttributeType": "S"},
         {"AttributeName": "eval_type", "AttributeType": "S"},
+        {"AttributeName": "eval_input", "AttributeType": "S"},
         {"AttributeName": "agent_id", "AttributeType": "S"},
         {"AttributeName": "team_id", "AttributeType": "S"},
         {"AttributeName": "workflow_id", "AttributeType": "S"},

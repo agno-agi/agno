@@ -2,7 +2,7 @@ import asyncio
 
 import nest_asyncio
 import streamlit as st
-from agno.run.response import RunEvent
+from agno.run.agent import RunEvent
 from agno.team import Team
 from agno.utils.log import logger
 from css import CUSTOM_CSS
@@ -83,16 +83,16 @@ async def body() -> None:
         uagi = create_uagi(uagi_config)
         st.session_state["uagi"] = uagi
         st.session_state["uagi_config"] = uagi_config
-        logger.info(f"---*--- UAgI instance created ---*---")
+        logger.info("---*--- UAgI instance created ---*---")
     else:
         uagi = st.session_state["uagi"]
-        logger.info(f"---*--- UAgI instance exists ---*---")
+        logger.info("---*--- UAgI instance exists ---*---")
 
     ####################################################################
     # Load Agent Session from the database
     ####################################################################
     try:
-        logger.info(f"---*--- Loading UAgI session ---*---")
+        logger.info("---*--- Loading UAgI session ---*---")
         st.session_state["session_id"] = uagi.load_session()
     except Exception:
         st.warning("Could not create UAgI session, is the database running?")

@@ -122,7 +122,7 @@ def test_tool_use_with_native_structured_outputs():
         model=Groq(id="llama-3.3-70b-versatile"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
-        response_model=StockPrice,
+        output_schema=StockPrice,
         telemetry=False,
     )
     response = agent.run("What is the current price of TSLA?")

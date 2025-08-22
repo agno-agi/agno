@@ -1,5 +1,5 @@
-import os
 from os import getenv
+from pathlib import Path
 from typing import Any, Iterable, Iterator, List, Optional, Union
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -72,8 +72,7 @@ class ReplicateTools(Toolkit):
         # Parse the URL to extract the file extension
         parsed_url = urlparse(output.url)
         path = parsed_url.path
-        _, ext = os.path.splitext(path)
-        ext = ext.lower()
+        ext = Path(path).suffix.lower()
 
         # Define supported extensions
         image_extensions = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp"}

@@ -53,7 +53,7 @@ agent = Agent(
 
         Be thorough but concise. If the page has extensive content, prioritize the most important information.
     """).strip(),
-    response_model=PageInformation,
+    output_schema=PageInformation,
 )
 
 result = agent.run("Extract all information from https://www.agno.com")

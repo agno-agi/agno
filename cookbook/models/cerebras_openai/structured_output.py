@@ -29,7 +29,7 @@ class MovieScript(BaseModel):
 structured_output_agent = Agent(
     model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
     description="You are a helpful assistant. Summarize the movie script based on the location in a JSON object.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 structured_output_agent.print_response("New York")

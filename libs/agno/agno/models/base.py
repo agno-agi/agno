@@ -25,7 +25,7 @@ from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
-from agno.run.response import RunContentEvent, RunOutput, RunOutputEvent
+from agno.run.agent import RunContentEvent, RunOutput, RunOutputEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
@@ -904,6 +904,10 @@ class Model(ABC):
 
         if model_response_delta.thinking is not None:
             stream_data.response_thinking += model_response_delta.thinking
+            should_yield = True
+
+        if model_response_delta.reasoning_content is not None:
+            stream_data.response_thinking += model_response_delta.reasoning_content
             should_yield = True
 
         if model_response_delta.redacted_thinking is not None:

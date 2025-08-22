@@ -100,7 +100,7 @@ def test_with_memory():
     _assert_metrics(response2)
 
 
-def test_response_model():
+def test_output_schema():
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
@@ -111,7 +111,7 @@ def test_response_model():
         markdown=True,
         # use_json_mode=True, if gemini-like / deepseek
         telemetry=False,
-        response_model=MovieScript,
+        output_schema=MovieScript,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -133,7 +133,7 @@ def test_json_response_mode():
         model=AIMLApi(id="gpt-4o-mini"),
         use_json_mode=True,
         telemetry=False,
-        response_model=MovieScript,
+        output_schema=MovieScript,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -156,7 +156,7 @@ def test_structured_outputs_deprecated():
         structured_outputs=False,  # They don't support native structured outputs
         # use_json_mode=True, if gemini-like / deepseek
         telemetry=False,
-        response_model=MovieScript,
+        output_schema=MovieScript,
     )
 
     response = agent.run("Create a movie about time travel")

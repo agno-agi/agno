@@ -1,3 +1,4 @@
+import asyncio
 import io
 import tempfile
 from pathlib import Path
@@ -7,7 +8,7 @@ import pytest
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.csv_reader import CSVReader
-from agno.vectordb.lancedb.lance_db import LanceDb
+from agno.vectordb.chroma import ChromaDb
 
 # Sample CSV data to use in tests
 EMPLOYEE_CSV_DATA = """id,name,department,salary,years_experience
@@ -57,10 +58,7 @@ def setup_csv_files():
 
 
 def test_csv_knowledge(setup_csv_files):
-    vector_db = LanceDb(
-        table_name="employees",
-        uri="tmp/lancedb",
-    )
+    vector_db = ChromaDb(collection="vectors", path="tmp/chromadb", persistent_client=True)
 
     # Use the temporary directory with CSV files
     csv_dir = Path(setup_csv_files) / "csvs"
@@ -75,9 +73,11 @@ def test_csv_knowledge(setup_csv_files):
         chunk=False,
     )
 
-    knowledge.add_content(
-        path=str(csv_dir),
-        reader=reader,
+    asyncio.run(
+        knowledge.add_content(
+            path=str(csv_dir),
+            reader=reader,
+        )
     )
 
     assert vector_db.exists()
@@ -94,10 +94,7 @@ def test_csv_knowledge(setup_csv_files):
 
 def test_csv_knowledge_single_file():
     """Test with a single in-memory CSV file."""
-    vector_db = LanceDb(
-        table_name="sales",
-        uri="tmp/lancedb",
-    )
+    vector_db = ChromaDb(collection="vectors", path="tmp/chromadb", persistent_client=True)
     csv_file = io.StringIO(SALES_CSV_DATA)
     csv_file.name = "sales.csv"
     with tempfile.NamedTemporaryFile(suffix=".csv", mode="w+") as temp_file:
@@ -112,9 +109,11 @@ def test_csv_knowledge_single_file():
             chunk=False,
         )
 
-        knowledge.add_content(
-            path=temp_file.name,
-            reader=reader,
+        asyncio.run(
+            knowledge.add_content(
+                path=temp_file.name,
+                reader=reader,
+            )
         )
 
         assert vector_db.exists()
@@ -131,10 +130,7 @@ def test_csv_knowledge_single_file():
 
 @pytest.mark.asyncio
 async def test_csv_knowledge_async(setup_csv_files):
-    vector_db = LanceDb(
-        table_name="employees_async",
-        uri="tmp/lancedb",
-    )
+    vector_db = ChromaDb(collection="vectors", path="tmp/chromadb", persistent_client=True)
     csv_dir = Path(setup_csv_files) / "csvs"
 
     knowledge = Knowledge(
@@ -144,13 +140,13 @@ async def test_csv_knowledge_async(setup_csv_files):
         chunk=False,
     )
 
-    await knowledge.async_add_content(
+    await knowledge.add_content(
         path=str(csv_dir),
         reader=reader,
     )
 
     assert await vector_db.async_exists()
-    count = await vector_db.async_get_count()
+    count = await vector_db.get_count()
     assert count >= 2
 
     # Create and use the agent
@@ -167,10 +163,7 @@ async def test_csv_knowledge_async(setup_csv_files):
 @pytest.mark.asyncio
 async def test_csv_knowledge_async_single_file():
     """Test with a single in-memory CSV file asynchronously."""
-    vector_db = LanceDb(
-        table_name="sales_async",
-        uri="tmp/lancedb",
-    )
+    vector_db = ChromaDb(collection="vectors", path="tmp/chromadb", persistent_client=True)
 
     with tempfile.NamedTemporaryFile(suffix=".csv", mode="w+") as temp_file:
         temp_file.write(SALES_CSV_DATA)
@@ -183,7 +176,7 @@ async def test_csv_knowledge_async_single_file():
             chunk=False,
         )
 
-        await knowledge.async_add_content(
+        await knowledge.add_content(
             path=temp_file.name,
             reader=reader,
         )

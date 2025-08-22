@@ -40,7 +40,6 @@ vector_db = Weaviate(
 )
 # Create knowledge base
 knowledge = Knowledge(
-    urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
     vector_db=vector_db,
 )
 
@@ -52,8 +51,9 @@ agent = Agent(
 if __name__ == "__main__":
     # Comment out after first run
     asyncio.run(
-        knowledge.async_add_content(
-            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+        knowledge.add_content(
+            name="Recipes",
+            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
         )
     )
 

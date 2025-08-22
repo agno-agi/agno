@@ -21,7 +21,7 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_content(
+knowledge.add_content_sync(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
 )
 

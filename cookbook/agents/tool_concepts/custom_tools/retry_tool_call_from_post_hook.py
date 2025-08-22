@@ -5,12 +5,10 @@ from agno.tools import FunctionCall, tool
 from agno.utils.log import logger
 
 
-def post_hook(agent: Agent, fc: FunctionCall):
+def post_hook(session_state: dict, fc: FunctionCall):
     logger.info(f"Post-hook: {fc.function.name}")
     logger.info(f"Arguments: {fc.arguments}")
-    shopping_list = (
-        agent.session_state.get("shopping_list", []) if agent.session_state else []
-    )
+    shopping_list = session_state.get("shopping_list", []) if session_state else []
     if len(shopping_list) < 3:
         raise RetryAgentRun(
             f"Shopping list is: {shopping_list}. Minimum 3 items in the shopping list. "
@@ -19,11 +17,11 @@ def post_hook(agent: Agent, fc: FunctionCall):
 
 
 @tool(post_hook=post_hook)
-def add_item(agent: Agent, item: str) -> str:
+def add_item(session_state: dict, item: str) -> str:
     """Add an item to the shopping list."""
-    if agent.session_state:
-        agent.session_state["shopping_list"].append(item)
-        return f"The shopping list is now {agent.session_state['shopping_list']}"
+    if session_state:
+        session_state["shopping_list"].append(item)
+        return f"The shopping list is now {session_state['shopping_list']}"
     return ""
 
 

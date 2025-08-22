@@ -37,17 +37,17 @@ from agno.models.message import Message, MessageReferences
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
-from agno.run.base import RunOutputMetaData, RunStatus
-from agno.run.messages import RunMessages
-from agno.run.response import (
+from agno.run.agent import (
     RunEvent,
     RunOutput,
     RunOutputEvent,
 )
+from agno.run.base import RunOutputMetaData, RunStatus
+from agno.run.messages import RunMessages
 from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager
+from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.tools.toolkit import Toolkit
 from agno.utils.events import (
     create_memory_update_completed_event,
     create_memory_update_started_event,
@@ -122,7 +122,7 @@ class Agent:
     session_state: Optional[Dict[str, Any]] = None
     # If True, the agent can update the session state
     enable_agentic_state: bool = False
-    # If True, cache the session in memory
+    # If True, cache the current Agent session in memory for faster access
     cache_session: bool = False
 
     search_session_history: Optional[bool] = False
@@ -268,18 +268,24 @@ class Agent:
     exponential_backoff: bool = False
 
     # --- Agent Response Model Settings ---
+    # Provide an input schema to validate the input
+    input_schema: Optional[Type[BaseModel]] = None
     # Provide a response model to get the response as a Pydantic model
-    response_model: Optional[Type[BaseModel]] = None
+    output_schema: Optional[Type[BaseModel]] = None
     # Provide a secondary model to parse the response from the primary model
     parser_model: Optional[Model] = None
     # Provide a prompt for the parser model
     parser_model_prompt: Optional[str] = None
-    # If True, the response from the Model is converted into the response_model
+    # Provide an output model to structure the response from the main model
+    output_model: Optional[Model] = None
+    # Provide a prompt for the output model
+    output_model_prompt: Optional[str] = None
+    # If True, the response from the Model is converted into the output_schema
     # Otherwise, the response is returned as a JSON string
     parse_response: bool = True
     # Use model enforced structured_outputs if supported (e.g. OpenAIChat)
     structured_outputs: Optional[bool] = None
-    # If `response_model` is set, sets the response mode of the model, i.e. if the model should explicitly respond with a JSON object instead of a Pydantic model
+    # If `output_schema` is set, sets the response mode of the model, i.e. if the model should explicitly respond with a JSON object instead of a Pydantic model
     use_json_mode: bool = False
     # Save the response to a file
     save_response_to_file: Optional[str] = None
@@ -303,6 +309,8 @@ class Agent:
     # --- If this Agent is part of a workflow ---
     # Optional workflow ID. Indicates this agent is part of a workflow.
     workflow_id: Optional[str] = None
+    # Set when this agent is part of a workflow.
+    workflow_session_id: Optional[str] = None
 
     # Metadata stored with this agent
     metadata: Optional[Dict[str, Any]] = None
@@ -327,9 +335,9 @@ class Agent:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        cache_session: bool = False,
         search_session_history: Optional[bool] = False,
         num_history_sessions: Optional[int] = None,
-        cache_session: bool = False,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
         db: Optional[BaseDb] = None,
@@ -384,8 +392,11 @@ class Agent:
         exponential_backoff: bool = False,
         parser_model: Optional[Model] = None,
         parser_model_prompt: Optional[str] = None,
-        response_model: Optional[Type[BaseModel]] = None,
+        input_schema: Optional[Type[BaseModel]] = None,
+        output_schema: Optional[Type[BaseModel]] = None,
         parse_response: bool = True,
+        output_model: Optional[Model] = None,
+        output_model_prompt: Optional[str] = None,
         structured_outputs: Optional[bool] = None,
         use_json_mode: bool = False,
         save_response_to_file: Optional[str] = None,
@@ -406,11 +417,10 @@ class Agent:
 
         self.session_id = session_id
         self.session_state = session_state
+        self.cache_session = cache_session
 
         self.search_session_history = search_session_history
         self.num_history_sessions = num_history_sessions
-
-        self.cache_session = cache_session
 
         self.dependencies = dependencies
         self.add_dependencies_to_context = add_dependencies_to_context
@@ -479,8 +489,11 @@ class Agent:
         self.exponential_backoff = exponential_backoff
         self.parser_model = parser_model
         self.parser_model_prompt = parser_model_prompt
-        self.response_model = response_model
+        self.input_schema = input_schema
+        self.output_schema = output_schema
         self.parse_response = parse_response
+        self.output_model = output_model
+        self.output_model_prompt = output_model_prompt
 
         self.structured_outputs = structured_outputs
 
@@ -535,7 +548,7 @@ class Agent:
         else:
             set_log_level_to_info()
 
-    def set_telemetry(self) -> None:
+    def _set_telemetry(self) -> None:
         """Override telemetry settings based on environment variables."""
 
         telemetry_env = getenv("AGNO_TELEMETRY")
@@ -557,6 +570,44 @@ class Agent:
 
             log_info("Setting default model to OpenAI Chat")
             self.model = OpenAIChat(id="gpt-4o")
+
+    def _validate_input(
+        self, input: Union[str, List, Dict, Message, BaseModel]
+    ) -> Union[str, List, Dict, Message, BaseModel]:
+        """Parse and validate input against input_schema if provided, otherwise return input as-is"""
+        if self.input_schema is None:
+            return input  # Return input unchanged if no schema is set
+
+        # Handle Message objects - extract content
+        if isinstance(input, Message):
+            input = input.content  # type: ignore
+
+        # Case 1: Message is already a BaseModel instance
+        if isinstance(input, BaseModel):
+            if isinstance(input, self.input_schema):
+                try:
+                    # Re-validate to catch any field validation errors
+                    input.model_validate(input.model_dump())
+                    return input
+                except Exception as e:
+                    raise ValueError(f"BaseModel validation failed: {str(e)}")
+            else:
+                # Different BaseModel types
+                raise ValueError(f"Expected {self.input_schema.__name__} but got {type(input).__name__}")
+
+        # Case 2: Message is a dict
+        elif isinstance(input, dict):
+            try:
+                validated_model = self.input_schema(**input)
+                return validated_model
+            except Exception as e:
+                raise ValueError(f"Failed to parse dict into {self.input_schema.__name__}: {str(e)}")
+
+        # Case 3: Other types not supported for structured input
+        else:
+            raise ValueError(
+                f"Cannot validate {type(input)} against input_schema. Expected dict or {self.input_schema.__name__} instance."
+            )
 
     def _set_memory_manager(self) -> None:
         if self.db is None:
@@ -604,7 +655,7 @@ class Agent:
 
     @property
     def should_parse_structured_output(self) -> bool:
-        return self.response_model is not None and self.parse_response and self.parser_model is None
+        return self.output_schema is not None and self.parse_response and self.parser_model is None
 
     def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
         if not self.tools:
@@ -688,6 +739,8 @@ class Agent:
             response_format=response_format,
             run_response=run_response,
         )
+        # If an output model is provided, generate output using the output model
+        self._generate_response_with_output_model(model_response, run_messages)
 
         # If a parser model is provided, structure the response separately
         self._parse_response_with_parser_model(model_response, run_messages)
@@ -770,14 +823,47 @@ class Agent:
         yield from self._handle_reasoning_stream(run_response=run_response, run_messages=run_messages)
 
         # 2. Process model response
-        yield from self._handle_model_response_stream(
-            session=session,
-            run_response=run_response,
-            run_messages=run_messages,
-            response_format=response_format,
-            stream_intermediate_steps=stream_intermediate_steps,
-            workflow_context=workflow_context,
-        )
+        if self.output_model is None:
+            for event in self._handle_model_response_stream(
+                session=session,
+                run_response=run_response,
+                run_messages=run_messages,
+                response_format=response_format,
+                stream_intermediate_steps=stream_intermediate_steps,
+                workflow_context=workflow_context,
+            ):
+                yield event
+        else:
+            from agno.run.agent import (
+                IntermediateRunContentEvent,
+                RunContentEvent,
+            )  # type: ignore
+
+            for event in self._handle_model_response_stream(
+                session=session,
+                run_response=run_response,
+                run_messages=run_messages,
+                response_format=response_format,
+                stream_intermediate_steps=stream_intermediate_steps,
+                workflow_context=workflow_context,
+            ):
+                if isinstance(event, RunContentEvent):
+                    if stream_intermediate_steps:
+                        yield IntermediateRunContentEvent(
+                            content=event.content,
+                            content_type=event.content_type,
+                        )
+                else:
+                    yield event
+
+            # If an output model is provided, generate output using the output model
+            yield from self._generate_response_with_output_model_stream(
+                session=session,
+                run_response=run_response,
+                run_messages=run_messages,
+                stream_intermediate_steps=stream_intermediate_steps,
+                workflow_context=workflow_context,
+            )
 
         # If a parser model is provided, structure the response separately
         yield from self._parse_response_with_parser_model_stream(
@@ -834,7 +920,7 @@ class Agent:
     @overload
     def run(
         self,
-        input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
+        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         *,
         stream: Literal[False] = False,
         stream_intermediate_steps: Optional[bool] = None,
@@ -854,7 +940,7 @@ class Agent:
     @overload
     def run(
         self,
-        input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
+        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         *,
         stream: Literal[True] = True,
         stream_intermediate_steps: Optional[bool] = None,
@@ -874,7 +960,7 @@ class Agent:
 
     def run(
         self,
-        input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
+        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         *,
         stream: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
@@ -896,6 +982,9 @@ class Agent:
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
+        # Validate input against input_schema if provided
+        validated_input = self._validate_input(input)
+
         session_id, user_id, session_state = self._initialize_session(
             run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
         )
@@ -904,7 +993,7 @@ class Agent:
         self.initialize_agent(debug_mode=debug_mode)
 
         # Read existing session from database
-        agent_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
+        agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=agent_session)
 
         # Update session state from DB
@@ -912,7 +1001,7 @@ class Agent:
 
         # Resolve dependencies
         if self.dependencies is not None:
-            self.resolve_run_dependencies()
+            self._resolve_run_dependencies()
 
         # Extract workflow context from kwargs if present
         workflow_context = kwargs.pop("workflow_context", None)
@@ -959,7 +1048,7 @@ class Agent:
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-        self.determine_tools_for_model(
+        self._determine_tools_for_model(
             model=self.model,
             run_response=run_response,
             session=agent_session,
@@ -978,9 +1067,9 @@ class Agent:
         for attempt in range(num_attempts):
             try:
                 # Prepare run messages
-                run_messages: RunMessages = self.get_run_messages(
+                run_messages: RunMessages = self._get_run_messages(
                     run_response=run_response,
-                    input=input,
+                    input=validated_input,
                     session=agent_session,
                     user_id=user_id,
                     audio=audio,
@@ -1074,7 +1163,7 @@ class Agent:
         """
         # Resolving here for async requirement
         if self.dependencies is not None:
-            await self.aresolve_run_dependencies()
+            await self._aresolve_run_dependencies()
 
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
@@ -1091,6 +1180,9 @@ class Agent:
             tool_call_limit=self.tool_call_limit,
             response_format=response_format,
         )
+
+        # If an output model is provided, generate output using the output model
+        await self._agenerate_response_with_output_model(model_response=model_response, run_messages=run_messages)
 
         # If a parser model is provided, structure the response separately
         await self._aparse_response_with_parser_model(model_response=model_response, run_messages=run_messages)
@@ -1164,7 +1256,7 @@ class Agent:
         """
         # Resolving here for async requirement
         if self.dependencies is not None:
-            await self.aresolve_run_dependencies()
+            await self._aresolve_run_dependencies()
 
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
         # Start the Run by yielding a RunStarted event
@@ -1176,15 +1268,48 @@ class Agent:
             yield item
 
         # 2. Generate a response from the Model
-        async for event in self._ahandle_model_response_stream(
-            session=session,
-            run_response=run_response,
-            run_messages=run_messages,
-            response_format=response_format,
-            stream_intermediate_steps=stream_intermediate_steps,
-            workflow_context=workflow_context,
-        ):
-            yield event
+        if self.output_model is None:
+            async for event in self._ahandle_model_response_stream(
+                session=session,
+                run_response=run_response,
+                run_messages=run_messages,
+                response_format=response_format,
+                stream_intermediate_steps=stream_intermediate_steps,
+                workflow_context=workflow_context,
+            ):
+                yield event
+        else:
+            from agno.run.agent import (
+                IntermediateRunContentEvent,
+                RunContentEvent,
+            )  # type: ignore
+
+            async for event in self._ahandle_model_response_stream(
+                session=session,
+                run_response=run_response,
+                run_messages=run_messages,
+                response_format=response_format,
+                stream_intermediate_steps=stream_intermediate_steps,
+                workflow_context=workflow_context,
+            ):
+                if isinstance(event, RunContentEvent):
+                    if stream_intermediate_steps:
+                        yield IntermediateRunContentEvent(
+                            content=event.content,
+                            content_type=event.content_type,
+                        )
+                else:
+                    yield event
+
+            # If an output model is provided, generate output using the output model
+            async for event in self._agenerate_response_with_output_model_stream(
+                session=session,
+                run_response=run_response,
+                run_messages=run_messages,
+                workflow_context=workflow_context,
+                stream_intermediate_steps=stream_intermediate_steps,
+            ):
+                yield event
 
         # If a parser model is provided, structure the response separately
         async for event in self._aparse_response_with_parser_model_stream(
@@ -1244,11 +1369,12 @@ class Agent:
     @overload
     async def arun(
         self,
-        input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
+        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         *,
         stream: Literal[False] = False,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
@@ -1263,7 +1389,7 @@ class Agent:
     @overload
     def arun(
         self,
-        input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
+        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         *,
         stream: Literal[True] = True,
         user_id: Optional[str] = None,
@@ -1282,7 +1408,7 @@ class Agent:
 
     def arun(  # type: ignore
         self,
-        input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
+        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         *,
         stream: Optional[bool] = None,
         user_id: Optional[str] = None,
@@ -1304,6 +1430,9 @@ class Agent:
         # Create a run_id for this specific run
         run_id = str(uuid4())
 
+        # Validate input against input_schema if provided
+        validated_input = self._validate_input(input)
+
         session_id, user_id, session_state = self._initialize_session(
             run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
         )
@@ -1312,7 +1441,7 @@ class Agent:
         self.initialize_agent(debug_mode=debug_mode)
 
         # Read existing session from storage
-        agent_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
+        agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=agent_session)
 
         # Update session state from DB
@@ -1361,7 +1490,7 @@ class Agent:
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-        self.determine_tools_for_model(
+        self._determine_tools_for_model(
             model=self.model,
             run_response=run_response,
             session=agent_session,
@@ -1380,9 +1509,9 @@ class Agent:
         for attempt in range(num_attempts):
             try:
                 # Prepare run messages
-                run_messages: RunMessages = self.get_run_messages(
+                run_messages: RunMessages = self._get_run_messages(
                     run_response=run_response,
-                    input=input,
+                    input=validated_input,
                     session=agent_session,
                     user_id=user_id,
                     audio=audio,
@@ -1515,10 +1644,10 @@ class Agent:
             knowledge_filters: The knowledge filters to use for the run.
             debug_mode: Whether to enable debug mode.
         """
-        if not run_response and not run_id:
+        if run_response is None and run_id is None:
             raise ValueError("Either run_response or run_id must be provided.")
 
-        if not run_response and (run_id is not None and (session_id is None and self.session_id is None)):
+        if run_response is None and (run_id is not None and (session_id is None and self.session_id is None)):
             raise ValueError("Session ID is required to continue a run from a run_id.")
 
         session_id = run_response.session_id if run_response else session_id
@@ -1532,7 +1661,7 @@ class Agent:
         self.initialize_agent(debug_mode=debug_mode)
 
         # Read existing session from storage
-        agent_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
+        agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=agent_session)
 
         # Update session state from DB
@@ -1540,7 +1669,7 @@ class Agent:
 
         # Resolve dependencies
         if self.dependencies is not None:
-            self.resolve_run_dependencies()
+            self._resolve_run_dependencies()
 
         effective_filters = knowledge_filters
 
@@ -1590,7 +1719,7 @@ class Agent:
         response_format = self._get_response_format()
         self.model = cast(Model, self.model)
 
-        self.determine_tools_for_model(
+        self._determine_tools_for_model(
             model=self.model,
             run_response=run_response,
             session=agent_session,
@@ -1608,7 +1737,7 @@ class Agent:
             log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
             # Prepare run messages
-            run_messages = self.get_continue_run_messages(
+            run_messages = self._get_continue_run_messages(
                 input=input,
             )
 
@@ -1889,10 +2018,10 @@ class Agent:
             knowledge_filters: The knowledge filters to use for the run.
             debug_mode: Whether to enable debug mode.
         """
-        if not run_response and not run_id:
+        if run_response is None and run_id is None:
             raise ValueError("Either run_response or run_id must be provided.")
 
-        if not run_response and (run_id is not None and (session_id is None and self.session_id is None)):
+        if run_response is None and (run_id is not None and (session_id is None and self.session_id is None)):
             raise ValueError("Session ID is required to continue a run from a run_id.")
 
         session_id, user_id, session_state = self._initialize_session(
@@ -1905,7 +2034,7 @@ class Agent:
         self.initialize_agent(debug_mode=debug_mode)
 
         # Read existing session from storage
-        agent_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
+        agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=agent_session)
 
         # Update session state from DB
@@ -1958,7 +2087,7 @@ class Agent:
         response_format = self._get_response_format()
         self.model = cast(Model, self.model)
 
-        self.determine_tools_for_model(
+        self._determine_tools_for_model(
             model=self.model,
             run_response=run_response,
             session=agent_session,
@@ -1976,7 +2105,7 @@ class Agent:
             log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
             # Prepare run messages
-            run_messages: RunMessages = self.get_continue_run_messages(
+            run_messages: RunMessages = self._get_continue_run_messages(
                 input=input,
             )
 
@@ -2059,7 +2188,7 @@ class Agent:
 
         # Resolving here for async requirement
         if self.dependencies is not None:
-            await self.aresolve_run_dependencies()
+            await self._aresolve_run_dependencies()
 
         self.model = cast(Model, self.model)
 
@@ -2141,7 +2270,7 @@ class Agent:
         """
         # Resolving here for async requirement
         if self.dependencies is not None:
-            await self.aresolve_run_dependencies()
+            await self._aresolve_run_dependencies()
 
         # Start the Run by yielding a RunContinued event
         if stream_intermediate_steps:
@@ -2220,15 +2349,17 @@ class Agent:
         if not run_response.content:
             run_response.content = get_paused_content(run_response)
 
-        # Save session to storage
-        self.save_session(session=session)
-
-        log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
-
         # Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
             run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
         )
+
+        session.upsert_run(run=run_response)
+
+        # Save session to storage
+        self.save_session(session=session)
+
+        log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
         # We return and await confirmation/completion for the tools that require it
         return run_response
@@ -2247,7 +2378,7 @@ class Agent:
             run_response.content = get_paused_content(run_response)
 
         # We return and await confirmation/completion for the tools that require it
-        yield self._handle_event(
+        pause_event = self._handle_event(
             create_run_paused_event(
                 from_run_response=run_response,
                 tools=run_response.tools,
@@ -2255,30 +2386,32 @@ class Agent:
             run_response,
         )
 
-        # Save session to storage
-        self.save_session(session=session)
-
         # Save output to file if save_response_to_file is set
         self.save_run_response_to_file(
             run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
         )
+        session.upsert_run(run=run_response)
+        # Save session to storage
+        self.save_session(session=session)
+
+        yield pause_event
 
         log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
     def _convert_response_to_structured_format(self, run_response: Union[RunOutput, ModelResponse]):
         # Convert the response to the structured format if needed
-        if self.response_model is not None and not isinstance(run_response.content, self.response_model):
+        if self.output_schema is not None and not isinstance(run_response.content, self.output_schema):
             if isinstance(run_response.content, str) and self.parse_response:
                 try:
-                    structured_output = parse_response_model_str(run_response.content, self.response_model)
+                    structured_output = parse_response_model_str(run_response.content, self.output_schema)
 
                     # Update RunOutput
                     if structured_output is not None:
                         run_response.content = structured_output
                         if isinstance(run_response, RunOutput):
-                            run_response.content_type = self.response_model.__name__
+                            run_response.content_type = self.output_schema.__name__
                     else:
-                        log_warning("Failed to convert response to response_model")
+                        log_warning("Failed to convert response to output_schema")
                 except Exception as e:
                     log_warning(f"Failed to convert response to output model: {e}")
             else:
@@ -2571,13 +2704,13 @@ class Agent:
             run_response.formatted_tool_calls = format_tool_calls(model_response.tool_executions)
 
         # Handle structured outputs
-        if self.response_model is not None and model_response.parsed is not None:
+        if self.output_schema is not None and model_response.parsed is not None:
             # We get native structured outputs from the model
             if self._model_should_return_structured_output():
                 # Update the run_response content with the structured output
                 run_response.content = model_response.parsed
                 # Update the run_response content_type with the structured output class name
-                run_response.content_type = self.response_model.__name__
+                run_response.content_type = self.output_schema.__name__
         else:
             # Update the run_response content with the model response content
             run_response.content = model_response.content
@@ -2607,7 +2740,7 @@ class Agent:
                 tool_name = tool_call.tool_name or ""
                 if tool_name.lower() in ["think", "analyze"]:
                     tool_args = tool_call.tool_args or {}
-                    self.update_reasoning_content_from_tool_call(
+                    self._update_reasoning_content_from_tool_call(
                         run_response=run_response, tool_name=tool_name, tool_args=tool_args
                     )
 
@@ -2821,7 +2954,7 @@ class Agent:
                         model_response.content = model_response_event.content
                         self._convert_response_to_structured_format(model_response)
 
-                        content_type = self.response_model.__name__  # type: ignore
+                        content_type = self.output_schema.__name__  # type: ignore
                         run_response.content = model_response.content
                         run_response.content_type = content_type
                     else:
@@ -2832,6 +2965,12 @@ class Agent:
                 if model_response_event.thinking is not None:
                     model_response.thinking = (model_response.thinking or "") + model_response_event.thinking
                     run_response.thinking = model_response.thinking
+
+                if model_response_event.reasoning_content is not None:
+                    model_response.reasoning_content = (
+                        model_response.reasoning_content or ""
+                    ) + model_response_event.reasoning_content
+                    run_response.reasoning_content = model_response.reasoning_content
 
                 if model_response_event.redacted_thinking is not None:
                     model_response.redacted_thinking = (
@@ -2859,6 +2998,7 @@ class Agent:
                 elif (
                     model_response_event.content is not None
                     or model_response_event.thinking is not None
+                    or model_response_event.reasoning_content is not None
                     or model_response_event.redacted_thinking is not None
                     or model_response_event.citations is not None
                 ):
@@ -2867,6 +3007,7 @@ class Agent:
                             from_run_response=run_response,
                             content=model_response_event.content,
                             thinking=model_response_event.thinking,
+                            reasoning_content=model_response_event.reasoning_content,
                             redacted_thinking=model_response_event.redacted_thinking,
                             citations=model_response_event.citations,
                         ),
@@ -2991,7 +3132,7 @@ class Agent:
                         if tool_name.lower() in ["think", "analyze"]:
                             tool_args = tool_call.tool_args or {}
 
-                            reasoning_step = self.update_reasoning_content_from_tool_call(
+                            reasoning_step = self._update_reasoning_content_from_tool_call(
                                 run_response=run_response, tool_name=tool_name, tool_args=tool_args
                             )
 
@@ -3260,19 +3401,19 @@ class Agent:
 
         # Add tools for accessing memory
         if self.read_chat_history:
-            agent_tools.append(self.get_chat_history_function(session=session))
+            agent_tools.append(self._get_chat_history_function(session=session))
             self._rebuild_tools = True
         if self.read_tool_call_history:
-            agent_tools.append(self.get_tool_call_history_function(session=session))
+            agent_tools.append(self._get_tool_call_history_function(session=session))
             self._rebuild_tools = True
         if self.search_session_history:
             agent_tools.append(
-                self.get_previous_sessions_messages_function(num_history_sessions=self.num_history_sessions)
+                self._get_previous_sessions_messages_function(num_history_sessions=self.num_history_sessions)
             )
             self._rebuild_tools = True
 
         if self.enable_agentic_memory:
-            agent_tools.append(self.get_update_user_memory_function(user_id=user_id, async_mode=async_mode))
+            agent_tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=async_mode))
             self._rebuild_tools = True
 
         if self.enable_agentic_state:
@@ -3293,13 +3434,13 @@ class Agent:
                 # Use async or sync search based on async_mode
                 if self.enable_agentic_knowledge_filters:
                     agent_tools.append(
-                        self.search_knowledge_base_with_agentic_filters_function(
+                        self._search_knowledge_base_with_agentic_filters_function(
                             run_response=run_response, async_mode=async_mode, knowledge_filters=knowledge_filters
                         )
                     )
                 else:
                     agent_tools.append(
-                        self.search_knowledge_base_function(
+                        self._get_search_knowledge_base_function(
                             run_response=run_response, async_mode=async_mode, knowledge_filters=knowledge_filters
                         )
                     )
@@ -3310,7 +3451,7 @@ class Agent:
 
         return agent_tools
 
-    def determine_tools_for_model(
+    def _determine_tools_for_model(
         self,
         model: Model,
         run_response: RunOutput,
@@ -3342,7 +3483,7 @@ class Agent:
                 # Check if we need strict mode for the functions for the model
                 strict = False
                 if (
-                    self.response_model is not None
+                    self.output_schema is not None
                     and (self.structured_outputs or (not self.use_json_mode))
                     and model.supports_native_structured_outputs
                 ):
@@ -3361,7 +3502,6 @@ class Agent:
                             # If the function does not exist in self.functions
                             if name not in self._functions_for_model:
                                 func._agent = self
-                                func._session_state = session_state
                                 func.process_entrypoint(strict=strict)
                                 if strict and func.strict is None:
                                     func.strict = True
@@ -3378,7 +3518,6 @@ class Agent:
                     elif isinstance(tool, Function):
                         if tool.name not in self._functions_for_model:
                             tool._agent = self
-                            tool._session_state = session_state
                             tool.process_entrypoint(strict=strict)
                             if strict and tool.strict is None:
                                 tool.strict = True
@@ -3398,7 +3537,6 @@ class Agent:
                             if function_name not in self._functions_for_model:
                                 func = Function.from_callable(tool, strict=strict)
                                 func._agent = self
-                                func._session_state = session_state
                                 if strict:
                                     func.strict = True
                                 if self.tool_hooks is not None:
@@ -3409,25 +3547,30 @@ class Agent:
                         except Exception as e:
                             log_warning(f"Could not add tool {tool}: {e}")
 
+        # Update the session state for the functions
+        if self._functions_for_model:
+            for func in self._functions_for_model.values():
+                func._session_state = session_state
+
     def _model_should_return_structured_output(self):
         self.model = cast(Model, self.model)
         return bool(
             self.model.supports_native_structured_outputs
-            and self.response_model is not None
+            and self.output_schema is not None
             and (not self.use_json_mode or self.structured_outputs)
         )
 
     def _get_response_format(self, model: Optional[Model] = None) -> Optional[Union[Dict, Type[BaseModel]]]:
         model = cast(Model, model or self.model)
-        if self.response_model is None:
+        if self.output_schema is None:
             return None
         else:
             json_response_format = {"type": "json_object"}
 
             if model.supports_native_structured_outputs:
                 if not self.use_json_mode or self.structured_outputs:
-                    log_debug("Setting Model.response_format to Agent.response_model")
-                    return self.response_model
+                    log_debug("Setting Model.response_format to Agent.output_schema")
+                    return self.output_schema
                 else:
                     log_debug(
                         "Model supports native structured outputs but it is not enabled. Using JSON mode instead."
@@ -3440,8 +3583,8 @@ class Agent:
                     return {
                         "type": "json_schema",
                         "json_schema": {
-                            "name": self.response_model.__name__,
-                            "schema": self.response_model.model_json_schema(),
+                            "name": self.output_schema.__name__,
+                            "schema": self.output_schema.model_json_schema(),
                         },
                     }
                 else:
@@ -3451,7 +3594,7 @@ class Agent:
                 log_debug("Model does not support structured or JSON schema outputs.")
                 return json_response_format
 
-    def resolve_run_dependencies(self) -> None:
+    def _resolve_run_dependencies(self) -> None:
         from inspect import signature
 
         log_debug("Resolving dependencies")
@@ -3471,7 +3614,7 @@ class Agent:
             else:
                 self.dependencies[key] = value
 
-    async def aresolve_run_dependencies(self) -> None:
+    async def _aresolve_run_dependencies(self) -> None:
         from inspect import iscoroutine, signature
 
         log_debug("Resolving context (async)")
@@ -3577,7 +3720,7 @@ class Agent:
         else:
             return Metrics()
 
-    def read_or_create_session(
+    def _read_or_create_session(
         self,
         session_id: str,
         user_id: Optional[str] = None,
@@ -3594,6 +3737,7 @@ class Agent:
             log_debug(f"Reading AgentSession: {session_id}")
 
             agent_session = cast(AgentSession, self._read_session(session_id=session_id))
+
         if agent_session is None:
             # Creating new session if none found
             log_debug(f"Creating new AgentSession: {session_id}")
@@ -3612,7 +3756,7 @@ class Agent:
 
         return agent_session
 
-    def get_run_response(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
+    def get_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
         """
         Get a RunOutput from the database.
 
@@ -3637,7 +3781,7 @@ class Agent:
                     log_warning(f"RunOutput {run_id} not found in AgentSession {session_id}")
         return None
 
-    def get_last_run_response(self, session_id: Optional[str] = None) -> Optional[RunOutput]:
+    def get_last_run_output(self, session_id: Optional[str] = None) -> Optional[RunOutput]:
         """
         Get the last run response from the database.
 
@@ -3669,22 +3813,32 @@ class Agent:
         self,
         session_id: Optional[str] = None,
     ) -> Optional[AgentSession]:
-        """Load an AgentSession from database.
+        """Load an AgentSession from database or cache.
 
         Args:
             session_id: The session_id to load from storage.
 
         Returns:
-            AgentSession: The AgentSession loaded from the database or created if it does not exist.
+            AgentSession: The AgentSession loaded from the database/cache or None if not found.
         """
         if not session_id and not self.session_id:
             raise Exception("No session_id provided")
 
         session_id_to_load = session_id or self.session_id
 
-        # Try to load from database
+        # If there is a cached session, return it
+        if self.cache_session and hasattr(self, "_agent_session") and self._agent_session is not None:
+            if self._agent_session.session_id == session_id_to_load:
+                return self._agent_session
+
+        # Load and return the session from the database
         if self.db is not None:
             agent_session = cast(AgentSession, self._read_session(session_id=session_id_to_load))  # type: ignore
+
+            # Cache the session if relevant
+            if agent_session is not None and self.cache_session:
+                self._agent_session = agent_session
+
             return agent_session
 
         log_warning(f"AgentSession {session_id_to_load} not found in db")
@@ -3703,9 +3857,10 @@ class Agent:
             and self.workflow_id is None
             and session.session_data is not None
         ):
-            session.session_data["session_state"].pop("current_session_id", None)
-            session.session_data["session_state"].pop("current_user_id", None)
-            session.session_data["session_state"].pop("current_run_id", None)
+            if session.session_data is not None and "session_state" in session.session_data:
+                session.session_data["session_state"].pop("current_session_id", None)
+                session.session_data["session_state"].pop("current_user_id", None)
+                session.session_data["session_state"].pop("current_run_id", None)
 
             # TODO: Add image/audio/video artifacts to the session correctly, from runs
             if self.images is not None:
@@ -3730,1070 +3885,6 @@ class Agent:
             raise Exception(f"Session {session_id_to_load} not found")
 
         return session.get_chat_history()
-
-    def format_message_with_state_variables(
-        self, message: Any, user_id: Optional[str] = None, session_state: Optional[Dict[str, Any]] = None
-    ) -> Any:
-        """Format a message with the session state variables."""
-        import re
-        import string
-        from copy import deepcopy
-
-        if not isinstance(message, str):
-            return message
-
-        format_variables = ChainMap(
-            session_state or {},
-            self.dependencies or {},
-            self.metadata or {},
-            {"user_id": user_id} if user_id is not None else {},
-        )
-        converted_msg = deepcopy(message)
-        for var_name in format_variables.keys():
-            # Only convert standalone {var_name} patterns, not nested ones
-            pattern = r"\{" + re.escape(var_name) + r"\}"
-            replacement = "${" + var_name + "}"
-            converted_msg = re.sub(pattern, replacement, converted_msg)
-
-        # Use Template to safely substitute variables
-        template = string.Template(converted_msg)
-        try:
-            result = template.safe_substitute(format_variables)
-            return result
-        except Exception as e:
-            log_warning(f"Template substitution failed: {e}")
-            return message
-
-    def get_system_message(self, session: AgentSession, user_id: Optional[str] = None) -> Optional[Message]:
-        """Return the system message for the Agent.
-
-        1. If the system_message is provided, use that.
-        2. If build_context is False, return None.
-        3. Build and return the default system message for the Agent.
-        """
-
-        # 1. If the system_message is provided, use that.
-        if self.system_message is not None:
-            if isinstance(self.system_message, Message):
-                return self.system_message
-
-            sys_message_content: str = ""
-            if isinstance(self.system_message, str):
-                sys_message_content = self.system_message
-            elif callable(self.system_message):
-                sys_message_content = self.system_message(agent=self)
-                if not isinstance(sys_message_content, str):
-                    raise Exception("system_message must return a string")
-
-            # Format the system message with the session state variables
-            if self.add_state_in_messages:
-                sys_message_content = self.format_message_with_state_variables(
-                    sys_message_content,
-                    user_id=user_id,
-                    session_state=session.session_data.get("session_state")
-                    if session.session_data is not None
-                    else None,
-                )
-
-            # type: ignore
-            return Message(role=self.system_message_role, content=sys_message_content)
-
-        # 2. If build_context is False, return None.
-        if not self.build_context:
-            return None
-
-        if self.model is None:
-            raise Exception("model not set")
-
-        # 3. Build and return the default system message for the Agent.
-        # 3.1 Build the list of instructions for the system message
-        instructions: List[str] = []
-        if self.instructions is not None:
-            _instructions = self.instructions
-            if callable(self.instructions):
-                import inspect
-
-                signature = inspect.signature(self.instructions)
-                if "agent" in signature.parameters:
-                    _instructions = self.instructions(agent=self)
-                else:
-                    _instructions = self.instructions()
-
-            if isinstance(_instructions, str):
-                instructions.append(_instructions)
-            elif isinstance(_instructions, list):
-                instructions.extend(_instructions)
-
-        # 3.1.1 Add instructions from the Model
-        _model_instructions = self.model.get_instructions_for_model(self._tools_for_model)
-        if _model_instructions is not None:
-            instructions.extend(_model_instructions)
-
-        # 3.2 Build a list of additional information for the system message
-        additional_information: List[str] = []
-        # 3.2.1 Add instructions for using markdown
-        if self.markdown and self.response_model is None:
-            additional_information.append("Use markdown to format your answers.")
-        # 3.2.2 Add the current datetime
-        if self.add_datetime_to_context:
-            from datetime import datetime
-
-            tz = None
-
-            if self.timezone_identifier:
-                try:
-                    from zoneinfo import ZoneInfo
-
-                    tz = ZoneInfo(self.timezone_identifier)
-                except Exception:
-                    log_warning("Invalid timezone identifier")
-
-            time = datetime.now(tz) if tz else datetime.now()
-
-            additional_information.append(f"The current time is {time}.")
-
-        # 3.2.3 Add the current location
-        if self.add_location_to_context:
-            from agno.utils.location import get_location
-
-            location = get_location()
-            if location:
-                location_str = ", ".join(
-                    filter(None, [location.get("city"), location.get("region"), location.get("country")])
-                )
-                if location_str:
-                    additional_information.append(f"Your approximate location is: {location_str}.")
-
-        # 3.2.4 Add agent name if provided
-        if self.name is not None and self.add_name_to_context:
-            additional_information.append(f"Your name is: {self.name}.")
-
-        # 3.2.5 Add information about agentic filters if enabled
-        if self.knowledge is not None and self.enable_agentic_knowledge_filters:
-            valid_filters = getattr(self.knowledge, "valid_metadata_filters", None)
-            if valid_filters:
-                valid_filters_str = ", ".join(valid_filters)
-                additional_information.append(
-                    dedent(f"""
-                    The knowledge base contains documents with these metadata filters: {valid_filters_str}.
-                    Always use filters when the user query indicates specific metadata.
-
-                    Examples:
-                    1. If the user asks about a specific person like "Jordan Mitchell", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like user_id>': '<valid value based on the user query>'}}.
-                    2. If the user asks about a specific document type like "contracts", you MUST use the search_knowledge_base tool with the filters parameter set to {{'document_type': 'contract'}}.
-                    4. If the user asks about a specific location like "documents from New York", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like location>': 'New York'}}.
-
-                    General Guidelines:
-                    - Always analyze the user query to identify relevant metadata.
-                    - Use the most specific filter(s) possible to narrow down results.
-                    - If multiple filters are relevant, combine them in the filters parameter (e.g., {{'name': 'Jordan Mitchell', 'document_type': 'contract'}}).
-                    - Ensure the filter keys match the valid metadata filters: {valid_filters_str}.
-
-                    You can use the search_knowledge_base tool to search the knowledge base and get the most relevant documents. Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUCTURE STRICTLY.
-                """)
-                )
-
-        # 3.3 Build the default system message for the Agent.
-        system_message_content: str = ""
-        # 3.3.1 First add the Agent description if provided
-        if self.description is not None:
-            system_message_content += f"{self.description}\n"
-        # 3.3.2 Then add the Agent role if provided
-        if self.role is not None:
-            system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
-        # 3.3.4 Then add instructions for the Agent
-        if len(instructions) > 0:
-            system_message_content += "<instructions>"
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"\n- {_upi}"
-            else:
-                system_message_content += "\n" + instructions[0]
-            system_message_content += "\n</instructions>\n\n"
-        # 3.3.6 Add additional information
-        if len(additional_information) > 0:
-            system_message_content += "<additional_information>"
-            for _ai in additional_information:
-                system_message_content += f"\n- {_ai}"
-            system_message_content += "\n</additional_information>\n\n"
-        # 3.3.7 Then add instructions for the tools
-        if self._tool_instructions is not None:
-            for _ti in self._tool_instructions:
-                system_message_content += f"{_ti}\n"
-
-        # Format the system message with the session state variables
-        if self.add_state_in_messages:
-            system_message_content = self.format_message_with_state_variables(
-                system_message_content,
-                user_id=user_id,
-                session_state=session.session_data.get("session_state") if session.session_data is not None else None,
-            )
-
-        # 3.3.7 Then add the expected output
-        if self.expected_output is not None:
-            system_message_content += f"<expected_output>\n{self.expected_output.strip()}\n</expected_output>\n\n"
-        # 3.3.8 Then add additional context
-        if self.additional_context is not None:
-            system_message_content += f"{self.additional_context}\n"
-        # 3.3.9 Then add memories to the system prompt
-        if self.add_memories_to_context:
-            _memory_manager_not_set = False
-            if not user_id:
-                user_id = "default"
-            if self.memory_manager is None:
-                self._set_memory_manager()
-                _memory_manager_not_set = True
-            user_memories = self.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
-            if user_memories and len(user_memories) > 0:
-                system_message_content += (
-                    "You have access to memories from previous interactions with the user that you can use:\n\n"
-                )
-                system_message_content += "<memories_from_previous_interactions>"
-                for _memory in user_memories:  # type: ignore
-                    system_message_content += f"\n- {_memory.memory}"
-                system_message_content += "\n</memories_from_previous_interactions>\n\n"
-                system_message_content += (
-                    "Note: this information is from previous interactions and may be updated in this conversation. "
-                    "You should always prefer information from this conversation over the past memories.\n"
-                )
-            else:
-                system_message_content += (
-                    "You have the capability to retain memories from previous interactions with the user, "
-                    "but have not had any interactions with the user yet.\n"
-                )
-            if _memory_manager_not_set:
-                self.memory_manager = None
-
-            if self.enable_agentic_memory:
-                system_message_content += (
-                    "\n<updating_user_memories>\n"
-                    "- You have access to the `update_user_memory` tool that you can use to add new memories, update existing memories, delete memories, or clear all memories.\n"
-                    "- If the user's message includes information that should be captured as a memory, use the `update_user_memory` tool to update your memory database.\n"
-                    "- Memories should include details that could personalize ongoing interactions with the user.\n"
-                    "- Use this tool to add new memories or update existing memories that you identify in the conversation.\n"
-                    "- Use this tool if the user asks to update their memory, delete a memory, or clear all memories.\n"
-                    "- If you use the `update_user_memory` tool, remember to pass on the response to the user.\n"
-                    "</updating_user_memories>\n\n"
-                )
-
-        # 3.3.11 Then add a summary of the interaction to the system prompt
-        if self.add_session_summary_to_context and session.summary is not None:
-            system_message_content += "Here is a brief summary of your previous interactions:\n\n"
-            system_message_content += "<summary_of_previous_interactions>\n"
-            system_message_content += session.summary.summary
-            system_message_content += "\n</summary_of_previous_interactions>\n\n"
-            system_message_content += (
-                "Note: this information is from previous interactions and may be outdated. "
-                "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
-            )
-
-        # 3.3.12 Add the system message from the Model
-        system_message_from_model = self.model.get_system_message_for_model(self._tools_for_model)
-        if system_message_from_model is not None:
-            system_message_content += system_message_from_model
-
-        # 3.3.13 Add the JSON output prompt if response_model is provided and the model does not support native structured outputs or JSON schema outputs
-        # or if use_json_mode is True
-        if (
-            self.response_model is not None
-            and self.parser_model is None
-            and not (
-                (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
-                and (not self.use_json_mode or self.structured_outputs is True)
-            )
-        ):
-            system_message_content += f"{get_json_output_prompt(self.response_model)}"  # type: ignore
-
-        # 3.3.14 Add the response model format prompt if response_model is provided
-        if self.response_model is not None and self.parser_model is not None:
-            system_message_content += f"{get_response_model_format_prompt(self.response_model)}"
-
-        # Return the system message
-        return (
-            Message(role=self.system_message_role, content=system_message_content.strip())  # type: ignore
-            if system_message_content
-            else None
-        )
-
-    def _get_user_message(
-        self,
-        *,
-        run_response: RunOutput,
-        session: AgentSession,
-        user_id: Optional[str] = None,
-        input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
-        **kwargs: Any,
-    ) -> Optional[Message]:
-        """Return the user message for the Agent.
-
-        1. If the user_message is provided, use that.
-        2. If build_user_context is False or if the message is a list, return the message as is.
-        3. Build the default user message for the Agent
-        """
-        # Get references from the knowledge base to use in the user message
-        references = None
-
-        # 1. If the user_message is provided, use that.
-        if self.user_message is not None:
-            if isinstance(self.user_message, Message):
-                return self.user_message
-
-            user_message_content = self.user_message
-            if callable(self.user_message):
-                user_message_kwargs = {"agent": self, "message": input, "references": references}
-                user_message_content = self.user_message(**user_message_kwargs)
-                if not isinstance(user_message_content, str):
-                    raise Exception("user_message must return a string")
-
-            if self.add_state_in_messages:
-                user_message_content = self.format_message_with_state_variables(
-                    user_message_content,
-                    user_id=user_id,
-                    session_state=session.session_data.get("session_state")
-                    if session.session_data is not None
-                    else None,
-                )
-
-            return Message(
-                role=self.user_message_role,
-                content=user_message_content,
-                audio=audio,
-                images=images,
-                videos=videos,
-                files=files,
-                **kwargs,
-            )
-
-        # 2. If build_user_context is False or message is a list, return the message as is.
-        elif not self.build_user_context:
-            return Message(
-                role=self.user_message_role,
-                content=input,
-                images=images,
-                audio=audio,
-                videos=videos,
-                files=files,
-                **kwargs,
-            )
-        # 3. Build the default user message for the Agent
-        elif input is None:
-            # If we have any media, return a message with empty content
-            if images is not None or audio is not None or videos is not None or files is not None:
-                return Message(
-                    role=self.user_message_role,
-                    content="",
-                    images=images,
-                    audio=audio,
-                    videos=videos,
-                    files=files,
-                    **kwargs,
-                )
-            else:
-                # If the input is None, return None
-                return None
-
-        else:
-            # Handle list messages by converting to string
-            if isinstance(input, list):
-                # Convert list to string (join with newlines if all elements are strings)
-                if all(isinstance(item, str) for item in input):
-                    message_content = "\n".join(input)  # type: ignore
-                else:
-                    message_content = str(input)
-
-                return Message(
-                    role=self.user_message_role,
-                    content=message_content,
-                    images=images,
-                    audio=audio,
-                    videos=videos,
-                    files=files,
-                    **kwargs,
-                )
-
-            # If message is provided as a Message, use it directly
-            elif isinstance(input, Message):
-                return input
-            # If message is provided as a dict, try to validate it as a Message
-            elif isinstance(input, dict):
-                try:
-                    return Message.model_validate(input)
-                except Exception as e:
-                    log_warning(f"Failed to validate message: {e}")
-                    raise Exception(f"Failed to validate message: {e}")
-
-            # If message is provided as a BaseModel, convert it to a Message
-            elif isinstance(input, BaseModel):
-                try:
-                    # Create a user message with the BaseModel content
-                    content = input.model_dump_json(indent=2, exclude_none=True)
-                    return Message(role=self.user_message_role, content=content)
-                except Exception as e:
-                    log_warning(f"Failed to convert BaseModel to message: {e}")
-                    raise Exception(f"Failed to convert BaseModel to message: {e}")
-            else:
-                user_msg_content = input
-                if self.add_knowledge_to_context:
-                    if isinstance(input, str):
-                        user_msg_content = input
-                    elif callable(input):
-                        user_msg_content = input(agent=self)
-                    else:
-                        raise Exception("message must be a string or a callable when add_references is True")
-
-                    try:
-                        retrieval_timer = Timer()
-                        retrieval_timer.start()
-                        docs_from_knowledge = self.get_relevant_docs_from_knowledge(
-                            query=user_msg_content, filters=knowledge_filters, **kwargs
-                        )
-                        if docs_from_knowledge is not None:
-                            references = MessageReferences(
-                                query=user_msg_content,
-                                references=docs_from_knowledge,
-                                time=round(retrieval_timer.elapsed, 4),
-                            )
-                            # Add the references to the run_response
-                            if run_response.metadata is None:
-                                run_response.metadata = RunOutputMetaData()
-                            if run_response.metadata.references is None:
-                                run_response.metadata.references = []
-                            run_response.metadata.references.append(references)
-                        retrieval_timer.stop()
-                        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
-                    except Exception as e:
-                        log_warning(f"Failed to get references: {e}")
-
-                if self.add_state_in_messages:
-                    user_msg_content = self.format_message_with_state_variables(
-                        user_msg_content,
-                        user_id=user_id,
-                        session_state=session.session_data.get("session_state")
-                        if session.session_data is not None
-                        else None,
-                    )
-
-                # Convert to string for concatenation operations
-                user_msg_content_str = get_text_from_message(user_msg_content) if user_msg_content is not None else ""
-
-                # 4.1 Add knowledge references to user message
-                if (
-                    self.add_knowledge_to_context
-                    and references is not None
-                    and references.references is not None
-                    and len(references.references) > 0
-                ):
-                    user_msg_content_str += "\n\nUse the following references from the knowledge base if it helps:\n"
-                    user_msg_content_str += "<references>\n"
-                    user_msg_content_str += self._convert_documents_to_string(references.references) + "\n"
-                    user_msg_content_str += "</references>"
-                # 4.2 Add context to user message
-                if self.add_dependencies_to_context and self.dependencies is not None:
-                    user_msg_content_str += "\n\n<additional context>\n"
-                    user_msg_content_str += self._convert_dependencies_to_string(self.dependencies) + "\n"
-                    user_msg_content_str += "</additional context>"
-
-                # Use the string version for the final content
-                user_msg_content = user_msg_content_str
-
-                # Return the user message
-                return Message(
-                    role=self.user_message_role,
-                    content=user_msg_content,
-                    audio=audio,
-                    images=images,
-                    videos=videos,
-                    files=files,
-                    **kwargs,
-                )
-
-    def get_run_messages(
-        self,
-        *,
-        run_response: RunOutput,
-        input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
-        session: AgentSession,
-        user_id: Optional[str] = None,
-        audio: Optional[Sequence[Audio]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        files: Optional[Sequence[File]] = None,
-        knowledge_filters: Optional[Dict[str, Any]] = None,
-        **kwargs: Any,
-    ) -> RunMessages:
-        """This function returns a RunMessages object with the following attributes:
-            - system_message: The system message for this run
-            - user_message: The user message for this run
-            - messages: List of messages to send to the model
-
-        To build the RunMessages object:
-        1. Add system message to run_messages
-        2. Add extra messages to run_messages if provided
-        3. Add history to run_messages
-        4. Add user message to run_messages (if input is single content)
-        5. Add input messages to run_messages if provided (if input is List[Message])
-
-        Returns:
-            RunMessages object with the following attributes:
-                - system_message: The system message for this run
-                - user_message: The user message for this run
-                - messages: List of all messages to send to the model
-
-        Typical usage:
-        run_messages = self.get_run_messages(
-            input=input, session_id=session_id, user_id=user_id, audio=audio, images=images, videos=videos, files=files, **kwargs
-        )
-        """
-
-        # Initialize the RunMessages object
-        run_messages = RunMessages()
-
-        # 1. Add system message to run_messages
-        system_message = self.get_system_message(session=session, user_id=user_id)
-        if system_message is not None:
-            run_messages.system_message = system_message
-            run_messages.messages.append(system_message)
-
-        # 2. Add extra messages to run_messages if provided
-        if self.additional_input is not None:
-            messages_to_add_to_run_response: List[Message] = []
-            if run_messages.extra_messages is None:
-                run_messages.extra_messages = []
-
-            for _m in self.additional_input:
-                if isinstance(_m, Message):
-                    messages_to_add_to_run_response.append(_m)
-                    run_messages.messages.append(_m)
-                    run_messages.extra_messages.append(_m)
-                elif isinstance(_m, dict):
-                    try:
-                        _m_parsed = Message.model_validate(_m)
-                        messages_to_add_to_run_response.append(_m_parsed)
-                        run_messages.messages.append(_m_parsed)
-                        run_messages.extra_messages.append(_m_parsed)
-                    except Exception as e:
-                        log_warning(f"Failed to validate message: {e}")
-            # Add the extra messages to the run_response
-            if len(messages_to_add_to_run_response) > 0:
-                log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
-                if run_response.metadata is None:
-                    run_response.metadata = RunOutputMetaData(additional_input=messages_to_add_to_run_response)
-                else:
-                    if run_response.metadata.additional_input is None:
-                        run_response.metadata.additional_input = messages_to_add_to_run_response
-                    else:
-                        run_response.metadata.additional_input.extend(messages_to_add_to_run_response)
-
-        # 3. Add history to run_messages
-        if self.add_history_to_context:
-            from copy import deepcopy
-
-            history: List[Message] = session.get_messages_from_last_n_runs(
-                last_n=self.num_history_runs,
-                skip_role=self.system_message_role,
-                agent_id=self.id if self.team_id is not None else None,
-            )
-
-            if len(history) > 0:
-                # Create a deep copy of the history messages to avoid modifying the original messages
-                history_copy = [deepcopy(msg) for msg in history]
-
-                # Tag each message as coming from history
-                for _msg in history_copy:
-                    _msg.from_history = True
-
-                log_debug(f"Adding {len(history_copy)} messages from history")
-
-                run_messages.messages += history_copy
-
-        # 4.1 Build user message if message is None, str or list
-        # 4. Add user message to run_messages
-        user_message: Optional[Message] = None
-        # 4.1 Build user message if input is None, str or list and not a list of Message/dict objects
-        if (
-            input is None
-            or isinstance(input, str)
-            or (
-                isinstance(input, list)
-                and not (
-                    len(input) > 0
-                    and (isinstance(input[0], Message) or (isinstance(input[0], dict) and "role" in input[0]))
-                )
-            )
-        ):
-            user_message = self._get_user_message(
-                run_response=run_response,
-                session=session,
-                input=input,
-                audio=audio,
-                images=images,
-                videos=videos,
-                files=files,
-                knowledge_filters=knowledge_filters,
-                **kwargs,
-            )
-        # 4.2 If input is provided as a Message, use it directly
-        elif isinstance(input, Message):
-            user_message = input
-        # 4.3 If input is provided as a dict, try to validate it as a Message
-        elif isinstance(input, dict):
-            try:
-                user_message = Message.model_validate(input)
-            except Exception as e:
-                log_warning(f"Failed to validate message: {e}")
-        # 4.4 If input is provided as a BaseModel, convert it to a Message
-        elif isinstance(input, BaseModel):
-            try:
-                # Create a user message with the BaseModel content
-                content = input.model_dump_json(indent=2, exclude_none=True)
-                user_message = Message(role=self.user_message_role, content=content)
-            except Exception as e:
-                log_warning(f"Failed to convert BaseModel to message: {e}")
-
-        # Add user message to run_messages
-        if user_message is not None:
-            run_messages.user_message = user_message
-            run_messages.messages.append(user_message)
-
-        # 5. Add input messages to run_messages if provided (List[Message] or List[Dict])
-        if (
-            isinstance(input, list)
-            and len(input) > 0
-            and (isinstance(input[0], Message) or (isinstance(input[0], dict) and "role" in input[0]))
-        ):
-            for _m in input:
-                if isinstance(_m, Message):
-                    run_messages.messages.append(_m)
-                    if run_messages.extra_messages is None:
-                        run_messages.extra_messages = []
-                    run_messages.extra_messages.append(_m)
-                elif isinstance(_m, dict):
-                    try:
-                        msg = Message.model_validate(_m)
-                        run_messages.messages.append(msg)
-                        if run_messages.extra_messages is None:
-                            run_messages.extra_messages = []
-                        run_messages.extra_messages.append(msg)
-                    except Exception as e:
-                        log_warning(f"Failed to validate message: {e}")
-
-        return run_messages
-
-    def get_continue_run_messages(
-        self,
-        input: List[Message],
-    ) -> RunMessages:
-        """This function returns a RunMessages object with the following attributes:
-            - system_message: The system message for this run
-            - user_message: The user message for this run
-            - messages: List of messages to send to the model
-
-        It continues from a previous run and completes a tool call that was paused.
-        """
-
-        # Initialize the RunMessages object
-        run_messages = RunMessages()
-
-        # Extract most recent user message from messages as the original user message
-        user_message = None
-        for msg in reversed(input):
-            if msg.role == self.user_message_role:
-                user_message = msg
-                break
-
-        # Extract system message from messages
-        system_message = None
-        for msg in input:
-            if msg.role == self.system_message_role:
-                system_message = msg
-                break
-
-        run_messages.system_message = system_message
-        run_messages.user_message = user_message
-        run_messages.messages = input
-
-        return run_messages
-
-    def get_messages_for_parser_model(
-        self, model_response: ModelResponse, response_format: Optional[Union[Dict, Type[BaseModel]]]
-    ) -> List[Message]:
-        """Get the messages for the parser model."""
-        system_content = (
-            self.parser_model_prompt
-            if self.parser_model_prompt is not None
-            else "You are tasked with creating a structured output from the provided user message."
-        )
-
-        if response_format == {"type": "json_object"} and self.response_model is not None:
-            system_content += f"{get_json_output_prompt(self.response_model)}"  # type: ignore
-
-        return [
-            Message(role="system", content=system_content),
-            Message(role="user", content=model_response.content),
-        ]
-
-    def get_messages_for_parser_model_stream(
-        self, run_response: RunOutput, response_format: Optional[Union[Dict, Type[BaseModel]]]
-    ) -> List[Message]:
-        """Get the messages for the parser model."""
-        system_content = (
-            self.parser_model_prompt
-            if self.parser_model_prompt is not None
-            else "You are tasked with creating a structured output from the provided data."
-        )
-
-        if response_format == {"type": "json_object"} and self.response_model is not None:
-            system_content += f"{get_json_output_prompt(self.response_model)}"  # type: ignore
-
-        return [
-            Message(role="system", content=system_content),
-            Message(role="user", content=run_response.content),
-        ]
-
-    def get_session_summary(self, session_id: Optional[str] = None):
-        """Get the session summary for the given session ID and user ID."""
-        session_id = session_id if session_id is not None else self.session_id
-        if session_id is None:
-            raise ValueError("Session ID is required")
-
-        session = self.get_session(session_id=session_id)
-
-        if session is None:
-            raise Exception(f"Session {session_id} not found")
-
-        return session.get_session_summary()
-
-    def get_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
-        """Get the user memories for the given user ID."""
-        if self.memory_manager is None:
-            return None
-        user_id = user_id if user_id is not None else self.user_id
-        if user_id is None:
-            user_id = "default"
-
-        return self.memory_manager.get_user_memories(user_id=user_id)
-
-    def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> Agent:
-        """Create and return a deep copy of this Agent, optionally updating fields.
-
-        Args:
-            update (Optional[Dict[str, Any]]): Optional dictionary of fields for the new Agent.
-
-        Returns:
-            Agent: A new Agent instance.
-        """
-        from dataclasses import fields
-
-        # Extract the fields to set for the new Agent
-        fields_for_new_agent: Dict[str, Any] = {}
-
-        for f in fields(self):
-            field_value = getattr(self, f.name)
-            if field_value is not None:
-                fields_for_new_agent[f.name] = self._deep_copy_field(f.name, field_value)
-
-        # Update fields if provided
-        if update:
-            fields_for_new_agent.update(update)
-        # Create a new Agent
-        new_agent = self.__class__(**fields_for_new_agent)
-        log_debug(f"Created new {self.__class__.__name__}")
-        return new_agent
-
-    def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
-        """Helper method to deep copy a field based on its type."""
-        from copy import copy, deepcopy
-
-        # For memory and reasoning_agent, use their deep_copy methods
-        if field_name == "reasoning_agent":
-            return field_value.deep_copy()
-
-        # For storage, model and reasoning_model, use a deep copy
-        elif field_name in ("db", "model", "reasoning_model"):
-            try:
-                return deepcopy(field_value)
-            except Exception:
-                try:
-                    return copy(field_value)
-                except Exception as e:
-                    log_warning(f"Failed to copy field: {field_name} - {e}")
-                    return field_value
-
-        # For compound types, attempt a deep copy
-        elif isinstance(field_value, (list, dict, set)):
-            try:
-                return deepcopy(field_value)
-            except Exception:
-                try:
-                    return copy(field_value)
-                except Exception as e:
-                    log_warning(f"Failed to copy field: {field_name} - {e}")
-                    return field_value
-
-        # For pydantic models, attempt a model_copy
-        elif isinstance(field_value, BaseModel):
-            try:
-                return field_value.model_copy(deep=True)
-            except Exception:
-                try:
-                    return field_value.model_copy(deep=False)
-                except Exception as e:
-                    log_warning(f"Failed to copy field: {field_name} - {e}")
-                    return field_value
-
-        # For other types, attempt a shallow copy first
-        try:
-            from copy import copy
-
-            return copy(field_value)
-        except Exception:
-            # If copy fails, return as is
-            return field_value
-
-    def get_relevant_docs_from_knowledge(
-        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs
-    ) -> Optional[List[Union[Dict[str, Any], str]]]:
-        """Get relevant docs from the knowledge base to answer a query.
-
-        Args:
-            query (str): The query to search for.
-            num_documents (Optional[int]): Number of documents to return.
-            filters (Optional[Dict[str, Any]]): Filters to apply to the search.
-            **kwargs: Additional keyword arguments.
-
-        Returns:
-            Optional[List[Dict[str, Any]]]: List of relevant document dicts.
-        """
-        from agno.knowledge.document import Document
-
-        # Validate the filters against known valid filter keys
-        if self.knowledge is not None:
-            valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
-
-            # Warn about invalid filter keys
-            if invalid_keys:
-                # type: ignore
-                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
-                log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
-
-                # Only use valid filters
-                filters = valid_filters
-                if not filters:
-                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
-
-        if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
-            from inspect import signature
-
-            try:
-                sig = signature(self.knowledge_retriever)
-                knowledge_retriever_kwargs: Dict[str, Any] = {}
-                if "agent" in sig.parameters:
-                    knowledge_retriever_kwargs = {"agent": self}
-                if "filters" in sig.parameters:
-                    knowledge_retriever_kwargs["filters"] = filters
-                knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
-                return self.knowledge_retriever(**knowledge_retriever_kwargs)
-            except Exception as e:
-                log_warning(f"Knowledge retriever failed: {e}")
-                raise e
-
-        # Use knowledge base search
-        try:
-            if self.knowledge is None or (
-                (getattr(self.knowledge, "vector_db", None)) is None
-                and getattr(self.knowledge, "knowledge_retriever", None) is None
-            ):
-                return None
-
-            if num_documents is None:
-                if isinstance(self.knowledge, Knowledge):
-                    num_documents = self.knowledge.max_results
-
-            log_debug(f"Searching knowledge base with filters: {filters}")
-            relevant_docs: List[Document] = self.knowledge.search(
-                query=query, max_results=num_documents, filters=filters
-            )
-
-            if not relevant_docs or len(relevant_docs) == 0:
-                log_debug("No relevant documents found for query")
-                return None
-
-            return [doc.to_dict() for doc in relevant_docs]
-        except Exception as e:
-            log_warning(f"Error searching knowledge base: {e}")
-            raise e
-
-    async def aget_relevant_docs_from_knowledge(
-        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs
-    ) -> Optional[List[Union[Dict[str, Any], str]]]:
-        """Get relevant documents from knowledge base asynchronously."""
-        from agno.knowledge.document import Document
-
-        # Validate the filters against known valid filter keys
-        if self.knowledge is not None:
-            valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
-
-            # Warn about invalid filter keys
-            if invalid_keys:  # type: ignore
-                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
-                log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
-
-                # Only use valid filters
-                filters = valid_filters
-                if not filters:
-                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
-
-        if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
-            from inspect import isawaitable, signature
-
-            try:
-                sig = signature(self.knowledge_retriever)
-                knowledge_retriever_kwargs: Dict[str, Any] = {}
-                if "agent" in sig.parameters:
-                    knowledge_retriever_kwargs = {"agent": self}
-                if "filters" in sig.parameters:
-                    knowledge_retriever_kwargs["filters"] = filters
-                knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
-                result = self.knowledge_retriever(**knowledge_retriever_kwargs)
-
-                if isawaitable(result):
-                    result = await result
-
-                return result
-            except Exception as e:
-                log_warning(f"Knowledge retriever failed: {e}")
-                raise e
-
-        # Use knowledge base search
-        try:
-            if self.knowledge is None or (
-                getattr(self.knowledge, "vector_db", None) is None
-                and getattr(self.knowledge, "knowledge_retriever", None) is None
-            ):
-                return None
-
-            if num_documents is None:
-                num_documents = self.knowledge.max_results
-
-            log_debug(f"Searching knowledge base with filters: {filters}")
-            relevant_docs: List[Document] = await self.knowledge.async_search(
-                query=query, max_results=num_documents, filters=filters
-            )
-
-            if not relevant_docs or len(relevant_docs) == 0:
-                log_debug("No relevant documents found for query")
-                return None
-
-            return [doc.to_dict() for doc in relevant_docs]
-        except Exception as e:
-            log_warning(f"Error searching knowledge base: {e}")
-            raise e
-
-    def _convert_documents_to_string(self, docs: List[Union[Dict[str, Any], str]]) -> str:
-        if docs is None or len(docs) == 0:
-            return ""
-
-        if self.references_format == "yaml":
-            import yaml
-
-            return yaml.dump(docs)
-
-        import json
-
-        return json.dumps(docs, indent=2, ensure_ascii=False)
-
-    def _convert_dependencies_to_string(self, context: Dict[str, Any]) -> str:
-        """Convert the context dictionary to a string representation.
-
-        Args:
-            context: Dictionary containing context data
-
-        Returns:
-            String representation of the context, or empty string if conversion fails
-        """
-        if context is None:
-            return ""
-
-        import json
-
-        try:
-            return json.dumps(context, indent=2, default=str)
-        except (TypeError, ValueError, OverflowError) as e:
-            log_warning(f"Failed to convert context to JSON: {e}")
-            # Attempt a fallback conversion for non-serializable objects
-            sanitized_context = {}
-            for key, value in context.items():
-                try:
-                    # Try to serialize each value individually
-                    json.dumps({key: value}, default=str)
-                    sanitized_context[key] = value
-                except Exception:
-                    # If serialization fails, convert to string representation
-                    sanitized_context[key] = str(value)
-
-            try:
-                return json.dumps(sanitized_context, indent=2)
-            except Exception as e:
-                log_error(f"Failed to convert sanitized context to JSON: {e}")
-                return str(context)
-
-    def save_run_response_to_file(
-        self,
-        run_response: RunOutput,
-        input: Optional[Union[str, List, Dict, Message, List[Message]]] = None,
-        session_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-    ) -> None:
-        if self.save_response_to_file is not None and run_response is not None:
-            message_str = None
-            if input is not None:
-                if isinstance(input, str):
-                    message_str = input
-                else:
-                    log_warning("Did not use input in output file name: input is not a string")
-            try:
-                from pathlib import Path
-
-                fn = self.save_response_to_file.format(
-                    name=self.name,
-                    session_id=session_id,
-                    user_id=user_id,
-                    message=message_str,
-                    run_id=run_response.run_id,
-                )
-                fn_path = Path(fn)
-                if not fn_path.parent.exists():
-                    fn_path.parent.mkdir(parents=True, exist_ok=True)
-                if isinstance(run_response.content, str):
-                    fn_path.write_text(run_response.content)
-                else:
-                    import json
-
-                    fn_path.write_text(json.dumps(run_response.content, indent=2))
-            except Exception as e:
-                log_warning(f"Failed to save output to file: {e}")
-
-    def _calculate_run_metrics(self, messages: List[Message], current_run_metrics: Optional[Metrics] = None) -> Metrics:
-        """Sum the metrics of the given messages into a Metrics object"""
-        metrics = current_run_metrics or Metrics()
-
-        assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
-        for m in messages:
-            if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
-                metrics += m.metrics
-
-        # If the run metrics were already initialized, keep the time related metrics
-        if current_run_metrics is not None:
-            metrics.timer = current_run_metrics.timer
-            metrics.duration = current_run_metrics.duration
-            metrics.time_to_first_token = current_run_metrics.time_to_first_token
-
-        return metrics
 
     def rename(self, name: str, session_id: Optional[str] = None) -> None:
         """Rename the Agent and save to storage"""
@@ -4947,6 +4038,1106 @@ class Agent:
             agent_id=self.id if self.team_id is not None else None,
         )
 
+    def get_session_summary(self, session_id: Optional[str] = None):
+        """Get the session summary for the given session ID and user ID."""
+        session_id = session_id if session_id is not None else self.session_id
+        if session_id is None:
+            raise ValueError("Session ID is required")
+
+        session = self.get_session(session_id=session_id)
+
+        if session is None:
+            raise Exception(f"Session {session_id} not found")
+
+        return session.get_session_summary()
+
+    def get_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
+        """Get the user memories for the given user ID."""
+        if self.memory_manager is None:
+            return None
+        user_id = user_id if user_id is not None else self.user_id
+        if user_id is None:
+            user_id = "default"
+
+        return self.memory_manager.get_user_memories(user_id=user_id)
+
+    def _format_message_with_state_variables(
+        self, message: Any, user_id: Optional[str] = None, session_state: Optional[Dict[str, Any]] = None
+    ) -> Any:
+        """Format a message with the session state variables."""
+        import re
+        import string
+        from copy import deepcopy
+
+        if not isinstance(message, str):
+            return message
+
+        format_variables = ChainMap(
+            session_state or {},
+            self.dependencies or {},
+            self.metadata or {},
+            {"user_id": user_id} if user_id is not None else {},
+        )
+        converted_msg = deepcopy(message)
+        for var_name in format_variables.keys():
+            # Only convert standalone {var_name} patterns, not nested ones
+            pattern = r"\{" + re.escape(var_name) + r"\}"
+            replacement = "${" + var_name + "}"
+            converted_msg = re.sub(pattern, replacement, converted_msg)
+
+        # Use Template to safely substitute variables
+        template = string.Template(converted_msg)
+        try:
+            result = template.safe_substitute(format_variables)
+            return result
+        except Exception as e:
+            log_warning(f"Template substitution failed: {e}")
+            return message
+
+    def get_system_message(self, session: AgentSession, user_id: Optional[str] = None) -> Optional[Message]:
+        """Return the system message for the Agent.
+
+        1. If the system_message is provided, use that.
+        2. If build_context is False, return None.
+        3. Build and return the default system message for the Agent.
+        """
+
+        # 1. If the system_message is provided, use that.
+        if self.system_message is not None:
+            if isinstance(self.system_message, Message):
+                return self.system_message
+
+            sys_message_content: str = ""
+            if isinstance(self.system_message, str):
+                sys_message_content = self.system_message
+            elif callable(self.system_message):
+                sys_message_content = self.system_message(agent=self)
+                if not isinstance(sys_message_content, str):
+                    raise Exception("system_message must return a string")
+
+            # Format the system message with the session state variables
+            if self.add_state_in_messages:
+                sys_message_content = self._format_message_with_state_variables(
+                    sys_message_content,
+                    user_id=user_id,
+                    session_state=session.session_data.get("session_state")
+                    if session.session_data is not None
+                    else None,
+                )
+
+            # type: ignore
+            return Message(role=self.system_message_role, content=sys_message_content)
+
+        # 2. If build_context is False, return None.
+        if not self.build_context:
+            return None
+
+        if self.model is None:
+            raise Exception("model not set")
+
+        # 3. Build and return the default system message for the Agent.
+        # 3.1 Build the list of instructions for the system message
+        instructions: List[str] = []
+        if self.instructions is not None:
+            _instructions = self.instructions
+            if callable(self.instructions):
+                import inspect
+
+                signature = inspect.signature(self.instructions)
+                instruction_args: Dict[str, Any] = {}
+
+                # Check for agent parameter
+                if "agent" in signature.parameters:
+                    instruction_args["agent"] = self
+
+                # Check for session_state parameter
+                if "session_state" in signature.parameters:
+                    session_state: Dict[str, Any] = {}
+                    if session.session_data and "session_state" in session.session_data:
+                        session_state = session.session_data["session_state"] or {}
+                    instruction_args["session_state"] = session_state
+
+                _instructions = self.instructions(**instruction_args)
+
+            if isinstance(_instructions, str):
+                instructions.append(_instructions)
+            elif isinstance(_instructions, list):
+                instructions.extend(_instructions)
+
+        # 3.1.1 Add instructions from the Model
+        _model_instructions = self.model.get_instructions_for_model(self._tools_for_model)
+        if _model_instructions is not None:
+            instructions.extend(_model_instructions)
+
+        # 3.2 Build a list of additional information for the system message
+        additional_information: List[str] = []
+        # 3.2.1 Add instructions for using markdown
+        if self.markdown and self.output_schema is None:
+            additional_information.append("Use markdown to format your answers.")
+        # 3.2.2 Add the current datetime
+        if self.add_datetime_to_context:
+            from datetime import datetime
+
+            tz = None
+
+            if self.timezone_identifier:
+                try:
+                    from zoneinfo import ZoneInfo
+
+                    tz = ZoneInfo(self.timezone_identifier)
+                except Exception:
+                    log_warning("Invalid timezone identifier")
+
+            time = datetime.now(tz) if tz else datetime.now()
+
+            additional_information.append(f"The current time is {time}.")
+
+        # 3.2.3 Add the current location
+        if self.add_location_to_context:
+            from agno.utils.location import get_location
+
+            location = get_location()
+            if location:
+                location_str = ", ".join(
+                    filter(None, [location.get("city"), location.get("region"), location.get("country")])
+                )
+                if location_str:
+                    additional_information.append(f"Your approximate location is: {location_str}.")
+
+        # 3.2.4 Add agent name if provided
+        if self.name is not None and self.add_name_to_context:
+            additional_information.append(f"Your name is: {self.name}.")
+
+        # 3.2.5 Add information about agentic filters if enabled
+        if self.knowledge is not None and self.enable_agentic_knowledge_filters:
+            valid_filters = getattr(self.knowledge, "valid_metadata_filters", None)
+            if valid_filters:
+                valid_filters_str = ", ".join(valid_filters)
+                additional_information.append(
+                    dedent(f"""
+                    The knowledge base contains documents with these metadata filters: {valid_filters_str}.
+                    Always use filters when the user query indicates specific metadata.
+
+                    Examples:
+                    1. If the user asks about a specific person like "Jordan Mitchell", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like user_id>': '<valid value based on the user query>'}}.
+                    2. If the user asks about a specific document type like "contracts", you MUST use the search_knowledge_base tool with the filters parameter set to {{'document_type': 'contract'}}.
+                    4. If the user asks about a specific location like "documents from New York", you MUST use the search_knowledge_base tool with the filters parameter set to {{'<valid key like location>': 'New York'}}.
+
+                    General Guidelines:
+                    - Always analyze the user query to identify relevant metadata.
+                    - Use the most specific filter(s) possible to narrow down results.
+                    - If multiple filters are relevant, combine them in the filters parameter (e.g., {{'name': 'Jordan Mitchell', 'document_type': 'contract'}}).
+                    - Ensure the filter keys match the valid metadata filters: {valid_filters_str}.
+
+                    You can use the search_knowledge_base tool to search the knowledge base and get the most relevant documents. Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUCTURE STRICTLY.
+                """)
+                )
+
+        # 3.3 Build the default system message for the Agent.
+        system_message_content: str = ""
+        # 3.3.1 First add the Agent description if provided
+        if self.description is not None:
+            system_message_content += f"{self.description}\n"
+        # 3.3.2 Then add the Agent role if provided
+        if self.role is not None:
+            system_message_content += f"\n<your_role>\n{self.role}\n</your_role>\n\n"
+        # 3.3.4 Then add instructions for the Agent
+        if len(instructions) > 0:
+            system_message_content += "<instructions>"
+            if len(instructions) > 1:
+                for _upi in instructions:
+                    system_message_content += f"\n- {_upi}"
+            else:
+                system_message_content += "\n" + instructions[0]
+            system_message_content += "\n</instructions>\n\n"
+        # 3.3.6 Add additional information
+        if len(additional_information) > 0:
+            system_message_content += "<additional_information>"
+            for _ai in additional_information:
+                system_message_content += f"\n- {_ai}"
+            system_message_content += "\n</additional_information>\n\n"
+        # 3.3.7 Then add instructions for the tools
+        if self._tool_instructions is not None:
+            for _ti in self._tool_instructions:
+                system_message_content += f"{_ti}\n"
+
+        # Format the system message with the session state variables
+        if self.add_state_in_messages:
+            system_message_content = self._format_message_with_state_variables(
+                system_message_content,
+                user_id=user_id,
+                session_state=session.session_data.get("session_state") if session.session_data is not None else None,
+            )
+
+        # 3.3.7 Then add the expected output
+        if self.expected_output is not None:
+            system_message_content += f"<expected_output>\n{self.expected_output.strip()}\n</expected_output>\n\n"
+        # 3.3.8 Then add additional context
+        if self.additional_context is not None:
+            system_message_content += f"{self.additional_context}\n"
+        # 3.3.9 Then add memories to the system prompt
+        if self.add_memories_to_context:
+            _memory_manager_not_set = False
+            if not user_id:
+                user_id = "default"
+            if self.memory_manager is None:
+                self._set_memory_manager()
+                _memory_manager_not_set = True
+            user_memories = self.memory_manager.get_user_memories(user_id=user_id)  # type: ignore
+            if user_memories and len(user_memories) > 0:
+                system_message_content += (
+                    "You have access to memories from previous interactions with the user that you can use:\n\n"
+                )
+                system_message_content += "<memories_from_previous_interactions>"
+                for _memory in user_memories:  # type: ignore
+                    system_message_content += f"\n- {_memory.memory}"
+                system_message_content += "\n</memories_from_previous_interactions>\n\n"
+                system_message_content += (
+                    "Note: this information is from previous interactions and may be updated in this conversation. "
+                    "You should always prefer information from this conversation over the past memories.\n"
+                )
+            else:
+                system_message_content += (
+                    "You have the capability to retain memories from previous interactions with the user, "
+                    "but have not had any interactions with the user yet.\n"
+                )
+            if _memory_manager_not_set:
+                self.memory_manager = None
+
+            if self.enable_agentic_memory:
+                system_message_content += (
+                    "\n<updating_user_memories>\n"
+                    "- You have access to the `update_user_memory` tool that you can use to add new memories, update existing memories, delete memories, or clear all memories.\n"
+                    "- If the user's message includes information that should be captured as a memory, use the `update_user_memory` tool to update your memory database.\n"
+                    "- Memories should include details that could personalize ongoing interactions with the user.\n"
+                    "- Use this tool to add new memories or update existing memories that you identify in the conversation.\n"
+                    "- Use this tool if the user asks to update their memory, delete a memory, or clear all memories.\n"
+                    "- If you use the `update_user_memory` tool, remember to pass on the response to the user.\n"
+                    "</updating_user_memories>\n\n"
+                )
+
+        # 3.3.11 Then add a summary of the interaction to the system prompt
+        if self.add_session_summary_to_context and session.summary is not None:
+            system_message_content += "Here is a brief summary of your previous interactions:\n\n"
+            system_message_content += "<summary_of_previous_interactions>\n"
+            system_message_content += session.summary.summary
+            system_message_content += "\n</summary_of_previous_interactions>\n\n"
+            system_message_content += (
+                "Note: this information is from previous interactions and may be outdated. "
+                "You should ALWAYS prefer information from this conversation over the past summary.\n\n"
+            )
+
+        # 3.3.12 Add the system message from the Model
+        system_message_from_model = self.model.get_system_message_for_model(self._tools_for_model)
+        if system_message_from_model is not None:
+            system_message_content += system_message_from_model
+
+        # 3.3.13 Add the JSON output prompt if output_schema is provided and the model does not support native structured outputs or JSON schema outputs
+        # or if use_json_mode is True
+        if (
+            self.output_schema is not None
+            and self.parser_model is None
+            and not (
+                (self.model.supports_native_structured_outputs or self.model.supports_json_schema_outputs)
+                and (not self.use_json_mode or self.structured_outputs is True)
+            )
+        ):
+            system_message_content += f"{get_json_output_prompt(self.output_schema)}"  # type: ignore
+
+        # 3.3.14 Add the response model format prompt if output_schema is provided
+        if self.output_schema is not None and self.parser_model is not None:
+            system_message_content += f"{get_response_model_format_prompt(self.output_schema)}"
+
+        # Return the system message
+        return (
+            Message(role=self.system_message_role, content=system_message_content.strip())  # type: ignore
+            if system_message_content
+            else None
+        )
+
+    def _get_user_message(
+        self,
+        *,
+        run_response: RunOutput,
+        session: AgentSession,
+        user_id: Optional[str] = None,
+        input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Optional[Message]:
+        """Return the user message for the Agent.
+
+        1. If the user_message is provided, use that.
+        2. If build_user_context is False or if the message is a list, return the message as is.
+        3. Build the default user message for the Agent
+        """
+        # Get references from the knowledge base to use in the user message
+        references = None
+
+        # 1. If the user_message is provided, use that.
+        if self.user_message is not None:
+            if isinstance(self.user_message, Message):
+                return self.user_message
+
+            user_message_content = self.user_message
+            if callable(self.user_message):
+                user_message_kwargs = {"agent": self, "message": input, "references": references}
+                user_message_content = self.user_message(**user_message_kwargs)
+                if not isinstance(user_message_content, str):
+                    raise Exception("user_message must return a string")
+
+            if self.add_state_in_messages:
+                user_message_content = self._format_message_with_state_variables(
+                    user_message_content,
+                    user_id=user_id,
+                    session_state=session.session_data.get("session_state")
+                    if session.session_data is not None
+                    else None,
+                )
+
+            return Message(
+                role=self.user_message_role,
+                content=user_message_content,
+                audio=audio,
+                images=images,
+                videos=videos,
+                files=files,
+                **kwargs,
+            )
+
+        # 2. If build_user_context is False or message is a list, return the message as is.
+        elif not self.build_user_context:
+            return Message(
+                role=self.user_message_role,
+                content=input,
+                images=images,
+                audio=audio,
+                videos=videos,
+                files=files,
+                **kwargs,
+            )
+        # 3. Build the default user message for the Agent
+        elif input is None:
+            # If we have any media, return a message with empty content
+            if images is not None or audio is not None or videos is not None or files is not None:
+                return Message(
+                    role=self.user_message_role,
+                    content="",
+                    images=images,
+                    audio=audio,
+                    videos=videos,
+                    files=files,
+                    **kwargs,
+                )
+            else:
+                # If the input is None, return None
+                return None
+
+        else:
+            # Handle list messages by converting to string
+            if isinstance(input, list):
+                # Convert list to string (join with newlines if all elements are strings)
+                if all(isinstance(item, str) for item in input):
+                    message_content = "\n".join(input)  # type: ignore
+                else:
+                    message_content = str(input)
+
+                return Message(
+                    role=self.user_message_role,
+                    content=message_content,
+                    images=images,
+                    audio=audio,
+                    videos=videos,
+                    files=files,
+                    **kwargs,
+                )
+
+            # If message is provided as a Message, use it directly
+            elif isinstance(input, Message):
+                return input
+            # If message is provided as a dict, try to validate it as a Message
+            elif isinstance(input, dict):
+                try:
+                    return Message.model_validate(input)
+                except Exception as e:
+                    log_warning(f"Failed to validate message: {e}")
+                    raise Exception(f"Failed to validate message: {e}")
+
+            # If message is provided as a BaseModel, convert it to a Message
+            elif isinstance(input, BaseModel):
+                try:
+                    # Create a user message with the BaseModel content
+                    content = input.model_dump_json(indent=2, exclude_none=True)
+                    return Message(role=self.user_message_role, content=content)
+                except Exception as e:
+                    log_warning(f"Failed to convert BaseModel to message: {e}")
+                    raise Exception(f"Failed to convert BaseModel to message: {e}")
+            else:
+                user_msg_content = input
+                if self.add_knowledge_to_context:
+                    if isinstance(input, str):
+                        user_msg_content = input
+                    elif callable(input):
+                        user_msg_content = input(agent=self)
+                    else:
+                        raise Exception("message must be a string or a callable when add_references is True")
+
+                    try:
+                        retrieval_timer = Timer()
+                        retrieval_timer.start()
+                        docs_from_knowledge = self.get_relevant_docs_from_knowledge(
+                            query=user_msg_content, filters=knowledge_filters, **kwargs
+                        )
+                        if docs_from_knowledge is not None:
+                            references = MessageReferences(
+                                query=user_msg_content,
+                                references=docs_from_knowledge,
+                                time=round(retrieval_timer.elapsed, 4),
+                            )
+                            # Add the references to the run_response
+                            if run_response.metadata is None:
+                                run_response.metadata = RunOutputMetaData()
+                            if run_response.metadata.references is None:
+                                run_response.metadata.references = []
+                            run_response.metadata.references.append(references)
+                        retrieval_timer.stop()
+                        log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
+                    except Exception as e:
+                        log_warning(f"Failed to get references: {e}")
+
+                if self.add_state_in_messages:
+                    user_msg_content = self._format_message_with_state_variables(
+                        user_msg_content,
+                        user_id=user_id,
+                        session_state=session.session_data.get("session_state")
+                        if session.session_data is not None
+                        else None,
+                    )
+
+                # Convert to string for concatenation operations
+                user_msg_content_str = get_text_from_message(user_msg_content) if user_msg_content is not None else ""
+
+                # 4.1 Add knowledge references to user message
+                if (
+                    self.add_knowledge_to_context
+                    and references is not None
+                    and references.references is not None
+                    and len(references.references) > 0
+                ):
+                    user_msg_content_str += "\n\nUse the following references from the knowledge base if it helps:\n"
+                    user_msg_content_str += "<references>\n"
+                    user_msg_content_str += self._convert_documents_to_string(references.references) + "\n"
+                    user_msg_content_str += "</references>"
+                # 4.2 Add context to user message
+                if self.add_dependencies_to_context and self.dependencies is not None:
+                    user_msg_content_str += "\n\n<additional context>\n"
+                    user_msg_content_str += self._convert_dependencies_to_string(self.dependencies) + "\n"
+                    user_msg_content_str += "</additional context>"
+
+                # Use the string version for the final content
+                user_msg_content = user_msg_content_str
+
+                # Return the user message
+                return Message(
+                    role=self.user_message_role,
+                    content=user_msg_content,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    **kwargs,
+                )
+
+    def _get_run_messages(
+        self,
+        *,
+        run_response: RunOutput,
+        input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
+        session: AgentSession,
+        user_id: Optional[str] = None,
+        audio: Optional[Sequence[Audio]] = None,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        files: Optional[Sequence[File]] = None,
+        knowledge_filters: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> RunMessages:
+        """This function returns a RunMessages object with the following attributes:
+            - system_message: The system message for this run
+            - user_message: The user message for this run
+            - messages: List of messages to send to the model
+
+        To build the RunMessages object:
+        1. Add system message to run_messages
+        2. Add extra messages to run_messages if provided
+        3. Add history to run_messages
+        4. Add user message to run_messages (if input is single content)
+        5. Add input messages to run_messages if provided (if input is List[Message])
+
+        Returns:
+            RunMessages object with the following attributes:
+                - system_message: The system message for this run
+                - user_message: The user message for this run
+                - messages: List of all messages to send to the model
+
+        Typical usage:
+        run_messages = self._get_run_messages(
+            input=input, session_id=session_id, user_id=user_id, audio=audio, images=images, videos=videos, files=files, **kwargs
+        )
+        """
+
+        # Initialize the RunMessages object
+        run_messages = RunMessages()
+
+        # 1. Add system message to run_messages
+        system_message = self.get_system_message(session=session, user_id=user_id)
+        if system_message is not None:
+            run_messages.system_message = system_message
+            run_messages.messages.append(system_message)
+
+        # 2. Add extra messages to run_messages if provided
+        if self.additional_input is not None:
+            messages_to_add_to_run_response: List[Message] = []
+            if run_messages.extra_messages is None:
+                run_messages.extra_messages = []
+
+            for _m in self.additional_input:
+                if isinstance(_m, Message):
+                    messages_to_add_to_run_response.append(_m)
+                    run_messages.messages.append(_m)
+                    run_messages.extra_messages.append(_m)
+                elif isinstance(_m, dict):
+                    try:
+                        _m_parsed = Message.model_validate(_m)
+                        messages_to_add_to_run_response.append(_m_parsed)
+                        run_messages.messages.append(_m_parsed)
+                        run_messages.extra_messages.append(_m_parsed)
+                    except Exception as e:
+                        log_warning(f"Failed to validate message: {e}")
+            # Add the extra messages to the run_response
+            if len(messages_to_add_to_run_response) > 0:
+                log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
+                if run_response.metadata is None:
+                    run_response.metadata = RunOutputMetaData(additional_input=messages_to_add_to_run_response)
+                else:
+                    if run_response.metadata.additional_input is None:
+                        run_response.metadata.additional_input = messages_to_add_to_run_response
+                    else:
+                        run_response.metadata.additional_input.extend(messages_to_add_to_run_response)
+
+        # 3. Add history to run_messages
+        if self.add_history_to_context:
+            from copy import deepcopy
+
+            history: List[Message] = session.get_messages_from_last_n_runs(
+                last_n=self.num_history_runs,
+                skip_role=self.system_message_role,
+                agent_id=self.id if self.team_id is not None else None,
+            )
+
+            if len(history) > 0:
+                # Create a deep copy of the history messages to avoid modifying the original messages
+                history_copy = [deepcopy(msg) for msg in history]
+
+                # Tag each message as coming from history
+                for _msg in history_copy:
+                    _msg.from_history = True
+
+                log_debug(f"Adding {len(history_copy)} messages from history")
+
+                run_messages.messages += history_copy
+
+        # 4. Add user message to run_messages
+        user_message: Optional[Message] = None
+
+        # 4.1 Build user message if input is None, str or list and not a list of Message/dict objects
+        if (
+            input is None
+            or isinstance(input, str)
+            or (
+                isinstance(input, list)
+                and not (
+                    len(input) > 0
+                    and (isinstance(input[0], Message) or (isinstance(input[0], dict) and "role" in input[0]))
+                )
+            )
+        ):
+            user_message = self._get_user_message(
+                run_response=run_response,
+                session=session,
+                input=input,
+                audio=audio,
+                images=images,
+                videos=videos,
+                files=files,
+                knowledge_filters=knowledge_filters,
+                **kwargs,
+            )
+
+        # 4.2 If input is provided as a Message, use it directly
+        elif isinstance(input, Message):
+            user_message = input
+
+        # 4.3 If input is provided as a dict, try to validate it as a Message
+        elif isinstance(input, dict):
+            try:
+                user_message = Message.model_validate(input)
+            except Exception as e:
+                log_warning(f"Failed to validate message: {e}")
+
+        # 4.4 If input is provided as a BaseModel, convert it to a Message
+        elif isinstance(input, BaseModel):
+            try:
+                # Create a user message with the BaseModel content
+                content = input.model_dump_json(indent=2, exclude_none=True)
+                user_message = Message(role=self.user_message_role, content=content)
+            except Exception as e:
+                log_warning(f"Failed to convert BaseModel to message: {e}")
+
+        # 5. Add input messages to run_messages if provided (List[Message] or List[Dict])
+        if (
+            isinstance(input, list)
+            and len(input) > 0
+            and (isinstance(input[0], Message) or (isinstance(input[0], dict) and "role" in input[0]))
+        ):
+            for _m in input:
+                if isinstance(_m, Message):
+                    run_messages.messages.append(_m)
+                    if run_messages.extra_messages is None:
+                        run_messages.extra_messages = []
+                    run_messages.extra_messages.append(_m)
+                elif isinstance(_m, dict):
+                    try:
+                        msg = Message.model_validate(_m)
+                        run_messages.messages.append(msg)
+                        if run_messages.extra_messages is None:
+                            run_messages.extra_messages = []
+                        run_messages.extra_messages.append(msg)
+                    except Exception as e:
+                        log_warning(f"Failed to validate message: {e}")
+
+        # Add user message to run_messages
+        if user_message is not None:
+            run_messages.user_message = user_message
+            run_messages.messages.append(user_message)
+
+        return run_messages
+
+    def _get_continue_run_messages(
+        self,
+        input: List[Message],
+    ) -> RunMessages:
+        """This function returns a RunMessages object with the following attributes:
+            - system_message: The system message for this run
+            - user_message: The user message for this run
+            - messages: List of messages to send to the model
+
+        It continues from a previous run and completes a tool call that was paused.
+        """
+
+        # Initialize the RunMessages object
+        run_messages = RunMessages()
+
+        # Extract most recent user message from messages as the original user message
+        user_message = None
+        for msg in reversed(input):
+            if msg.role == self.user_message_role:
+                user_message = msg
+                break
+
+        # Extract system message from messages
+        system_message = None
+        for msg in input:
+            if msg.role == self.system_message_role:
+                system_message = msg
+                break
+
+        run_messages.system_message = system_message
+        run_messages.user_message = user_message
+        run_messages.messages = input
+
+        return run_messages
+
+    def _get_messages_for_parser_model(
+        self, model_response: ModelResponse, response_format: Optional[Union[Dict, Type[BaseModel]]]
+    ) -> List[Message]:
+        """Get the messages for the parser model."""
+        system_content = (
+            self.parser_model_prompt
+            if self.parser_model_prompt is not None
+            else "You are tasked with creating a structured output from the provided user message."
+        )
+
+        if response_format == {"type": "json_object"} and self.output_schema is not None:
+            system_content += f"{get_json_output_prompt(self.output_schema)}"  # type: ignore
+
+        return [
+            Message(role="system", content=system_content),
+            Message(role="user", content=model_response.content),
+        ]
+
+    def _get_messages_for_parser_model_stream(
+        self, run_response: RunOutput, response_format: Optional[Union[Dict, Type[BaseModel]]]
+    ) -> List[Message]:
+        """Get the messages for the parser model."""
+        system_content = (
+            self.parser_model_prompt
+            if self.parser_model_prompt is not None
+            else "You are tasked with creating a structured output from the provided data."
+        )
+
+        if response_format == {"type": "json_object"} and self.output_schema is not None:
+            system_content += f"{get_json_output_prompt(self.output_schema)}"  # type: ignore
+
+        return [
+            Message(role="system", content=system_content),
+            Message(role="user", content=run_response.content),
+        ]
+
+    def _get_messages_for_output_model(self, messages: List[Message]) -> List[Message]:
+        """Get the messages for the output model."""
+
+        if self.output_model_prompt is not None:
+            system_message_exists = False
+            for message in messages:
+                if message.role == "system":
+                    system_message_exists = True
+                    message.content = self.output_model_prompt
+                    break
+            if not system_message_exists:
+                messages.insert(0, Message(role="system", content=self.output_model_prompt))
+
+        # Remove the last assistant message from the messages list
+        messages.pop(-1)
+
+        return messages
+
+    def get_relevant_docs_from_knowledge(
+        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs
+    ) -> Optional[List[Union[Dict[str, Any], str]]]:
+        """Get relevant docs from the knowledge base to answer a query.
+
+        Args:
+            query (str): The query to search for.
+            num_documents (Optional[int]): Number of documents to return.
+            filters (Optional[Dict[str, Any]]): Filters to apply to the search.
+            **kwargs: Additional keyword arguments.
+
+        Returns:
+            Optional[List[Dict[str, Any]]]: List of relevant document dicts.
+        """
+        from agno.knowledge.document import Document
+
+        if num_documents is None and self.knowledge is not None:
+            num_documents = self.knowledge.max_results
+        # Validate the filters against known valid filter keys
+        if self.knowledge is not None:
+            valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
+
+            # Warn about invalid filter keys
+            if invalid_keys:
+                # type: ignore
+                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
+                log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
+
+                # Only use valid filters
+                filters = valid_filters
+                if not filters:
+                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
+
+        if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
+            from inspect import signature
+
+            try:
+                sig = signature(self.knowledge_retriever)
+                knowledge_retriever_kwargs: Dict[str, Any] = {}
+                if "agent" in sig.parameters:
+                    knowledge_retriever_kwargs = {"agent": self}
+                if "filters" in sig.parameters:
+                    knowledge_retriever_kwargs["filters"] = filters
+                knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
+                return self.knowledge_retriever(**knowledge_retriever_kwargs)
+            except Exception as e:
+                log_warning(f"Knowledge retriever failed: {e}")
+                raise e
+
+        # Use knowledge base search
+        try:
+            if self.knowledge is None or (
+                (getattr(self.knowledge, "vector_db", None)) is None
+                and getattr(self.knowledge, "knowledge_retriever", None) is None
+            ):
+                return None
+
+            if num_documents is None:
+                if isinstance(self.knowledge, Knowledge):
+                    num_documents = self.knowledge.max_results
+
+            log_debug(f"Searching knowledge base with filters: {filters}")
+            relevant_docs: List[Document] = self.knowledge.search(
+                query=query, max_results=num_documents, filters=filters
+            )
+
+            if not relevant_docs or len(relevant_docs) == 0:
+                log_debug("No relevant documents found for query")
+                return None
+
+            return [doc.to_dict() for doc in relevant_docs]
+        except Exception as e:
+            log_warning(f"Error searching knowledge base: {e}")
+            raise e
+
+    async def aget_relevant_docs_from_knowledge(
+        self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None, **kwargs
+    ) -> Optional[List[Union[Dict[str, Any], str]]]:
+        """Get relevant documents from knowledge base asynchronously."""
+        from agno.knowledge.document import Document
+
+        if num_documents is None and self.knowledge is not None:
+            num_documents = self.knowledge.max_results
+
+        # Validate the filters against known valid filter keys
+        if self.knowledge is not None:
+            valid_filters, invalid_keys = self.knowledge.validate_filters(filters)  # type: ignore
+
+            # Warn about invalid filter keys
+            if invalid_keys:  # type: ignore
+                log_warning(f"Invalid filter keys provided: {invalid_keys}. These filters will be ignored.")
+                log_info(f"Valid filter keys are: {self.knowledge.valid_metadata_filters}")  # type: ignore
+
+                # Only use valid filters
+                filters = valid_filters
+                if not filters:
+                    log_warning("No valid filters remain after validation. Search will proceed without filters.")
+
+        if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
+            from inspect import isawaitable, signature
+
+            try:
+                sig = signature(self.knowledge_retriever)
+                knowledge_retriever_kwargs: Dict[str, Any] = {}
+                if "agent" in sig.parameters:
+                    knowledge_retriever_kwargs = {"agent": self}
+                if "filters" in sig.parameters:
+                    knowledge_retriever_kwargs["filters"] = filters
+                knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
+                result = self.knowledge_retriever(**knowledge_retriever_kwargs)
+
+                if isawaitable(result):
+                    result = await result
+
+                return result
+            except Exception as e:
+                log_warning(f"Knowledge retriever failed: {e}")
+                raise e
+
+        # Use knowledge base search
+        try:
+            if self.knowledge is None or (
+                getattr(self.knowledge, "vector_db", None) is None
+                and getattr(self.knowledge, "knowledge_retriever", None) is None
+            ):
+                return None
+
+            if num_documents is None:
+                num_documents = self.knowledge.max_results
+
+            log_debug(f"Searching knowledge base with filters: {filters}")
+            relevant_docs: List[Document] = await self.knowledge.async_search(
+                query=query, max_results=num_documents, filters=filters
+            )
+
+            if not relevant_docs or len(relevant_docs) == 0:
+                log_debug("No relevant documents found for query")
+                return None
+
+            return [doc.to_dict() for doc in relevant_docs]
+        except Exception as e:
+            log_warning(f"Error searching knowledge base: {e}")
+            raise e
+
+    def _convert_documents_to_string(self, docs: List[Union[Dict[str, Any], str]]) -> str:
+        if docs is None or len(docs) == 0:
+            return ""
+
+        if self.references_format == "yaml":
+            import yaml
+
+            return yaml.dump(docs)
+
+        import json
+
+        return json.dumps(docs, indent=2, ensure_ascii=False)
+
+    def _convert_dependencies_to_string(self, context: Dict[str, Any]) -> str:
+        """Convert the context dictionary to a string representation.
+
+        Args:
+            context: Dictionary containing context data
+
+        Returns:
+            String representation of the context, or empty string if conversion fails
+        """
+        if context is None:
+            return ""
+
+        import json
+
+        try:
+            return json.dumps(context, indent=2, default=str)
+        except (TypeError, ValueError, OverflowError) as e:
+            log_warning(f"Failed to convert context to JSON: {e}")
+            # Attempt a fallback conversion for non-serializable objects
+            sanitized_context = {}
+            for key, value in context.items():
+                try:
+                    # Try to serialize each value individually
+                    json.dumps({key: value}, default=str)
+                    sanitized_context[key] = value
+                except Exception:
+                    # If serialization fails, convert to string representation
+                    sanitized_context[key] = str(value)
+
+            try:
+                return json.dumps(sanitized_context, indent=2)
+            except Exception as e:
+                log_error(f"Failed to convert sanitized context to JSON: {e}")
+                return str(context)
+
+    def deep_copy(self, *, update: Optional[Dict[str, Any]] = None) -> Agent:
+        """Create and return a deep copy of this Agent, optionally updating fields.
+
+        Args:
+            update (Optional[Dict[str, Any]]): Optional dictionary of fields for the new Agent.
+
+        Returns:
+            Agent: A new Agent instance.
+        """
+        from dataclasses import fields
+
+        # Extract the fields to set for the new Agent
+        fields_for_new_agent: Dict[str, Any] = {}
+
+        for f in fields(self):
+            field_value = getattr(self, f.name)
+            if field_value is not None:
+                fields_for_new_agent[f.name] = self._deep_copy_field(f.name, field_value)
+
+        # Update fields if provided
+        if update:
+            fields_for_new_agent.update(update)
+        # Create a new Agent
+        new_agent = self.__class__(**fields_for_new_agent)
+        log_debug(f"Created new {self.__class__.__name__}")
+        return new_agent
+
+    def _deep_copy_field(self, field_name: str, field_value: Any) -> Any:
+        """Helper method to deep copy a field based on its type."""
+        from copy import copy, deepcopy
+
+        # For memory and reasoning_agent, use their deep_copy methods
+        if field_name == "reasoning_agent":
+            return field_value.deep_copy()
+
+        # For storage, model and reasoning_model, use a deep copy
+        elif field_name in ("db", "model", "reasoning_model"):
+            try:
+                return deepcopy(field_value)
+            except Exception:
+                try:
+                    return copy(field_value)
+                except Exception as e:
+                    log_warning(f"Failed to copy field: {field_name} - {e}")
+                    return field_value
+
+        # For compound types, attempt a deep copy
+        elif isinstance(field_value, (list, dict, set)):
+            try:
+                return deepcopy(field_value)
+            except Exception:
+                try:
+                    return copy(field_value)
+                except Exception as e:
+                    log_warning(f"Failed to copy field: {field_name} - {e}")
+                    return field_value
+
+        # For pydantic models, attempt a model_copy
+        elif isinstance(field_value, BaseModel):
+            try:
+                return field_value.model_copy(deep=True)
+            except Exception:
+                try:
+                    return field_value.model_copy(deep=False)
+                except Exception as e:
+                    log_warning(f"Failed to copy field: {field_name} - {e}")
+                    return field_value
+
+        # For other types, attempt a shallow copy first
+        try:
+            from copy import copy
+
+            return copy(field_value)
+        except Exception:
+            # If copy fails, return as is
+            return field_value
+
+    def save_run_response_to_file(
+        self,
+        run_response: RunOutput,
+        input: Optional[Union[str, List, Dict, Message, List[Message]]] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
+        if self.save_response_to_file is not None and run_response is not None:
+            message_str = None
+            if input is not None:
+                if isinstance(input, str):
+                    message_str = input
+                else:
+                    log_warning("Did not use input in output file name: input is not a string")
+            try:
+                from pathlib import Path
+
+                fn = self.save_response_to_file.format(
+                    name=self.name,
+                    session_id=session_id,
+                    user_id=user_id,
+                    message=message_str,
+                    run_id=run_response.run_id,
+                )
+                fn_path = Path(fn)
+                if not fn_path.parent.exists():
+                    fn_path.parent.mkdir(parents=True, exist_ok=True)
+                if isinstance(run_response.content, str):
+                    fn_path.write_text(run_response.content)
+                else:
+                    import json
+
+                    fn_path.write_text(json.dumps(run_response.content, indent=2))
+            except Exception as e:
+                log_warning(f"Failed to save output to file: {e}")
+
+    def _calculate_run_metrics(self, messages: List[Message], current_run_metrics: Optional[Metrics] = None) -> Metrics:
+        """Sum the metrics of the given messages into a Metrics object"""
+        metrics = current_run_metrics or Metrics()
+
+        assistant_message_role = self.model.assistant_message_role if self.model is not None else "assistant"
+        for m in messages:
+            if m.role == assistant_message_role and m.metrics is not None and m.from_history is False:
+                metrics += m.metrics
+
+        # If the run metrics were already initialized, keep the time related metrics
+        if current_run_metrics is not None:
+            metrics.timer = current_run_metrics.timer
+            metrics.duration = current_run_metrics.duration
+            metrics.time_to_first_token = current_run_metrics.time_to_first_token
+
+        return metrics
+
     ###########################################################################
     # Handle images, videos and audio
     ###########################################################################
@@ -4990,19 +5181,19 @@ class Agent:
 
     def _handle_reasoning(self, run_response: RunOutput, run_messages: RunMessages) -> None:
         if self.reasoning or self.reasoning_model is not None:
-            reasoning_generator = self.reason(run_response=run_response, run_messages=run_messages)
+            reasoning_generator = self._reason(run_response=run_response, run_messages=run_messages)
 
             # Consume the generator without yielding
             deque(reasoning_generator, maxlen=0)
 
     def _handle_reasoning_stream(self, run_response: RunOutput, run_messages: RunMessages) -> Iterator[RunOutputEvent]:
         if self.reasoning or self.reasoning_model is not None:
-            reasoning_generator = self.reason(run_response=run_response, run_messages=run_messages)
+            reasoning_generator = self._reason(run_response=run_response, run_messages=run_messages)
             yield from reasoning_generator
 
     async def _ahandle_reasoning(self, run_response: RunOutput, run_messages: RunMessages) -> None:
         if self.reasoning or self.reasoning_model is not None:
-            reason_generator = self.areason(run_response=run_response, run_messages=run_messages)
+            reason_generator = self._areason(run_response=run_response, run_messages=run_messages)
             # Consume the generator without yielding
             async for _ in reason_generator:
                 pass
@@ -5011,7 +5202,7 @@ class Agent:
         self, run_response: RunOutput, run_messages: RunMessages
     ) -> AsyncIterator[RunOutputEvent]:
         if self.reasoning or self.reasoning_model is not None:
-            reason_generator = self.areason(run_response=run_response, run_messages=run_messages)
+            reason_generator = self._areason(run_response=run_response, run_messages=run_messages)
             async for item in reason_generator:
                 yield item
 
@@ -5038,7 +5229,7 @@ class Agent:
 
         return updated_reasoning_content
 
-    def reason(self, run_response: RunOutput, run_messages: RunMessages) -> Iterator[RunOutputEvent]:
+    def _reason(self, run_response: RunOutput, run_messages: RunMessages) -> Iterator[RunOutputEvent]:
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
             yield self._handle_event(create_reasoning_started_event(from_run_response=run_response), run_response)
@@ -5070,6 +5261,9 @@ class Agent:
                 telemetry=self.telemetry,
                 debug_mode=self.debug_mode,
                 debug_level=self.debug_level,
+                session_state=self.session_state,
+                dependencies=self.dependencies,
+                metadata=self.metadata,
             )
             is_deepseek = is_deepseek_reasoning_model(reasoning_model)
             is_groq = is_groq_reasoning_model(reasoning_model)
@@ -5159,6 +5353,9 @@ class Agent:
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
                     debug_level=self.debug_level,
+                    session_state=self.session_state,
+                    dependencies=self.dependencies,
+                    metadata=self.metadata,
                 )
 
             # Validate reasoning agent
@@ -5167,9 +5364,9 @@ class Agent:
                 return
             # Ensure the reasoning agent response model is ReasoningSteps
             if (
-                reasoning_agent.response_model is not None
-                and not isinstance(reasoning_agent.response_model, type)
-                and not issubclass(reasoning_agent.response_model, ReasoningSteps)
+                reasoning_agent.output_schema is not None
+                and not isinstance(reasoning_agent.output_schema, type)
+                and not issubclass(reasoning_agent.output_schema, ReasoningSteps)
             ):
                 log_warning("Reasoning agent response model should be `ReasoningSteps`, continuing regular session...")
                 return
@@ -5183,9 +5380,7 @@ class Agent:
                 log_debug(f"Step {step_count}", center=True, symbol="=")
                 try:
                     # Run the reasoning agent
-                    reasoning_agent_response: RunOutput = reasoning_agent.run(
-                        messages=run_messages.get_input_messages()
-                    )
+                    reasoning_agent_response: RunOutput = reasoning_agent.run(input=run_messages.get_input_messages())
                     if reasoning_agent_response.content is None or reasoning_agent_response.messages is None:
                         log_warning("Reasoning error. Reasoning response is empty, continuing regular session...")
                         break
@@ -5259,7 +5454,7 @@ class Agent:
                     run_response,
                 )
 
-    async def areason(self, run_response: RunOutput, run_messages: RunMessages) -> Any:
+    async def _areason(self, run_response: RunOutput, run_messages: RunMessages) -> Any:
         # Yield a reasoning started event
         if self.stream_intermediate_steps:
             yield self._handle_event(create_reasoning_started_event(from_run_response=run_response), run_response)
@@ -5291,6 +5486,9 @@ class Agent:
                 telemetry=self.telemetry,
                 debug_mode=self.debug_mode,
                 debug_level=self.debug_level,
+                session_state=self.session_state,
+                dependencies=self.dependencies,
+                metadata=self.metadata,
             )
             is_deepseek = is_deepseek_reasoning_model(reasoning_model)
             is_groq = is_groq_reasoning_model(reasoning_model)
@@ -5380,6 +5578,9 @@ class Agent:
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
                     debug_level=self.debug_level,
+                    session_state=self.session_state,
+                    dependencies=self.dependencies,
+                    metadata=self.metadata,
                 )
 
             # Validate reasoning agent
@@ -5388,9 +5589,9 @@ class Agent:
                 return
             # Ensure the reasoning agent response model is ReasoningSteps
             if (
-                reasoning_agent.response_model is not None
-                and not isinstance(reasoning_agent.response_model, type)
-                and not issubclass(reasoning_agent.response_model, ReasoningSteps)
+                reasoning_agent.output_schema is not None
+                and not isinstance(reasoning_agent.output_schema, type)
+                and not issubclass(reasoning_agent.output_schema, ReasoningSteps)
             ):
                 log_warning("Reasoning agent response model should be `ReasoningSteps`, continuing regular session...")
                 return
@@ -5406,7 +5607,7 @@ class Agent:
                 try:
                     # Run the reasoning agent
                     reasoning_agent_response: RunOutput = await reasoning_agent.arun(
-                        messages=run_messages.get_input_messages()
+                        input=run_messages.get_input_messages()
                     )
                     if reasoning_agent_response.content is None or reasoning_agent_response.messages is None:
                         log_warning("Reasoning error. Reasoning response is empty, continuing regular session...")
@@ -5504,9 +5705,9 @@ class Agent:
         if self.parser_model is None:
             return
 
-        if self.response_model is not None:
+        if self.output_schema is not None:
             parser_response_format = self._get_response_format(self.parser_model)
-            messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
+            messages_for_parser_model = self._get_messages_for_parser_model(model_response, parser_response_format)
             parser_model_response: ModelResponse = self.parser_model.response(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
@@ -5524,9 +5725,9 @@ class Agent:
         if self.parser_model is None:
             return
 
-        if self.response_model is not None:
+        if self.output_schema is not None:
             parser_response_format = self._get_response_format(self.parser_model)
-            messages_for_parser_model = self.get_messages_for_parser_model(model_response, parser_response_format)
+            messages_for_parser_model = self._get_messages_for_parser_model(model_response, parser_response_format)
             parser_model_response: ModelResponse = await self.parser_model.aresponse(
                 messages=messages_for_parser_model,
                 response_format=parser_response_format,
@@ -5542,13 +5743,13 @@ class Agent:
     ):
         """Parse the model response using the parser model"""
         if self.parser_model is not None:
-            if self.response_model is not None:
+            if self.output_schema is not None:
                 if stream_intermediate_steps:
                     yield self._handle_event(create_parser_model_response_started_event(run_response), run_response)
 
                 parser_model_response = ModelResponse(content="")
                 parser_response_format = self._get_response_format(self.parser_model)
-                messages_for_parser_model = self.get_messages_for_parser_model_stream(
+                messages_for_parser_model = self._get_messages_for_parser_model_stream(
                     run_response, parser_response_format
                 )
                 for model_response_event in self.parser_model.response_stream(
@@ -5587,13 +5788,13 @@ class Agent:
     ):
         """Parse the model response using the parser model stream."""
         if self.parser_model is not None:
-            if self.response_model is not None:
+            if self.output_schema is not None:
                 if stream_intermediate_steps:
                     yield self._handle_event(create_parser_model_response_started_event(run_response), run_response)
 
                 parser_model_response = ModelResponse(content="")
                 parser_response_format = self._get_response_format(self.parser_model)
-                messages_for_parser_model = self.get_messages_for_parser_model_stream(
+                messages_for_parser_model = self._get_messages_for_parser_model_stream(
                     run_response, parser_response_format
                 )
                 model_response_stream = self.parser_model.aresponse_stream(
@@ -5628,6 +5829,115 @@ class Agent:
             else:
                 log_warning("A response model is required to parse the response with a parser model")
 
+    def _generate_response_with_output_model(self, model_response: ModelResponse, run_messages: RunMessages) -> None:
+        """Parse the model response using the output model."""
+        if self.output_model is None:
+            return
+
+        messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
+        output_model_response: ModelResponse = self.output_model.response(messages=messages_for_output_model)
+        model_response.content = output_model_response.content
+
+    def _generate_response_with_output_model_stream(
+        self,
+        session: AgentSession,
+        run_response: RunOutput,
+        run_messages: RunMessages,
+        stream_intermediate_steps: bool = False,
+        workflow_context: Optional[Dict] = None,
+    ):
+        """Parse the model response using the output model."""
+        from agno.utils.events import (
+            create_output_model_response_completed_event,
+            create_output_model_response_started_event,
+        )
+
+        if self.output_model is None:
+            return
+
+        if stream_intermediate_steps:
+            yield self._handle_event(create_output_model_response_started_event(run_response), run_response)
+
+        messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
+
+        model_response = ModelResponse(content="")
+
+        for model_response_event in self.output_model.response_stream(messages=messages_for_output_model):
+            yield from self._handle_model_response_chunk(
+                session=session,
+                run_response=run_response,
+                model_response=model_response,
+                model_response_event=model_response_event,
+                workflow_context=workflow_context,
+                stream_intermediate_steps=stream_intermediate_steps,
+            )
+
+        if stream_intermediate_steps:
+            yield self._handle_event(create_output_model_response_completed_event(run_response), run_response)
+
+        # Build a list of messages that should be added to the RunResponse
+        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+        # Update the RunResponse messages
+        run_response.messages = messages_for_run_response
+        # Update the RunResponse metrics
+        run_response.metrics = self._calculate_run_metrics(messages_for_run_response)
+
+    async def _agenerate_response_with_output_model(self, model_response: ModelResponse, run_messages: RunMessages):
+        """Parse the model response using the output model."""
+        if self.output_model is None:
+            return
+
+        messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
+        output_model_response: ModelResponse = await self.output_model.aresponse(messages=messages_for_output_model)
+        model_response.content = output_model_response.content
+
+    async def _agenerate_response_with_output_model_stream(
+        self,
+        session: AgentSession,
+        run_response: RunOutput,
+        run_messages: RunMessages,
+        stream_intermediate_steps: bool = False,
+        workflow_context: Optional[Dict] = None,
+    ):
+        """Parse the model response using the output model."""
+        from agno.utils.events import (
+            create_output_model_response_completed_event,
+            create_output_model_response_started_event,
+        )
+
+        if self.output_model is None:
+            return
+
+        if stream_intermediate_steps:
+            yield self._handle_event(create_output_model_response_started_event(run_response), run_response)
+
+        messages_for_output_model = self._get_messages_for_output_model(run_messages.messages)
+
+        model_response = ModelResponse(content="")
+
+        model_response_stream = self.output_model.aresponse_stream(messages=messages_for_output_model)
+
+        async for model_response_event in model_response_stream:
+            for event in self._handle_model_response_chunk(
+                session=session,
+                run_response=run_response,
+                model_response=model_response,
+                model_response_event=model_response_event,
+                workflow_context=workflow_context,
+                stream_intermediate_steps=stream_intermediate_steps,
+            ):
+                yield event
+
+        if stream_intermediate_steps:
+            yield self._handle_event(create_output_model_response_completed_event(run_response), run_response)
+
+        # Build a list of messages that should be added to the RunResponse
+        messages_for_run_response = [m for m in run_messages.messages if m.add_to_agent_memory]
+        # Update the RunResponse messages
+        run_response.messages = messages_for_run_response
+        # Update the RunResponse metrics
+        run_response.metrics = self._calculate_run_metrics(messages_for_run_response)
+
     def _handle_event(self, event: RunOutputEvent, run_response: RunOutput, workflow_context: Optional[Dict] = None):
         if workflow_context:
             event.workflow_id = workflow_context.get("workflow_id")
@@ -5648,7 +5958,7 @@ class Agent:
     # Default Tools
     ###########################################################################
 
-    def get_update_user_memory_function(self, user_id: Optional[str] = None, async_mode: bool = False) -> Function:
+    def _get_update_user_memory_function(self, user_id: Optional[str] = None, async_mode: bool = False) -> Function:
         def update_user_memory(task: str) -> str:
             """Use this function to submit a task to modify the Agent's memory.
             Describe the task in detail and be specific.
@@ -5687,7 +5997,7 @@ class Agent:
 
         return Function.from_callable(update_user_memory_function, name="update_user_memory")
 
-    def get_chat_history_function(self, session: AgentSession) -> Callable:
+    def _get_chat_history_function(self, session: AgentSession) -> Callable:
         def get_chat_history(num_chats: Optional[int] = None) -> str:
             """Use this function to get the chat history between the user and agent.
 
@@ -5723,7 +6033,7 @@ class Agent:
 
         return get_chat_history
 
-    def get_tool_call_history_function(self, session: AgentSession) -> Callable:
+    def _get_tool_call_history_function(self, session: AgentSession) -> Callable:
         def get_tool_call_history(num_calls: int = 3) -> str:
             """Use this function to get the tools called by the agent in reverse chronological order.
 
@@ -5758,7 +6068,7 @@ class Agent:
             session_state[key] = value
         return f"Updated session state: {session_state}"
 
-    def search_knowledge_base_function(
+    def _get_search_knowledge_base_function(
         self, run_response: RunOutput, knowledge_filters: Optional[Dict[str, Any]] = None, async_mode: bool = False
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
@@ -5831,7 +6141,7 @@ class Agent:
 
         return Function.from_callable(search_knowledge_base_function, name="search_knowledge_base")
 
-    def search_knowledge_base_with_agentic_filters_function(
+    def _search_knowledge_base_with_agentic_filters_function(
         self, run_response: RunOutput, knowledge_filters: Optional[Dict[str, Any]] = None, async_mode: bool = False
     ) -> Function:
         """Factory function to create a search_knowledge_base function with filters."""
@@ -5931,6 +6241,64 @@ class Agent:
         asyncio.run(self.knowledge.add_content(name=document_name, text_content=document_content, reader=TextReader()))
         return "Successfully added to knowledge base"
 
+    def _get_previous_sessions_messages_function(self, num_history_sessions: Optional[int] = 2) -> Callable:
+        """Factory function to create a get_previous_session_messages function.
+
+        Args:
+            num_history_sessions: The last n sessions to be taken from db
+
+        Returns:
+            Callable: A function that retrieves messages from previous sessions
+        """
+
+        def get_previous_session_messages() -> str:
+            """Use this function to retrieve messages from previous chat sessions.
+            USE THIS TOOL ONLY WHEN THE QUESTION IS EITHER "What was my last conversation?" or "What was my last question?" and similar to it.
+
+            Returns:
+                str: JSON formatted list of message pairs from previous sessions
+            """
+            # TODO: Review and Test this function
+            import json
+
+            if self.db is None:
+                return "Previous session messages not available"
+
+            selected_sessions = self.db.get_sessions(session_type=SessionType.AGENT, limit=num_history_sessions)
+
+            all_messages = []
+            seen_message_pairs = set()
+
+            for session in selected_sessions:
+                if isinstance(session, AgentSession) and session.runs:
+                    message_count = 0
+                    for run in session.runs:
+                        messages = run.messages
+                        if messages is not None:
+                            for i in range(0, len(messages) - 1, 2):
+                                if i + 1 < len(messages):
+                                    try:
+                                        user_msg = messages[i]
+                                        assistant_msg = messages[i + 1]
+                                        user_content = user_msg.content
+                                        assistant_content = assistant_msg.content
+                                        if user_content is None or assistant_content is None:
+                                            continue  # Skip this pair if either message has no content
+
+                                        msg_pair_id = f"{user_content}:{assistant_content}"
+                                        if msg_pair_id not in seen_message_pairs:
+                                            seen_message_pairs.add(msg_pair_id)
+                                            all_messages.append(Message.model_validate(user_msg))
+                                            all_messages.append(Message.model_validate(assistant_msg))
+                                            message_count += 1
+                                    except Exception as e:
+                                        log_warning(f"Error processing message pair: {e}")
+                                        continue
+
+            return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else "No history found"
+
+        return get_previous_session_messages
+
     ###########################################################################
     # Print Response
     ###########################################################################
@@ -5965,7 +6333,7 @@ class Agent:
         if markdown is None:
             markdown = self.markdown
 
-        if self.response_model is not None:
+        if self.output_schema is not None:
             markdown = False
 
         if stream is None:
@@ -6050,7 +6418,7 @@ class Agent:
         if markdown is None:
             markdown = self.markdown
 
-        if self.response_model is not None:
+        if self.output_schema is not None:
             markdown = False
 
         if stream is None:
@@ -6104,7 +6472,7 @@ class Agent:
                 **kwargs,
             )
 
-    def update_reasoning_content_from_tool_call(
+    def _update_reasoning_content_from_tool_call(
         self, run_response: RunOutput, tool_name: str, tool_args: Dict[str, Any]
     ) -> Optional[ReasoningStep]:
         """Update reasoning_content based on tool calls that look like thinking or reasoning tools."""
@@ -6179,7 +6547,7 @@ class Agent:
             append_to_reasoning_content(run_response=run_response, content=formatted_content)
             return reasoning_step
 
-        # Case 3: ThinkingTools.think (simple format, just has 'thought')
+        # Case 3: ReasoningTool.think (simple format, just has 'thought')
         elif tool_name.lower() == "think" and "thought" in tool_args:
             thought = tool_args["thought"]
             reasoning_step = ReasoningStep(
@@ -6222,64 +6590,6 @@ class Agent:
             log_debug(f"Using knowledge filters: {effective_filters}")
 
         return effective_filters
-
-    def get_previous_sessions_messages_function(self, num_history_sessions: Optional[int] = 2) -> Callable:
-        """Factory function to create a get_previous_session_messages function.
-
-        Args:
-            num_history_sessions: The last n sessions to be taken from db
-
-        Returns:
-            Callable: A function that retrieves messages from previous sessions
-        """
-
-        def get_previous_session_messages() -> str:
-            """Use this function to retrieve messages from previous chat sessions.
-            USE THIS TOOL ONLY WHEN THE QUESTION IS EITHER "What was my last conversation?" or "What was my last question?" and similar to it.
-
-            Returns:
-                str: JSON formatted list of message pairs from previous sessions
-            """
-            # TODO: Review and Test this function
-            import json
-
-            if self.db is None:
-                return "Previous session messages not available"
-
-            selected_sessions = self.db.get_sessions(session_type=SessionType.AGENT, limit=num_history_sessions)
-
-            all_messages = []
-            seen_message_pairs = set()
-
-            for session in selected_sessions:
-                if isinstance(session, AgentSession) and session.runs:
-                    message_count = 0
-                    for run in session.runs:
-                        messages = run.messages
-                        if messages is not None:
-                            for i in range(0, len(messages) - 1, 2):
-                                if i + 1 < len(messages):
-                                    try:
-                                        user_msg = messages[i]
-                                        assistant_msg = messages[i + 1]
-                                        user_content = user_msg.content
-                                        assistant_content = assistant_msg.content
-                                        if user_content is None or assistant_content is None:
-                                            continue  # Skip this pair if either message has no content
-
-                                        msg_pair_id = f"{user_content}:{assistant_content}"
-                                        if msg_pair_id not in seen_message_pairs:
-                                            seen_message_pairs.add(msg_pair_id)
-                                            all_messages.append(Message.model_validate(user_msg))
-                                            all_messages.append(Message.model_validate(assistant_msg))
-                                            message_count += 1
-                                    except Exception as e:
-                                        log_warning(f"Error processing message pair: {e}")
-                                        continue
-
-            return json.dumps([msg.to_dict() for msg in all_messages]) if all_messages else "No history found"
-
-        return get_previous_session_messages
 
     def cli_app(
         self,
@@ -6360,7 +6670,7 @@ class Agent:
     ###########################################################################
 
     def _log_agent_run(self, session_id: str, user_id: Optional[str] = None) -> None:
-        self.set_telemetry()
+        self._set_telemetry()
 
         if not self.telemetry:
             return
@@ -6368,7 +6678,7 @@ class Agent:
         # # from agno.api.agent import AgentRunCreate, create_agent_run
 
         # try:
-        #     # agent_session: Optional[AgentSession] = self.agent_session or self.read_or_create_session(
+        #     # agent_session: Optional[AgentSession] = self.agent_session or self._read_or_create_session(
         #     #     session_id=session_id, user_id=user_id
         #     # )
 
@@ -6382,7 +6692,7 @@ class Agent:
         #     log_debug(f"Could not create agent event: {e}")
 
     async def _alog_agent_run(self, session_id: str, user_id: Optional[str] = None) -> None:
-        self.set_telemetry()
+        self._set_telemetry()
 
         if not self.telemetry:
             return
@@ -6390,7 +6700,7 @@ class Agent:
         # from agno.api.agent import AgentRunCreate, acreate_agent_run
 
         # try:
-        #     agent_session: Optional[AgentSession] = self.agent_session or self.read_or_create_session(
+        #     agent_session: Optional[AgentSession] = self.agent_session or self._read_or_create_session(
         #         session_id=session_id, user_id=user_id
         #     )
 

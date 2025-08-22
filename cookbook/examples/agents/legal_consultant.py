@@ -1,3 +1,5 @@
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
@@ -8,8 +10,11 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 knowledge = Knowledge(
     vector_db=PgVector(table_name="legal_docs", db_url=db_url),
 )
-knowledge.add_content(
-    url="https://www.justice.gov/d9/criminal-ccips/legacy/2015/01/14/ccmanual_0.pdf",
+
+asyncio.run(
+    knowledge.add_content(
+        url="https://www.justice.gov/d9/criminal-ccips/legacy/2015/01/14/ccmanual_0.pdf",
+    )
 )
 
 legal_agent = Agent(

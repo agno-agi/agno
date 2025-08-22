@@ -15,13 +15,11 @@ Setup:
 3. Run this script to see coordinated reasoning RAG in action
 """
 
-import asyncio
-
 from agno.agent import Agent
 from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.reranker import CohereReranker
 from agno.models.anthropic import Claude
-from agno.reranker.cohere import CohereReranker
 from agno.team.team import Team
 from agno.tools.reasoning import ReasoningTools
 from agno.vectordb.lancedb import LanceDb, SearchType

@@ -1,6 +1,6 @@
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import uuid4
 
 from sqlalchemy import Index, UniqueConstraint
@@ -1621,7 +1621,7 @@ class MySQLDb(BaseDb):
 
         # Parse the content into the new format
         memories: List[UserMemory] = []
-        sessions: List[AgentSession] | List[TeamSession] | List[WorkflowSession] = []
+        sessions: Sequence[Union[AgentSession, TeamSession, WorkflowSession]] = []
         if v1_table_type == "agent_sessions":
             sessions = parse_agent_sessions(old_content)
         elif v1_table_type == "team_sessions":

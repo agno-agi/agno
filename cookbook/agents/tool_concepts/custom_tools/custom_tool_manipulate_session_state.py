@@ -6,7 +6,7 @@ from rich.pretty import pprint
 
 
 @tool()
-def answer_from_known_questions(agent: Agent, question: str) -> str:
+def answer_from_known_questions(session_state: dict, question: str) -> str:
     """Answer a question from a list of known questions
 
     Args:
@@ -29,15 +29,15 @@ def answer_from_known_questions(agent: Agent, question: str) -> str:
         "What is the capital of Greece?": "Athens",
         "What is the capital of Turkey?": "Ankara",
     }
-    if agent.session_state is None:
-        agent.session_state = {}
+    if session_state is None:
+        session_state = {}
 
-    if "last_answer" in agent.session_state:
-        del agent.session_state["last_answer"]
+    if "last_answer" in session_state:
+        del session_state["last_answer"]
 
     if question in faq:
         answer = Answer(answer=faq[question], original_question=question)
-        agent.session_state["last_answer"] = answer
+        session_state["last_answer"] = answer
         return answer.answer
     else:
         return "I don't know the answer to that question."

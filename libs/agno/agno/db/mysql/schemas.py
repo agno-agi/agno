@@ -46,6 +46,7 @@ EVAL_TABLE_SCHEMA = {
     "run_id": {"type": String, "primary_key": True, "nullable": False},
     "eval_type": {"type": String, "nullable": False},
     "eval_data": {"type": JSON, "nullable": False},
+    "eval_input": {"type": JSON, "nullable": False},
     "name": {"type": String, "nullable": True},
     "agent_id": {"type": String, "nullable": True},
     "team_id": {"type": String, "nullable": True},

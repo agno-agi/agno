@@ -97,7 +97,7 @@ def test_structured_output():
 
     agent = Agent(
         model=DeepInfra(id="meta-llama/Llama-2-70b-chat-hf"),
-        response_model=MovieScript,
+        output_schema=MovieScript,
         telemetry=False,
     )
 

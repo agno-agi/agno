@@ -15,7 +15,7 @@ def test_structured_output_parsing_with_quotes():
     movie_agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         description="You help people write movie scripts. Always add some example dialog in your scripts in double quotes.",
-        response_model=MovieScript,
+        output_schema=MovieScript,
     )
 
     # Get the response in a variable

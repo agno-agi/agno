@@ -23,7 +23,7 @@ except ImportError:
 
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
-from agno.reranker.base import Reranker
+from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_info, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
@@ -966,6 +966,9 @@ class PgVector(VectorDb):
                         usage=result.usage,
                     )
                 )
+
+            if self.reranker:
+                search_results = self.reranker.rerank(query=query, documents=search_results)
 
             log_info(f"Found {len(search_results)} documents")
             return search_results

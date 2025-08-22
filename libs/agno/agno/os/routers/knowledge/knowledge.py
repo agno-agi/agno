@@ -88,13 +88,11 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
                 type="manual",
             )
         elif file:
-            file_data = (
-                FileData(
-                    content=content_bytes,
-                    type=file.content_type if file.content_type else None,
-                )  # type: ignore
-                if file
-                else None
+            file_data = FileData(
+                content=content_bytes,
+                type=file.content_type if file.content_type else None,
+                filename=file.filename,
+                size=file.size,
             )
         else:
             file_data = None
@@ -112,7 +110,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             metadata=parsed_metadata,
             file_data=file_data,
             size=file.size if file else None if text_content else None,
-            upload_file=file,
         )
 
         background_tasks.add_task(process_content, knowledge, content_id, content, reader_id)

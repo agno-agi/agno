@@ -36,7 +36,7 @@ personal_agent = Agent(
     model=Gemini(id="gemini-2.0-flash"),
     tools=[GoogleSearchTools()],
     add_history_to_context=True,
-    num_history_responses=3,
+    num_history_runs=3,
     add_datetime_to_context=True,
     markdown=True,
     memory=memory,

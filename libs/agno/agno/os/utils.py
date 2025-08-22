@@ -9,8 +9,8 @@ from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.team.team import Team
+from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger
 from agno.workflow.workflow import Workflow
 

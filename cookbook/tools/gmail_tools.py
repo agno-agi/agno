@@ -29,7 +29,7 @@ agent = Agent(
         "Attachments can be added to the email",
     ],
     markdown=True,
-    response_model=FindEmailOutput,
+    output_schema=FindEmailOutput,
 )
 
 # Example 1: Find the last email from a specific sender

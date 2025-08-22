@@ -7,8 +7,8 @@
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.reranker import CohereReranker
 from agno.models.openai import OpenAIChat
-from agno.reranker.cohere import CohereReranker
 from agno.vectordb.lancedb import LanceDb, SearchType
 
 knowledge = Knowledge(
@@ -26,7 +26,9 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/introduction.md")
+knowledge.add_content_sync(
+    name="Agno Docs", url="https://docs.agno.com/introduction.md"
+)
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),

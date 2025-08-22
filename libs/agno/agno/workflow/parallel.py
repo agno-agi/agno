@@ -5,7 +5,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List
 from uuid import uuid4
 
 from agno.models.metrics import Metrics
-from agno.run.response import RunOutputEvent
+from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import (
     ParallelExecutionCompletedEvent,
@@ -577,7 +577,7 @@ class Parallel:
                 # If step_index is tuple (child step): all parallel sub-steps get same index
                 if step_index is None or isinstance(step_index, int):
                     # Parallel is a main step - sub-steps get sequential numbers: 1.1, 1.2, 1.3
-                    sub_step_index = (step_index if step_index is not None else 0, index)
+                    sub_step_index = (step_index if step_index is not None else 0, idx)
                 else:
                     # Parallel is a child step - all sub-steps get the same parent number: 1.1, 1.1, 1.1
                     sub_step_index = step_index

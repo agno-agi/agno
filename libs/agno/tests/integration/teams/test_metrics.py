@@ -51,7 +51,7 @@ def test_team_metrics_basic(shared_db):
     assert session_from_db.session_data["session_metrics"]["total_tokens"] is not None
 
 
-def test_team_metrics_streaming():
+def test_team_metrics_streaming(shared_db):
     """Test team metrics with streaming."""
 
     stock_agent = Agent(
@@ -66,6 +66,8 @@ def test_team_metrics_streaming():
         mode="route",
         model=OpenAIChat("gpt-4o"),
         members=[stock_agent],
+        db=shared_db,
+        store_member_responses=True,
     )
 
     # Run with streaming
@@ -76,7 +78,7 @@ def test_team_metrics_streaming():
     responses = list(run_stream)
     assert len(responses) > 0
 
-    run_response = team.get_last_run_response()
+    run_response = team.get_last_run_output()
 
     # Verify metrics exist after stream completion
     assert run_response is not None
@@ -134,7 +136,7 @@ def test_team_metrics_with_history(shared_db):
     )
 
     team.run("Hi")
-    run_response = team.get_last_run_response()
+    run_response = team.get_last_run_output()
     assert run_response is not None
     assert run_response.metrics is not None
     assert run_response.metrics.input_tokens is not None
@@ -149,7 +151,7 @@ def test_team_metrics_with_history(shared_db):
 
     # Checking metrics aggregation works with multiple runs
     team.run("Hi")
-    run_response = team.get_last_run_response()
+    run_response = team.get_last_run_output()
     assert run_response is not None
     assert run_response.metrics is not None
     assert run_response.metrics.input_tokens is not None

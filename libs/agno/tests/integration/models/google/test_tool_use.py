@@ -112,7 +112,7 @@ def test_tool_use_with_native_structured_outputs():
         model=Gemini(id="gemini-2.5-flash-preview-04-17"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
-        response_model=StockPrice,
+        output_schema=StockPrice,
         telemetry=False,
         delay_between_retries=5,
     )
@@ -135,7 +135,7 @@ def test_tool_use_with_json_structured_outputs():
         exponential_backoff=True,
         delay_between_retries=5,
         markdown=True,
-        response_model=StockPrice,
+        output_schema=StockPrice,
         use_json_mode=True,
         telemetry=False,
     )
