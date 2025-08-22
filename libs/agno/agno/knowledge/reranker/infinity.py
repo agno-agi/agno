@@ -2,7 +2,7 @@ from typing import Any, List, Optional
 from urllib.parse import urlparse
 
 from agno.knowledge.document import Document
-from agno.reranker.base import Reranker
+from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import logger
 
 try:

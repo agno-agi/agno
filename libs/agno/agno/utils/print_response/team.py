@@ -593,7 +593,7 @@ def print_response_stream(
                 live_console.update(Group(*panels))
 
         response_timer.stop()
-        run_response = team.get_run_response(run_id=run_id)  # type: ignore
+        run_response = team.get_run_output(run_id=run_id)  # type: ignore
 
         # Add citations
         if hasattr(resp, "citations") and resp.citations is not None and resp.citations.urls is not None:
@@ -1320,7 +1320,7 @@ async def aprint_response_stream(
                 live_console.update(Group(*panels))
         response_timer.stop()
 
-        run_response = team.get_run_response(run_id=run_id)  # type: ignore
+        run_response = team.get_run_output(run_id=run_id)  # type: ignore
 
         # Add citations
         if hasattr(resp, "citations") and resp.citations is not None and resp.citations.urls is not None:

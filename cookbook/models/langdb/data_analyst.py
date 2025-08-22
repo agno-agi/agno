@@ -15,7 +15,7 @@ duckdb_tools.create_table_from_path(
 )
 
 agent = Agent(
-    model=LangDB(id="grok-2", project_id="langdb-project-id"),
+    model=LangDB(id="llama3-1-70b-instruct-v1.0"),
     tools=[duckdb_tools],
     markdown=True,
     additional_context=dedent("""\

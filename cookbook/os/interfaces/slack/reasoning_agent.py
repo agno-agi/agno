@@ -3,7 +3,7 @@ from agno.db.sqlite.sqlite import SqliteDb
 from agno.models.anthropic.claude import Claude
 from agno.os.app import AgentOS
 from agno.os.interfaces.slack.slack import Slack
-from agno.tools.thinking import ThinkingTools
+from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 
 agent_db = SqliteDb(session_table="agent_sessions", db_file="tmp/persistent_memory.db")
@@ -13,7 +13,7 @@ reasoning_finance_agent = Agent(
     model=Claude(id="claude-3-7-sonnet-latest"),
     db=agent_db,
     tools=[
-        ThinkingTools(add_instructions=True),
+        ReasoningTools(add_instructions=True),
         YFinanceTools(
             stock_price=True,
             analyst_recommendations=True,

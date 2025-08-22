@@ -65,8 +65,7 @@ if __name__ == "__main__":
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-001", cached_content=cache.name),
     )
-    agent.print_response(
+    run_output = agent.run(
         "Find a lighthearted moment from this transcript",  # No need to pass the txt file
     )
-    run_response = agent.get_last_run_response()
-    print("Metrics: ", run_response.metrics)
+    print("Metrics: ", run_output.metrics)

@@ -15,8 +15,8 @@ Run: `uv run cookbook/agent_concepts/rag/rag_sentence_transformer.py`
 from agno.agent import Agent
 from agno.knowledge.embedder.sentence_transformer import SentenceTransformerEmbedder
 from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.reranker import SentenceTransformerReranker
 from agno.models.openai import OpenAIChat
-from agno.reranker.sentence_transformer import SentenceTransformerReranker
 from agno.vectordb.pgvector import PgVector
 
 search_results = [

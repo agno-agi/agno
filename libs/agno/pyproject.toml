@@ -89,7 +89,7 @@ portkey = ["portkey-ai"]
 agentql = ["agentql"]
 apify = ["apify-client"]
 arxiv = ["arxiv"]
-# brave = ["brave-search"]
+brave = ["brave-search"]
 browserbase = ["browserbase", "playwright"]
 cartesia = ["cartesia"]
 confluence = ["atlassian-python-api"]
@@ -108,6 +108,7 @@ googlemaps = ["googlemaps", "google-maps-places"]
 matplotlib = ["matplotlib"]
 mcp = ["mcp"]
 mem0 = ["mem0ai"]
+memori = ["memorisdk"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 opencv = ["opencv-python"]
 psycopg = ["psycopg-binary", "psycopg"]
@@ -143,6 +144,7 @@ milvusdb = ["pymilvus>=2.5.10"]
 clickhouse = ["clickhouse-connect"]
 pinecone = ["pinecone==5.4.2"]
 surrealdb = ["surrealdb>=1.0.4"]
+upstash = ["upstash-vector"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
@@ -225,6 +227,7 @@ tools = [
   "agno[oxylabs]",
   "agno[zep]",
   "agno[mem0]",
+  "agno[memori]",
   "agno[google_bigquery]",
   "agno[psycopg]",
   "agno[trafilatura]",
@@ -254,7 +257,8 @@ vectordbs = [
   "agno[milvusdb]",
   "agno[clickhouse]",
   "agno[pinecone]",
-  "agno[surrealdb]"
+  "agno[surrealdb]",
+  "agno[upstash]",
 ]
 
 # All knowledge
@@ -327,6 +331,7 @@ module = [
   "ag_ui.*",
   "agentql.*",
   "aioboto3.*",
+  "aiohttp.*",
   "aiofiles.*",
   "altair.*",
   "anthropic.*",
@@ -389,6 +394,7 @@ module = [
   "litellm.*",
   "matplotlib.*",
   "mem0.*",
+  "memori.*",
   "mcp.*",
   "memory_profiler.*",
   "mistralai.*",

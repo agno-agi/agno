@@ -26,7 +26,7 @@ agent = Agent(
 agent.print_response(
     "create a video of a cat driving at top speed",
 )
-response = agent.get_last_run_response()
+response = agent.get_last_run_output()
 if response and response.videos:
     for video in response.videos:
         if video.content:

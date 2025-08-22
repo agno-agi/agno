@@ -25,4 +25,5 @@ async def acreate_agent_run(run: AgentRunCreate) -> None:
             )
         except Exception as e:
             log_debug(f"Could not create Agent run: {e}")
+
     return

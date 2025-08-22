@@ -355,7 +355,7 @@ class RedisDb(BaseDb):
             sort_order (Optional[str]): The order to sort by.
 
         Returns:
-            List[AgentSession] | List[TeamSession] | List[WorkflowSession]: The list of sessions.
+            List[Union[AgentSession, TeamSession, WorkflowSession]]: The list of sessions.
         """
         try:
             all_sessions = self._get_all_records("sessions")

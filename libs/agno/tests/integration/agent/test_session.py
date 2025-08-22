@@ -162,7 +162,7 @@ def test_agent_with_state_on_agent_stream(shared_db):
     ):
         pass
 
-    run_response = agent.get_last_run_response()
+    run_response = agent.get_last_run_output()
     assert (
         run_response.messages[1].content
         == 'Current shopping list: [\'oranges\']. Other random json ```json { "properties": { "title": { "title": "a" } } }```'
@@ -232,7 +232,7 @@ def test_agent_with_state_on_run_stream(shared_db):
     ):
         pass
 
-    run_response = agent.get_last_run_response(session_id="session_1")
+    run_response = agent.get_last_run_output(session_id="session_1")
     assert (
         run_response.messages[1].content
         == 'Current shopping list: [\'oranges\']. Other random json ```json { "properties": { "title": { "title": "a" } } }```'
@@ -302,7 +302,7 @@ async def test_agent_with_state_on_run_stream_async(shared_db):
     ):
         pass
 
-    run_response = agent.get_last_run_response(session_id="session_1")
+    run_response = agent.get_last_run_output(session_id="session_1")
     assert (
         run_response.messages[1].content
         == 'Current shopping list: [\'oranges\']. Other random json ```json { "properties": { "title": { "title": "a" } } }```'

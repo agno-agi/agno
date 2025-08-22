@@ -11,13 +11,14 @@ agent = Agent(
     name="Groq Translation Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[GroqTools()],
+    cache_session=True,
 )
 
 agent.print_response(
     f"Let's transcribe the audio file located at '{path}' and translate it to English. After that generate a new music audio file using the translated text."
 )
 
-response = agent.get_last_run_response()
+response = agent.get_last_run_output()
 
 if response and response.audio:
     save_base64_data(response.audio[0].base64_audio, Path("tmp/sample-en.mp3"))  # type: ignore

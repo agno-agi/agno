@@ -1,7 +1,7 @@
 """Run `pip install smolagents` to install dependencies."""
 
 from agno.eval.performance import PerformanceEval
-from smolagents import HfApiModel, Tool, ToolCallingAgent
+from smolagents import InferenceClientModel, Tool, ToolCallingAgent
 
 
 class WeatherTool(Tool):
@@ -29,7 +29,7 @@ class WeatherTool(Tool):
 def instantiate_agent():
     return ToolCallingAgent(
         tools=[WeatherTool()],
-        model=HfApiModel(model_id="meta-llama/Llama-3.3-70B-Instruct"),
+        model=InferenceClientModel(model_id="meta-llama/Llama-3.3-70B-Instruct"),
     )
 
 
