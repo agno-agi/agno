@@ -118,21 +118,21 @@ def save_base64_data(base64_data: str, output_path: str) -> bool:
 def wait_for_media_ready(url: str, timeout: int = 120, interval: int = 5, verbose: bool = True) -> bool:
     """
     Wait for media to be ready at URL by polling with HEAD requests.
-    
+
     Args:
         url (str): The URL to check for media availability
         timeout (int): Maximum time to wait in seconds (default: 120)
         interval (int): Seconds between each check (default: 5)
         verbose (bool): Whether to print progress messages (default: True)
-        
+
     Returns:
         bool: True if media is ready, False if timeout reached
     """
     max_attempts = timeout // interval
-    
+
     if verbose:
         print("Media generated! Waiting for upload to complete...")
-    
+
     for attempt in range(max_attempts):
         try:
             response = httpx.head(url, timeout=10)
@@ -142,12 +142,12 @@ def wait_for_media_ready(url: str, timeout: int = 120, interval: int = 5, verbos
             return True
         except httpx.HTTPError:
             pass
-        
+
         if verbose and (attempt + 1) % 3 == 0:
             print(f"Still processing... ({(attempt + 1) * interval}s elapsed)")
-        
+
         time.sleep(interval)
-    
+
     if verbose:
         print(f"Timeout waiting for media. Try this URL later: {url}")
     return False

@@ -357,7 +357,9 @@ class Knowledge:
 
                     read_signature = inspect.signature(content.reader.read)
                     if "password" in read_signature.parameters and content.auth and content.auth.password:
-                        read_documents = content.reader.read(path, name=content.name or path.name, password=content.auth.password)
+                        read_documents = content.reader.read(
+                            path, name=content.name or path.name, password=content.auth.password
+                        )
                     else:
                         read_documents = content.reader.read(path, name=content.name or path.name)
 
@@ -370,7 +372,9 @@ class Knowledge:
 
                         read_signature = inspect.signature(reader.read)
                         if "password" in read_signature.parameters and content.auth and content.auth.password:
-                            read_documents = reader.read(path, name=content.name or path.name, password=content.auth.password)
+                            read_documents = reader.read(
+                                path, name=content.name or path.name, password=content.auth.password
+                            )
                         else:
                             read_documents = reader.read(path, name=content.name or path.name)
 

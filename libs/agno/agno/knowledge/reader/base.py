@@ -40,10 +40,10 @@ class Reader:
         self.description = description
         self.max_results = max_results
 
-    def read(self, obj: Any, name: Optional[str] = None) -> List[Document]:
+    def read(self, obj: Any, name: Optional[str] = None, password: Optional[str] = None) -> List[Document]:
         raise NotImplementedError
 
-    async def async_read(self, obj: Any, name: Optional[str] = None) -> List[Document]:
+    async def async_read(self, obj: Any, name: Optional[str] = None, password: Optional[str] = None) -> List[Document]:
         raise NotImplementedError
 
     def chunk_document(self, document: Document) -> List[Document]:
