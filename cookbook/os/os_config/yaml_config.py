@@ -14,7 +14,7 @@ cwd = Path(__file__).parent
 os_config_path = str(cwd.joinpath("config.yaml"))
 
 # Setup the database
-db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", id="db-0001")
 
 # Setup basic agents, teams and workflows
 basic_agent = Agent(

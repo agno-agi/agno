@@ -10,13 +10,13 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 
 from agno.agent.agent import Agent
+from agno.os.config import AgentOSConfig
 from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router
 from agno.os.routers.evals import get_eval_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
 from agno.os.routers.session import get_session_router
-from agno.os.schema import AgentOSConfig
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import generate_id
 from agno.team.team import Team

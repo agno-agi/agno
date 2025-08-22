@@ -304,14 +304,17 @@ def get_base_router(
         return ConfigResponse(
             os_id=os.os_id or "Unnamed OS",
             description=os.description,
-            databases=os.config.dbs or [],
+            available_models=os.config.available_models,
+            memory=os.config.memory,
+            knowledge=os.config.knowledge,
+            evals=os.config.evals,
+            agents=[AgentSummaryResponse.from_agent(agent) for agent in os.agents] if os.agents else [],
+            teams=[TeamSummaryResponse.from_team(team) for team in os.teams] if os.teams else [],
+            workflows=[WorkflowSummaryResponse.from_workflow(w) for w in os.workflows] if os.workflows else [],
             interfaces=[
                 InterfaceResponse(type=interface.type, version=interface.version, route=interface.router_prefix)
                 for interface in os.interfaces
             ],
-            agents=[AgentSummaryResponse.from_agent(agent) for agent in os.agents] if os.agents else [],
-            teams=[TeamSummaryResponse.from_team(team) for team in os.teams] if os.teams else [],
-            workflows=[WorkflowSummaryResponse.from_workflow(w) for w in os.workflows] if os.workflows else [],
         )
 
     @router.get(

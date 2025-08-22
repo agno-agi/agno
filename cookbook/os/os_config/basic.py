@@ -2,15 +2,21 @@ from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
+from agno.os.config import (
+    AgentOSConfig,
+    ChatConfig,
+    DatabaseConfig,
+    MemoryConfig,
+    MemoryDomainConfig,
+)
 from agno.os.interfaces.slack import Slack
 from agno.os.interfaces.whatsapp import Whatsapp
-from agno.os.schema import AgentOSConfig, ChatConfig, DatabaseConfig
 from agno.team import Team
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
 
 # Setup the database
-db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai", id="db-0001")
 
 # Setup basic agents, teams and workflows
 basic_agent = Agent(
@@ -56,18 +62,6 @@ agent_os = AgentOS(
     interfaces=[Whatsapp(agent=basic_agent), Slack(agent=basic_agent)],
     # Configuration for the AgentOS
     config=AgentOSConfig(
-        dbs=[
-            DatabaseConfig(
-                id="basic-db",
-                display_names={
-                    "session": "Session",
-                    "memory": "Memory",
-                    "eval": "Eval",
-                    "metrics": "Metrics",
-                    "knowledge": "Knowledge",
-                },
-            )
-        ],
         chat=ChatConfig(
             quick_prompts={
                 "basic-agent": [
@@ -78,6 +72,17 @@ agent_os = AgentOS(
                 "basic-team": ["Which members are in the team?"],
                 "basic-workflow": ["What are the steps in the workflow?"],
             },
+        ),
+        memory=MemoryConfig(
+            display_name="Default Memory Page Name",
+            dbs=[
+                DatabaseConfig(
+                    db_id=db.id,
+                    domain_config=MemoryDomainConfig(
+                        display_name="Postgres Memory",
+                    ),
+                )
+            ],
         ),
     ),
 )

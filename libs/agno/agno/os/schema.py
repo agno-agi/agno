@@ -3,11 +3,12 @@ from enum import Enum
 from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
 from uuid import uuid4
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.models.message import Message
+from agno.os.config import EvalsConfig, KnowledgeConfig, MemoryConfig
 from agno.os.utils import (
     format_team_tools,
     format_tools,
@@ -20,35 +21,6 @@ from agno.run.team import TeamRunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.team import Team
 from agno.workflow.workflow import Workflow
-
-
-class ChatConfig(BaseModel):
-    """Configuration for the Chat page of the AgentOS"""
-
-    quick_prompts: dict[str, list[str]]
-
-    # Limit the number of quick prompts to 3 (per agent/team/workflow)
-    @field_validator("quick_prompts")
-    @classmethod
-    def limit_lists(cls, v):
-        for key, lst in v.items():
-            if len(lst) > 3:
-                raise ValueError(f"Too many quick prompts for '{key}', maximum allowed is 3")
-        return v
-
-
-class DatabaseConfig(BaseModel):
-    """Configuration for the databases of the AgentOS"""
-
-    id: str
-    display_names: Optional[dict[str, str]] = None
-
-
-class AgentOSConfig(BaseModel):
-    """General configuration for an AgentOS instance"""
-
-    dbs: Optional[List[DatabaseConfig]] = None
-    chat: Optional[ChatConfig] = None
 
 
 class InterfaceResponse(BaseModel):
@@ -95,14 +67,21 @@ class WorkflowSummaryResponse(BaseModel):
 
 
 class ConfigResponse(BaseModel):
+    """Response schema for the general config endpoint"""
+
     os_id: str
     name: Optional[str] = None
     description: Optional[str] = None
-    databases: List[DatabaseConfig]
-    interfaces: List[InterfaceResponse]
+    available_models: Optional[List[str]] = None
+
+    memory: Optional[MemoryConfig] = None
+    knowledge: Optional[KnowledgeConfig] = None
+    evals: Optional[EvalsConfig] = None
+
     agents: List[AgentSummaryResponse]
     teams: List[TeamSummaryResponse]
     workflows: List[WorkflowSummaryResponse]
+    interfaces: List[InterfaceResponse]
 
 
 class Model(BaseModel):
