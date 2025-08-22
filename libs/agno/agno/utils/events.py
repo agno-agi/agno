@@ -81,7 +81,6 @@ def create_team_run_completed_event(from_run_response: TeamRunOutput) -> TeamRun
         videos=from_run_response.videos,  # type: ignore
         audio=from_run_response.audio,  # type: ignore
         response_audio=from_run_response.response_audio,  # type: ignore
-        # Individual fields from TeamRunOutput instead of metadata
         references=from_run_response.references,  # type: ignore
         additional_input=from_run_response.additional_input,  # type: ignore
         reasoning_steps=from_run_response.reasoning_steps,  # type: ignore
@@ -105,7 +104,6 @@ def create_run_completed_event(from_run_response: RunOutput) -> RunCompletedEven
         videos=from_run_response.videos,  # type: ignore
         audio=from_run_response.audio,  # type: ignore
         response_audio=from_run_response.response_audio,  # type: ignore
-        # Individual fields from RunOutput instead of metadata
         references=from_run_response.references,  # type: ignore
         additional_input=from_run_response.additional_input,  # type: ignore
         reasoning_steps=from_run_response.reasoning_steps,  # type: ignore
@@ -362,7 +360,6 @@ def create_run_output_content_event(
         citations=citations,
         response_audio=response_audio,
         image=image,
-        # Individual fields from RunOutput instead of metadata
         references=from_run_response.references,
         additional_input=from_run_response.additional_input,
         reasoning_steps=from_run_response.reasoning_steps,
@@ -392,7 +389,6 @@ def create_team_run_output_content_event(
         citations=citations,
         response_audio=response_audio,
         image=image,
-        # Individual fields from TeamRunOutput instead of metadata
         references=from_run_response.references,  # type: ignore
         additional_input=from_run_response.additional_input,  # type: ignore
         reasoning_steps=from_run_response.reasoning_steps,  # type: ignore

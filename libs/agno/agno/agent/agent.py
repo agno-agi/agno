@@ -974,7 +974,6 @@ class Agent:
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        metadata: Optional[Dict[str, Any]] = None,
         yield_run_response: bool = False,
         **kwargs: Any,
     ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
@@ -1040,7 +1039,7 @@ class Agent:
             session_id=session_id,
             agent_id=self.id,
             agent_name=self.name,
-            metadata=metadata or self.metadata,  # Use provided metadata or agent metadata
+            metadata=self.metadata,  # Add agent metadata as tags
         )
 
         run_response.model = self.model.id if self.model is not None else None
