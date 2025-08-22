@@ -14,7 +14,6 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
-from agno.knowledge.reader.pdf_reader import PDFReader, PDFUrlReader
 from agno.knowledge.remote_content.remote_content import GCSContent, RemoteContent, S3Content
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb import VectorDb
@@ -354,23 +353,26 @@ class Knowledge:
 
                 if content.reader:
                     # TODO: We will refactor this to eventually pass authorization to all readers
-                    if isinstance(content.reader, (PDFReader, PDFUrlReader)):
-                        if content.auth and content.auth.password:
-                            content.reader.password = content.auth.password
+                    import inspect
 
-                    name = content.name or path.name
-                    read_documents = content.reader.read(path, name=name)
+                    read_signature = inspect.signature(content.reader.read)
+                    if "password" in read_signature.parameters and content.auth and content.auth.password:
+                        read_documents = content.reader.read(path, name=content.name or path.name, password=content.auth.password)
+                    else:
+                        read_documents = content.reader.read(path, name=content.name or path.name)
+
                 else:
                     reader = ReaderFactory.get_reader_for_extension(path.suffix)
                     log_info(f"Using Reader: {reader.__class__.__name__}")
                     if reader:
                         # TODO: We will refactor this to eventually pass authorization to all readers
-                        if isinstance(reader, (PDFReader, PDFUrlReader)):
-                            if content.auth and content.auth.password:
-                                reader.password = content.auth.password
+                        import inspect
 
-                        name = content.name or path.name
-                        read_documents = reader.read(path, name=name)
+                        read_signature = inspect.signature(reader.read)
+                        if "password" in read_signature.parameters and content.auth and content.auth.password:
+                            read_documents = reader.read(path, name=content.name or path.name, password=content.auth.password)
+                        else:
+                            read_documents = reader.read(path, name=content.name or path.name)
 
                 if not content.file_type:
                     content.file_type = path.suffix
@@ -453,11 +455,13 @@ class Knowledge:
                 reader = content.reader or self.url_reader
                 if reader is not None:
                     # TODO: We will refactor this to eventually pass authorization to all readers
-                    if isinstance(reader, (PDFReader, PDFUrlReader)):
-                        if content.auth and content.auth.password:
-                            reader.password = content.auth.password
+                    import inspect
 
-                    read_documents = reader.read(content.url, name=content.name)
+                    read_signature = inspect.signature(reader.read)
+                    if "password" in read_signature.parameters and content.auth and content.auth.password:
+                        read_documents = reader.read(content.url, name=content.name, password=content.auth.password)
+                    else:
+                        read_documents = reader.read(content.url, name=content.name)
 
             elif file_extension and file_extension is not None:
                 log_info(f"Detected file type: {file_extension} from URL: {content.url}")
@@ -468,11 +472,13 @@ class Knowledge:
                     if reader is not None:
                         log_info(f"Selected reader: {reader.__class__.__name__}")
                         # TODO: We will refactor this to eventually pass authorization to all readers
-                        if isinstance(reader, (PDFReader, PDFUrlReader)):
-                            if content.auth and content.auth.password:
-                                reader.password = content.auth.password
+                        import inspect
 
-                        read_documents = reader.read(content.url, name=content.name)
+                        read_signature = inspect.signature(reader.read)
+                        if "password" in read_signature.parameters and content.auth and content.auth.password:
+                            read_documents = reader.read(content.url, name=content.name, password=content.auth.password)
+                        else:
+                            read_documents = reader.read(content.url, name=content.name)
                     else:
                         log_info(f"No reader found for file extension: {file_extension}")
             else:
@@ -484,11 +490,13 @@ class Knowledge:
                 if reader is not None:
                     log_info(f"Selected reader: {reader.__class__.__name__}")
                     # TODO: We will refactor this to eventually pass authorization to all readers
-                    if isinstance(reader, (PDFReader, PDFUrlReader)):
-                        if content.auth and content.auth.password:
-                            reader.password = content.auth.password
+                    import inspect
 
-                    read_documents = reader.read(content.url, name=content.name)
+                    read_signature = inspect.signature(reader.read)
+                    if "password" in read_signature.parameters and content.auth and content.auth.password:
+                        read_documents = reader.read(content.url, name=content.name, password=content.auth.password)
+                    else:
+                        read_documents = reader.read(content.url, name=content.name)
                 else:
                     log_info(f"No reader found for URL: {content.url}")
 
