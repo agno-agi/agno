@@ -934,6 +934,7 @@ class Agent:
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunOutput: ...
 
@@ -954,6 +955,7 @@ class Agent:
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
         yield_run_response: bool = False,
         **kwargs: Any,
     ) -> Iterator[Union[RunOutputEvent, RunOutput]]: ...
@@ -974,6 +976,7 @@ class Agent:
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
         yield_run_response: bool = False,
         **kwargs: Any,
     ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
@@ -1077,6 +1080,7 @@ class Agent:
                     videos=videos,
                     files=files,
                     knowledge_filters=effective_filters,
+                    add_history_to_context=add_history_to_context,
                     **kwargs,
                 )
                 if len(run_messages.messages) == 0:
@@ -1383,6 +1387,7 @@ class Agent:
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunOutput: ...
 
@@ -1402,6 +1407,7 @@ class Agent:
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
         yield_run_response: Optional[bool] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]: ...
@@ -1422,6 +1428,7 @@ class Agent:
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
         yield_run_response: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
@@ -1519,6 +1526,7 @@ class Agent:
                     videos=videos,
                     files=files,
                     knowledge_filters=effective_filters,
+                    add_history_to_context=add_history_to_context,
                     **kwargs,
                 )
                 if len(run_messages.messages) == 0:
@@ -4389,6 +4397,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunMessages:
         """This function returns a RunMessages object with the following attributes:
@@ -4455,7 +4464,8 @@ class Agent:
                         run_response.metadata.additional_input.extend(messages_to_add_to_run_response)
 
         # 3. Add history to run_messages
-        if self.add_history_to_context:
+        should_add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+        if should_add_history:
             from copy import deepcopy
 
             history: List[Message] = session.get_messages_from_last_n_runs(

@@ -923,6 +923,7 @@ class Team:
         knowledge_filters: Optional[Dict[str, Any]] = None,
         store_member_responses: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> TeamRunOutput: ...
 
@@ -944,6 +945,7 @@ class Team:
         knowledge_filters: Optional[Dict[str, Any]] = None,
         store_member_responses: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
         yield_run_response: bool = False,
         **kwargs: Any,
     ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
@@ -965,6 +967,7 @@ class Team:
         store_member_responses: Optional[bool] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
         yield_run_response: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
@@ -1062,6 +1065,8 @@ class Team:
             files=files,
             workflow_context=workflow_context,
             store_member_responses=store_member_responses,
+            debug_mode=debug_mode,
+            add_history_to_context=add_history_to_context,
         )
 
         retries = retries or 3
@@ -1089,6 +1094,7 @@ class Team:
                         videos=videos,
                         files=files,
                         knowledge_filters=effective_filters,
+                        add_history_to_context=add_history_to_context,
                         **kwargs,
                     )
                 else:
@@ -1102,6 +1108,7 @@ class Team:
                         videos=videos,
                         files=files,
                         knowledge_filters=effective_filters,
+                        add_history_to_context=add_history_to_context,
                         **kwargs,
                     )
                 if len(run_messages.messages) == 0:
@@ -1379,7 +1386,8 @@ class Team:
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         store_member_responses: Optional[bool] = None,
-        debug_mode: bool = False,
+        debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> TeamRunOutput: ...
 
@@ -1400,7 +1408,8 @@ class Team:
         files: Optional[Sequence[File]] = None,
         store_member_responses: Optional[bool] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        debug_mode: bool = False,
+        debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
         yield_run_response: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
@@ -1421,7 +1430,8 @@ class Team:
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         store_member_responses: Optional[bool] = None,
-        debug_mode: bool = False,
+        debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
         yield_run_response: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
@@ -1514,6 +1524,8 @@ class Team:
             files=files,
             workflow_context=workflow_context,
             store_member_responses=store_member_responses,
+            debug_mode=debug_mode,
+            add_history_to_context=add_history_to_context,
         )
 
         retries = retries or 3
@@ -1540,6 +1552,7 @@ class Team:
                         videos=videos,
                         files=files,
                         knowledge_filters=effective_filters,
+                        add_history_to_context=add_history_to_context,
                         **kwargs,
                     )
                 else:
@@ -1553,6 +1566,7 @@ class Team:
                         videos=videos,
                         files=files,
                         knowledge_filters=effective_filters,
+                        add_history_to_context=add_history_to_context,
                         **kwargs,
                     )
 
@@ -3331,6 +3345,7 @@ class Team:
         workflow_context: Optional[Dict] = None,
         store_member_responses: bool = False,
         debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
     ) -> None:
         # Prepare tools
         _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
@@ -3452,6 +3467,7 @@ class Team:
                 workflow_context=workflow_context,
                 store_member_responses=store_member_responses,
                 debug_mode=debug_mode,
+                add_history_to_context=add_history_to_context,
             )
             _tools.append(run_member_agents_func)
 
@@ -3853,6 +3869,7 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunMessages:
         """This function returns a RunMessages object with the following attributes:
@@ -3909,7 +3926,8 @@ class Team:
                         run_response.metadata.additional_input.extend(messages_to_add_to_run_response)
 
         # 3. Add history to run_messages
-        if self.add_history_to_context:
+        should_add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+        if should_add_history:
             from copy import deepcopy
 
             history = session.get_messages_from_last_n_runs(
@@ -4493,6 +4511,7 @@ class Team:
         workflow_context: Optional[Dict] = None,
         store_member_responses: bool = False,
         debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
     ) -> Function:
         if not images:
             images = []
@@ -4534,7 +4553,8 @@ class Team:
 
                 # Add history for the member if enabled
                 history = None
-                if member_agent.add_history_to_context:
+                should_add_member_history = add_history_to_context if add_history_to_context is not None else member_agent.add_history_to_context
+                if should_add_member_history:
                     history = self._get_history_for_member_agent(session, member_agent)
                     if history:
                         history.append(Message(role="user", content=member_agent_task))
@@ -4555,6 +4575,7 @@ class Team:
                         stream_intermediate_steps=stream_intermediate_steps,
                         workflow_context=workflow_context,
                         debug_mode=debug_mode,
+                        add_history_to_context=add_history_to_context,
                         yield_run_response=True,
                     )
                     member_agent_run_response = None
@@ -4582,6 +4603,7 @@ class Team:
                         stream=False,
                         workflow_context=workflow_context,
                         debug_mode=debug_mode,
+                        add_history_to_context=add_history_to_context,
                     )
 
                     check_if_run_cancelled(member_agent_run_response)  # type: ignore
@@ -4937,7 +4959,8 @@ class Team:
             )
 
             # 4. Add history for the member if enabled
-            if member_agent.add_history_to_context:
+            should_add_member_history = add_history_to_context if add_history_to_context is not None else member_agent.add_history_to_context
+            if should_add_member_history:
                 history = self._get_history_for_member_agent(session, member_agent)
                 if history:
                     history.append(Message(role="user", content=member_agent_task))
@@ -4964,6 +4987,7 @@ class Team:
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
                     debug_mode=debug_mode,
+                    add_history_to_context=add_history_to_context,
                     workflow_context=workflow_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
@@ -4994,6 +5018,7 @@ class Team:
                     files=files,
                     stream=False,
                     debug_mode=debug_mode,
+                    add_history_to_context=add_history_to_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
@@ -5097,7 +5122,8 @@ class Team:
             )
 
             # 4. Add history for the member if enabled
-            if member_agent.add_history_to_context:
+            should_add_member_history = add_history_to_context if add_history_to_context is not None else member_agent.add_history_to_context
+            if should_add_member_history:
                 history = self._get_history_for_member_agent(session, member_agent)
                 if history:
                     history.append(Message(role="user", content=member_agent_task))
@@ -5126,6 +5152,7 @@ class Team:
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
                     debug_mode=debug_mode,
+                    add_history_to_context=add_history_to_context,
                     workflow_context=workflow_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
@@ -5154,6 +5181,7 @@ class Team:
                     files=files,
                     stream=False,
                     debug_mode=debug_mode,
+                    add_history_to_context=add_history_to_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
@@ -5290,7 +5318,8 @@ class Team:
             member_agent_task = input.get_content_string() if input is not None else ""
 
             # Add history for the member if enabled
-            if member_agent.add_history_to_context:
+            should_add_member_history = add_history_to_context if add_history_to_context is not None else member_agent.add_history_to_context
+            if should_add_member_history:
                 history = self._get_history_for_member_agent(session, member_agent)
                 if history:
                     history.append(Message(role="user", content=member_agent_task))
@@ -5319,6 +5348,7 @@ class Team:
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
                     debug_mode=debug_mode,
+                    add_history_to_context=add_history_to_context,
                     workflow_context=workflow_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
@@ -5347,6 +5377,7 @@ class Team:
                     files=files,
                     stream=False,
                     debug_mode=debug_mode,
+                    add_history_to_context=add_history_to_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
@@ -5446,7 +5477,8 @@ class Team:
             member_agent_task = input.get_content_string() if input is not None else ""
 
             # Add history for the member if enabled
-            if member_agent.add_history_to_context:
+            should_add_member_history = add_history_to_context if add_history_to_context is not None else member_agent.add_history_to_context
+            if should_add_member_history:
                 history = self._get_history_for_member_agent(session, member_agent)
                 if history:
                     history.append(Message(role="user", content=member_agent_task))
@@ -5477,6 +5509,7 @@ class Team:
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_context=workflow_context,
                     debug_mode=debug_mode,
+                    add_history_to_context=add_history_to_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
@@ -5504,6 +5537,7 @@ class Team:
                     files=files,
                     stream=False,
                     debug_mode=debug_mode,
+                    add_history_to_context=add_history_to_context,
                     knowledge_filters=knowledge_filters
                     if (member_agent.knowledge_filters and member_agent.knowledge)
                     else None,
