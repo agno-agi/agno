@@ -315,6 +315,14 @@ class Team:
     # Enable member logs - Sets the debug_mode for team and members
     show_members_responses: bool = False
 
+    # --- Team Response Settings ---
+    # Number of retries to attempt
+    retries: int = 0
+    # Delay between retries (in seconds)
+    delay_between_retries: int = 1
+    # Exponential backoff: if True, the delay between retries is doubled each time
+    exponential_backoff: bool = False
+
     # --- Telemetry ---
     # telemetry=True logs minimal telemetry for analytics
     # This helps us improve the Teams implementation and provide better support
@@ -395,6 +403,9 @@ class Team:
         debug_mode: bool = False,
         debug_level: Literal[1, 2] = 1,
         show_members_responses: bool = False,
+        retries: int = 0,
+        delay_between_retries: int = 1,
+        exponential_backoff: bool = False,
         telemetry: bool = True,
     ):
         self.members = members
@@ -494,6 +505,10 @@ class Team:
             debug_level = 1
         self.debug_level = debug_level
         self.show_members_responses = show_members_responses
+
+        self.retries = retries
+        self.delay_between_retries = delay_between_retries
+        self.exponential_backoff = exponential_backoff
 
         self.telemetry = telemetry
 
@@ -1061,7 +1076,8 @@ class Team:
             store_member_responses=store_member_responses,
         )
 
-        retries = retries or 3
+        # If no retries are set, use the team's default retries
+        retries = retries if retries is not None else self.retries
 
         # Run the team
         last_exception = None
@@ -1136,8 +1152,12 @@ class Team:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
 
                 last_exception = e
-                if attempt < num_attempts - 1:
-                    time.sleep(2**attempt)
+                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
+                    if self.exponential_backoff:
+                        delay = 2**attempt * self.delay_between_retries
+                    else:
+                        delay = self.delay_between_retries
+                    time.sleep(delay)
             except (KeyboardInterrupt, RunCancelledException):
                 run_response.content = "Operation cancelled by user"
                 run_response.status = RunStatus.cancelled
@@ -1513,7 +1533,8 @@ class Team:
             store_member_responses=store_member_responses,
         )
 
-        retries = retries or 3
+        # If no retries are set, use the team's default retries
+        retries = retries if retries is not None else self.retries
 
         # Run the team
         last_exception = None
@@ -1577,10 +1598,13 @@ class Team:
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 last_exception = e
-                if attempt < num_attempts - 1:
+                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
+                    if self.exponential_backoff:
+                        delay = 2**attempt * self.delay_between_retries
+                    else:
+                        delay = self.delay_between_retries
                     import time
-
-                    time.sleep(2**attempt)
+                    time.sleep(delay)
             except (KeyboardInterrupt, RunCancelledException):
                 run_response.status = RunStatus.cancelled
                 run_response.content = "Operation cancelled by user"
