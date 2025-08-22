@@ -20,7 +20,6 @@ class DashScope(OpenAILike):
         api_key (Optional[str]): The DashScope API key.
         base_url (str): The base URL. Defaults to "https://dashscope-intl.aliyuncs.com/compatible-mode/v1".
         enable_thinking (Optional[bool]): Enable thinking process (DashScope native parameter). Defaults to None.
-        include_thoughts (Optional[bool]): Include thinking process in response (alternative parameter). Defaults to None.
     """
 
     id: str = "qwen-plus"
@@ -31,7 +30,7 @@ class DashScope(OpenAILike):
     base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
     # Thinking parameters
-    enable_thinking: Optional[bool] = None
+    enable_thinking: Optional[bool] = False
     include_thoughts: Optional[bool] = None
 
     # DashScope supports structured outputs
@@ -75,7 +74,7 @@ class DashScope(OpenAILike):
     ) -> Dict[str, Any]:
         params = super().get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice)
 
-        should_include_thoughts = self.enable_thinking or self.include_thoughts
-        if should_include_thoughts:
-            params["extra_body"] = {"enable_thinking": True}
+        thinking_value = self.enable_thinking if self.enable_thinking is not None else False
+        params["extra_body"] = {"enable_thinking": thinking_value}
+
         return params
