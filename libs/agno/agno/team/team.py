@@ -936,11 +936,11 @@ class Team:
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         store_member_responses: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> TeamRunOutput: ...
 
@@ -961,11 +961,11 @@ class Team:
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         store_member_responses: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         yield_run_response: bool = False,
         **kwargs: Any,
     ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
@@ -986,18 +986,18 @@ class Team:
         files: Optional[Sequence[File]] = None,
         store_member_responses: Optional[bool] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         yield_run_response: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, Iterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         """Run the Team and return the response."""
 
         # Validate input against input_schema if provided
-        validated_input = self._validate_input(input) if input is not None else input
+        validated_input = self._validate_input(input)
 
         if store_member_responses is not None:
             self.store_member_responses = store_member_responses
@@ -1025,9 +1025,7 @@ class Team:
         # Resolve callable dependencies if present
         if run_dependencies is not None:
             # Always make a copy so we don't modify the original dependencies
-            from copy import deepcopy
-
-            run_dependencies = deepcopy(run_dependencies)
+            run_dependencies = run_dependencies.copy()
             self._resolve_run_dependencies(run_dependencies)
 
         # Extract workflow context from kwargs if present
@@ -1075,11 +1073,9 @@ class Team:
 
         # Add user-provided metadata if provided
         if metadata is not None:
-            from agno.run.base import RunOutputMetaData
-
             if run_response.metadata is None:
-                run_response.metadata = RunOutputMetaData()
-            run_response.metadata.custom_metadata = metadata
+                run_response.metadata = {}
+            run_response.metadata.update(metadata)
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
@@ -1247,9 +1243,7 @@ class Team:
         # Resolving here for async requirement
         if run_dependencies is not None:
             # Always make a copy so we don't modify the original dependencies
-            from copy import deepcopy
-
-            run_dependencies = deepcopy(run_dependencies)
+            run_dependencies = run_dependencies.copy()
             await self._aresolve_run_dependencies(run_dependencies)
 
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
@@ -1439,11 +1433,11 @@ class Team:
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         store_member_responses: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> TeamRunOutput: ...
 
@@ -1464,11 +1458,11 @@ class Team:
         files: Optional[Sequence[File]] = None,
         store_member_responses: Optional[bool] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         yield_run_response: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
@@ -1489,18 +1483,18 @@ class Team:
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         store_member_responses: Optional[bool] = None,
-        debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         yield_run_response: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         """Run the Team asynchronously and return the response."""
 
         # Validate input against input_schema if provided
-        validated_input = self._validate_input(input) if input is not None else input
+        validated_input = self._validate_input(input)
 
         if store_member_responses is not None:
             self.store_member_responses = store_member_responses
@@ -1527,9 +1521,7 @@ class Team:
         # Resolve callable dependencies if present
         if run_dependencies is not None:
             # Always make a copy so we don't modify the original dependencies
-            from copy import deepcopy
-
-            run_dependencies = deepcopy(run_dependencies)
+            run_dependencies = run_dependencies.copy()
             self._resolve_run_dependencies(run_dependencies)
 
         # Extract workflow context from kwargs if present
@@ -1577,11 +1569,9 @@ class Team:
 
         # Add user-provided metadata if provided
         if metadata is not None:
-            from agno.run.base import RunOutputMetaData
-
             if run_response.metadata is None:
-                run_response.metadata = RunOutputMetaData()
-            run_response.metadata.custom_metadata = metadata
+                run_response.metadata = {}
+            run_response.metadata.update(metadata)
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
@@ -1689,6 +1679,7 @@ class Team:
                     else:
                         delay = self.delay_between_retries
                     import time
+
                     time.sleep(delay)
             except (KeyboardInterrupt, RunCancelledException):
                 run_response.status = RunStatus.cancelled
@@ -4290,11 +4281,11 @@ class Team:
         return messages
 
     def _format_message_with_state_variables(
-        self, 
-        message: Any, 
-        user_id: Optional[str] = None, 
+        self,
+        message: Any,
+        user_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
-        dependencies: Optional[Dict[str, Any]] = None
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> Any:
         """Format a message with the session state variables."""
         import re

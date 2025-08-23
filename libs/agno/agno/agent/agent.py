@@ -995,7 +995,7 @@ class Agent:
         run_id = str(uuid4())
 
         # Validate input against input_schema if provided
-        validated_input = self._validate_input(input) if input is not None else input
+        validated_input = self._validate_input(input)
 
         session_id, user_id, session_state = self._initialize_session(
             run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
@@ -1011,18 +1011,13 @@ class Agent:
         # Update session state from DB
         session_state = self._update_session_state(session=agent_session, session_state=session_state)
 
-        # Store original dependencies for restoration later
-        original_dependencies = self.dependencies
-
         # Determine runtime dependencies
         run_dependencies = dependencies if dependencies is not None else self.dependencies
 
         # Resolve dependencies
         if run_dependencies is not None:
             # Always make a copy so we don't modify the original dependencies
-            from copy import deepcopy
-
-            run_dependencies = deepcopy(run_dependencies)
+            run_dependencies = run_dependencies.copy()
             self._resolve_run_dependencies(run_dependencies)
 
         # Resolve final boolean flags for this run
@@ -1073,11 +1068,9 @@ class Agent:
 
         # Add user-provided metadata if provided
         if metadata is not None:
-            from agno.run.base import RunOutputMetaData
-
             if run_response.metadata is None:
-                run_response.metadata = RunOutputMetaData()
-            run_response.metadata.custom_metadata = metadata
+                run_response.metadata = {}
+            run_response.metadata.update(metadata)
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
@@ -1189,6 +1182,7 @@ class Agent:
         session: AgentSession,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        run_dependencies: Optional[Dict[str, Any]] = None,
     ) -> RunOutput:
         """Run the Agent and yield the RunOutput.
 
@@ -1202,9 +1196,7 @@ class Agent:
         7. Save session to storage
         8. Optional: Save output to file if save_response_to_file is set
         """
-        # Resolving here for async requirement
-        if self.dependencies is not None:
-            await self._aresolve_run_dependencies()
+        # Dependencies should already be resolved and passed from arun() method
 
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
@@ -1484,7 +1476,7 @@ class Agent:
         run_id = str(uuid4())
 
         # Validate input against input_schema if provided
-        validated_input = self._validate_input(input) if input is not None else input
+        validated_input = self._validate_input(input)
 
         session_id, user_id, session_state = self._initialize_session(
             run_id=run_id, session_id=session_id, user_id=user_id, session_state=session_state
@@ -1500,18 +1492,13 @@ class Agent:
         # Update session state from DB
         session_state = self._update_session_state(session=agent_session, session_state=session_state)
 
-        # Store original dependencies for restoration later
-        original_dependencies = self.dependencies
-
         # Determine run dependencies
         run_dependencies = dependencies if dependencies is not None else self.dependencies
 
         # Resolve callable dependencies if present
         if run_dependencies is not None:
             # Always make a copy so we don't modify the original dependencies
-            from copy import deepcopy
-
-            run_dependencies = deepcopy(run_dependencies)
+            run_dependencies = run_dependencies.copy()
             self._resolve_run_dependencies(run_dependencies)
 
         # Resolve final boolean flags for this run
@@ -1560,11 +1547,9 @@ class Agent:
 
         # Add user-provided metadata if provided
         if metadata is not None:
-            from agno.run.base import RunOutputMetaData
-
             if run_response.metadata is None:
-                run_response.metadata = RunOutputMetaData()
-            run_response.metadata.custom_metadata = metadata
+                run_response.metadata = {}
+            run_response.metadata.update(metadata)
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
@@ -1629,6 +1614,7 @@ class Agent:
                         run_response=run_response,
                         run_messages=run_messages,
                         user_id=user_id,
+                        run_dependencies=run_dependencies,
                         session=agent_session,
                         response_format=response_format,
                     )
@@ -3984,7 +3970,6 @@ class Agent:
 
         return session.get_chat_history()
 
-
     def rename(self, name: str, session_id: Optional[str] = None) -> None:
         """Rename the Agent and save to storage"""
 
@@ -4159,13 +4144,13 @@ class Agent:
             user_id = "default"
 
         return self.memory_manager.get_user_memories(user_id=user_id)
-    
+
     def _format_message_with_state_variables(
-        self, 
-        message: Any, 
-        user_id: Optional[str] = None, 
+        self,
+        message: Any,
+        user_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
-        dependencies: Optional[Dict[str, Any]] = None
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> Any:
         """Format a message with the session state variables."""
         import re
@@ -4200,7 +4185,9 @@ class Agent:
             log_warning(f"Template substitution failed: {e}")
             return message
 
-    def get_system_message(self, session: AgentSession, user_id: Optional[str] = None, run_dependencies: Optional[Dict[str, Any]] = None) -> Optional[Message]:
+    def get_system_message(
+        self, session: AgentSession, user_id: Optional[str] = None, run_dependencies: Optional[Dict[str, Any]] = None
+    ) -> Optional[Message]:
         """Return the system message for the Agent.
 
         1. If the system_message is provided, use that.
@@ -4785,7 +4772,7 @@ class Agent:
                 files=files,
                 knowledge_filters=knowledge_filters,
                 run_dependencies=run_dependencies,
-                add_dependencies_to_context=final_add_dependencies_to_context,
+                add_dependencies_to_context=add_dependencies_to_context,
                 **kwargs,
             )
 
