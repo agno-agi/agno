@@ -106,6 +106,7 @@ googlemaps = ["googlemaps", "google-maps-places"]
 matplotlib = ["matplotlib"]
 mcp = ["mcp"]
 mem0 = ["mem0ai"]
+memori = ["memorisdk"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 opencv = ["opencv-python"]
 psycopg = ["psycopg-binary", "psycopg"]
@@ -221,6 +222,7 @@ tools = [
   "agno[oxylabs]",
   "agno[zep]",
   "agno[mem0]",
+  "agno[memori]",
   "agno[google_bigquery]",
   "agno[psycopg]",
   "agno[trafilatura]",
@@ -389,6 +391,7 @@ module = [
   "litellm.*",
   "matplotlib.*",
   "mem0.*",
+  "memori.*",
   "mcp.*",
   "memory_profiler.*",
   "mistralai.*",
