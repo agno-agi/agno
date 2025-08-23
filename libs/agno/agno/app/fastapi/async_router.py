@@ -433,7 +433,8 @@ def get_async_router(
                         if isinstance(image_content, (bytes, bytearray)):
                             try:
                                 decoded_string = image_content.decode("utf-8")
-                            except Exception:
+                            except Exception as e:
+                                logger.error(e)
                                 decoded_string = base64.b64encode(bytes(image_content)).decode("utf-8")
                             run_response.images[i].content = decoded_string
                 return run_response.to_dict()
@@ -457,7 +458,8 @@ def get_async_router(
                         if isinstance(image_content, (bytes, bytearray)):
                             try:
                                 decoded_string = image_content.decode("utf-8")
-                            except Exception:
+                            except Exception as e:
+                                logger.error(e)
                                 decoded_string = base64.b64encode(bytes(image_content)).decode("utf-8")
                             team_run_response.images[i].content = decoded_string
                 return team_run_response.to_dict()
