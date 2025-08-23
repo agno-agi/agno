@@ -1,46 +1,59 @@
 import json
 
-import httpx
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 
 
-def get_top_hackernews_stories(num_stories: int = 5) -> str:
-    """Fetch and return the top stories from HackerNews.
-
+def get_user_profile(user_id: str = "john_doe") -> dict:
+    """Get user profile information that can be referenced in responses.
+    
     Args:
-        num_stories: Number of top stories to retrieve (default: 5)
+        user_id: The user ID to get profile for
     Returns:
-        JSON string containing story details (title, url, score, etc.)
+        Dictionary containing user profile information
     """
-    # Get top stories
-    stories = [
-        {
-            k: v
-            for k, v in httpx.get(
-                f"https://hacker-news.firebaseio.com/v0/item/{id}.json"
-            )
-            .json()
-            .items()
-            if k != "kids"  # Exclude discussion threads
+    # Mock user profile data - in real scenarios this would come from a database
+    profiles = {
+        "john_doe": {
+            "name": "John Doe",
+            "preferences": {
+                "communication_style": "professional",
+                "topics_of_interest": ["AI/ML", "Software Engineering", "Finance"],
+                "experience_level": "senior"
+            },
+            "location": "San Francisco, CA",
+            "role": "Senior Software Engineer"
         }
-        for id in httpx.get(
-            "https://hacker-news.firebaseio.com/v0/topstories.json"
-        ).json()[:num_stories]
-    ]
-    return json.dumps(stories, indent=4)
+    }
+    
+    return profiles.get(user_id, {"name": "Unknown User"})
 
 
-# Create a Context-Aware Agent that can access real-time HackerNews data
+def get_current_context() -> dict:
+    """Get current contextual information like time, weather, etc."""
+    from datetime import datetime
+    
+    return {
+        "current_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "timezone": "PST",
+        "day_of_week": datetime.now().strftime("%A")
+    }
+
+
+# Create a Context-Aware Agent that can access user profile and context
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     markdown=True,
 )
 
 # Example usage - sync
+# The dependencies will be available in the context when processing this message
 response = agent.run(
-    "Summarize the top stories on HackerNews and identify any interesting trends.",
-    dependencies={"top_hackernews_stories": get_top_hackernews_stories},
+    "Please provide me with a personalized summary of today's priorities based on my profile and interests.",
+    dependencies={
+        "user_profile": get_user_profile,
+        "current_context": get_current_context
+    },
     add_dependencies_to_context=True,
     debug_mode=True,
 )
@@ -52,8 +65,11 @@ print(response.content)
 # ------------------------------------------------------------
 # async def test_async():
 #     async_response = await agent.arun(
-#         "What are the current trending topics based on the HackerNews data?",
-#         dependencies={"hackernews_data": get_top_hackernews_stories},
+#         "Based on my profile, what should I focus on this week? Include specific recommendations.",
+#         dependencies={
+#             "user_profile": get_user_profile,
+#             "current_context": get_current_context
+#         },
 #         add_dependencies_to_context=True,
 #         debug_mode=True,
 #     )

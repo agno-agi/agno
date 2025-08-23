@@ -933,11 +933,11 @@ class Agent:
         files: Optional[Sequence[File]] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunOutput: ...
 
@@ -957,12 +957,12 @@ class Agent:
         files: Optional[Sequence[File]] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         yield_run_response: bool = False,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Iterator[Union[RunOutputEvent, RunOutput]]: ...
 
@@ -981,12 +981,12 @@ class Agent:
         files: Optional[Sequence[File]] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         yield_run_response: bool = False,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
         """Run the Agent and return the response."""
@@ -1024,6 +1024,14 @@ class Agent:
 
             run_dependencies = deepcopy(run_dependencies)
             self._resolve_run_dependencies(run_dependencies)
+
+        # Resolve final boolean flags for this run
+        final_add_dependencies_to_context = (
+            add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+        )
+        final_add_history_to_context = (
+            add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+        )
 
         # Extract workflow context from kwargs if present
         workflow_context = kwargs.pop("workflow_context", None)
@@ -1107,9 +1115,9 @@ class Agent:
                     videos=videos,
                     files=files,
                     knowledge_filters=effective_filters,
-                    add_history_to_context=add_history_to_context,
+                    add_history_to_context=final_add_history_to_context,
                     run_dependencies=run_dependencies,
-                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_dependencies_to_context=final_add_dependencies_to_context,
                     **kwargs,
                 )
                 if len(run_messages.messages) == 0:
@@ -1415,11 +1423,11 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunOutput: ...
 
@@ -1438,12 +1446,12 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         yield_run_response: Optional[bool] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]: ...
 
@@ -1462,12 +1470,12 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        debug_mode: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         yield_run_response: Optional[bool] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
         """Async Run the Agent and return the response."""
@@ -1505,6 +1513,14 @@ class Agent:
 
             run_dependencies = deepcopy(run_dependencies)
             self._resolve_run_dependencies(run_dependencies)
+
+        # Resolve final boolean flags for this run
+        final_add_dependencies_to_context = (
+            add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+        )
+        final_add_history_to_context = (
+            add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+        )
 
         # Extract workflow context from kwargs if present
         workflow_context = kwargs.pop("workflow_context", None)
@@ -1586,9 +1602,9 @@ class Agent:
                     videos=videos,
                     files=files,
                     knowledge_filters=effective_filters,
-                    add_history_to_context=add_history_to_context,
+                    add_history_to_context=final_add_history_to_context,
                     run_dependencies=run_dependencies,
-                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_dependencies_to_context=final_add_dependencies_to_context,
                     **kwargs,
                 )
                 if len(run_messages.messages) == 0:
@@ -4159,8 +4175,8 @@ class Agent:
         if not isinstance(message, str):
             return message
 
-        # Use provided dependencies or fall back to agent dependencies
-        effective_dependencies = dependencies if dependencies is not None else self.dependencies
+        # Use provided dependencies (should be passed from run() method)
+        effective_dependencies = dependencies or {}
 
         format_variables = ChainMap(
             session_state or {},
@@ -4184,7 +4200,7 @@ class Agent:
             log_warning(f"Template substitution failed: {e}")
             return message
 
-    def get_system_message(self, session: AgentSession, user_id: Optional[str] = None) -> Optional[Message]:
+    def get_system_message(self, session: AgentSession, user_id: Optional[str] = None, run_dependencies: Optional[Dict[str, Any]] = None) -> Optional[Message]:
         """Return the system message for the Agent.
 
         1. If the system_message is provided, use that.
@@ -4353,10 +4369,11 @@ class Agent:
 
         # Format the system message with the session state variables
         if self.add_state_in_messages:
-            system_message_content = self.__class__format_message_with_state_variables(
+            system_message_content = self._format_message_with_state_variables(
                 system_message_content,
                 user_id=user_id,
                 session_state=session.session_data.get("session_state") if session.session_data is not None else None,
+                dependencies=run_dependencies,
             )
 
         # 3.3.7 Then add the expected output
@@ -4625,12 +4642,7 @@ class Agent:
                     user_msg_content_str += self._convert_documents_to_string(references.references) + "\n"
                     user_msg_content_str += "</references>"
                 # 4.2 Add context to user message
-                should_add_dependencies = (
-                    add_dependencies_to_context
-                    if add_dependencies_to_context is not None
-                    else self.add_dependencies_to_context
-                )
-                if should_add_dependencies and run_dependencies is not None:
+                if add_dependencies_to_context and run_dependencies is not None:
                     user_msg_content_str += "\n\n<additional context>\n"
                     user_msg_content_str += self._convert_dependencies_to_string(run_dependencies) + "\n"
                     user_msg_content_str += "</additional context>"
@@ -4694,7 +4706,7 @@ class Agent:
         run_messages = RunMessages()
 
         # 1. Add system message to run_messages
-        system_message = self.get_system_message(session=session, user_id=user_id)
+        system_message = self.get_system_message(session=session, user_id=user_id, run_dependencies=run_dependencies)
         if system_message is not None:
             run_messages.system_message = system_message
             run_messages.messages.append(system_message)
@@ -4727,10 +4739,7 @@ class Agent:
                     run_response.additional_input.extend(messages_to_add_to_run_response)
 
         # 3. Add history to run_messages
-        should_add_history = (
-            add_history_to_context if add_history_to_context is not None else self.add_history_to_context
-        )
-        if should_add_history:
+        if add_history_to_context:
             from copy import deepcopy
 
             history: List[Message] = session.get_messages_from_last_n_runs(
@@ -4776,7 +4785,7 @@ class Agent:
                 files=files,
                 knowledge_filters=knowledge_filters,
                 run_dependencies=run_dependencies,
-                add_dependencies_to_context=add_dependencies_to_context,
+                add_dependencies_to_context=final_add_dependencies_to_context,
                 **kwargs,
             )
 
