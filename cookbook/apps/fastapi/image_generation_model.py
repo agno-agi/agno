@@ -8,7 +8,7 @@ image_agent = Agent(
         response_modalities=["Text", "Image"],
     ),
     debug_mode=True,
-    agent_id="image_model"
+    agent_id="image_model",
 )
 
 fastapi_app = FastAPIApp(
@@ -18,7 +18,7 @@ fastapi_app = FastAPIApp(
     description="A model that generates images using the Gemini API.",
 )
 
-app = fastapi_app .get_app()
+app = fastapi_app.get_app()
 
 if __name__ == "__main__":
     fastapi_app.serve(app="image_generation_model:app", port=8000, reload=True)
