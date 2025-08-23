@@ -12,7 +12,6 @@ def get_user_profile(user_id: str = "john_doe") -> dict:
     Returns:
         Dictionary containing user profile information
     """
-    # Mock user profile data - in real scenarios this would come from a database
     profiles = {
         "john_doe": {
             "name": "John Doe",
@@ -40,14 +39,12 @@ def get_current_context() -> dict:
     }
 
 
-# Create a Context-Aware Agent that can access user profile and context
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     markdown=True,
 )
 
 # Example usage - sync
-# The dependencies will be available in the context when processing this message
 response = agent.run(
     "Please provide me with a personalized summary of today's priorities based on my profile and interests.",
     dependencies={

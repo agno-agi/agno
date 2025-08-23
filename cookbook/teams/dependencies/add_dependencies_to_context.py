@@ -1,66 +1,86 @@
-import json
-
-import httpx
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 
 
-def get_top_hackernews_stories(num_stories: int = 5) -> str:
-    """Fetch and return the top stories from HackerNews.
+def get_user_profile(user_id: str = "john_doe") -> dict:
+    """Get user profile information that can be referenced in responses.
 
     Args:
-        num_stories: Number of top stories to retrieve (default: 5)
+        user_id: The user ID to get profile for
     Returns:
-        JSON string containing story details (title, url, score, etc.)
+        Dictionary containing user profile information
     """
-    # Get top stories
-    stories = [
-        {
-            k: v
-            for k, v in httpx.get(
-                f"https://hacker-news.firebaseio.com/v0/item/{id}.json"
-            )
-            .json()
-            .items()
-            if k != "kids"  # Exclude discussion threads
+    profiles = {
+        "john_doe": {
+            "name": "John Doe",
+            "preferences": {
+                "communication_style": "professional",
+                "topics_of_interest": ["AI/ML", "Software Engineering", "Finance"],
+                "experience_level": "senior",
+            },
+            "location": "San Francisco, CA",
+            "role": "Senior Software Engineer",
         }
-        for id in httpx.get(
-            "https://hacker-news.firebaseio.com/v0/topstories.json"
-        ).json()[:num_stories]
-    ]
-    return json.dumps(stories, indent=4)
+    }
+
+    return profiles.get(user_id, {"name": "Unknown User"})
 
 
-# Create Agents for the Team
-news_agent = Agent(
-    name="NewsAnalyst",
+def get_current_context() -> dict:
+    """Get current contextual information like time, weather, etc."""
+    from datetime import datetime
+
+    return {
+        "current_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "timezone": "PST",
+        "day_of_week": datetime.now().strftime("%A"),
+    }
+
+
+profile_agent = Agent(
+    name="ProfileAnalyst",
     model=OpenAIChat(id="gpt-4o-mini"),
-    instructions="You are a tech news analyst specializing in HackerNews trends.",
+    instructions="You analyze user profiles and provide personalized recommendations.",
 )
 
-summary_agent = Agent(
-    name="SummaryAgent",
+context_agent = Agent(
+    name="ContextAnalyst",
     model=OpenAIChat(id="gpt-4o-mini"),
-    instructions="You create concise summaries and extract key insights.",
+    instructions="You analyze current context and timing to provide relevant insights.",
 )
 
-# Create a Team with dependencies set at instance level
 team = Team(
-    name="NewsTeam",
+    name="PersonalizationTeam",
     mode="coordinate",  # Use coordinate mode for simpler team behavior
     model=OpenAIChat(id="gpt-4o-mini"),
-    members=[news_agent, summary_agent],
-    # Dependencies are set at the Team instance level and resolved automatically
-    dependencies={"top_hackernews_stories": get_top_hackernews_stories},
-    # Enable context addition at instance level
+    members=[profile_agent, context_agent],
+    dependencies={
+        "user_profile": get_user_profile,
+        "current_context": get_current_context,
+    },
     add_dependencies_to_context=True,
+    debug_mode=True,
     markdown=True,
 )
 
-# Example usage - Team with instance dependencies
-print("=== Team with Instance Dependencies ===")
-team.print_response(
-    "Based on the provided HackerNews data, analyze trends and provide insights.",
-    stream=True,
+response = team.run(
+    "Please provide me with a personalized summary of today's priorities based on my profile and interests.",
 )
+
+print(response.content)
+
+# ------------------------------------------------------------
+# ASYNC EXAMPLE
+# ------------------------------------------------------------
+# async def test_async():
+#     async_response = await team.arun(
+#         "Based on my profile, what should I focus on this week? Include specific recommendations.",
+#     )
+#
+#     print("\n=== Async Run Response ===")
+#     print(async_response.content)
+
+# # Run the async test
+# import asyncio
+# asyncio.run(test_async())

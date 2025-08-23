@@ -1069,7 +1069,7 @@ class Team:
             team_name=self.name,
         )
 
-        # Add user-provided metadata if provided
+        # Add user-provided metadata
         if metadata is not None:
             if run_response.metadata is None:
                 run_response.metadata = {}
@@ -1129,7 +1129,7 @@ class Team:
                         files=files,
                         knowledge_filters=effective_filters,
                         add_history_to_context=add_history_to_context,
-                        run_dependencies=run_dependencies,
+                        dependencies=run_dependencies,
                         add_dependencies_to_context=add_dependencies_to_context,
                         **kwargs,
                     )
@@ -1145,7 +1145,7 @@ class Team:
                         files=files,
                         knowledge_filters=effective_filters,
                         add_history_to_context=add_history_to_context,
-                        run_dependencies=run_dependencies,
+                        dependencies=run_dependencies,
                         add_dependencies_to_context=add_dependencies_to_context,
                         **kwargs,
                     )
@@ -1224,7 +1224,7 @@ class Team:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         workflow_context: Optional[Dict] = None,
-        run_dependencies: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> TeamRunOutput:
         """Run the Team and return the response.
 
@@ -1239,8 +1239,8 @@ class Team:
         self.model = cast(Model, self.model)
 
         # Resolving here for async requirement
-        if run_dependencies is not None:
-            await self._aresolve_run_dependencies(run_dependencies)
+        if dependencies is not None:
+            await self._aresolve_run_dependencies(dependencies)
 
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
@@ -1306,7 +1306,7 @@ class Team:
         stream_intermediate_steps: bool = False,
         workflow_context: Optional[Dict] = None,
         yield_run_response: bool = False,
-        run_dependencies: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
         """Run the Team and return the response.
 
@@ -1317,7 +1317,9 @@ class Team:
         4. Save session to storage
         5. Log Team Run
         """
-        # Dependencies should be resolved by the calling method
+        # Resolving here for async requirement
+        if dependencies is not None:
+            await self._aresolve_run_dependencies(dependencies)
 
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
@@ -1516,7 +1518,7 @@ class Team:
 
         # Resolve callable dependencies if present
         if run_dependencies is not None:
-            self._resolve_run_dependencies(run_dependencies)
+            self._resolve_run_dependencies(dependencies=run_dependencies)
 
         # Extract workflow context from kwargs if present
         workflow_context = kwargs.pop("workflow_context", None)
@@ -1561,7 +1563,7 @@ class Team:
             team_name=self.name,
         )
 
-        # Add user-provided metadata if provided
+        # Add user-provided metadata
         if metadata is not None:
             if run_response.metadata is None:
                 run_response.metadata = {}
@@ -1620,7 +1622,7 @@ class Team:
                         files=files,
                         knowledge_filters=effective_filters,
                         add_history_to_context=add_history_to_context,
-                        run_dependencies=run_dependencies,
+                        dependencies=run_dependencies,
                         add_dependencies_to_context=add_dependencies_to_context,
                         **kwargs,
                     )
@@ -1636,7 +1638,7 @@ class Team:
                         files=files,
                         knowledge_filters=effective_filters,
                         add_history_to_context=add_history_to_context,
-                        run_dependencies=run_dependencies,
+                        dependencies=run_dependencies,
                         add_dependencies_to_context=add_dependencies_to_context,
                         **kwargs,
                     )
@@ -3953,7 +3955,7 @@ class Team:
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
-        run_dependencies: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunMessages:
@@ -4047,7 +4049,7 @@ class Team:
             videos=videos,
             files=files,
             knowledge_filters=knowledge_filters,
-            run_dependencies=run_dependencies,
+            dependencies=dependencies,
             add_dependencies_to_context=add_dependencies_to_context,
             **kwargs,
         )
@@ -4070,7 +4072,7 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        run_dependencies: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         **kwargs,
     ):
@@ -4168,7 +4170,7 @@ class Team:
                         session_state=session.session_data.get("session_state")
                         if session.session_data is not None
                         else None,
-                        dependencies=run_dependencies,
+                        dependencies=dependencies,
                     )
 
                 # Convert to string for concatenation operations
@@ -4191,9 +4193,9 @@ class Team:
                     if add_dependencies_to_context is not None
                     else self.add_dependencies_to_context
                 )
-                if should_add_dependencies and run_dependencies is not None:
+                if should_add_dependencies and dependencies is not None:
                     user_msg_content_str += "\n\n<additional context>\n"
-                    user_msg_content_str += self._convert_dependencies_to_string(run_dependencies) + "\n"
+                    user_msg_content_str += self._convert_dependencies_to_string(dependencies) + "\n"
                     user_msg_content_str += "</additional context>"
 
                 # Use the string version for the final content

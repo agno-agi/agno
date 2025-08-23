@@ -1018,7 +1018,6 @@ class Agent:
         if run_dependencies is not None:
             self._resolve_run_dependencies(dependencies=run_dependencies)
 
-        # Resolve final boolean flags for this run
         add_dependencies = (
             add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
         )
@@ -1062,7 +1061,7 @@ class Agent:
             agent_name=self.name,
         )
 
-        # Add user-provided metadata if provided
+        # Add user-provided metadata
         if metadata is not None:
             if run_response.metadata is None:
                 run_response.metadata = {}
@@ -1192,7 +1191,10 @@ class Agent:
         7. Save session to storage
         8. Optional: Save output to file if save_response_to_file is set
         """
-        # Dependencies should already be resolved and passed from arun() method
+        arun_dependencies = dependencies if dependencies is not None else self.dependencies
+        # Resolving here for async requirement
+        if self.dependencies is not None:
+            await self._aresolve_run_dependencies(dependencies=arun_dependencies)
 
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
@@ -1271,6 +1273,7 @@ class Agent:
         stream_intermediate_steps: bool = False,
         workflow_context: Optional[Dict] = None,
         yield_run_response: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
         """Run the Agent and yield the RunOutput.
 
@@ -1283,7 +1286,10 @@ class Agent:
         6. Add RunOutput to Agent Session
         7. Save session to storage
         """
-        # Dependencies should already be resolved in main arun() method
+        run_dependencies = dependencies if dependencies is not None else self.dependencies
+        # Resolving here for async requirement
+        if self.dependencies is not None:
+            await self._aresolve_run_dependencies(dependencies=run_dependencies)
 
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
         # Start the Run by yielding a RunStarted event
@@ -1493,7 +1499,6 @@ class Agent:
         if run_dependencies is not None:
             self._resolve_run_dependencies(dependencies=run_dependencies)
 
-        # Resolve final boolean flags for this run
         add_dependencies = (
             add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
         )
@@ -1535,7 +1540,7 @@ class Agent:
             agent_name=self.name,
         )
 
-        # Add user-provided metadata if provided
+        # Add user-provided metadata
         if metadata is not None:
             if run_response.metadata is None:
                 run_response.metadata = {}
@@ -1598,15 +1603,16 @@ class Agent:
                         stream_intermediate_steps=stream_intermediate_steps,
                         workflow_context=workflow_context,
                         yield_run_response=yield_run_response,
+                        dependencies=run_dependencies if add_dependencies else None,
                     )  # type: ignore[assignment]
                 else:
                     return self._arun(  # type: ignore
                         run_response=run_response,
                         run_messages=run_messages,
                         user_id=user_id,
-                        dependencies=run_dependencies,
                         session=agent_session,
                         response_format=response_format,
+                        dependencies=run_dependencies if add_dependencies else None,
                     )
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
@@ -1962,6 +1968,11 @@ class Agent:
         6. Add RunOutput to Agent Session
         7. Save session to storage
         """
+
+        # Resolve dependencies if needed
+        if self.dependencies is not None:
+            self._resolve_run_dependencies(dependencies=self.dependencies)
+
         # Start the Run by yielding a RunContinued event
         if stream_intermediate_steps:
             yield self._handle_event(create_run_continued_event(run_response), run_response)
@@ -2187,6 +2198,7 @@ class Agent:
                         session=agent_session,
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
+                        dependencies=run_dependencies if add_dependencies else None,
                     )
                 else:
                     return self._acontinue_run(  # type: ignore
@@ -2195,6 +2207,7 @@ class Agent:
                         user_id=user_id,
                         session=agent_session,
                         response_format=response_format,
+                        dependencies=run_dependencies if add_dependencies else None,
                     )
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
@@ -2239,6 +2252,7 @@ class Agent:
         session: AgentSession,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> RunOutput:
         """Continue a previous run.
 
@@ -2252,7 +2266,9 @@ class Agent:
         7. Save output to file if save_response_to_file is set
         """
 
-        # Dependencies should already be resolved in calling method
+        # Resolving here for async requirement
+        if dependencies is not None:
+            await self._aresolve_run_dependencies(dependencies=self.dependencies)
 
         self.model = cast(Model, self.model)
 
@@ -2310,9 +2326,6 @@ class Agent:
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
-        # Restore original dependencies
-        self.dependencies = original_dependencies
-
         return run_response
 
     async def _acontinue_run_stream(
@@ -2323,6 +2336,7 @@ class Agent:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
         """Continue a previous run.
 
@@ -2335,7 +2349,9 @@ class Agent:
         6. Save output to file if save_response_to_file is set
         7. Save session to storage
         """
-        # Dependencies should already be resolved in calling method
+        # Resolving here for async requirement
+        if dependencies is not None:
+            await self._aresolve_run_dependencies(dependencies=dependencies)
 
         # Start the Run by yielding a RunContinued event
         if stream_intermediate_steps:

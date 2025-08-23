@@ -11,7 +11,6 @@ def get_user_profile(user_id: str = "john_doe") -> dict:
     Returns:
         Dictionary containing user profile information
     """
-    # Mock user profile data - in real scenarios this would come from a database
     profiles = {
         "john_doe": {
             "name": "John Doe",
@@ -39,7 +38,6 @@ def get_current_context() -> dict:
     }
 
 
-# Create Agents for the Team
 profile_agent = Agent(
     name="ProfileAnalyst",
     model=OpenAIChat(id="gpt-4o-mini"),
@@ -52,7 +50,6 @@ context_agent = Agent(
     instructions="You analyze current context and timing to provide relevant insights.",
 )
 
-# Create a Context-Aware Team (no dependencies at instance level)
 team = Team(
     name="PersonalizationTeam",
     mode="coordinate",  # Use coordinate mode for simpler team behavior
@@ -61,8 +58,6 @@ team = Team(
     markdown=True,
 )
 
-# Example usage - Team with runtime dependencies (sync)
-# The dependencies will be available in the context when processing this message
 response = team.run(
     "Please provide me with a personalized summary of today's priorities based on my profile and interests.",
     dependencies={
