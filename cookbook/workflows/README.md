@@ -41,7 +41,7 @@ Welcome to **Agno Workflows 2.0** - the next generation of intelligent, flexible
 
 Agno Workflows 2.0 provides a powerful, declarative way to orchestrate multi-step AI processes. Unlike traditional linear workflows, you can now create sophisticated branching logic, parallel execution, and dynamic routing based on content analysis.
 
-![Workflows 2.0 flow](assets/workflows_v2_flow.png)
+![Workflows 2.0 flow](assets/workflows_flow.png)
 
 ### Key Features
 
@@ -933,4 +933,12 @@ workflow.print_response(
 4. **Enable streaming**: For event-based information
 5. **Add state management**: Use `session_state` for data sharing
 
-For more examples and advanced patterns, explore the [`01_basic_workflows/`](01_basic_workflows), [`02_workflows_conditional_execution/`](02_workflows_conditional_execution), [`03_workflows_loop_execution/`](03_workflows_loop_execution), [`04_workflows_parallel_execution/`](04_workflows_parallel_execution), [`05_workflows_conditional_branching/`](05_workflows_conditional_branching), and [`06_advanced_concepts/`](06_advanced_concepts) directories. Each file demonstrates a specific pattern with detailed comments and real-world use cases.
+For more examples and advanced patterns, explore the following directories- 
+- [`01_basic_workflows/`](01_basic_workflows) 
+- [`02_workflows_conditional_execution/`](02_workflows_conditional_execution) 
+- [`03_workflows_loop_execution/`](03_workflows_loop_execution) 
+- [`04_workflows_parallel_execution/`](04_workflows_parallel_execution) 
+- [`05_workflows_conditional_branching/`](05_workflows_conditional_branching) 
+- [`06_advanced_concepts/`](06_advanced_concepts) 
+
+Each file demonstrates a specific pattern with detailed comments and real-world use cases.
