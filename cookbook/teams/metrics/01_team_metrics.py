@@ -3,16 +3,26 @@ This example demonstrates how to access and analyze team metrics.
 
 Shows how to retrieve detailed metrics for team execution, including
 message-level metrics, session metrics, and member-specific metrics.
+
+Prerequisites:
+1. Run: cookbook/run_pgvector.sh (to start PostgreSQL)
+2. Ensure PostgreSQL is running on localhost:5532
 """
 
 from typing import Iterator
 
 from agno.agent import Agent, RunOutput
+from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
+from agno.run.team import TeamRunOutput
 from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.pprint import pprint_run_response
 from rich.pretty import pprint
+
+# Database configuration for metrics storage
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url=db_url, session_table="team_metrics_sessions")
 
 # Create stock research agent
 stock_searcher = Agent(
@@ -28,24 +38,24 @@ team = Team(
     mode="route",
     model=OpenAIChat("gpt-4o"),
     members=[stock_searcher],
+    db=db,  # Database required for session metrics
+    session_id="team_metrics_demo",
     markdown=True,
-    debug_mode=True,  # Enable detailed metrics tracking
     show_members_responses=True,
+    store_member_responses=True,
 )
 
 # Run the team and capture metrics
-run_stream: Iterator[RunOutput] = team.run(
-    "What is the stock price of NVDA", stream=True
-)
-pprint_run_response(run_stream, markdown=True)
+run_output = team.run("What is the stock price of NVDA")
+pprint_run_response(run_output, markdown=True)
 
 # Analyze team leader message metrics
 print("=" * 50)
 print("TEAM LEADER MESSAGE METRICS")
 print("=" * 50)
 
-if team.run_response.messages:
-    for message in team.run_response.messages:
+if run_output.messages:
+    for message in run_output.messages:
         if message.role == "assistant":
             if message.content:
                 print(f"📝 Message: {message.content[:100]}...")
@@ -60,21 +70,21 @@ if team.run_response.messages:
 print("=" * 50)
 print("AGGREGATED TEAM METRICS")
 print("=" * 50)
-pprint(team.run_response.metrics)
+pprint(run_output.metrics)
 
 # Analyze session-level metrics
 print("=" * 50)
 print("SESSION METRICS")
 print("=" * 50)
-pprint(team.session_metrics)
+pprint(team.get_session_metrics())
 
 # Analyze individual member metrics
 print("=" * 50)
 print("TEAM MEMBER MESSAGE METRICS")
 print("=" * 50)
 
-if team.run_response.member_responses:
-    for member_response in team.run_response.member_responses:
+if run_output.member_responses:
+    for member_response in run_output.member_responses:
         if member_response.messages:
             for message in member_response.messages:
                 if message.role == "assistant":
@@ -86,9 +96,3 @@ if team.run_response.member_responses:
                     print("-" * 20, "Member Metrics", "-" * 20)
                     pprint(message.metrics)
                     print("-" * 60)
-
-# Full team session metrics (comprehensive view)
-print("=" * 50)
-print("FULL TEAM SESSION METRICS")
-print("=" * 50)
-pprint(team.full_team_session_metrics)

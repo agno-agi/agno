@@ -61,10 +61,22 @@ team = Team(
     show_members_responses=True,
 )
 
-team.print_response(
-    "Give me a stock report for NVDA", stream=True, stream_intermediate_steps=True
+# Run with streaming and consume the generator to get the final response
+stream_generator = team.run(
+    "Give me a stock report for NVDA",
+    stream=True,
+    stream_intermediate_steps=True,
 )
 
-# Or async
-# asyncio.run(team.aprint_response("Give me a stock report for NVDA", stream=True, stream_intermediate_steps=True))
-assert isinstance(team.run_response.content, StockReport)
+# Consume the streaming events and get the final response
+run_response = None
+for event_or_response in stream_generator:
+    # The last item in the stream is the final TeamRunOutput
+    run_response = event_or_response
+
+assert isinstance(run_response.content, StockReport)
+print(
+    f"✅ Response content is correctly typed as StockReport: {type(run_response.content)}"
+)
+print(f"✅ Stock Symbol: {run_response.content.symbol}")
+print(f"✅ Company Name: {run_response.content.company_name}")

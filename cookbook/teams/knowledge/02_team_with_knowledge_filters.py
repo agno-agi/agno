@@ -34,7 +34,7 @@ knowledge_base = Knowledge(
 )
 
 # Add documents with metadata for filtering
-knowledge_base.add_contents(
+knowledge_base.add_contents_sync(
     [
         {
             "path": downloaded_cv_paths[0],

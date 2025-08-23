@@ -65,11 +65,15 @@ class BaseTeamRunEvent(BaseRunOutputEvent):
 
         member_responses_final = []
         for response in member_responses or []:
-            if "agent_id" in response:
+            # Handle case where response is already a TeamRunOutput or RunOutput object
+            if hasattr(response, "run_id") or not isinstance(response, dict):
+                member_responses_final.append(response)
+            elif "agent_id" in response:
                 run_response_parsed = RunOutput.from_dict(response)
+                member_responses_final.append(run_response_parsed)
             else:
                 run_response_parsed = TeamRunOutput.from_dict(response)  # type: ignore
-            member_responses_final.append(run_response_parsed)
+                member_responses_final.append(run_response_parsed)
 
         if member_responses_final:
             event.member_responses = member_responses_final
@@ -384,6 +388,10 @@ class TeamRunOutput:
         events = data.pop("events", None)
         final_events = []
         for event in events or []:
+            # Handle case where event is already a TeamRunOutput or other object
+            if hasattr(event, "to_dict") or not isinstance(event, dict):
+                final_events.append(event)
+                continue
             if "agent_id" in event:
                 # Use the factory from response.py for agent events
                 from agno.run.agent import run_output_event_from_dict
@@ -401,7 +409,10 @@ class TeamRunOutput:
         parsed_member_responses: List[Union["TeamRunOutput", RunOutput]] = []
         if member_responses:
             for response in member_responses:
-                if "agent_id" in response:
+                # Handle case where response is already a TeamRunOutput or RunOutput object
+                if hasattr(response, "run_id") or not isinstance(response, dict):
+                    parsed_member_responses.append(response)
+                elif "agent_id" in response:
                     parsed_member_responses.append(RunOutput.from_dict(response))
                 else:
                     parsed_member_responses.append(cls.from_dict(response))

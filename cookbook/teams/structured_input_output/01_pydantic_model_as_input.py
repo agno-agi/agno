@@ -48,6 +48,7 @@ team = Team(
         "Tailor the research to the specified target audience",
         "Provide the requested number of sources",
     ],
+    show_members_responses=True,
 )
 
 # Use Pydantic model as structured input

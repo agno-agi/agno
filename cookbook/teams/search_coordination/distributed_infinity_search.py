@@ -54,8 +54,12 @@ knowledge_secondary = Knowledge(
 )
 
 # Add content to both knowledge bases
-knowledge_primary.add_contents(urls=["https://docs.agno.com/introduction/agents.md"])
-knowledge_secondary.add_contents(urls=["https://docs.agno.com/introduction/agents.md"])
+knowledge_primary.add_contents_sync(
+    urls=["https://docs.agno.com/introduction/agents.md"]
+)
+knowledge_secondary.add_contents_sync(
+    urls=["https://docs.agno.com/introduction/agents.md"]
+)
 
 # Primary Searcher Agent - Broad search with infinity reranking
 primary_searcher = Agent(

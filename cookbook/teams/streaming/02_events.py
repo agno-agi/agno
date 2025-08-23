@@ -4,7 +4,8 @@ from uuid import uuid4
 from agno.agent import RunEvent
 from agno.agent.agent import Agent
 from agno.models.anthropic.claude import Claude
-from agno.models.mistral.mistral import MistralChat
+
+# from agno.models.mistral.mistral import MistralChat
 from agno.models.openai.chat import OpenAIChat
 from agno.team import Team, TeamRunEvent
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -14,7 +15,7 @@ wikipedia_agent = Agent(
     id="hacker-news-agent",
     name="Hacker News Agent",
     role="Search Hacker News for information",
-    model=MistralChat(id="mistral-large-latest"),
+    # model=MistralChat(id="mistral-large-latest"),
     tools=[HackerNewsTools()],
     instructions=[
         "Find articles about the company in the Hacker News",

@@ -9,12 +9,10 @@ from agno.agent import Agent
 from agno.team.team import Team
 from agno.tools import tool
 from agno.tools.duckduckgo import DuckDuckGoTools
-from pydantic import BaseModel
-from rich.pretty import pprint
 
 
 @tool()
-def answer_from_known_questions(agent: Team, question: str) -> str:
+def answer_from_known_questions(question: str) -> str:
     """Answer a question from a list of known questions
 
     Args:
@@ -23,10 +21,6 @@ def answer_from_known_questions(agent: Team, question: str) -> str:
     Returns:
         The answer to the question
     """
-
-    class Answer(BaseModel):
-        answer: str
-        original_question: str
 
     # FAQ knowledge base
     faq = {
@@ -39,21 +33,11 @@ def answer_from_known_questions(agent: Team, question: str) -> str:
         "What is the capital of Turkey?": "Ankara",
     }
 
-    # Initialize session state if needed
-    if agent.session_state is None:
-        agent.session_state = {}
-
-    # Clear previous answer
-    if "last_answer" in agent.session_state:
-        del agent.session_state["last_answer"]
-
     # Check if question is in FAQ
     if question in faq:
-        answer = Answer(answer=faq[question], original_question=question)
-        agent.session_state["last_answer"] = answer
-        return answer.answer
+        return f"From my knowledge base: {faq[question]}"
     else:
-        return "I don't know the answer to that question."
+        return "I don't have that information in my knowledge base. Try asking the web search agent."
 
 
 # Create web search agent for fallback
@@ -70,6 +54,16 @@ team = Team(name="Q & A team", members=[web_agent], tools=[answer_from_known_que
 # Test the team
 team.print_response("What is the capital of France?", stream=True)
 
-# Display the stored answer from session state
-if "last_answer" in team.session_state:
-    pprint(team.session_state["last_answer"])
+# Check if team has session state and display information
+print(f"\n📊 Team Session Info:")
+print(f"   Session ID: {team.session_id}")
+print(f"   Session State: {team.session_state}")
+
+# Show team capabilities
+print(f"\n🔧 Team Tools Available:")
+for tool in team.tools:
+    print(f"   - {tool.name}: {tool.description}")
+
+print(f"\n👥 Team Members:")
+for member in team.members:
+    print(f"   - {member.name}: {member.role}")

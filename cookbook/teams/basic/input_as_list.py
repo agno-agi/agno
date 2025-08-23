@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.team import Team
 
-Team(
+team = Team(
     members=[
         Agent(
             name="Sarah",
@@ -14,7 +14,9 @@ Team(
             instructions="Create clear, concise summaries",
         ),
     ],
-).print_response(
+)
+
+team.print_response(
     [
         {"type": "text", "text": "What's in this image?"},
         {

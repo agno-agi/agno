@@ -14,11 +14,14 @@ Setup:
 2. Run this script to see distributed RAG in action
 """
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
+from agno.utils.print_response.team import aprint_response, print_response
 from agno.vectordb.lancedb import LanceDb, SearchType
 
 # Primary knowledge base for main retrieval
@@ -42,10 +45,10 @@ context_knowledge = Knowledge(
 )
 
 # Add content to knowledge bases
-primary_knowledge.add_content(
+primary_knowledge.add_content_sync(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
 )
-context_knowledge.add_content(
+context_knowledge.add_content_sync(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
 )
 
@@ -142,10 +145,11 @@ async def async_distributed_rag_demo():
 
     query = "How do I make chicken and galangal in coconut milk soup? Include cooking tips and variations."
 
-    # Run async distributed RAG
-    await distributed_rag_team.aprint_response(
-        query, stream=True, stream_intermediate_steps=True
-    )
+    # # Run async distributed RAG
+    # await distributed_rag_team.aprint_response(
+    #     query, stream=True, stream_intermediate_steps=True
+    # )
+    await aprint_response(input=query, team=distributed_rag_team)
 
 
 def sync_distributed_rag_demo():
@@ -156,9 +160,7 @@ def sync_distributed_rag_demo():
     query = "How do I make chicken and galangal in coconut milk soup? Include cooking tips and variations."
 
     # Run distributed RAG
-    distributed_rag_team.print_response(
-        query, stream=True, stream_intermediate_steps=True
-    )
+    print_response(distributed_rag_team, query)
 
 
 def multi_course_meal_demo():
@@ -170,15 +172,13 @@ def multi_course_meal_demo():
     I'd like to start with a soup, then a thai curry for the main course and finish with a dessert.
     Please include cooking techniques and any special tips."""
 
-    distributed_rag_team.print_response(
-        query, stream=True, stream_intermediate_steps=True
-    )
+    print_response(distributed_rag_team, query)
 
 
 if __name__ == "__main__":
     # Choose which demo to run
-    # asyncio.run(async_distributed_rag_demo())
+    asyncio.run(async_distributed_rag_demo())
 
     # multi_course_meal_demo()
 
-    sync_distributed_rag_demo()
+    # sync_distributed_rag_demo()
