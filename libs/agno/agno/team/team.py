@@ -3482,6 +3482,8 @@ class Team:
                 videos=videos,
                 files=files,
                 user_id=user_id,
+                dependencies=dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,
             )
             forward_task_func: Function = self._get_forward_task_function(
                 input=user_message,
@@ -4011,10 +4013,7 @@ class Team:
                     run_response.additional_input.extend(messages_to_add_to_run_response)
 
         # 3. Add history to run_messages
-        should_add_history = (
-            add_history_to_context if add_history_to_context is not None else self.add_history_to_context
-        )
-        if should_add_history:
+        if add_history_to_context:
             from copy import deepcopy
 
             history = session.get_messages_from_last_n_runs(
@@ -4188,12 +4187,7 @@ class Team:
                     user_msg_content_str += self._convert_documents_to_string(references.references) + "\n"
                     user_msg_content_str += "</references>"
                 # 4.2 Add context to user message
-                should_add_dependencies = (
-                    add_dependencies_to_context
-                    if add_dependencies_to_context is not None
-                    else self.add_dependencies_to_context
-                )
-                if should_add_dependencies and dependencies is not None:
+                if add_dependencies_to_context and dependencies is not None:
                     user_msg_content_str += "\n\n<additional context>\n"
                     user_msg_content_str += self._convert_dependencies_to_string(dependencies) + "\n"
                     user_msg_content_str += "</additional context>"
@@ -4653,12 +4647,7 @@ class Team:
 
                 # Add history for the member if enabled
                 history = None
-                should_add_member_history = (
-                    add_history_to_context
-                    if add_history_to_context is not None
-                    else member_agent.add_history_to_context
-                )
-                if should_add_member_history:
+                if member_agent.add_history_to_context:
                     history = self._get_history_for_member_agent(session, member_agent)
                     if history:
                         history.append(Message(role="user", content=member_agent_task))
@@ -5065,10 +5054,7 @@ class Team:
             )
 
             # 4. Add history for the member if enabled
-            should_add_member_history = (
-                add_history_to_context if add_history_to_context is not None else member_agent.add_history_to_context
-            )
-            if should_add_member_history:
+            if member_agent.add_history_to_context:
                 history = self._get_history_for_member_agent(session, member_agent)
                 if history:
                     history.append(Message(role="user", content=member_agent_task))
@@ -5230,10 +5216,7 @@ class Team:
             )
 
             # 4. Add history for the member if enabled
-            should_add_member_history = (
-                add_history_to_context if add_history_to_context is not None else member_agent.add_history_to_context
-            )
-            if should_add_member_history:
+            if member_agent.add_history_to_context:
                 history = self._get_history_for_member_agent(session, member_agent)
                 if history:
                     history.append(Message(role="user", content=member_agent_task))
@@ -5590,11 +5573,7 @@ class Team:
             # If found in subteam, include the path in the task description
             member_agent_task = input.get_content_string() if input is not None else ""
 
-            # Add history for the member if enabled
-            should_add_member_history = (
-                add_history_to_context if add_history_to_context is not None else member_agent.add_history_to_context
-            )
-            if should_add_member_history:
+            if member_agent.add_history_to_context:
                 history = self._get_history_for_member_agent(session, member_agent)
                 if history:
                     history.append(Message(role="user", content=member_agent_task))
