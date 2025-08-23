@@ -1606,6 +1606,28 @@ class Agent:
                 return async_generator_wrapper(create_run_response_error_event(run_response, error=str(last_exception)))
             raise Exception(f"Failed after {num_attempts} attempts.")
 
+    def cancel_run(self, run_id: Optional[str] = None, reason: str = "Run cancelled") -> bool:
+        """Cancel a run using Agno's standard cancellation pattern."""
+        target_run_id = run_id or self.run_id
+        if not target_run_id:
+            return False
+        
+        # If this is the current run, set cancellation flag
+        if self.run_response and self.run_response.run_id == target_run_id:
+            # Set cancellation flag that will be checked during execution
+            self._cancel_requested = True
+            self._cancel_reason = reason
+            
+        return True
+    
+    def _check_if_cancelled(self) -> None:
+        """Check if cancellation has been requested and raise RunCancelledException if so."""
+        if hasattr(self, '_cancel_requested') and self._cancel_requested:
+            self._cancel_requested = False
+            reason = getattr(self, '_cancel_reason', 'Run cancelled')
+            from agno.exceptions import RunCancelledException
+            raise RunCancelledException(f"Agent run cancelled: {reason}")
+
     @overload
     def continue_run(
         self,
@@ -2200,6 +2222,9 @@ class Agent:
 
             # Reset the run paused state
             run_response.status = RunStatus.running
+            
+            # Check if cancellation has been requested
+            self._check_if_cancelled()
 
             try:
                 if stream:
@@ -2276,6 +2301,9 @@ class Agent:
         6. Save session to storage
         7. Save output to file if save_response_to_file is set
         """
+        
+        # Check if cancellation has been requested
+        self._check_if_cancelled()
 
         self.model = cast(Model, self.model)
 
@@ -2287,6 +2315,9 @@ class Agent:
         index_of_last_user_message = len(run_messages.messages)
 
         # 2. Generate a response from the Model (includes running function calls)
+        # Check if cancellation has been requested before model call
+        self._check_if_cancelled()
+        
         model_response: ModelResponse = await self.model.aresponse(
             messages=run_messages.messages,
             response_format=response_format,

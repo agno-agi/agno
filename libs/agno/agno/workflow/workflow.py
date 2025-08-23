@@ -261,6 +261,9 @@ class Workflow:
         # Set run_input, run_response
         self.run_input = kwargs
         self.run_response = RunResponse(run_id=self.run_id, session_id=self.session_id, workflow_id=self.workflow_id)
+        
+        # Check if cancellation has been requested
+        self._check_if_cancelled()
 
         # Read existing session from storage
         self.read_from_storage()
@@ -364,6 +367,28 @@ class Workflow:
         """Async version of run() that calls arun_workflow()"""
         logger.error(f"{self.__class__.__name__}.arun() method not implemented.")
         return
+
+    def cancel_run(self, run_id: Optional[str] = None, reason: str = "Run cancelled") -> bool:
+        """Cancel a workflow run using Agno's standard cancellation pattern."""
+        target_run_id = run_id or getattr(self, 'run_id', None)
+        if not target_run_id:
+            return False
+        
+        if hasattr(self, 'run_response') and self.run_response and self.run_response.run_id == target_run_id:
+            self._cancel_requested = True
+            self._cancel_reason = reason
+        
+        return True
+    
+    def _check_if_cancelled(self) -> None:
+        """Check if cancellation has been requested and raise appropriate exception."""
+        if hasattr(self, '_cancel_requested') and self._cancel_requested:
+            # Clear the cancellation flag
+            self._cancel_requested = False
+            reason = getattr(self, '_cancel_reason', 'Workflow run cancelled')
+            # Use standard exception for workflow cancellation
+            from agno.exceptions import RunCancelledException
+            raise RunCancelledException(reason)
 
     def set_storage_mode(self):
         if self.storage is not None:
