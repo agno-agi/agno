@@ -253,6 +253,12 @@ class OpenAIChat(Model):
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
 
+    def _format_messages(self, messages: List[Message]) -> List[Dict[str, Any]]:
+        """
+        Format a list of messages into the format expected by OpenAI.
+        """
+        return [self._format_message(m) for m in messages]
+
     def _format_message(self, message: Message) -> Dict[str, Any]:
         """
         Format a message into the format expected by OpenAI.
@@ -336,7 +342,7 @@ class OpenAIChat(Model):
         try:
             return self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m) for m in messages],  # type: ignore
+                messages=self._format_messages(messages),
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
         except RateLimitError as e:
@@ -396,7 +402,7 @@ class OpenAIChat(Model):
         try:
             return await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m) for m in messages],  # type: ignore
+                messages=self._format_messages(messages),
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
         except RateLimitError as e:
@@ -457,7 +463,7 @@ class OpenAIChat(Model):
         try:
             yield from self.get_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m) for m in messages],  # type: ignore
+                messages=self._format_messages(messages),
                 stream=True,
                 stream_options={"include_usage": True},
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
@@ -520,7 +526,7 @@ class OpenAIChat(Model):
         try:
             async_stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
-                messages=[self._format_message(m) for m in messages],  # type: ignore
+                messages=self._format_messages(messages),
                 stream=True,
                 stream_options={"include_usage": True},
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
