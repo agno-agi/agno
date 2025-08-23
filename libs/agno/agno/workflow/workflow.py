@@ -149,6 +149,11 @@ class Workflow:
     # Metadata stored with this workflow
     metadata: Optional[Dict[str, Any]] = None
 
+    # --- Telemetry ---
+    # telemetry=True logs minimal telemetry for analytics
+    # This helps us improve the Agent and provide better support
+    telemetry: bool = True
+
     def __init__(
         self,
         id: Optional[str] = None,
@@ -168,6 +173,7 @@ class Workflow:
         input_schema: Optional[Type[BaseModel]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         cache_session: bool = False,
+        telemetry: bool = True,
     ):
         self.id = id
         self.name = name
@@ -186,6 +192,7 @@ class Workflow:
         self.metadata = metadata
         self.cache_session = cache_session
         self.db = db
+        self.telemetry = telemetry
 
         self._workflow_session: Optional[WorkflowSession] = None
 
@@ -677,6 +684,13 @@ class Workflow:
         else:
             set_log_level_to_info(source_type="workflow")
 
+    def _set_telemetry(self) -> None:
+        """Override telemetry settings based on environment variables."""
+
+        telemetry_env = getenv("AGNO_TELEMETRY")
+        if telemetry_env is not None:
+            self.telemetry = telemetry_env.lower() == "true"
+
     def _propagate_debug_to_step(self, step):
         """Recursively propagate debug mode to steps and nested primitives"""
         # Handle direct Step objects
@@ -924,6 +938,10 @@ class Workflow:
                 session.upsert_run(run=workflow_run_response)
                 self.save_session(session=session)
 
+        # Log Workflow Telemetry
+        if self.telemetry:
+            self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
+
         return workflow_run_response
 
     def _execute_stream(
@@ -1119,6 +1137,10 @@ class Workflow:
         session.upsert_run(run=workflow_run_response)
         self.save_session(session=session)
 
+        # Log Workflow Telemetry
+        if self.telemetry:
+            self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
+
     async def _acall_custom_function(
         self, func: Callable, execution_input: WorkflowExecutionInput, **kwargs: Any
     ) -> Any:
@@ -1289,6 +1311,10 @@ class Workflow:
         self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
         session.upsert_run(run=workflow_run_response)
         self.save_session(session=session)
+
+        # Log Workflow Telemetry
+        if self.telemetry:
+            await self._alog_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
 
         return workflow_run_response
 
@@ -1491,6 +1517,10 @@ class Workflow:
         self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
         session.upsert_run(run=workflow_run_response)
         self.save_session(session=session)
+
+        # Log Workflow Telemetry
+        if self.telemetry:
+            await self._alog_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
 
     async def _arun_background(
         self,
@@ -2270,3 +2300,45 @@ class Workflow:
                         for member in active_executor.members:
                             if hasattr(member, "workflow_id"):
                                 member.workflow_id = self.id
+
+    ###########################################################################
+    # Telemetry functions
+    ###########################################################################
+
+    def _get_telemetry_data(self) -> Dict[str, Any]:
+        """Get the telemetry data for the workflow"""
+        return {
+            # TODO:
+        }
+
+    def _log_workflow_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
+        """Send a telemetry event to the API for a created Workflow run"""
+
+        self._set_telemetry()
+        if not self.telemetry:
+            return
+
+        from agno.api.workflow import WorkflowRunCreate, create_workflow_run
+
+        try:
+            create_workflow_run(
+                workflow=WorkflowRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data()),
+            )
+        except Exception as e:
+            log_debug(f"Could not create Workflow run telemetry event: {e}")
+
+    async def _alog_workflow_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
+        """Send a telemetry event to the API for a created Workflow async run"""
+
+        self._set_telemetry()
+        if not self.telemetry:
+            return
+
+        from agno.api.workflow import WorkflowRunCreate, acreate_workflow_run
+
+        try:
+            await acreate_workflow_run(
+                workflow=WorkflowRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data())
+            )
+        except Exception as e:
+            log_debug(f"Could not create Workflow run telemetry event: {e}")

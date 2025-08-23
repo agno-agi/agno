@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 
@@ -34,4 +34,13 @@ class UserMemory:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "UserMemory":
+        data = dict(data)
+
+        # Convert updated_at to datetime
+        if updated_at := data.get("updated_at"):
+            if isinstance(updated_at, (int, float)):
+                data["updated_at"] = datetime.fromtimestamp(updated_at, tz=timezone.utc)
+            else:
+                data["updated_at"] = datetime.fromisoformat(updated_at)
+
         return cls(**data)

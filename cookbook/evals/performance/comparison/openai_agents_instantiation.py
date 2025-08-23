@@ -2,8 +2,14 @@
 
 from typing import Literal
 
-from agents import Agent, function_tool
 from agno.eval.performance import PerformanceEval
+
+try:
+    from agents import Agent, function_tool
+except ImportError:
+    raise ImportError(
+        "OpenAI agents not installed. Please install it using `pip install agents`."
+    )
 
 
 def get_weather(city: Literal["nyc", "sf"]):

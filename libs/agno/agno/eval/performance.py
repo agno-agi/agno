@@ -3,12 +3,12 @@ import gc
 import tracemalloc
 from dataclasses import dataclass, field
 from os import getenv
-from typing import TYPE_CHECKING, Callable, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 from uuid import uuid4
 
 from agno.db.base import BaseDb
 from agno.db.schemas.evals import EvalType
-from agno.eval.utils import async_log_eval_run, log_eval_run, store_result_in_file
+from agno.eval.utils import async_log_eval, log_eval_run, store_result_in_file
 from agno.utils.log import log_debug, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.timer import Timer
 
@@ -223,6 +223,11 @@ class PerformanceEval:
     debug_mode: bool = getenv("AGNO_DEBUG", "false").lower() == "true"
     # The database to store Evaluation results
     db: Optional[BaseDb] = None
+
+    # Telemetry settings
+    # telemetry=True logs minimal telemetry for analytics
+    # This helps us improve our Evals and provide better support
+    telemetry: bool = True
 
     def _measure_time(self) -> float:
         """Measure execution time for a single run."""
@@ -598,6 +603,15 @@ class PerformanceEval:
                 eval_input=eval_input,
             )
 
+        if self.telemetry:
+            from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
+
+            create_eval_run_telemetry(
+                eval_run=EvalRunCreate(
+                    run_id=self.eval_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data()
+                ),
+            )
+
         log_debug(f"*********** Evaluation End: {self.eval_id} ***********")
         return self.result
 
@@ -718,7 +732,7 @@ class PerformanceEval:
                 "warmup_runs": self.warmup_runs,
             }
 
-            await async_log_eval_run(
+            await async_log_eval(
                 db=self.db,
                 run_id=self.eval_id,  # type: ignore
                 run_data=self._parse_eval_run_data(),
@@ -732,5 +746,25 @@ class PerformanceEval:
                 eval_input=eval_input,
             )
 
+        if self.telemetry:
+            from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
+
+            await async_create_eval_run_telemetry(
+                eval_run=EvalRunCreate(
+                    run_id=self.eval_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data()
+                ),
+            )
+
         log_debug(f"*********** Evaluation End: {self.eval_id} ***********")
         return self.result
+
+    def _get_telemetry_data(self) -> Dict[str, Any]:
+        """Get the telemetry data for the evaluation"""
+        return {
+            "model_id": self.model_id,
+            "model_provider": self.model_provider,
+            "num_iterations": self.num_iterations,
+            "warmup_runs": self.warmup_runs,
+            "measure_memory": self.measure_memory,
+            "measure_runtime": self.measure_runtime,
+        }

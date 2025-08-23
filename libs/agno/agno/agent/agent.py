@@ -784,8 +784,8 @@ class Agent:
         # 8. Save session to memory
         self.save_session(session=session)
 
-        # Log Agent Run
-        self._log_agent_run(user_id=user_id, session_id=session.session_id)
+        # Log Agent Telemetry
+        self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -912,8 +912,8 @@ class Agent:
         if yield_run_response:
             yield run_response
 
-        # Log Agent Run
-        self._log_agent_run(user_id=user_id, session_id=session.session_id)
+        # Log Agent Telemetry
+        self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1225,8 +1225,8 @@ class Agent:
         # 8. Save session to storage
         self.save_session(session=session)
 
-        # Log Agent Run
-        await self._alog_agent_run(user_id=user_id, session_id=session.session_id)
+        # Log Agent Telemetry
+        await self._alog_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1361,8 +1361,8 @@ class Agent:
         if yield_run_response:
             yield run_response
 
-        # Log Agent Run
-        await self._alog_agent_run(user_id=user_id, session_id=session.session_id)
+        # Log Agent Telemetry
+        await self._alog_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1874,8 +1874,8 @@ class Agent:
         # 7. Save session to storage
         self.save_session(session=session)
 
-        # Log Agent Run
-        self._log_agent_run(user_id=user_id, session_id=session.session_id)
+        # Log Agent Telemetry
+        self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         return run_response
 
@@ -1953,8 +1953,8 @@ class Agent:
         if stream_intermediate_steps:
             yield completed_event
 
-        # Log Agent Run
-        self._log_agent_run(user_id=user_id, session_id=session.session_id)
+        # Log Agent Telemetry
+        self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -2241,8 +2241,8 @@ class Agent:
         # 6. Save session to storage
         self.save_session(session=session)
 
-        # Log Agent Run
-        await self._alog_agent_run(user_id=user_id, session_id=session.session_id)
+        # Log Agent Telemetry
+        await self._alog_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -2331,8 +2331,8 @@ class Agent:
         if stream_intermediate_steps:
             yield completed_event
 
-        # Log Agent Run
-        await self._alog_agent_run(user_id=user_id, session_id=session.session_id)
+        # Log Agent Telemetry
+        await self._alog_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -6669,46 +6669,52 @@ class Agent:
     # Api functions
     ###########################################################################
 
-    def _log_agent_run(self, session_id: str, user_id: Optional[str] = None) -> None:
-        self._set_telemetry()
+    def _get_telemetry_data(self) -> Dict[str, Any]:
+        """Get the telemetry data for the agent"""
+        return {
+            "agent_id": self.id,
+            "model_provider": self.model.provider if self.model else None,
+            "model_name": self.model.name if self.model else None,
+            "model_id": self.model.id if self.model else None,
+            "has_tools": self.tools is not None,
+            "has_memory": self.enable_user_memories is not None,
+            "has_reasoning": self.reasoning is not None,
+            "has_knowledge": self.knowledge is not None,
+            "has_input_schema": self.input_schema is not None,
+            "has_output_schema": self.output_schema is not None,
+            "has_parser_model": self.parser_model is not None,
+            "has_team": self.team_id is not None,
+        }
 
+    def _log_agent_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
+        """Send a telemetry event to the API for a created Agent run"""
+
+        self._set_telemetry()
         if not self.telemetry:
             return
 
-        # # from agno.api.agent import AgentRunCreate, create_agent_run
+        from agno.api.agent import AgentRunCreate, create_agent_run
 
-        # try:
-        #     # agent_session: Optional[AgentSession] = self.agent_session or self._read_or_create_session(
-        #     #     session_id=session_id, user_id=user_id
-        #     # )
+        try:
+            create_agent_run(
+                run=AgentRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data()),
+            )
+        except Exception as e:
+            log_debug(f"Could not create Agent run telemetry event: {e}")
 
-        #     # TODO: Telemetry data
-        #     # create_agent_run(
-        #     #     run=AgentRunCreate(
-        #     #         agent_data=agent_session.telemetry_data(),
-        #     #     ),
-        #     # )
-        # except Exception as e:
-        #     log_debug(f"Could not create agent event: {e}")
+    async def _alog_agent_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
+        """Send a telemetry event to the API for a created Agent async run"""
 
-    async def _alog_agent_run(self, session_id: str, user_id: Optional[str] = None) -> None:
         self._set_telemetry()
-
         if not self.telemetry:
             return
 
-        # from agno.api.agent import AgentRunCreate, acreate_agent_run
+        from agno.api.agent import AgentRunCreate, acreate_agent_run
 
-        # try:
-        #     agent_session: Optional[AgentSession] = self.agent_session or self._read_or_create_session(
-        #         session_id=session_id, user_id=user_id
-        #     )
+        try:
+            await acreate_agent_run(
+                run=AgentRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data())
+            )
 
-        #     # TODO: Telemetry data
-        #     # await acreate_agent_run(
-        #     #     run=AgentRunCreate(
-        #     #         agent_data=agent_session.telemetry_data(),
-        #     #     ),
-        #     # )
-        # except Exception as e:
-        #     log_debug(f"Could not create agent event: {e}")
+        except Exception as e:
+            log_debug(f"Could not create Agent run telemetry event: {e}")
