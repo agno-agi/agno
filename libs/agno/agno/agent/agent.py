@@ -1016,17 +1016,13 @@ class Agent:
 
         # Resolve dependencies
         if run_dependencies is not None:
-            # Always make a copy so we don't modify the original dependencies
-            run_dependencies = run_dependencies.copy()
-            self._resolve_run_dependencies(run_dependencies)
+            self._resolve_run_dependencies(dependencies=run_dependencies)
 
         # Resolve final boolean flags for this run
-        final_add_dependencies_to_context = (
+        add_dependencies = (
             add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
         )
-        final_add_history_to_context = (
-            add_history_to_context if add_history_to_context is not None else self.add_history_to_context
-        )
+        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
         # Extract workflow context from kwargs if present
         workflow_context = kwargs.pop("workflow_context", None)
@@ -1108,9 +1104,9 @@ class Agent:
                     videos=videos,
                     files=files,
                     knowledge_filters=effective_filters,
-                    add_history_to_context=final_add_history_to_context,
-                    run_dependencies=run_dependencies,
-                    add_dependencies_to_context=final_add_dependencies_to_context,
+                    add_history_to_context=add_history,
+                    dependencies=run_dependencies,
+                    add_dependencies_to_context=add_dependencies,
                     **kwargs,
                 )
                 if len(run_messages.messages) == 0:
@@ -1182,7 +1178,7 @@ class Agent:
         session: AgentSession,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        run_dependencies: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> RunOutput:
         """Run the Agent and yield the RunOutput.
 
@@ -1287,9 +1283,7 @@ class Agent:
         6. Add RunOutput to Agent Session
         7. Save session to storage
         """
-        # Resolving here for async requirement
-        if self.dependencies is not None:
-            await self._aresolve_run_dependencies()
+        # Dependencies should already be resolved in main arun() method
 
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
         # Start the Run by yielding a RunStarted event
@@ -1497,17 +1491,13 @@ class Agent:
 
         # Resolve callable dependencies if present
         if run_dependencies is not None:
-            # Always make a copy so we don't modify the original dependencies
-            run_dependencies = run_dependencies.copy()
-            self._resolve_run_dependencies(run_dependencies)
+            self._resolve_run_dependencies(dependencies=run_dependencies)
 
         # Resolve final boolean flags for this run
-        final_add_dependencies_to_context = (
+        add_dependencies = (
             add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
         )
-        final_add_history_to_context = (
-            add_history_to_context if add_history_to_context is not None else self.add_history_to_context
-        )
+        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
         # Extract workflow context from kwargs if present
         workflow_context = kwargs.pop("workflow_context", None)
@@ -1587,9 +1577,9 @@ class Agent:
                     videos=videos,
                     files=files,
                     knowledge_filters=effective_filters,
-                    add_history_to_context=final_add_history_to_context,
-                    run_dependencies=run_dependencies,
-                    add_dependencies_to_context=final_add_dependencies_to_context,
+                    add_history_to_context=add_history,
+                    dependencies=run_dependencies,
+                    add_dependencies_to_context=add_dependencies,
                     **kwargs,
                 )
                 if len(run_messages.messages) == 0:
@@ -1614,7 +1604,7 @@ class Agent:
                         run_response=run_response,
                         run_messages=run_messages,
                         user_id=user_id,
-                        run_dependencies=run_dependencies,
+                        dependencies=run_dependencies,
                         session=agent_session,
                         response_format=response_format,
                     )
@@ -1742,9 +1732,7 @@ class Agent:
         # Update session state from DB
         session_state = self._update_session_state(session=agent_session, session_state=session_state)
 
-        # Resolve dependencies
-        if self.dependencies is not None:
-            self._resolve_run_dependencies()
+        # Dependencies should already be resolved in main run() method
 
         effective_filters = knowledge_filters
 
@@ -2264,9 +2252,7 @@ class Agent:
         7. Save output to file if save_response_to_file is set
         """
 
-        # Resolving here for async requirement
-        if self.dependencies is not None:
-            await self._aresolve_run_dependencies()
+        # Dependencies should already be resolved in calling method
 
         self.model = cast(Model, self.model)
 
@@ -2349,9 +2335,7 @@ class Agent:
         6. Save output to file if save_response_to_file is set
         7. Save session to storage
         """
-        # Resolving here for async requirement
-        if self.dependencies is not None:
-            await self._aresolve_run_dependencies()
+        # Dependencies should already be resolved in calling method
 
         # Start the Run by yielding a RunContinued event
         if stream_intermediate_steps:
@@ -3675,40 +3659,38 @@ class Agent:
                 log_debug("Model does not support structured or JSON schema outputs.")
                 return json_response_format
 
-    def _resolve_run_dependencies(self, dependencies_to_resolve: Optional[Dict[str, Any]] = None) -> None:
+    def _resolve_run_dependencies(self, dependencies: Dict[str, Any]) -> None:
         from inspect import signature
 
-        # Use provided dependencies or fall back to instance dependencies
-        deps = dependencies_to_resolve if dependencies_to_resolve is not None else self.dependencies
-
+        # Dependencies should already be resolved in run() method
         log_debug("Resolving dependencies")
-        if not isinstance(deps, dict):
+        if not isinstance(dependencies, dict):
             log_warning("Dependencies is not a dict")
             return
 
-        for key, value in deps.items():
+        for key, value in dependencies.items():
             if callable(value):
                 try:
                     sig = signature(value)
                     result = value(agent=self) if "agent" in sig.parameters else value()
                     if result is not None:
-                        deps[key] = result
+                        dependencies[key] = result
                 except Exception as e:
                     log_warning(f"Failed to resolve dependencies for '{key}': {e}")
             else:
-                deps[key] = value
+                dependencies[key] = value
 
-    async def _aresolve_run_dependencies(self) -> None:
+    async def _aresolve_run_dependencies(self, dependencies: Dict[str, Any]) -> None:
         from inspect import iscoroutine, signature
 
         log_debug("Resolving context (async)")
-        if not isinstance(self.dependencies, dict):
+        if not isinstance(dependencies, dict):
             log_warning("Context is not a dict")
             return
 
-        for key, value in self.dependencies.items():
+        for key, value in dependencies.items():
             if not callable(value):
-                self.dependencies[key] = value
+                dependencies[key] = value
                 continue
 
             try:
@@ -3718,7 +3700,7 @@ class Agent:
                 if iscoroutine(result):
                     result = await result
 
-                self.dependencies[key] = result
+                dependencies[key] = result
             except Exception as e:
                 log_warning(f"Failed to resolve context for '{key}': {e}")
 
@@ -4160,12 +4142,10 @@ class Agent:
         if not isinstance(message, str):
             return message
 
-        # Use provided dependencies (should be passed from run() method)
-        effective_dependencies = dependencies or {}
-
+        # Dependencies should already be resolved and passed from run() method
         format_variables = ChainMap(
             session_state or {},
-            effective_dependencies or {},
+            dependencies or {},
             self.metadata or {},
             {"user_id": user_id} if user_id is not None else {},
         )
@@ -4186,7 +4166,7 @@ class Agent:
             return message
 
     def get_system_message(
-        self, session: AgentSession, user_id: Optional[str] = None, run_dependencies: Optional[Dict[str, Any]] = None
+        self, session: AgentSession, user_id: Optional[str] = None, dependencies: Optional[Dict[str, Any]] = None
     ) -> Optional[Message]:
         """Return the system message for the Agent.
 
@@ -4360,7 +4340,7 @@ class Agent:
                 system_message_content,
                 user_id=user_id,
                 session_state=session.session_data.get("session_state") if session.session_data is not None else None,
-                dependencies=run_dependencies,
+                dependencies=dependencies,
             )
 
         # 3.3.7 Then add the expected output
@@ -4461,7 +4441,7 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        run_dependencies: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> Optional[Message]:
@@ -4611,7 +4591,7 @@ class Agent:
                         session_state=session.session_data.get("session_state")
                         if session.session_data is not None
                         else None,
-                        dependencies=run_dependencies,
+                        dependencies=dependencies,
                     )
 
                 # Convert to string for concatenation operations
@@ -4629,9 +4609,9 @@ class Agent:
                     user_msg_content_str += self._convert_documents_to_string(references.references) + "\n"
                     user_msg_content_str += "</references>"
                 # 4.2 Add context to user message
-                if add_dependencies_to_context and run_dependencies is not None:
+                if add_dependencies_to_context and dependencies is not None:
                     user_msg_content_str += "\n\n<additional context>\n"
-                    user_msg_content_str += self._convert_dependencies_to_string(run_dependencies) + "\n"
+                    user_msg_content_str += self._convert_dependencies_to_string(dependencies) + "\n"
                     user_msg_content_str += "</additional context>"
 
                 # Use the string version for the final content
@@ -4693,7 +4673,7 @@ class Agent:
         run_messages = RunMessages()
 
         # 1. Add system message to run_messages
-        system_message = self.get_system_message(session=session, user_id=user_id, run_dependencies=run_dependencies)
+        system_message = self.get_system_message(session=session, user_id=user_id, dependencies=run_dependencies)
         if system_message is not None:
             run_messages.system_message = system_message
             run_messages.messages.append(system_message)

@@ -1024,8 +1024,6 @@ class Team:
 
         # Resolve callable dependencies if present
         if run_dependencies is not None:
-            # Always make a copy so we don't modify the original dependencies
-            run_dependencies = run_dependencies.copy()
             self._resolve_run_dependencies(run_dependencies)
 
         # Extract workflow context from kwargs if present
@@ -1242,8 +1240,6 @@ class Team:
 
         # Resolving here for async requirement
         if run_dependencies is not None:
-            # Always make a copy so we don't modify the original dependencies
-            run_dependencies = run_dependencies.copy()
             await self._aresolve_run_dependencies(run_dependencies)
 
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
@@ -1520,8 +1516,6 @@ class Team:
 
         # Resolve callable dependencies if present
         if run_dependencies is not None:
-            # Always make a copy so we don't modify the original dependencies
-            run_dependencies = run_dependencies.copy()
             self._resolve_run_dependencies(run_dependencies)
 
         # Extract workflow context from kwargs if present
@@ -3365,44 +3359,38 @@ class Team:
                     run_response,
                 )
 
-    def _resolve_run_dependencies(self, dependencies_to_resolve: Optional[Dict[str, Any]] = None) -> None:
+    def _resolve_run_dependencies(self, dependencies: Optional[Dict[str, Any]] = None) -> None:
         from inspect import signature
 
-        # Use provided dependencies or fall back to instance dependencies
-        deps = dependencies_to_resolve if dependencies_to_resolve is not None else self.dependencies
-
         log_debug("Resolving dependencies")
-        if not isinstance(deps, dict):
+        if not isinstance(dependencies, dict):
             log_warning("Dependencies is not a dict")
             return
 
-        for key, value in deps.items():
+        for key, value in dependencies.items():
             if not callable(value):
-                deps[key] = value
+                dependencies[key] = value
                 continue
 
             try:
                 sig = signature(value)
                 resolved_value = value(agent=self) if "agent" in sig.parameters else value()
 
-                deps[key] = resolved_value
+                dependencies[key] = resolved_value
             except Exception as e:
                 log_warning(f"Failed to resolve dependencies for {key}: {e}")
 
-    async def _aresolve_run_dependencies(self, dependencies_to_resolve: Optional[Dict[str, Any]] = None) -> None:
+    async def _aresolve_run_dependencies(self, dependencies: Optional[Dict[str, Any]] = None) -> None:
         from inspect import iscoroutine, signature
 
-        # Use provided dependencies or fall back to instance dependencies
-        deps = dependencies_to_resolve if dependencies_to_resolve is not None else self.dependencies
-
         log_debug("Resolving context (async)")
-        if not isinstance(deps, dict):
+        if not isinstance(dependencies, dict):
             log_warning("Dependencies is not a dict")
             return
 
-        for key, value in deps.items():
+        for key, value in dependencies.items():
             if not callable(value):
-                deps[key] = value
+                dependencies[key] = value
                 continue
 
             try:
@@ -3412,7 +3400,7 @@ class Team:
                 if iscoroutine(resolved_value):
                     resolved_value = await resolved_value
 
-                deps[key] = resolved_value
+                dependencies[key] = resolved_value
             except Exception as e:
                 log_warning(f"Failed to resolve context for '{key}': {e}")
 
@@ -4294,11 +4282,10 @@ class Team:
         if not isinstance(message, str):
             return message
 
-        run_dependencies = dependencies if dependencies is not None else self.dependencies
-
+        # Dependencies should already be resolved and passed from run() method
         format_variables = ChainMap(
             session_state or {},
-            run_dependencies or {},
+            dependencies or {},
             self.metadata or {},
             {"user_id": user_id} if user_id is not None else {},
         )

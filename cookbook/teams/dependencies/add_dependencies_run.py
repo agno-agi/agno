@@ -1,70 +1,76 @@
-import json
-
-import httpx
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 
 
-def get_top_hackernews_stories(num_stories: int = 5) -> str:
-    """Fetch and return the top stories from HackerNews.
+def get_user_profile(user_id: str = "john_doe") -> dict:
+    """Get user profile information that can be referenced in responses.
 
     Args:
-        num_stories: Number of top stories to retrieve (default: 5)
+        user_id: The user ID to get profile for
     Returns:
-        JSON string containing story details (title, url, score, etc.)
+        Dictionary containing user profile information
     """
-    # Get top stories
-    stories = [
-        {
-            k: v
-            for k, v in httpx.get(
-                f"https://hacker-news.firebaseio.com/v0/item/{id}.json"
-            )
-            .json()
-            .items()
-            if k != "kids"  # Exclude discussion threads
+    # Mock user profile data - in real scenarios this would come from a database
+    profiles = {
+        "john_doe": {
+            "name": "John Doe",
+            "preferences": {
+                "communication_style": "professional",
+                "topics_of_interest": ["AI/ML", "Software Engineering", "Finance"],
+                "experience_level": "senior",
+            },
+            "location": "San Francisco, CA",
+            "role": "Senior Software Engineer",
         }
-        for id in httpx.get(
-            "https://hacker-news.firebaseio.com/v0/topstories.json"
-        ).json()[:num_stories]
-    ]
-    return json.dumps(stories, indent=4)
+    }
+
+    return profiles.get(user_id, {"name": "Unknown User"})
 
 
-def get_trending_topics() -> str:
-    """Get trending tech topics."""
-    return "AI, Machine Learning, Web Development, DevOps, Cybersecurity"
+def get_current_context() -> dict:
+    """Get current contextual information like time, weather, etc."""
+    from datetime import datetime
+
+    return {
+        "current_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "timezone": "PST",
+        "day_of_week": datetime.now().strftime("%A"),
+    }
 
 
 # Create Agents for the Team
-news_agent = Agent(
-    name="NewsAnalyst",
+profile_agent = Agent(
+    name="ProfileAnalyst",
     model=OpenAIChat(id="gpt-4o-mini"),
-    instructions="You analyze news trends and provide insights.",
+    instructions="You analyze user profiles and provide personalized recommendations.",
 )
 
-trend_agent = Agent(
-    name="TrendAnalyst",
+context_agent = Agent(
+    name="ContextAnalyst",
     model=OpenAIChat(id="gpt-4o-mini"),
-    instructions="You identify and analyze trending topics in technology.",
+    instructions="You analyze current context and timing to provide relevant insights.",
 )
 
-# Create a Team (no dependencies at instance level)
+# Create a Context-Aware Team (no dependencies at instance level)
 team = Team(
-    name="AnalysisTeam",
+    name="PersonalizationTeam",
     mode="coordinate",  # Use coordinate mode for simpler team behavior
     model=OpenAIChat(id="gpt-4o-mini"),
-    members=[news_agent, trend_agent],
+    members=[profile_agent, context_agent],
     markdown=True,
 )
 
 # Example usage - Team with runtime dependencies (sync)
-print("=== Team Run with Runtime Dependencies (Sync) ===")
+# The dependencies will be available in the context when processing this message
 response = team.run(
-    "Based on the provided HackerNews data, summarize the current trending stories.",
-    dependencies={"hackernews_stories": get_top_hackernews_stories},
+    "Please provide me with a personalized summary of today's priorities based on my profile and interests.",
+    dependencies={
+        "user_profile": get_user_profile,
+        "current_context": get_current_context,
+    },
     add_dependencies_to_context=True,
+    debug_mode=True,
 )
 
 print(response.content)
@@ -72,17 +78,20 @@ print(response.content)
 # ------------------------------------------------------------
 # ASYNC EXAMPLE
 # ------------------------------------------------------------
-# async def test_team_async():
-#     print("\n=== Team Run with Runtime Dependencies (Async) ===")
+# async def test_async():
 #     async_response = await team.arun(
-#         "Based on the provided topics, analyze the current technology trends.",
-#         dependencies={"trending_topics": get_trending_topics},
+#         "Based on my profile, what should I focus on this week? Include specific recommendations.",
+#         dependencies={
+#             "user_profile": get_user_profile,
+#             "current_context": get_current_context,
+#         },
 #         add_dependencies_to_context=True,
-
+#         debug_mode=True,
 #     )
-
+#
+#     print("\n=== Async Run Response ===")
 #     print(async_response.content)
 
 # # Run the async test
 # import asyncio
-# asyncio.run(test_team_async())
+# asyncio.run(test_async())
