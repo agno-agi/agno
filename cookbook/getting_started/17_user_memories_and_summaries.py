@@ -87,66 +87,50 @@ def print_agent_memory(agent):
     """Print the current state of agent's memory systems"""
     console = Console()
 
-    messages = []
-    session_id = agent.session_id
-    session_run = agent.memory.runs[session_id][-1]
-    for m in session_run.messages:
-        message_dict = m.to_dict()
-        messages.append(message_dict)
-
     # Print chat history
+    messages = agent.get_messages_for_session()
     console.print(
         Panel(
             JSON(
                 json.dumps(
-                    messages,
+                    [m.model_dump(include={"role", "content"}) for m in messages],
+                    indent=4,
                 ),
-                indent=4,
             ),
-            title=f"Chat History for session_id: {session_run.session_id}",
+            title=f"Chat History for session_id: {agent.session_id}",
             expand=True,
         )
     )
 
     # Print user memories
-    for user_id in list(agent.memory.memories.keys()):
+    user_memories = agent.get_user_memories(user_id=agent.user_id)
+    if user_memories:
+        memories_data = [memory.to_dict() for memory in user_memories]
         console.print(
             Panel(
-                JSON(
-                    json.dumps(
-                        [
-                            user_memory.to_dict()
-                            for user_memory in agent.memory.get_user_memories(
-                                user_id=user_id
-                            )
-                        ],
-                        indent=4,
-                    ),
-                ),
-                title=f"Memories for user_id: {user_id}",
+                JSON(json.dumps(memories_data, indent=4)),
+                title=f"Memories for user_id: {agent.user_id}",
                 expand=True,
             )
         )
 
-    # Print session summary
-    for user_id in list(agent.memory.summaries.keys()):
-        console.print(
-            Panel(
-                JSON(
-                    json.dumps(
-                        [
-                            summary.to_dict()
-                            for summary in agent.memory.get_session_summaries(
-                                user_id=user_id
-                            )
-                        ],
-                        indent=4,
+    # Print session summaries
+    try:
+        session_summary = agent.get_session_summary()
+        if session_summary:
+            console.print(
+                Panel(
+                    JSON(
+                        json.dumps(session_summary.to_dict(), indent=4),
                     ),
-                ),
-                title=f"Summary for session_id: {agent.session_id}",
-                expand=True,
+                    title=f"Session Summary for session_id: {agent.session_id}",
+                    expand=True,
+                )
             )
-        )
+        else:
+            console.print("Session summary: Not yet created (summaries are created after multiple interactions)")
+    except Exception as e:
+        console.print(f"Session summary error: {e}")
 
 
 def main(user: str = "user"):

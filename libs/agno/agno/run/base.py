@@ -180,62 +180,6 @@ class BaseRunOutputEvent:
         return False
 
 
-@dataclass
-class RunOutputMetaData:
-    references: Optional[List[MessageReferences]] = None
-    additional_input: Optional[List[Message]] = None
-    reasoning_steps: Optional[List[ReasoningStep]] = None
-    reasoning_messages: Optional[List[Message]] = None
-    custom_metadata: Optional[Dict[str, Any]] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        _dict = {}
-        if self.additional_input is not None:
-            _dict["additional_input"] = [m.to_dict() for m in self.additional_input]
-            # Backward compatibility
-            _dict["additional_messages"] = [m.to_dict() for m in self.additional_input]
-        if self.reasoning_messages is not None:
-            _dict["reasoning_messages"] = [m.to_dict() for m in self.reasoning_messages]
-        if self.reasoning_steps is not None:
-            _dict["reasoning_steps"] = [rs.model_dump() for rs in self.reasoning_steps]
-        if self.references is not None:
-            _dict["references"] = [r.model_dump() for r in self.references]
-        if self.custom_metadata is not None:
-            _dict["custom_metadata"] = self.custom_metadata
-        return _dict
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "RunOutputMetaData":
-        additional_input = data.pop("additional_input", None)
-        # Backward compatibility - check for old field name
-        if additional_input is None:
-            additional_input = data.pop("additional_messages", None)
-        if additional_input is not None:
-            additional_input = [Message.model_validate(message) for message in additional_input]
-
-        reasoning_steps = data.pop("reasoning_steps", None)
-        if reasoning_steps is not None:
-            reasoning_steps = [ReasoningStep.model_validate(step) for step in reasoning_steps]
-
-        reasoning_messages = data.pop("reasoning_messages", None)
-        if reasoning_messages is not None:
-            reasoning_messages = [Message.model_validate(message) for message in reasoning_messages]
-
-        references = data.pop("references", None)
-        if references is not None:
-            references = [MessageReferences.model_validate(reference) for reference in references]
-
-        custom_metadata = data.pop("custom_metadata", None)
-
-        return cls(
-            additional_input=additional_input,
-            reasoning_steps=reasoning_steps,
-            reasoning_messages=reasoning_messages,
-            references=references,
-            custom_metadata=custom_metadata,
-        )
-
-
 class RunStatus(str, Enum):
     """State of the main run response"""
 
