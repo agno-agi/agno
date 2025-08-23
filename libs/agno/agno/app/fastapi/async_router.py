@@ -1,6 +1,7 @@
 import json
 from dataclasses import asdict
 from io import BytesIO
+import base64
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union, cast
 from uuid import uuid4
 
@@ -423,6 +424,18 @@ def get_async_router(
                         stream=False,
                     ),
                 )
+                if run_response.images:
+                    number_of_images = len(run_response.images)
+                    logger.info(f"images generated: f{number_of_images}")
+                    for i in range(number_of_images):
+                        image_content = run_response.images[i].content
+                        # If bytes/bytearray, decode to a string; fallback to base64 if not valid UTF-8
+                        if isinstance(image_content, (bytes, bytearray)):
+                            try:
+                                decoded_string = image_content.decode("utf-8")
+                            except Exception:
+                                decoded_string = base64.b64encode(bytes(image_content)).decode("utf-8")
+                            run_response.images[i].content = decoded_string
                 return run_response.to_dict()
             elif team:
                 team_run_response = await team.arun(
@@ -435,6 +448,18 @@ def get_async_router(
                     files=document_files if document_files else None,
                     stream=False,
                 )
+                if team_run_response.images:
+                    number_of_images = len(team_run_response.images)
+                    logger.info(f"images generated: f{number_of_images}")
+                    for i in range(number_of_images):
+                        image_content = team_run_response.images[i].content
+                        # If bytes/bytearray, decode to a string; fallback to base64 if not valid UTF-8
+                        if isinstance(image_content, (bytes, bytearray)):
+                            try:
+                                decoded_string = image_content.decode("utf-8")
+                            except Exception:
+                                decoded_string = base64.b64encode(bytes(image_content)).decode("utf-8")
+                            team_run_response.images[i].content = decoded_string
                 return team_run_response.to_dict()
             elif workflow:
                 if isinstance(workflow, Workflow):
