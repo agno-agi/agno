@@ -29,7 +29,7 @@ Welcome to **Agno Workflows 2.0** - the next generation of intelligent, flexible
     - [Additional Data](#additional-data)
     - [Streaming Support](#streaming-support)
     - [Session State Management](#session-state-management)
-    - [Background Exection](#background-execution)
+    - [Background Execution](#background-execution)
     - [Structured Inputs](#structured-inputs)
   - [Best Practices](#best-practices)
     - [When to Use Each Pattern](#when-to-use-each-pattern)
