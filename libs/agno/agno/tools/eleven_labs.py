@@ -142,7 +142,7 @@ class ElevenLabsTools(Toolkit):
             base64_audio = self._process_audio(audio_generator)
 
             # Attach to the agent
-            agent.add_audio(
+            agent._add_audio(
                 AudioArtifact(
                     id=str(uuid4()),
                     base64_audio=base64_audio,
@@ -176,7 +176,7 @@ class ElevenLabsTools(Toolkit):
             base64_audio = self._process_audio(audio_generator)
 
             # Attach to the agent
-            agent.add_audio(
+            agent._add_audio(
                 AudioArtifact(
                     id=str(uuid4()),
                     base64_audio=base64_audio,

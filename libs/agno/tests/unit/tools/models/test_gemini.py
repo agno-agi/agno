@@ -14,7 +14,7 @@ from agno.tools.models.gemini import GeminiTools
 @pytest.fixture
 def mock_agent():
     agent = MagicMock(spec=Agent)
-    agent.add_image = MagicMock()
+    agent._add_image = MagicMock()
     return agent
 
 
@@ -149,9 +149,9 @@ def test_generate_image_success(mock_gemini_tools, mock_agent, mock_successful_r
         assert result == "Image generated successfully"
         mock_gemini_tools.client.models.generate_images.assert_called_once_with(model=image_model, prompt=prompt)
 
-        # Verify agent.add_image was called with the correct ImageArtifact
-        mock_agent.add_image.assert_called_once()
-        call_args, _ = mock_agent.add_image.call_args
+        # Verify agent._add_image was called with the correct ImageArtifact
+        mock_agent._add_image.assert_called_once()
+        call_args, _ = mock_agent._add_image.call_args
         added_artifact = call_args[0]
 
         assert isinstance(added_artifact, ImageArtifact)
@@ -180,7 +180,7 @@ def test_generate_image_api_error(mock_gemini_tools, mock_agent):
         model=mock_gemini_tools.image_model,  # Use default model
         prompt=prompt,
     )
-    mock_agent.add_image.assert_not_called()
+    mock_agent._add_image.assert_not_called()
 
 
 def test_generate_image_no_image_bytes(mock_gemini_tools, mock_agent, mock_failed_response_no_bytes):
@@ -196,7 +196,7 @@ def test_generate_image_no_image_bytes(mock_gemini_tools, mock_agent, mock_faile
         model=mock_gemini_tools.image_model,
         prompt=prompt,
     )
-    mock_agent.add_image.assert_not_called()
+    mock_agent._add_image.assert_not_called()
 
 
 # Tests for generate_video method
@@ -210,7 +210,7 @@ def test_generate_video_requires_vertexai(mock_gemini_tools, mock_agent):
         "Please set `vertexai=True` or environment variable `GOOGLE_GENAI_USE_VERTEXAI=true`."
     )
     assert result == expected
-    mock_agent.add_video.assert_not_called()
+    mock_agent._add_video.assert_not_called()
 
 
 @pytest.fixture
@@ -238,8 +238,8 @@ def test_generate_video_success(mock_gemini_tools, mock_agent, mock_video_operat
         call_args = mock_gemini_tools.client.models.generate_videos.call_args
         assert call_args.kwargs["model"] == mock_gemini_tools.video_model
         assert call_args.kwargs["prompt"] == prompt
-        mock_agent.add_video.assert_called_once()
-        added = mock_agent.add_video.call_args[0][0]
+        mock_agent._add_video.assert_called_once()
+        added = mock_agent._add_video.call_args[0][0]
         assert isinstance(added, VideoArtifact)
         assert added.id == expected_id
         assert added.original_prompt == prompt
@@ -257,7 +257,7 @@ def test_generate_video_exception(mock_gemini_tools, mock_agent):
     prompt = "A sample video prompt"
     result = mock_gemini_tools.generate_video(mock_agent, prompt)
     assert result == "Failed to generate video: API error"
-    mock_agent.add_video.assert_not_called()
+    mock_agent._add_video.assert_not_called()
 
 
 def test_empty_response_handling(mock_gemini_tools, mock_agent):

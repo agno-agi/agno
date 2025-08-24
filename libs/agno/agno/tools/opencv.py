@@ -109,7 +109,7 @@ class OpenCVTools(Toolkit):
                 base64_encoded_image = base64.b64encode(image_bytes)
 
                 media_id = str(uuid4())
-                agent.add_image(
+                agent._add_image(
                     ImageArtifact(
                         id=media_id,
                         content=base64_encoded_image,
@@ -280,7 +280,7 @@ class OpenCVTools(Toolkit):
                 base64_encoded_video = base64.b64encode(video_bytes)
 
                 media_id = str(uuid4())
-                agent.add_video(
+                agent._add_video(
                     VideoArtifact(
                         id=media_id,
                         content=base64_encoded_video,

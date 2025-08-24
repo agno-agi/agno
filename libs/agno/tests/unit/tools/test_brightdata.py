@@ -16,7 +16,7 @@ from agno.tools.brightdata import BrightDataTools
 def mock_agent():
     """Create a mock Agent instance."""
     agent = Mock(spec=Agent)
-    agent.add_image = Mock()
+    agent._add_image = Mock()
     return agent
 
 
@@ -188,8 +188,8 @@ def test_get_screenshot_success(brightdata_tools, mock_requests, mock_agent):
     assert payload["zone"] == "test_web_unlocker_zone"
 
     # Verify ImageArtifact creation
-    mock_agent.add_image.assert_called_once()
-    call_args = mock_agent.add_image.call_args[0][0]
+    mock_agent._add_image.assert_called_once()
+    call_args = mock_agent._add_image.call_args[0][0]
     assert isinstance(call_args, ImageArtifact)
     assert call_args.id == "test-uuid-123"
     assert call_args.mime_type == "image/png"

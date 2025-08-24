@@ -175,7 +175,7 @@ class CartesiaTools(Toolkit):
                 base64_audio=base64_audio,
                 mime_type=mime_type,  # Hardcoded to audio/mpeg
             )
-            agent.add_audio(artifact)
+            agent._add_audio(artifact)
 
             return "Audio generated and attached successfully."
 

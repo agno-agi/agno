@@ -69,7 +69,7 @@ class GiphyTools(Toolkit):
                 alt_text = gif["alt_text"]
                 gif_urls.append(gif_url)
 
-                agent.add_image(ImageArtifact(id=media_id, url=gif_url, alt_text=alt_text, revised_prompt=query))
+                agent._add_image(ImageArtifact(id=media_id, url=gif_url, alt_text=alt_text, revised_prompt=query))
 
             return f"These are the found gifs {gif_urls}"
 

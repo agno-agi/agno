@@ -21,7 +21,7 @@ TEST_API_KEY = os.environ.get("E2B_API_KEY", "test_api_key")
 def mock_agent():
     """Create a mocked Agent instance."""
     agent = Mock()
-    agent.add_image = Mock()
+    agent._add_image = Mock()
     return agent
 
 

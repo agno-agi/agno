@@ -2740,15 +2740,15 @@ class Agent:
         # Handle unified media fields from ModelResponse
         if model_response.images is not None:
             for image in model_response.images:
-                self.add_image(image, run_response)
+                self._add_image(image, run_response)
         
         if model_response.videos is not None:
             for video in model_response.videos:
-                self.add_video(video, run_response)
+                self._add_video(video, run_response)
         
         if model_response.audio is not None:
             for audio in model_response.audio:
-                self.add_audio(audio, run_response)
+                self._add_audio(audio, run_response)
 
         # Update the run_response audio with the model response audio
         if model_response.audio is not None:
@@ -5135,7 +5135,7 @@ class Agent:
     # Handle images, videos and audio
     ###########################################################################
 
-    def add_image(self, image: ImageArtifact, run_response: Optional[RunOutput] = None) -> None:
+    def _add_image(self, image: ImageArtifact, run_response: Optional[RunOutput] = None) -> None:
         """Add an image to both the agent's stateful storage and the current run response"""  
         # Add to run response 
         if run_response is not None:
@@ -5143,7 +5143,7 @@ class Agent:
                 run_response.images = []
             run_response.images.append(image)
 
-    def add_video(self, video: VideoArtifact, run_response: Optional[RunOutput] = None) -> None:
+    def _add_video(self, video: VideoArtifact, run_response: Optional[RunOutput] = None) -> None:
         """Add a video to both the agent's stateful storage and the current run response"""
         # Add to run response
         if run_response is not None:
@@ -5151,7 +5151,7 @@ class Agent:
                 run_response.videos = []
             run_response.videos.append(video)
 
-    def add_audio(self, audio: AudioArtifact, run_response: Optional[RunOutput] = None) -> None:
+    def _add_audio(self, audio: AudioArtifact, run_response: Optional[RunOutput] = None) -> None:
         """Add audio to both the agent's stateful storage and the current run response"""
         # Add to run response
         if run_response is not None:

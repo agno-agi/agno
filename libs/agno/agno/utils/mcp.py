@@ -49,7 +49,7 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
                         content=getattr(content_item, "data", None),
                         mime_type=getattr(content_item, "mimeType", "image/png"),
                     )
-                    agent.add_image(img_artifact)
+                    agent._add_image(img_artifact)
                     response_str += "Image has been generated and added to the response.\n"
                 elif isinstance(content_item, EmbeddedResource):
                     # Handle embedded resources

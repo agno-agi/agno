@@ -96,7 +96,7 @@ class NebiusTools(Toolkit):
                 image_base64 = data.b64_json
                 image_content_bytes = base64.b64decode(image_base64)
                 media_id = str(uuid4())
-                agent.add_image(
+                agent._add_image(
                     ImageArtifact(
                         id=media_id, content=image_content_bytes, mime_type="image/png", original_prompt=prompt
                     )

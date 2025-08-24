@@ -249,7 +249,7 @@ def test_generate_speech_success(mock_toolkit_init, mock_groq_client):
     """Test generate_speech successfully creates an audio artifact."""
     tools = GroqTools()
     mock_agent = MagicMock(spec=Agent)
-    mock_agent.add_audio = MagicMock()
+    mock_agent._add_audio = MagicMock()
     text_input = "Hello, this is a test."
 
     # Mock the response object from client.audio.speech.create
@@ -264,9 +264,9 @@ def test_generate_speech_success(mock_toolkit_init, mock_groq_client):
         model=tools.tts_model, voice=tools.tts_voice, input=text_input, response_format=tools.tts_format
     )
     # Check that add_audio was called on the agent
-    mock_agent.add_audio.assert_called_once()
+    mock_agent._add_audio.assert_called_once()
     # Optionally check the details of the artifact passed to add_audio
-    call_args = mock_agent.add_audio.call_args[0][0]
+    call_args = mock_agent._add_audio.call_args[0][0]
     assert isinstance(call_args, AudioArtifact)
     assert call_args.mime_type == "audio/wav"
     assert isinstance(call_args.id, str)
@@ -289,4 +289,4 @@ def test_generate_speech_error(mock_toolkit_init, mock_groq_client):
     mock_groq_client.audio.speech.create.assert_called_once_with(
         model=tools.tts_model, voice=tools.tts_voice, input=text_input, response_format=tools.tts_format
     )
-    mock_agent.add_audio.assert_not_called()
+    mock_agent._add_audio.assert_not_called()
