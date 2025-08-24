@@ -16,9 +16,9 @@ Run `pip install openai agno` to install dependencies.
 from textwrap import dedent
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.tools.dalle import DalleTools
-from agno.db.sqlite import SqliteDb
 
 # Create an Creative AI Artist Agent
 image_agent = Agent(

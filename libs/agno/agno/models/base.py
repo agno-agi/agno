@@ -583,7 +583,7 @@ class Model(ABC):
         # Add image to assistant message
         if provider_response.images is not None:
             if provider_response.images:
-                assistant_message.image_output = provider_response.images[-1] # Taking last (most recent) image
+                assistant_message.image_output = provider_response.images[-1]  # Taking last (most recent) image
 
         # Add thinking content to assistant message
         if provider_response.thinking is not None:
