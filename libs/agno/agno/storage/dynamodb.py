@@ -273,43 +273,58 @@ class DynamoDbStorage(Storage):
         session_ids: List[str] = []
         try:
             if user_id is not None:
-                # Query using user_id index
-                response = self.table.query(
-                    IndexName="user_id-index",
-                    KeyConditionExpression=Key("user_id").eq(user_id),
-                    ProjectionExpression="session_id",
-                )
-                items = response.get("Items", [])
-                session_ids.extend([item["session_id"] for item in items if "session_id" in item])
+                # Query using user_id index with pagination
+                query_kwargs = {
+                    "IndexName": "user_id-index",
+                    "KeyConditionExpression": Key("user_id").eq(user_id),
+                    "ProjectionExpression": "session_id",
+                }
+                while True:
+                    response = self.table.query(**query_kwargs)
+                    items = response.get("Items", [])
+                    session_ids.extend([item["session_id"] for item in items if "session_id" in item])
+
+                    last_evaluated_key = response.get("LastEvaluatedKey")
+                    if not last_evaluated_key:
+                        break
+                    query_kwargs["ExclusiveStartKey"] = last_evaluated_key
+
             elif entity_id is not None:
+                # Query using entity_id index with pagination
+                query_kwargs = {"ProjectionExpression": "session_id"}
                 if self.mode == "agent":
-                    # Query using agent_id index
-                    response = self.table.query(
-                        IndexName="agent_id-index",
-                        KeyConditionExpression=Key("agent_id").eq(entity_id),
-                        ProjectionExpression="session_id",
-                    )
+                    query_kwargs["IndexName"] = "agent_id-index"
+                    query_kwargs["KeyConditionExpression"] = Key("agent_id").eq(entity_id)
                 elif self.mode == "team":
-                    # Query using team_id index
-                    response = self.table.query(
-                        IndexName="team_id-index",
-                        KeyConditionExpression=Key("team_id").eq(entity_id),
-                        ProjectionExpression="session_id",
-                    )
+                    query_kwargs["IndexName"] = "team_id-index"
+                    query_kwargs["KeyConditionExpression"] = Key("team_id").eq(entity_id)
                 elif self.mode == "workflow":
-                    # Query using workflow_id index
-                    response = self.table.query(
-                        IndexName="workflow_id-index",
-                        KeyConditionExpression=Key("workflow_id").eq(entity_id),
-                        ProjectionExpression="session_id",
-                    )
-                items = response.get("Items", [])  # type: ignore
-                session_ids.extend([item["session_id"] for item in items if "session_id" in item])
+                    query_kwargs["IndexName"] = "workflow_id-index"
+                    query_kwargs["KeyConditionExpression"] = Key("workflow_id").eq(entity_id)
+
+                while True:
+                    response = self.table.query(**query_kwargs)
+                    items = response.get("Items", [])
+                    session_ids.extend([item["session_id"] for item in items if "session_id" in item])
+
+                    last_evaluated_key = response.get("LastEvaluatedKey")
+                    if not last_evaluated_key:
+                        break
+                    query_kwargs["ExclusiveStartKey"] = last_evaluated_key
+
             else:
-                # Scan the whole table
-                response = self.table.scan(ProjectionExpression="session_id")
-                items = response.get("Items", [])
-                session_ids.extend([item["session_id"] for item in items if "session_id" in item])
+                # Scan the whole table with pagination
+                scan_kwargs = {"ProjectionExpression": "session_id"}
+                while True:
+                    response = self.table.scan(**scan_kwargs)
+                    items = response.get("Items", [])
+                    session_ids.extend([item["session_id"] for item in items if "session_id" in item])
+
+                    last_evaluated_key = response.get("LastEvaluatedKey")
+                    if not last_evaluated_key:
+                        break
+                    scan_kwargs["ExclusiveStartKey"] = last_evaluated_key
+
         except Exception as e:
             logger.error(f"Error retrieving session IDs: {e}")
         return session_ids
@@ -327,112 +342,93 @@ class DynamoDbStorage(Storage):
         """
         sessions: List[Session] = []
         try:
+            query_kwargs = {}
             if user_id is not None:
                 if self.mode == "agent":
-                    # Query using user_id index
-                    response = self.table.query(
-                        IndexName="user_id-index",
-                        KeyConditionExpression=Key("user_id").eq(user_id),
-                        ProjectionExpression="session_id, agent_id, user_id, team_session_id, memory, agent_data, session_data, extra_data, created_at, updated_at",
-                    )
+                    query_kwargs = {
+                        "IndexName": "user_id-index",
+                        "KeyConditionExpression": Key("user_id").eq(user_id),
+                        "ProjectionExpression": "session_id, agent_id, user_id, team_session_id, memory, agent_data, session_data, extra_data, created_at, updated_at",
+                    }
                 elif self.mode == "team":
-                    # Query using user_id index
-                    response = self.table.query(
-                        IndexName="user_id-index",
-                        KeyConditionExpression=Key("user_id").eq(user_id),
-                        ProjectionExpression="session_id, team_id, user_id, team_session_id, memory, team_data, session_data, extra_data, created_at, updated_at",
-                    )
+                    query_kwargs = {
+                        "IndexName": "user_id-index",
+                        "KeyConditionExpression": Key("user_id").eq(user_id),
+                        "ProjectionExpression": "session_id, team_id, user_id, team_session_id, memory, team_data, session_data, extra_data, created_at, updated_at",
+                    }
                 elif self.mode == "workflow":
-                    # Query using user_id index
-                    response = self.table.query(
-                        IndexName="user_id-index",
-                        KeyConditionExpression=Key("user_id").eq(user_id),
-                        ProjectionExpression="session_id, workflow_id, user_id, memory, workflow_data, session_data, extra_data, created_at, updated_at",
-                    )
+                    query_kwargs = {
+                        "IndexName": "user_id-index",
+                        "KeyConditionExpression": Key("user_id").eq(user_id),
+                        "ProjectionExpression": "session_id, workflow_id, user_id, memory, workflow_data, session_data, extra_data, created_at, updated_at",
+                    }
                 elif self.mode == "workflow_v2":
                     # Query using user_id index
-                    response = self.table.query(
-                        IndexName="user_id-index",
-                        KeyConditionExpression=Key("user_id").eq(user_id),
-                        ProjectionExpression="session_id, workflow_id, user_id, workflow_name, runs, workflow_data, session_data, extra_data, created_at, updated_at",
-                    )
-                items = response.get("Items", [])  # type: ignore
-                for item in items:
-                    item = self._deserialize_item(item)
-                    _session: Optional[Session] = None
-                    if self.mode == "agent":
-                        _session = AgentSession.from_dict(item)
-                    else:
-                        _session = WorkflowSession.from_dict(item)  # type: ignore
-                    if _session is not None:
-                        sessions.append(_session)
+                    query_kwargs = {
+                        "IndexName": "user_id-index",
+                        "KeyConditionExpression": Key("user_id").eq(user_id),
+                        "ProjectionExpression": "session_id, workflow_id, user_id, workflow_name, runs, workflow_data, session_data, extra_data, created_at, updated_at",
+                    }
             elif entity_id is not None:
                 if self.mode == "agent":
-                    # Query using agent_id index
-                    response = self.table.query(
-                        IndexName="agent_id-index",
-                        KeyConditionExpression=Key("agent_id").eq(entity_id),
-                        ProjectionExpression="session_id, agent_id, user_id, team_session_id, memory, agent_data, session_data, extra_data, created_at, updated_at",
-                    )
+                    query_kwargs = {
+                        "IndexName": "agent_id-index",
+                        "KeyConditionExpression": Key("agent_id").eq(entity_id),
+                        "ProjectionExpression": "session_id, agent_id, user_id, team_session_id, memory, agent_data, session_data, extra_data, created_at, updated_at",
+                    }
                 elif self.mode == "team":
-                    # Query using team_id index
-                    response = self.table.query(
-                        IndexName="team_id-index",
-                        KeyConditionExpression=Key("team_id").eq(entity_id),
-                        ProjectionExpression="session_id, team_id, user_id, team_session_id, memory, team_data, session_data, extra_data, created_at, updated_at",
-                    )
+                    query_kwargs = {
+                        "IndexName": "team_id-index",
+                        "KeyConditionExpression": Key("team_id").eq(entity_id),
+                        "ProjectionExpression": "session_id, team_id, user_id, team_session_id, memory, team_data, session_data, extra_data, created_at, updated_at",
+                    }
                 elif self.mode == "workflow":
-                    # Query using workflow_id index
-                    response = self.table.query(
-                        IndexName="workflow_id-index",
-                        KeyConditionExpression=Key("workflow_id").eq(entity_id),
-                        ProjectionExpression="session_id, workflow_id, user_id, memory, workflow_data, session_data, extra_data, created_at, updated_at",
-                    )
-                elif self.mode == "workflow_v2":
-                    # Query using workflow_id index
-                    response = self.table.query(
-                        IndexName="workflow_id-index",
-                        KeyConditionExpression=Key("workflow_id").eq(entity_id),
-                        ProjectionExpression="session_id, workflow_id, user_id, workflow_name, runs, workflow_data, session_data, extra_data, created_at, updated_at",
-                    )
-                items = response.get("Items", [])  # type: ignore
-                for item in items:
-                    item = self._deserialize_item(item)
-                    if self.mode == "agent":
-                        _session = AgentSession.from_dict(item)  # type: ignore
-                    else:
-                        _session = WorkflowSession.from_dict(item)  # type: ignore
-                    if _session is not None:
-                        sessions.append(_session)
+                    query_kwargs = {
+                        "IndexName": "workflow_id-index",
+                        "KeyConditionExpression": Key("workflow_id").eq(entity_id),
+                        "ProjectionExpression": "session_id, workflow_id, user_id, memory, workflow_data, session_data, extra_data, created_at, updated_at",
+                    }
             else:
-                # Scan the whole table
-                if self.mode == "agent":
-                    response = self.table.scan(
-                        ProjectionExpression="session_id, agent_id, user_id, team_session_id, memory, agent_data, session_data, extra_data, created_at, updated_at"
-                    )
-                elif self.mode == "team":
-                    response = self.table.scan(
-                        ProjectionExpression="session_id, team_id, user_id, team_session_id, memory, team_data, session_data, extra_data, created_at, updated_at"
-                    )
-                elif self.mode == "workflow":
-                    response = self.table.scan(
-                        ProjectionExpression="session_id, workflow_id, user_id, memory, workflow_data, session_data, extra_data, created_at, updated_at"
-                    )
-                elif self.mode == "workflow_v2":
-                    response = self.table.scan(
-                        ProjectionExpression="session_id, workflow_id, user_id, workflow_name, runs, workflow_data, session_data, extra_data, created_at, updated_at"
-                    )
+                # This case will scan the entire table, which can be slow and costly.
+                # It's generally better to query with a specific index.
+                logger.warning("Scanning the entire table without a filter.")
+                scan_kwargs = {}
+                while True:
+                    response = self.table.scan(**scan_kwargs)
+                    items = response.get("Items", [])
+                    for item in items:
+                        deserialized_item = self._deserialize_item(item)
+                        if self.mode == "agent":
+                            sessions.append(AgentSession.from_dict(deserialized_item))
+                        elif self.mode == "team":
+                            sessions.append(TeamSession.from_dict(deserialized_item))
+                        elif self.mode == "workflow":
+                            sessions.append(WorkflowSession.from_dict(deserialized_item))
+
+                    last_evaluated_key = response.get("LastEvaluatedKey")
+                    if not last_evaluated_key:
+                        break
+                    scan_kwargs["ExclusiveStartKey"] = last_evaluated_key
+                return sessions
+
+            # Common query execution with pagination
+            while True:
+                response = self.table.query(**query_kwargs)
                 items = response.get("Items", [])
                 for item in items:
-                    item = self._deserialize_item(item)
+                    deserialized_item = self._deserialize_item(item)
                     if self.mode == "agent":
-                        _session = AgentSession.from_dict(item)  # type: ignore
+                        sessions.append(AgentSession.from_dict(deserialized_item))
                     elif self.mode == "team":
-                        _session = TeamSession.from_dict(item)  # type: ignore
-                    else:
-                        _session = WorkflowSession.from_dict(item)  # type: ignore
-                    if _session is not None:
-                        sessions.append(_session)
+                        sessions.append(TeamSession.from_dict(deserialized_item))
+                    elif self.mode == "workflow":
+                        sessions.append(WorkflowSession.from_dict(deserialized_item))
+
+                last_evaluated_key = response.get("LastEvaluatedKey")
+                if not last_evaluated_key:
+                    break
+                query_kwargs["ExclusiveStartKey"] = last_evaluated_key
+
         except Exception as e:
             logger.error(f"Error retrieving sessions: {e}")
         return sessions
