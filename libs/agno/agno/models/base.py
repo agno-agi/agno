@@ -291,6 +291,11 @@ class Model(ABC):
                 self.format_function_call_results(
                     messages=messages, function_call_results=function_call_results, **model_response.extra or {}
                 )
+
+                if any(msg.images or msg.videos or msg.audio for msg in function_call_results):
+                    # Handle function call media
+                    self._handle_function_call_media(messages=messages, function_call_results=function_call_results)
+
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
 
@@ -421,6 +426,11 @@ class Model(ABC):
                 self.format_function_call_results(
                     messages=messages, function_call_results=function_call_results, **model_response.extra or {}
                 )
+
+                if any(msg.images or msg.videos or msg.audio for msg in function_call_results):
+                    # Handle function call media
+                    self._handle_function_call_media(messages=messages, function_call_results=function_call_results)
+
                 for function_call_result in function_call_results:
                     function_call_result.log(metrics=True)
 
@@ -1643,60 +1653,72 @@ class Model(ABC):
         self, messages: List[Message], function_call_results: List[Message], **kwargs
     ) -> None:
         """
-        Format function call results and add follow-up user messages for generated media if needed.
+        Format function call results.
         """
         if len(function_call_results) > 0:
             messages.extend(function_call_results)
 
-            # Collect all media artifacts from function calls
-            all_images = []
-            all_videos = []
-            all_audio = []
+    def _handle_function_call_media(
+        self, messages: List[Message], function_call_results: List[Message]
+    ) -> None:
+        """
+        Handle media artifacts from function calls by adding follow-up user messages for generated media if needed.
+        """
+        if not function_call_results:
+            return
+            
+        # Collect all media artifacts from function calls
+        all_images = []
+        all_videos = []
+        all_audio = []
 
-            for result_message in function_call_results:
-                if result_message.images:
-                    all_images.extend(result_message.images)
-                    # Remove images from tool message to avoid the below OpenAI error
-                    """
-                    ERROR: API status error from OpenAI API: Error code: 400 - 
-                    {'error': {'message': "Invalid 'messages[2]'. Image URLs are only allowed 
-                    for messages with role 'user', but this message with role 'tool' contains 
-                    an image URL.", 'type': 'invalid_request_error',    
-                    'param': 'messages[2]', 'code': 'invalid_value'}}
-                    """
-                    result_message.images = None
+        for result_message in function_call_results:
+            if result_message.images:
+                all_images.extend(result_message.images)
+                # Remove images from tool message to avoid the below OpenAI error
+                """
+                ERROR: API status error from OpenAI API: Error code: 400 - 
+                {'error': {'message': "Invalid 'messages[2]'. Image URLs are only allowed 
+                for messages with role 'user', but this message with role 'tool' contains 
+                an image URL.", 'type': 'invalid_request_error',    
+                'param': 'messages[2]', 'code': 'invalid_value'}}
+                """
+                result_message.images = None
 
-                if result_message.videos:
-                    all_videos.extend(result_message.videos)
-                    result_message.videos = None
+            if result_message.videos:
+                all_videos.extend(result_message.videos)
+                result_message.videos = None
 
-                if result_message.audio:
-                    all_audio.extend(result_message.audio)
-                    result_message.audio = None
+            if result_message.audio:
+                all_audio.extend(result_message.audio)
+                result_message.audio = None
 
-            # If we have media artifacts, add a follow-up "user" message instead of a "tool"
-            # message with the media artifacts which throws error for some models
-            if all_images or all_videos or all_audio:
-                # Get all tool contents directly from function_call_results
-                tool_contents = [msg.content for msg in function_call_results if msg.content and msg.role == "tool"]
+        # If we have media artifacts, add a follow-up "user" message instead of a "tool"
+        # message with the media artifacts which throws error for some models
+        if all_images or all_videos or all_audio:
+            # Get all tool contents directly from function_call_results
+            tool_contents = [
+                msg.content for msg in function_call_results if msg.content and msg.role == "tool"
+            ]
 
-                content = "Here is the content generated by the tools:\n\n"
-                if tool_contents:
-                    content += "\n".join(tool_contents)
-                    content += (
-                        "\n\nPlease analyze the generated content and include the URLs and details in your response."
-                    )
-                else:
-                    content += "Please analyze the generated content."
-
-                media_message = Message(
-                    role="user",
-                    content=content,
-                    images=all_images if all_images else None,
-                    videos=all_videos if all_videos else None,
-                    audio=all_audio if all_audio else None,
+            content = "Here is the content generated by the tools:\n\n"
+            if tool_contents:
+                content += "\n".join(tool_contents)
+                content += (
+                    "\n\nPlease analyze the generated content and include the URLs and details in your response."
                 )
-                messages.append(media_message)
+            else:
+                content += "Please analyze the generated content."
+
+            media_message = Message(
+                role="user",
+                content=content,
+                images=all_images if all_images else None,
+                videos=all_videos if all_videos else None,
+                audio=all_audio if all_audio else None,
+            )
+            messages.append(media_message)
+        
 
     def get_system_message_for_model(self, tools: Optional[List[Any]] = None) -> Optional[str]:
         return self.system_prompt
