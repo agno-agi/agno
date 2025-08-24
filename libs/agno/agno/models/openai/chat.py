@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Optional, Type, Union
+from typing import Any, Dict, Iterator, List, Literal, Optional, Type, Union
 
 import httpx
 from pydantic import BaseModel
@@ -45,6 +45,7 @@ class OpenAIChat(Model):
     # Request parameters
     store: Optional[bool] = None
     reasoning_effort: Optional[str] = None
+    verbosity: Optional[Literal["low", "medium", "high"]] = None
     metadata: Optional[Dict[str, Any]] = None
     frequency_penalty: Optional[float] = None
     logit_bias: Optional[Any] = None
@@ -159,6 +160,7 @@ class OpenAIChat(Model):
         base_params = {
             "store": self.store,
             "reasoning_effort": self.reasoning_effort,
+            "verbosity": self.verbosity,
             "frequency_penalty": self.frequency_penalty,
             "logit_bias": self.logit_bias,
             "logprobs": self.logprobs,
@@ -227,6 +229,8 @@ class OpenAIChat(Model):
         model_dict.update(
             {
                 "store": self.store,
+                "reasoning_effort": self.reasoning_effort,
+                "verbosity": self.verbosity,
                 "frequency_penalty": self.frequency_penalty,
                 "logit_bias": self.logit_bias,
                 "logprobs": self.logprobs,
