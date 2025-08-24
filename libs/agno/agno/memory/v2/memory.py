@@ -5,6 +5,8 @@ from datetime import datetime
 from os import getenv
 from typing import Any, Dict, List, Literal, Optional, Type, Union
 
+from pydantic import BaseModel, Field
+
 from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 from agno.memory.v2.db.base import MemoryDb
 from agno.memory.v2.db.schema import MemoryRow
@@ -13,6 +15,7 @@ from agno.memory.v2.schema import SessionSummary, UserMemory
 from agno.memory.v2.summarizer import SessionSummarizer
 from agno.models.base import Model
 from agno.models.message import Message
+from agno.run.base import RunStatus
 from agno.run.response import RunResponse
 from agno.run.team import TeamRunResponse
 from agno.utils.log import (
@@ -24,7 +27,6 @@ from agno.utils.log import (
 )
 from agno.utils.prompts import get_json_output_prompt
 from agno.utils.string import parse_response_model_str
-from pydantic import BaseModel, Field
 
 
 class MemorySearchResponse(BaseModel):
@@ -50,7 +52,14 @@ class TeamMemberInteraction:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TeamMemberInteraction":
-        return cls(member_name=data["member_name"], task=data["task"], response=RunResponse.from_dict(data["response"]))
+        if data["response"].get("agent_id"):
+            return cls(
+                member_name=data["member_name"], task=data["task"], response=RunResponse.from_dict(data["response"])
+            )
+        else:
+            return cls(
+                member_name=data["member_name"], task=data["task"], response=TeamRunResponse.from_dict(data["response"])
+            )
 
 
 @dataclass
@@ -187,6 +196,7 @@ class Memory:
                 all_memories = self.db.read_memories()
             else:
                 all_memories = self.db.read_memories(user_id=user_id)
+
             # Reset the memories
             self.memories = {}
             for memory in all_memories:
@@ -235,13 +245,12 @@ class Memory:
         return _memory_dict
 
     # -*- Public Functions
-    def get_user_memories(self, user_id: Optional[str] = None, refresh_from_db: bool = True) -> List[UserMemory]:
+    def get_user_memories(self, user_id: Optional[str] = None) -> List[UserMemory]:
         """Get the user memories for a given user id"""
         if user_id is None:
             user_id = "default"
-        # Refresh from the DB
-        if refresh_from_db:
-            self.refresh_from_db(user_id=user_id)
+
+        self.refresh_from_db(user_id=user_id)
 
         if self.memories is None:
             return []
@@ -251,19 +260,16 @@ class Memory:
         """Get the session summaries for a given user id"""
         if user_id is None:
             user_id = "default"
+        self.refresh_from_db(user_id=user_id)
         if self.summaries is None:
             return []
         return list(self.summaries.get(user_id, {}).values())
 
-    def get_user_memory(
-        self, memory_id: str, user_id: Optional[str] = None, refresh_from_db: bool = True
-    ) -> Optional[UserMemory]:
+    def get_user_memory(self, memory_id: str, user_id: Optional[str] = None) -> Optional[UserMemory]:
         """Get the user memory for a given user id"""
         if user_id is None:
             user_id = "default"
-        # Refresh from the DB
-        if refresh_from_db:
-            self.refresh_from_db(user_id=user_id)
+        self.refresh_from_db(user_id=user_id)
         if self.memories is None:
             return None
         return self.memories.get(user_id, {}).get(memory_id, None)
@@ -697,15 +703,21 @@ class Memory:
     def get_messages_from_last_n_runs(
         self,
         session_id: str,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
         last_n: Optional[int] = None,
         skip_role: Optional[str] = None,
+        skip_status: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
     ) -> List[Message]:
         """Returns the messages from the last_n runs, excluding previously tagged history messages.
         Args:
             session_id: The session id to get the messages from.
+            agent_id: The id of the agent to get the messages from.
+            team_id: The id of the team to get the messages from.
             last_n: The number of runs to return from the end of the conversation. Defaults to all runs.
             skip_role: Skip messages with this role.
+            skip_status: Skip messages with this status.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
         Returns:
             A list of Messages from the specified runs, excluding history messages.
@@ -713,7 +725,20 @@ class Memory:
         if not self.runs:
             return []
 
+        if skip_status is None:
+            skip_status = [RunStatus.paused, RunStatus.cancelled, RunStatus.error]
+
         session_runs = self.runs.get(session_id, [])
+        # Filter by agent_id and team_id
+        if agent_id:
+            session_runs = [run for run in session_runs if hasattr(run, "agent_id") and run.agent_id == agent_id]  # type: ignore
+        if team_id:
+            session_runs = [run for run in session_runs if hasattr(run, "team_id") and run.team_id == team_id]  # type: ignore
+
+        # Filter by status
+        session_runs = [run for run in session_runs if hasattr(run, "status") and run.status not in skip_status]  # type: ignore
+
+        # Filter by last_n
         runs_to_process = session_runs[-last_n:] if last_n is not None else session_runs
         messages_from_history = []
         system_message = None
@@ -964,27 +989,6 @@ class Memory:
         self.summaries = {}
         self.runs = {}
 
-    def deep_copy(self) -> "Memory":
-        from copy import deepcopy
-
-        # Create a shallow copy of the object
-        copied_obj = self.__class__(**self.to_dict())
-
-        # Manually deepcopy fields that are known to be safe
-        for field_name, field_value in self.__dict__.items():
-            if field_name not in ["db", "memory_manager", "summary_manager"]:
-                try:
-                    setattr(copied_obj, field_name, deepcopy(field_value))
-                except Exception as e:
-                    logger.warning(f"Failed to deepcopy field: {field_name} - {e}")
-                    setattr(copied_obj, field_name, field_value)
-
-        copied_obj.db = self.db
-        copied_obj.memory_manager = self.memory_manager
-        copied_obj.summary_manager = self.summary_manager
-
-        return copied_obj
-
     # -*- Team Functions
     def add_interaction_to_team_context(
         self, session_id: str, member_name: str, task: str, run_response: Union[RunResponse, TeamRunResponse]
@@ -1083,3 +1087,17 @@ class Memory:
                 if interaction.response.audio:
                     audio.extend(interaction.response.audio)
         return audio
+
+    def __deepcopy__(self, memo):
+        from copy import deepcopy
+
+        # Create a new instance without calling __init__
+        copied_obj = self.__class__.__new__(self.__class__)
+        memo[id(self)] = copied_obj
+
+        # Copy attributes, reusing specific objects
+        shared_objects = {"db", "memory_manager", "summary_manager", "team_context"}
+        for k, v in self.__dict__.items():
+            setattr(copied_obj, k, v if k in shared_objects else deepcopy(v, memo))
+
+        return copied_obj

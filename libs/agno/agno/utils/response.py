@@ -1,4 +1,4 @@
-from typing import List, Set, Union
+from typing import AsyncIterator, Iterator, List, Set, Union
 
 from agno.exceptions import RunCancelledException
 from agno.models.message import Message
@@ -115,3 +115,47 @@ def create_paused_run_response_panel(run_response: Union[RunResponsePausedEvent,
         border_style="blue",
     )
     return response_panel
+
+
+def get_paused_content(run_response: RunResponse) -> str:
+    paused_content = ""
+    for tool in run_response.tools or []:
+        # Initialize flags for each tool
+        confirmation_required = False
+        user_input_required = False
+        external_execution_required = False
+
+        if tool.requires_confirmation is not None and tool.requires_confirmation is True and not tool.confirmed:
+            confirmation_required = True
+        if tool.requires_user_input is not None and tool.requires_user_input is True:
+            user_input_required = True
+        if tool.external_execution_required is not None and tool.external_execution_required is True:
+            external_execution_required = True
+
+        if confirmation_required and user_input_required and external_execution_required:
+            paused_content = "I have tools to execute, but I need confirmation, user input, or external execution."
+        elif confirmation_required and user_input_required:
+            paused_content = "I have tools to execute, but I need confirmation or user input."
+        elif confirmation_required and external_execution_required:
+            paused_content = "I have tools to execute, but I need confirmation or external execution."
+        elif user_input_required and external_execution_required:
+            paused_content = "I have tools to execute, but I need user input or external execution."
+        elif confirmation_required:
+            paused_content = "I have tools to execute, but I need confirmation."
+        elif user_input_required:
+            paused_content = "I have tools to execute, but I need user input."
+        elif external_execution_required:
+            paused_content = "I have tools to execute, but it needs external execution."
+    return paused_content
+
+
+def generator_wrapper(
+    event: Union[RunResponseEvent, TeamRunResponseEvent],
+) -> Iterator[Union[RunResponseEvent, TeamRunResponseEvent]]:
+    yield event
+
+
+async def async_generator_wrapper(
+    event: Union[RunResponseEvent, TeamRunResponseEvent],
+) -> AsyncIterator[Union[RunResponseEvent, TeamRunResponseEvent]]:
+    yield event

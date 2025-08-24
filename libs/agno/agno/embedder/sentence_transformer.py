@@ -10,6 +10,12 @@ try:
 except ImportError:
     raise ImportError("`sentence-transformers` not installed, please run `pip install sentence-transformers`")
 
+try:
+    import numpy as np
+
+except ImportError:
+    raise ImportError("numpy not installed, use `pip install numpy`")
+
 
 @dataclass
 class SentenceTransformerEmbedder(Embedder):
@@ -26,6 +32,9 @@ class SentenceTransformerEmbedder(Embedder):
             model = self.sentence_transformer_client
         embedding = model.encode(text, prompt=self.prompt, normalize_embeddings=self.normalize_embeddings)
         try:
+            if isinstance(embedding, np.ndarray):
+                return embedding.tolist()
+
             return embedding  # type: ignore
         except Exception as e:
             logger.warning(e)

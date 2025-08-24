@@ -5,7 +5,7 @@ Get an API key from https://play.cartesia.ai/keys
 
 from agno.agent import Agent
 from agno.tools.cartesia import CartesiaTools
-from agno.utils.media import save_audio
+from agno.utils.audio import write_audio_to_file
 
 # Initialize Agent with Cartesia tools
 agent = Agent(
@@ -22,6 +22,6 @@ response = agent.run(
 )
 # Save the generated audio
 if response.audio:
-    save_audio(
-        base64_data=response.audio[0].base64_audio, output_path="tmp/greeting.mp3"
+    write_audio_to_file(
+        audio=response.audio[0].base64_audio, filename="tmp/greeting.mp3"
     )

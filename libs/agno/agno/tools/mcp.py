@@ -1,19 +1,18 @@
 from contextlib import AsyncExitStack
 from dataclasses import asdict, dataclass
 from datetime import timedelta
-from os import environ
 from types import TracebackType
 from typing import Any, Dict, List, Literal, Optional, Union
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_warning, logger
+from agno.utils.log import log_debug, log_info, log_warning, logger
 from agno.utils.mcp import get_entrypoint_for_tool
 
 try:
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.sse import sse_client
-    from mcp.client.stdio import stdio_client
+    from mcp.client.stdio import get_default_environment, stdio_client
     from mcp.client.streamable_http import streamablehttp_client
 except (ImportError, ModuleNotFoundError):
     raise ImportError("`mcp` not installed. Please install using `pip install mcp`")
@@ -83,8 +82,11 @@ class MCPTools(Toolkit):
         """
         super().__init__(name="MCPTools", **kwargs)
 
+        if transport == "sse":
+            log_info("SSE as a standalone transport is deprecated. Please use Streamable HTTP instead.")
+
         # Set these after `__init__` to bypass the `_check_tools_filters`
-        # beacuse tools are not available until `initialize()` is called.
+        # because tools are not available until `initialize()` is called.
         self.include_tools = include_tools
         self.exclude_tools = exclude_tools
 
@@ -129,11 +131,11 @@ class MCPTools(Toolkit):
         # Merge provided env with system env
         if env is not None:
             env = {
-                **environ,
+                **get_default_environment(),
                 **env,
             }
         else:
-            env = {**environ}
+            env = get_default_environment()
 
         if command is not None and transport not in ["sse", "streamable-http"]:
             from shlex import split
@@ -304,10 +306,14 @@ class MultiMCPTools(Toolkit):
         """
         super().__init__(name="MultiMCPTools", **kwargs)
 
+        if urls_transports is not None:
+            if "sse" in urls_transports:
+                log_info("SSE as a standalone transport is deprecated. Please use Streamable HTTP instead.")
+
         if urls is not None:
             if urls_transports is None:
                 log_warning(
-                    "The default transport 'sse' will be used. You can explicitly set the transports by providing the urls_transports parameter."
+                    "The default transport 'streamable-http' will be used. You can explicitly set the transports by providing the urls_transports parameter."
                 )
             else:
                 if len(urls) != len(urls_transports):
@@ -330,11 +336,11 @@ class MultiMCPTools(Toolkit):
         # Merge provided env with system env
         if env is not None:
             env = {
-                **environ,
+                **get_default_environment(),
                 **env,
             }
         else:
-            env = {**environ}
+            env = get_default_environment()
 
         if commands is not None:
             from shlex import split
@@ -356,7 +362,7 @@ class MultiMCPTools(Toolkit):
                         self.server_params_list.append(SSEClientParams(url=url))
             else:
                 for url in urls:
-                    self.server_params_list.append(SSEClientParams(url=url))
+                    self.server_params_list.append(StreamableHTTPClientParams(url=url))
 
         self._async_exit_stack = AsyncExitStack()
 

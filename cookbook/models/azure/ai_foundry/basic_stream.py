@@ -3,7 +3,13 @@ from typing import Iterator  # noqa
 from agno.agent import Agent, RunResponseEvent  # noqa
 from agno.models.azure import AzureAIFoundry
 
-agent = Agent(model=AzureAIFoundry(id="Phi-4"), markdown=True)
+agent = Agent(
+    model=AzureAIFoundry(
+        id="Phi-4",
+        azure_endpoint="",
+    ),
+    markdown=True,
+)
 
 # Get the response in a variable
 # run_response: Iterator[RunResponseEvent] = agent.run("Share a 2 sentence horror story", stream=True)

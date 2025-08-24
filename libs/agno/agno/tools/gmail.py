@@ -116,6 +116,7 @@ class GmailTools(Toolkit):
         credentials_path: Optional[str] = None,
         token_path: Optional[str] = None,
         scopes: Optional[List[str]] = None,
+        port: Optional[int] = None,
         **kwargs,
     ):
         """Initialize GmailTools and authenticate with Gmail API
@@ -136,12 +137,14 @@ class GmailTools(Toolkit):
             credentials_path (Optional[str]): Path to credentials file. Defaults to None.
             token_path (Optional[str]): Path to token file. Defaults to None.
             scopes (Optional[List[str]]): Custom OAuth scopes. If None, uses DEFAULT_SCOPES.
+            port (Optional[int]): Port to use for OAuth authentication. Defaults to None.
         """
         self.creds = creds
         self.credentials_path = credentials_path
         self.token_path = token_path
         self.service = None
         self.scopes = scopes or self.DEFAULT_SCOPES
+        self.port = port
 
         # Validate that required scopes are present for requested operations
         if (create_draft_email or send_email) and "https://www.googleapis.com/auth/gmail.compose" not in self.scopes:
@@ -219,7 +222,7 @@ class GmailTools(Toolkit):
                     flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
                 else:
                     flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
-                self.creds = flow.run_local_server(port=0)
+                self.creds = flow.run_local_server(port=self.port)
 
             # Save the credentials for future use
             if self.creds and self.creds.valid:

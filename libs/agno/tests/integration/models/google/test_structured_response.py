@@ -23,7 +23,7 @@ class MovieScript(BaseModel):
     storyline: str = Field(..., description="3 sentence storyline for the movie. Make it exciting!")
     rating: Dict[str, int] = Field(
         ...,
-        description="Your own rating of the movie. 1-10. Return a dictionary with the keys 'story' and 'acting'.",
+        description="Your own rating of the movie. 1 to 5. Return a dictionary with the keys 'story' and 'acting'.",
     )
 
 

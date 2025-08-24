@@ -1,5 +1,6 @@
 """Logic used by the AG-UI router."""
 
+import json
 import uuid
 from collections import deque
 from collections.abc import Iterator
@@ -17,12 +18,15 @@ from ag_ui.core import (
     TextMessageStartEvent,
     ToolCallArgsEvent,
     ToolCallEndEvent,
+    ToolCallResultEvent,
     ToolCallStartEvent,
 )
 from ag_ui.core.types import Message as AGUIMessage
 
-from agno.run.response import RunEvent, RunResponse, RunResponseEvent
-from agno.run.team import TeamRunEvent, TeamRunResponse, TeamRunResponseEvent
+from agno.models.message import Message
+from agno.run.response import RunEvent, RunResponseContentEvent, RunResponseEvent, RunResponsePausedEvent
+from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
+from agno.run.team import TeamRunEvent, TeamRunResponseEvent
 
 
 @dataclass
@@ -63,27 +67,40 @@ class EventBuffer:
         return False
 
 
-def get_last_user_message(messages: Optional[List[AGUIMessage]]) -> str:
-    if not messages:
-        return ""
-    for msg in reversed(messages):
-        if msg.role == "user" and msg.content:
-            return msg.content
-    return ""
+def convert_agui_messages_to_agno_messages(messages: List[AGUIMessage]) -> List[Message]:
+    """Convert AG-UI messages to Agno messages."""
+    result = []
+    for msg in messages:
+        if msg.role == "tool":
+            result.append(Message(role="tool", tool_call_id=msg.tool_call_id, content=msg.content))
+        elif msg.role == "assistant":
+            tool_calls = None
+            if msg.tool_calls:
+                tool_calls = [call.model_dump() for call in msg.tool_calls]
+            result.append(
+                Message(
+                    role="assistant",
+                    content=msg.content,
+                    tool_calls=tool_calls,
+                )
+            )
+        elif msg.role == "user":
+            result.append(Message(role="user", content=msg.content))
+    return result
 
 
-def extract_team_response_chunk_content(response: TeamRunResponse) -> str:
+def extract_team_response_chunk_content(response: TeamRunResponseContentEvent) -> str:
     """Given a response stream chunk, find and extract the content."""
 
     # Handle Team members' responses
     members_content = []
-    if hasattr(response, "member_responses") and response.member_responses:
-        for member_resp in response.member_responses:
-            if isinstance(member_resp, RunResponse):
+    if hasattr(response, "member_responses") and response.member_responses:  # type: ignore
+        for member_resp in response.member_responses:  # type: ignore
+            if isinstance(member_resp, RunResponseContentEvent):
                 member_content = extract_response_chunk_content(member_resp)
                 if member_content:
                     members_content.append(f"Team member: {member_content}")
-            elif isinstance(member_resp, TeamRunResponse):
+            elif isinstance(member_resp, TeamRunResponseContentEvent):
                 member_content = extract_team_response_chunk_content(member_resp)
                 if member_content:
                     members_content.append(f"Team member: {member_content}")
@@ -92,10 +109,10 @@ def extract_team_response_chunk_content(response: TeamRunResponse) -> str:
     return str(response.content) + members_response
 
 
-def extract_response_chunk_content(response: RunResponse) -> str:
+def extract_response_chunk_content(response: RunResponseContentEvent) -> str:
     """Given a response stream chunk, find and extract the content."""
-    if hasattr(response, "messages") and response.messages:
-        for msg in reversed(response.messages):
+    if hasattr(response, "messages") and response.messages:  # type: ignore
+        for msg in reversed(response.messages):  # type: ignore
             if hasattr(msg, "role") and msg.role == "assistant" and hasattr(msg, "content") and msg.content:
                 return str(msg.content)
 
@@ -114,16 +131,16 @@ def _create_events_from_chunk(
     """
     events_to_emit = []
 
-    # Extract content
-    if isinstance(chunk, RunResponse):
-        content = extract_response_chunk_content(chunk)
-    elif isinstance(chunk, TeamRunResponse):
-        content = extract_team_response_chunk_content(chunk)
+    # Extract content if the contextual event is a content event
+    if chunk.event == RunEvent.run_response_content:
+        content = extract_response_chunk_content(chunk)  # type: ignore
+    elif chunk.event == TeamRunEvent.run_response_content:
+        content = extract_team_response_chunk_content(chunk)  # type: ignore
     else:
         content = None
 
     # Handle text responses
-    if chunk.event == RunEvent.run_response_content or chunk.event == TeamRunEvent.run_response_content:
+    if content is not None:
         # Handle the message start event, emitted once per message
         if not message_started:
             message_started = True
@@ -145,8 +162,8 @@ def _create_events_from_chunk(
 
     # Handle starting a new tool call
     elif chunk.event == RunEvent.tool_call_started:
-        if chunk.tools is not None and len(chunk.tools) != 0:  # type: ignore
-            tool_call = chunk.tools[0]  # type: ignore
+        if chunk.tool is not None:  # type: ignore
+            tool_call = chunk.tool  # type: ignore
             start_event = ToolCallStartEvent(
                 type=EventType.TOOL_CALL_START,
                 tool_call_id=tool_call.tool_call_id,  # type: ignore
@@ -158,20 +175,30 @@ def _create_events_from_chunk(
             args_event = ToolCallArgsEvent(
                 type=EventType.TOOL_CALL_ARGS,
                 tool_call_id=tool_call.tool_call_id,  # type: ignore
-                delta=str(tool_call.tool_args),
+                delta=json.dumps(tool_call.tool_args),
             )
             events_to_emit.append(args_event)
 
     # Handle tool call completion
     elif chunk.event == RunEvent.tool_call_completed:
-        if chunk.tools is not None and len(chunk.tools) != 0:  # type: ignore
-            tool_call = chunk.tools[0]  # type: ignore
+        if chunk.tool is not None:  # type: ignore
+            tool_call = chunk.tool  # type: ignore
             if tool_call.tool_call_id not in event_buffer.ended_tool_call_ids:
                 end_event = ToolCallEndEvent(
                     type=EventType.TOOL_CALL_END,
                     tool_call_id=tool_call.tool_call_id,  # type: ignore
                 )
                 events_to_emit.append(end_event)
+
+                if tool_call.result is not None:
+                    result_event = ToolCallResultEvent(
+                        type=EventType.TOOL_CALL_RESULT,
+                        tool_call_id=tool_call.tool_call_id,  # type: ignore
+                        content=str(tool_call.result),
+                        role="tool",
+                        message_id=str(uuid.uuid4()),
+                    )
+                    events_to_emit.append(result_event)
 
     # Handle reasoning
     elif chunk.event == RunEvent.reasoning_started:
@@ -185,7 +212,12 @@ def _create_events_from_chunk(
 
 
 def _create_completion_events(
-    event_buffer: EventBuffer, message_started: bool, message_id: str, thread_id: str, run_id: str
+    chunk: Union[RunResponseEvent, TeamRunResponseEvent],
+    event_buffer: EventBuffer,
+    message_started: bool,
+    message_id: str,
+    thread_id: str,
+    run_id: str,
 ) -> List[BaseEvent]:
     """Create events for run completion."""
     events_to_emit = []
@@ -203,6 +235,33 @@ def _create_completion_events(
     if message_started:
         end_message_event = TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=message_id)
         events_to_emit.append(end_message_event)
+
+    # emit frontend tool calls, i.e. external_execution=True
+    if isinstance(chunk, RunResponsePausedEvent) and chunk.tools is not None:
+        for tool in chunk.tools:
+            if tool.tool_call_id is None or tool.tool_name is None:
+                continue
+
+            start_event = ToolCallStartEvent(
+                type=EventType.TOOL_CALL_START,
+                tool_call_id=tool.tool_call_id,
+                tool_call_name=tool.tool_name,
+                parent_message_id=message_id,
+            )
+            events_to_emit.append(start_event)
+
+            args_event = ToolCallArgsEvent(
+                type=EventType.TOOL_CALL_ARGS,
+                tool_call_id=tool.tool_call_id,
+                delta=json.dumps(tool.tool_args),
+            )
+            events_to_emit.append(args_event)
+
+            end_event = ToolCallEndEvent(
+                type=EventType.TOOL_CALL_END,
+                tool_call_id=tool.tool_call_id,
+            )
+            events_to_emit.append(end_event)
 
     run_finished_event = RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)
     events_to_emit.append(run_finished_event)
@@ -270,8 +329,14 @@ def stream_agno_response_as_agui_events(
 
     for chunk in response_stream:
         # Handle the lifecycle end event
-        if chunk.event == RunEvent.run_completed or chunk.event == TeamRunEvent.run_completed:
-            completion_events = _create_completion_events(event_buffer, message_started, message_id, thread_id, run_id)
+        if (
+            chunk.event == RunEvent.run_completed
+            or chunk.event == TeamRunEvent.run_completed
+            or chunk.event == RunEvent.run_paused
+        ):
+            completion_events = _create_completion_events(
+                chunk, event_buffer, message_started, message_id, thread_id, run_id
+            )
             for event in completion_events:
                 events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
                 for emit_event in events_to_emit:
@@ -301,8 +366,14 @@ async def async_stream_agno_response_as_agui_events(
 
     async for chunk in response_stream:
         # Handle the lifecycle end event
-        if chunk.event == RunEvent.run_completed or chunk.event == TeamRunEvent.run_completed:
-            completion_events = _create_completion_events(event_buffer, message_started, message_id, thread_id, run_id)
+        if (
+            chunk.event == RunEvent.run_completed
+            or chunk.event == TeamRunEvent.run_completed
+            or chunk.event == RunEvent.run_paused
+        ):
+            completion_events = _create_completion_events(
+                chunk, event_buffer, message_started, message_id, thread_id, run_id
+            )
             for event in completion_events:
                 events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
                 for emit_event in events_to_emit:

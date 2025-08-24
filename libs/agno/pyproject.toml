@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.6.0"
+version = "1.7.5"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -79,6 +79,7 @@ meta = ["llama-api-client"]
 mistral = ["mistralai"]
 ollama = ["ollama"]
 openai = ["openai"]
+portkey = ["portkey-ai"]
 
 # Dependencies for Tools
 agentql = ["agentql"]
@@ -90,6 +91,7 @@ confluence = ["atlassian-python-api"]
 ddg = ["duckduckgo-search"]
 duckdb = ["duckdb"]
 elevenlabs = ["elevenlabs"]
+evm = ["web3"]
 exa = ["exa_py"]
 fal = ["fal_client"]
 firecrawl = ["firecrawl-py"]
@@ -102,17 +104,23 @@ matplotlib = ["matplotlib"]
 mcp = ["mcp"]
 mem0 = ["mem0ai"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
+opencv = ["opencv-python"]
+psycopg2 = ["psycopg2-binary"]
 todoist = ["todoist-api-python"]
+valyu = ["valyu"]
 webex = ["webexpythonsdk"]
 yfinance = ["yfinance"]
 youtube = ["youtube_transcript_api"]
 zep = ["zep-cloud"]
+daytona=["daytona"]
+oxylabs = ["oxylabs"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
 postgres = ["psycopg-binary", "psycopg"]
 sqlite = ["sqlalchemy"]
 gcs = ["google-cloud-storage"]
+firestore = ["google-cloud-firestore"]
 redis = ["redis"]
 
 # Dependencies for Vector databases
@@ -128,6 +136,7 @@ weaviate = ["weaviate-client"]
 milvusdb = ["pymilvus>=2.5.10"]
 clickhouse = ["clickhouse-connect"]
 pinecone = ["pinecone==5.4.2"]
+surrealdb = ["surrealdb>=1.0.4"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
@@ -171,7 +180,8 @@ models = [
   "agno[meta]",
   "agno[mistral]",
   "agno[ollama]",
-  "agno[openai]"
+  "agno[openai]",
+  "agno[portkey]"
 ]
 
 # All tools
@@ -192,16 +202,21 @@ tools = [
   "agno[todoist]",
   "agno[matplotlib]",
   "agno[elevenlabs]",
+  "agno[evm]",
   "agno[fal]",
   "agno[webex]",
   "agno[mcp]",
   "agno[browserbase]",
   "agno[agentql]",
+  "agno[opencv]",
+  "agno[valyu]",
 #  "agno[yfinance]",  # Broken right now
   "agno[confluence]",
+  "agno[oxylabs]",
   "agno[zep]",
   "agno[mem0]",
   "agno[google_bigquery]",
+  "agno[psycopg2]",
 ]
 
 # All storage
@@ -210,6 +225,7 @@ storage = [
   "agno[postgres]",
   "agno[sqlite]",
   "agno[gcs]",
+  "agno[firestore]",
   "agno[redis]",
 ]
 
@@ -226,7 +242,8 @@ vectordbs = [
   "agno[weaviate]",
   "agno[milvusdb]",
   "agno[clickhouse]",
-  "agno[pinecone]"
+  "agno[pinecone]",
+  "agno[surrealdb]"
 ]
 
 # All knowledge
@@ -285,6 +302,7 @@ asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 line-length = 120
+target-version = "py39"
 # Ignore `F401` (import violations) in all `__init__.py` files
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
@@ -301,6 +319,7 @@ exclude = ["tests*"]
 module = [
   "ag_ui.*",
   "agentql.*",
+  "aioboto3.*",
   "aiofiles.*",
   "altair.*",
   "anthropic.*",
@@ -324,13 +343,16 @@ module = [
   "clip.*",
   "cohere.*",
   "crawl4ai.*",
-  "daytona_sdk.*",
+  "daytona.*",
+  "daytona_api_client.*",
+  "discord.*",
   "docker.*",
   "docx.*",
   "duckdb.*",
   "duckduckgo_search.*",
   "email_validator.*",
   "e2b_code_interpreter.*",
+  "eth_account.*",
   "exa_py.*",
   "fastapi.*",
   "fastembed.*",
@@ -344,6 +366,7 @@ module = [
   "googleapiclient.*",
   "googlesearch.*",
   "groq.*",
+  "hexbytes.*",
   "huggingface_hub.*",
   "ibm_watsonx_ai.*",
   "imghdr.*",
@@ -367,12 +390,14 @@ module = [
   "numpy.*",
   "ollama.*",
   "openai.*",
+  "cv2.*",
   "openbb.*",
   "pandas.*",
   "pgvector.*",
   "PIL.*",
   "pinecone_text.*",
   "pinecone.*",
+  "portkey_ai.*",
   "playwright.sync_api.*",
   "psycopg.*",
   "psycopg2.*",
@@ -409,9 +434,11 @@ module = [
   "upstash_vector.*",
   "urllib3.*",
   "uvicorn.*",
+  "valyu.*",
   "vertexai.*",
   "voyageai.*",
   "weaviate.*",
+  "web3.*",
   "webexpythonsdk.*",
   "wikipedia.*",
   "yaml.*",
@@ -419,6 +446,8 @@ module = [
   "youtube_transcript_api.*",
   "couchbase.*",
   "acouchbase.*",
-  "zep_cloud.*"
+  "zep_cloud.*",
+  "oxylabs.*",
+  "surrealdb.*"
 ]
 ignore_missing_imports = true

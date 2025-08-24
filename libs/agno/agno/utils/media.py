@@ -11,6 +11,7 @@ class SampleDataFileExtension(str, Enum):
     PDF = "pdf"
     TXT = "txt"
     JSON = "json"
+    CSV = "csv"
 
 
 def download_image(url: str, output_path: str) -> bool:
@@ -130,7 +131,11 @@ def download_knowledge_filters_sample_data(
     root_path = Path.cwd()
 
     for i in range(1, num_files + 1):
-        filename = f"cv_{i}.{file_extension.value}"
+        if file_extension == SampleDataFileExtension.CSV:
+            filename = f"filters_{i}.csv"
+        else:
+            filename = f"cv_{i}.{file_extension.value}"
+
         download_path = root_path / "cookbook" / "data" / filename
         download_path.parent.mkdir(parents=True, exist_ok=True)
 

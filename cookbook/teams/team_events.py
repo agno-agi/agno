@@ -8,16 +8,16 @@ from agno.models.mistral.mistral import MistralChat
 from agno.models.openai.chat import OpenAIChat
 from agno.team import Team, TeamRunEvent
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.wikipedia import WikipediaTools
+from agno.tools.hackernews import HackerNewsTools
 
 wikipedia_agent = Agent(
-    agent_id="wikipedia-agent",
-    name="Wikipedia Agent",
-    role="Search wikipedia for information",
+    agent_id="hacker-news-agent",
+    name="Hacker News Agent",
+    role="Search Hacker News for information",
     model=MistralChat(id="mistral-large-latest"),
-    tools=[WikipediaTools()],
+    tools=[HackerNewsTools()],
     instructions=[
-        "Find information about the company in the wikipedia",
+        "Find articles about the company in the Hacker News",
     ],
 )
 

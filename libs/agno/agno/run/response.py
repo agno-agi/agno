@@ -34,14 +34,19 @@ class RunEvent(str, Enum):
     memory_update_started = "MemoryUpdateStarted"
     memory_update_completed = "MemoryUpdateCompleted"
 
+    parser_model_response_started = "ParserModelResponseStarted"
+    parser_model_response_completed = "ParserModelResponseCompleted"
+
 
 @dataclass
 class BaseAgentRunResponseEvent(BaseRunResponseEvent):
     created_at: int = field(default_factory=lambda: int(time()))
     event: str = ""
     agent_id: str = ""
+    agent_name: str = ""
     run_id: Optional[str] = None
     session_id: Optional[str] = None
+    team_session_id: Optional[str] = None
 
     # For backwards compatibility
     content: Optional[Any] = None
@@ -162,6 +167,16 @@ class ToolCallCompletedEvent(BaseAgentRunResponseEvent):
     audio: Optional[List[AudioArtifact]] = None  # Audio produced by the tool call
 
 
+@dataclass
+class ParserModelResponseStartedEvent(BaseAgentRunResponseEvent):
+    event: str = RunEvent.parser_model_response_started.value
+
+
+@dataclass
+class ParserModelResponseCompletedEvent(BaseAgentRunResponseEvent):
+    event: str = RunEvent.parser_model_response_completed.value
+
+
 RunResponseEvent = Union[
     RunResponseStartedEvent,
     RunResponseContentEvent,
@@ -177,7 +192,38 @@ RunResponseEvent = Union[
     MemoryUpdateCompletedEvent,
     ToolCallStartedEvent,
     ToolCallCompletedEvent,
+    ParserModelResponseStartedEvent,
+    ParserModelResponseCompletedEvent,
 ]
+
+
+# Map event string to dataclass
+RUN_EVENT_TYPE_REGISTRY = {
+    RunEvent.run_started.value: RunResponseStartedEvent,
+    RunEvent.run_response_content.value: RunResponseContentEvent,
+    RunEvent.run_completed.value: RunResponseCompletedEvent,
+    RunEvent.run_error.value: RunResponseErrorEvent,
+    RunEvent.run_cancelled.value: RunResponseCancelledEvent,
+    RunEvent.run_paused.value: RunResponsePausedEvent,
+    RunEvent.run_continued.value: RunResponseContinuedEvent,
+    RunEvent.reasoning_started.value: ReasoningStartedEvent,
+    RunEvent.reasoning_step.value: ReasoningStepEvent,
+    RunEvent.reasoning_completed.value: ReasoningCompletedEvent,
+    RunEvent.memory_update_started.value: MemoryUpdateStartedEvent,
+    RunEvent.memory_update_completed.value: MemoryUpdateCompletedEvent,
+    RunEvent.tool_call_started.value: ToolCallStartedEvent,
+    RunEvent.tool_call_completed.value: ToolCallCompletedEvent,
+    RunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,
+    RunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
+}
+
+
+def run_response_event_from_dict(data: dict) -> BaseRunResponseEvent:
+    event_type = data.get("event", "")
+    cls = RUN_EVENT_TYPE_REGISTRY.get(event_type)
+    if not cls:
+        raise ValueError(f"Unknown event type: {event_type}")
+    return cls.from_dict(data)  # type: ignore
 
 
 @dataclass
@@ -194,7 +240,9 @@ class RunResponse:
     model_provider: Optional[str] = None
     run_id: Optional[str] = None
     agent_id: Optional[str] = None
+    agent_name: Optional[str] = None
     session_id: Optional[str] = None
+    team_session_id: Optional[str] = None
     workflow_id: Optional[str] = None
     tools: Optional[List[ToolExecution]] = None
     formatted_tool_calls: Optional[List[str]] = None
@@ -205,6 +253,8 @@ class RunResponse:
     citations: Optional[Citations] = None
     extra_data: Optional[RunResponseExtraData] = None
     created_at: int = field(default_factory=lambda: int(time()))
+
+    events: Optional[List[RunResponseEvent]] = None
 
     status: RunStatus = RunStatus.running
 
@@ -233,8 +283,22 @@ class RunResponse:
             k: v
             for k, v in asdict(self).items()
             if v is not None
-            and k not in ["messages", "tools", "extra_data", "images", "videos", "audio", "response_audio", "citations"]
+            and k
+            not in [
+                "messages",
+                "tools",
+                "extra_data",
+                "images",
+                "videos",
+                "audio",
+                "response_audio",
+                "citations",
+                "events",
+            ]
         }
+
+        if self.events is not None:
+            _dict["events"] = [e.to_dict() for e in self.events]
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
@@ -309,19 +373,22 @@ class RunResponse:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RunResponse":
+        events = data.pop("events", None)
+        events = [run_response_event_from_dict(event) for event in events] if events else None
+
         messages = data.pop("messages", None)
         messages = [Message.model_validate(message) for message in messages] if messages else None
 
-        tools = data.pop("tools", None)
+        tools = data.pop("tools", [])
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
 
-        images = data.pop("images", None)
+        images = data.pop("images", [])
         images = [ImageArtifact.model_validate(image) for image in images] if images else None
 
-        videos = data.pop("videos", None)
+        videos = data.pop("videos", [])
         videos = [VideoArtifact.model_validate(video) for video in videos] if videos else None
 
-        audio = data.pop("audio", None)
+        audio = data.pop("audio", [])
         audio = [AudioArtifact.model_validate(audio) for audio in audio] if audio else None
 
         response_audio = data.pop("response_audio", None)
@@ -331,7 +398,16 @@ class RunResponse:
         if "event" in data:
             data.pop("event")
 
-        return cls(messages=messages, tools=tools, images=images, videos=videos, response_audio=response_audio, **data)
+        return cls(
+            messages=messages,
+            tools=tools,
+            images=images,
+            audio=audio,
+            videos=videos,
+            response_audio=response_audio,
+            events=events,
+            **data,
+        )
 
     def get_content_as_string(self, **kwargs) -> str:
         import json

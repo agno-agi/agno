@@ -109,10 +109,14 @@ if __name__ == "__main__":
         # Run the workflow and collect the final response
         final_content = []
         try:
-            async for response in workflow.arun(num_stories=5):
+            response = await workflow.arun(num_stories=5)
+            async for response in response:
                 if response.content:
                     final_content.append(response.content)
         except Exception as e:
+            import traceback
+
+            traceback.print_exc()
             logger.error(f"Error running workflow: {e}")
             return
 
