@@ -1,4 +1,7 @@
 import time
+import json
+import gzip
+import base64
 from dataclasses import asdict
 from decimal import Decimal
 from typing import Any, Dict, List, Literal, Optional
@@ -499,6 +502,7 @@ class DynamoDbStorage(Storage):
     def upsert(self, session: Session) -> Optional[Session]:
         """
         Create or update a Session in the database.
+        Handles large items by compressing data that exceeds DynamoDB's 400KB limit.
 
         Args:
             session (Session): The session data to upsert.
@@ -517,6 +521,9 @@ class DynamoDbStorage(Storage):
 
             # Convert data to DynamoDB compatible format
             item = self._serialize_item(item)
+
+            # Check item size and compress if necessary
+            item = self._handle_large_item(item)
 
             # Put item into DynamoDB
             self.table.put_item(Item=item)
@@ -584,7 +591,7 @@ class DynamoDbStorage(Storage):
 
     def _deserialize_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Deserialize item from DynamoDB format.
+        Deserialize item from DynamoDB format and decompress compressed fields.
 
         Args:
             item (Dict[str, Any]): The item to deserialize.
@@ -600,10 +607,135 @@ class DynamoDbStorage(Storage):
                 else:
                     return float(value)
             elif isinstance(value, dict):
-                return {k: deserialize_value(v) for k, v in value.items()}
+                # Check if this is a compressed field
+                if value.get("_compressed") is True and "_data" in value:
+                    try:
+                        # Decompress the data
+                        encoded_data = value["_data"]
+                        compressed_data = base64.b64decode(encoded_data.encode("utf-8"))
+                        decompressed_data = gzip.decompress(compressed_data).decode("utf-8")
+                        return json.loads(decompressed_data)
+                    except Exception as e:
+                        logger.error(f"Failed to decompress field: {e}")
+                        # Return empty dict if decompression fails
+                        return {}
+                else:
+                    return {k: deserialize_value(v) for k, v in value.items()}
             elif isinstance(value, list):
                 return [deserialize_value(v) for v in value]
             else:
                 return value
 
         return {k: deserialize_value(v) for k, v in item.items()}
+
+    def _calculate_item_size(self, item: Dict[str, Any]) -> int:
+        """
+        Calculate the approximate size of a DynamoDB item in bytes.
+
+        Args:
+            item (Dict[str, Any]): The item to calculate size for.
+
+        Returns:
+            int: Approximate size in bytes.
+        """
+        return len(json.dumps(item, default=str).encode("utf-8"))
+
+    def _handle_large_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Handle items that exceed DynamoDB's 400KB limit by compressing large fields.
+
+        Args:
+            item (Dict[str, Any]): The item to process.
+
+        Returns:
+            Dict[str, Any]: Processed item with compression if needed.
+        """
+        # DynamoDB limit is 400KB, leave some buffer
+        MAX_ITEM_SIZE = 380 * 1024  # 380KB
+
+        current_size = self._calculate_item_size(item)
+
+        if current_size <= MAX_ITEM_SIZE:
+            return item
+
+        logger.warning(f"Item size ({current_size} bytes) exceeds limit. Applying compression.")
+
+        # Fields that are typically large and can be compressed
+        compressible_fields = ["memory", "agent_data", "team_data", "workflow_data", "session_data", "extra_data"]
+
+        compressed_item = item.copy()
+
+        for field in compressible_fields:
+            if field in compressed_item and compressed_item[field]:
+                try:
+                    # Compress the field
+                    field_data = json.dumps(compressed_item[field], default=str)
+                    compressed_data = gzip.compress(field_data.encode("utf-8"))
+                    encoded_data = base64.b64encode(compressed_data).decode("utf-8")
+
+                    # Replace with compressed version and mark as compressed
+                    compressed_item[field] = {
+                        "_compressed": True,
+                        "_data": encoded_data,
+                        "_original_size": len(field_data),
+                    }
+
+                    # Check if we're now under the limit
+                    new_size = self._calculate_item_size(compressed_item)
+                    logger.info(f"Compressed {field}: {len(field_data)} -> {len(encoded_data)} bytes")
+
+                    if new_size <= MAX_ITEM_SIZE:
+                        logger.info(f"Item size after compression: {new_size} bytes")
+                        return compressed_item
+
+                except Exception as e:
+                    logger.error(f"Failed to compress field {field}: {e}")
+                    # Restore original field if compression fails
+                    compressed_item[field] = item[field]
+
+        # If still too large after compression, truncate memory/history
+        final_size = self._calculate_item_size(compressed_item)
+        if final_size > MAX_ITEM_SIZE:
+            logger.warning(f"Item still too large ({final_size} bytes) after compression. Truncating data.")
+            compressed_item = self._truncate_large_fields(compressed_item, MAX_ITEM_SIZE)
+
+        return compressed_item
+
+    def _truncate_large_fields(self, item: Dict[str, Any], max_size: int) -> Dict[str, Any]:
+        """
+        Truncate large fields to fit within size limit.
+
+        Args:
+            item (Dict[str, Any]): The item to truncate.
+            max_size (int): Maximum allowed size in bytes.
+
+        Returns:
+            Dict[str, Any]: Truncated item.
+        """
+        truncated_item = item.copy()
+
+        # Truncate memory field if it exists (keep only recent entries)
+        if "memory" in truncated_item and isinstance(truncated_item["memory"], dict):
+            memory = truncated_item["memory"]
+            if isinstance(memory.get("chat_history"), list):
+                # Keep only the last 50 messages
+                memory["chat_history"] = memory["chat_history"][-50:]
+                logger.warning("Truncated chat_history to last 50 messages")
+
+        # Check size after truncation
+        current_size = self._calculate_item_size(truncated_item)
+        if current_size <= max_size:
+            return truncated_item
+
+        # If still too large, remove non-essential fields
+        non_essential_fields = ["extra_data", "session_data"]
+        for field in non_essential_fields:
+            if field in truncated_item:
+                del truncated_item[field]
+                logger.warning(f"Removed {field} to reduce item size")
+
+                current_size = self._calculate_item_size(truncated_item)
+                if current_size <= max_size:
+                    return truncated_item
+
+        return truncated_item
