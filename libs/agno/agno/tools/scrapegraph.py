@@ -22,6 +22,7 @@ class ScrapeGraphTools(Toolkit):
         markdownify: bool = False,
         crawl: bool = False,
         searchscraper: bool = False,
+        agentic_crawler: bool = False,
         **kwargs,
     ):
         self.api_key: Optional[str] = api_key or os.getenv("SGAI_API_KEY")
@@ -41,11 +42,13 @@ class ScrapeGraphTools(Toolkit):
             tools.append(self.crawl)
         if searchscraper:
             tools.append(self.searchscraper)
+        if agentic_crawler:
+            tools.append(self.agentic_crawler)
 
         super().__init__(name="scrapegraph_tools", tools=tools, **kwargs)
 
     def smartscraper(self, url: str, prompt: str) -> str:
-        """Use this function to extract structured data from a webpage using LLM.
+        """Extract structured data from a webpage using LLM.
         Args:
             url (str): The URL to scrape
             prompt (str): Natural language prompt describing what to extract
@@ -59,7 +62,7 @@ class ScrapeGraphTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     def markdownify(self, url: str) -> str:
-        """Use this function to convert a webpage to markdown format.
+        """Convert a webpage to markdown format.
         Args:
             url (str): The URL to convert
         Returns:
@@ -82,7 +85,7 @@ class ScrapeGraphTools(Toolkit):
         same_domain_only: bool = True,
         batch_size: int = 1,
     ) -> str:
-        """Use this function to crawl a website and extract structured data using a schema.
+        """Crawl a website and extract structured data
         Args:
             url (str): The URL to crawl
             prompt (str): Natural language prompt describing what to extract
@@ -110,17 +113,82 @@ class ScrapeGraphTools(Toolkit):
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    def searchscraper(self, url: str, prompt: str) -> str:
-        """Use this function to search and extract information from a webpage using LLM.
+    def agentic_crawler(
+        self,
+        url: str,
+        steps: List[str],
+        use_session: bool = True,
+        user_prompt: Optional[str] = None,
+        output_schema: Optional[dict] = None,
+        ai_extraction: bool = False,
+    ) -> str:
+        """Perform agentic crawling with automated browser actions and optional AI extraction.
+        
+        This tool can:
+        1. Navigate to a website
+        2. Perform a series of automated actions (like filling forms, clicking buttons)
+        3. Extract the resulting HTML content as markdown
+        4. Optionally use AI to extract structured data
+        
         Args:
-            url (str): The URL to search
-            prompt (str): Natural language prompt describing what to search for
+            url (str): The URL to scrape
+            steps (List[str]): List of steps to perform on the webpage (e.g., ["Type email in input box", "click login"])
+            use_session (bool): Whether to use session for the scraping (default: True)
+            user_prompt (Optional[str]): Prompt for AI extraction (only used when ai_extraction=True)
+            output_schema (Optional[dict]): Schema for structured data extraction (only used when ai_extraction=True)
+            ai_extraction (bool): Whether to use AI for data extraction from the scraped content (default: False)
+            
         Returns:
-            The search results extracted from the webpage
+            JSON string containing the scraping results, including request_id, status, and extracted data
         """
         try:
-            response = self.client.searchscraper(website_url=url, user_prompt=prompt)
-            # If response has a 'result' attribute, return it, else return the whole response
+            # Validate required parameters for AI extraction
+            if ai_extraction and not user_prompt:
+                return json.dumps({"error": "user_prompt is required when ai_extraction=True"})
+            
+            # Validate URL format
+            if not url.strip():
+                return json.dumps({"error": "URL cannot be empty"})
+            if not (url.startswith("http://") or url.startswith("https://")):
+                return json.dumps({"error": "Invalid URL - must start with http:// or https://"})
+            
+            # Validate steps
+            if not steps:
+                return json.dumps({"error": "Steps cannot be empty"})
+            if any(not step.strip() for step in steps):
+                return json.dumps({"error": "All steps must contain valid instructions"})
+            
+            # Prepare parameters for the API call
+            params = {
+                "url": url,
+                "steps": steps,
+                "use_session": use_session,
+                "ai_extraction": ai_extraction
+            }
+            
+            # Add optional parameters only if they are provided
+            if user_prompt:
+                params["user_prompt"] = user_prompt
+            if output_schema:
+                params["output_schema"] = output_schema
+            
+            # Call the agentic scraper API
+            response = self.client.agenticscraper(**params)
+            
+            return json.dumps(response, indent=2)
+            
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    def searchscraper(self, prompt: str) -> str:
+        """Search the web and extract information from the web.
+        Args:
+            prompt (str): Search query
+        Returns:
+            JSON of the search results
+        """
+        try:
+            response = self.client.searchscraper(user_prompt=prompt)
             if hasattr(response, "result"):
                 return json.dumps(response.result)
             elif isinstance(response, dict) and "result" in response:

@@ -17,6 +17,7 @@ class TeamRunEvent(str, Enum):
 
     run_started = "TeamRunStarted"
     run_response_content = "TeamRunResponseContent"
+    run_intermediate_response_content = "TeamRunIntermediateResponseContent"
     run_completed = "TeamRunCompleted"
     run_error = "TeamRunError"
     run_cancelled = "TeamRunCancelled"
@@ -33,6 +34,9 @@ class TeamRunEvent(str, Enum):
 
     parser_model_response_started = "TeamParserModelResponseStarted"
     parser_model_response_completed = "TeamParserModelResponseCompleted"
+
+    output_model_response_started = "TeamOutputModelResponseStarted"
+    output_model_response_completed = "TeamOutputModelResponseCompleted"
 
 
 @dataclass
@@ -89,6 +93,13 @@ class RunResponseContentEvent(BaseTeamRunResponseEvent):
     response_audio: Optional[AudioResponse] = None  # Model audio response
     image: Optional[ImageArtifact] = None  # Image attached to the response
     extra_data: Optional[RunResponseExtraData] = None
+
+
+@dataclass
+class IntermediateRunResponseContentEvent(BaseTeamRunResponseEvent):
+    event: str = TeamRunEvent.run_intermediate_response_content.value
+    content: Optional[Any] = None
+    content_type: str = "str"
 
 
 @dataclass
@@ -175,9 +186,20 @@ class ParserModelResponseCompletedEvent(BaseTeamRunResponseEvent):
     event: str = TeamRunEvent.parser_model_response_completed.value
 
 
+@dataclass
+class OutputModelResponseStartedEvent(BaseTeamRunResponseEvent):
+    event: str = TeamRunEvent.output_model_response_started.value
+
+
+@dataclass
+class OutputModelResponseCompletedEvent(BaseTeamRunResponseEvent):
+    event: str = TeamRunEvent.output_model_response_completed.value
+
+
 TeamRunResponseEvent = Union[
     RunResponseStartedEvent,
     RunResponseContentEvent,
+    IntermediateRunResponseContentEvent,
     RunResponseCompletedEvent,
     RunResponseErrorEvent,
     RunResponseCancelledEvent,
@@ -190,12 +212,15 @@ TeamRunResponseEvent = Union[
     ToolCallCompletedEvent,
     ParserModelResponseStartedEvent,
     ParserModelResponseCompletedEvent,
+    OutputModelResponseStartedEvent,
+    OutputModelResponseCompletedEvent,
 ]
 
 # Map event string to dataclass for team events
 TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.run_started.value: RunResponseStartedEvent,
     TeamRunEvent.run_response_content.value: RunResponseContentEvent,
+    TeamRunEvent.run_intermediate_response_content.value: IntermediateRunResponseContentEvent,
     TeamRunEvent.run_completed.value: RunResponseCompletedEvent,
     TeamRunEvent.run_error.value: RunResponseErrorEvent,
     TeamRunEvent.run_cancelled.value: RunResponseCancelledEvent,
@@ -208,6 +233,8 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.tool_call_completed.value: ToolCallCompletedEvent,
     TeamRunEvent.parser_model_response_started.value: ParserModelResponseStartedEvent,
     TeamRunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
+    TeamRunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,
+    TeamRunEvent.output_model_response_completed.value: OutputModelResponseCompletedEvent,
 }
 
 
@@ -361,9 +388,9 @@ class TeamRunResponse:
         messages = data.pop("messages", None)
         messages = [Message.model_validate(message) for message in messages] if messages else None
 
-        member_responses = data.pop("member_responses", None)
+        member_responses = data.pop("member_responses", [])
         parsed_member_responses: List[Union["TeamRunResponse", RunResponse]] = []
-        if member_responses is not None:
+        if member_responses:
             for response in member_responses:
                 if "agent_id" in response:
                     parsed_member_responses.append(RunResponse.from_dict(response))
@@ -374,20 +401,23 @@ class TeamRunResponse:
         if extra_data is not None:
             extra_data = RunResponseExtraData.from_dict(extra_data)
 
-        images = data.pop("images", None)
+        images = data.pop("images", [])
         images = [ImageArtifact.model_validate(image) for image in images] if images else None
 
-        videos = data.pop("videos", None)
+        videos = data.pop("videos", [])
         videos = [VideoArtifact.model_validate(video) for video in videos] if videos else None
 
-        audio = data.pop("audio", None)
+        audio = data.pop("audio", [])
         audio = [AudioArtifact.model_validate(audio) for audio in audio] if audio else None
 
-        tools = data.pop("tools", None)
+        tools = data.pop("tools", [])
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
 
         response_audio = data.pop("response_audio", None)
         response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
+
+        citations = data.pop("citations", None)
+        citations = Citations.model_validate(citations) if citations else None
 
         # To make it backwards compatible
         if "event" in data:
@@ -401,6 +431,7 @@ class TeamRunResponse:
             videos=videos,
             audio=audio,
             response_audio=response_audio,
+            citations=citations,
             tools=tools,
             events=events,
             **data,

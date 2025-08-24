@@ -1,5 +1,4 @@
 import asyncio
-from hashlib import md5
 from math import sqrt
 from typing import Any, Dict, List, Optional, Union, cast
 
@@ -23,6 +22,7 @@ from agno.document import Document
 from agno.embedder import Embedder
 from agno.reranker.base import Reranker
 from agno.utils.log import log_debug, log_info, logger
+from agno.utils.string import safe_content_hash
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.pgvector.index import HNSW, Ivfflat
@@ -239,8 +239,7 @@ class PgVector(VectorDb):
         Returns:
             bool: True if the document exists, False otherwise.
         """
-        cleaned_content = document.content.replace("\x00", "\ufffd")
-        content_hash = md5(cleaned_content.encode()).hexdigest()
+        content_hash = safe_content_hash(document.content)
         return self._record_exists(self.table.c.content_hash, content_hash)
 
     async def async_doc_exists(self, document: Document) -> bool:
@@ -311,26 +310,7 @@ class PgVector(VectorDb):
                         batch_records = []
                         for doc in batch_docs:
                             try:
-                                doc.embed(embedder=self.embedder)
-                                cleaned_content = self._clean_content(doc.content)
-                                content_hash = md5(cleaned_content.encode()).hexdigest()
-                                _id = doc.id or content_hash
-
-                                meta_data = doc.meta_data or {}
-                                if filters:
-                                    meta_data.update(filters)
-
-                                record = {
-                                    "id": _id,
-                                    "name": doc.name,
-                                    "meta_data": doc.meta_data,
-                                    "filters": filters,
-                                    "content": cleaned_content,
-                                    "embedding": doc.embedding,
-                                    "usage": doc.usage,
-                                    "content_hash": content_hash,
-                                }
-                                batch_records.append(record)
+                                batch_records.append(self._get_document_record(doc, filters))
                             except Exception as e:
                                 logger.error(f"Error processing document '{doc.name}': {e}")
 
@@ -384,25 +364,7 @@ class PgVector(VectorDb):
                         batch_records = []
                         for doc in batch_docs:
                             try:
-                                doc.embed(embedder=self.embedder)
-                                cleaned_content = self._clean_content(doc.content)
-                                content_hash = md5(cleaned_content.encode()).hexdigest()
-
-                                meta_data = doc.meta_data or {}
-                                if filters:
-                                    meta_data.update(filters)
-
-                                record = {
-                                    "id": content_hash,  # use content_hash as a reproducible id to avoid duplicates while upsert
-                                    "name": doc.name,
-                                    "meta_data": doc.meta_data,
-                                    "filters": filters,
-                                    "content": cleaned_content,
-                                    "embedding": doc.embedding,
-                                    "usage": doc.usage,
-                                    "content_hash": content_hash,
-                                }
-                                batch_records.append(record)
+                                batch_records.append(self._get_document_record(doc, filters))
                             except Exception as e:
                                 logger.error(f"Error processing document '{doc.name}': {e}")
 
@@ -430,6 +392,27 @@ class PgVector(VectorDb):
         except Exception as e:
             logger.error(f"Error upserting documents: {e}")
             raise
+
+    def _get_document_record(self, doc: Document, filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        doc.embed(embedder=self.embedder)
+        cleaned_content = self._clean_content(doc.content)
+        content_hash = safe_content_hash(doc.content)
+        _id = doc.id or content_hash
+
+        meta_data = doc.meta_data or {}
+        if filters:
+            meta_data.update(filters)
+
+        return {
+            "id": _id,
+            "name": doc.name,
+            "meta_data": meta_data,
+            "filters": filters,
+            "content": cleaned_content,
+            "embedding": doc.embedding,
+            "usage": doc.usage,
+            "content_hash": content_hash,
+        }
 
     async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Upsert documents asynchronously by running in a thread."""
@@ -766,6 +749,9 @@ class PgVector(VectorDb):
                         usage=result.usage,
                     )
                 )
+
+            if self.reranker:
+                search_results = self.reranker.rerank(query=query, documents=search_results)
 
             log_info(f"Found {len(search_results)} documents")
             return search_results

@@ -1,3 +1,21 @@
+"""
+This example demonstrates the nested Team functionality in a hierarchical team structure.
+Each team and agent has a clearly defined role that guides their behavior and specialization:
+
+Team Hierarchy & Roles:
+├── Shopping List Team (Orchestrator)
+│   Role: "Orchestrate comprehensive shopping list management and meal planning"
+│   ├── Shopping Management Team (Operations Specialist)
+│   │   Role: "Execute precise shopping list operations through delegation"
+│   │   └── Shopping List Agent
+│   │       Role: "Maintain and modify the shopping list with precision and accuracy"
+│   └── Meal Planning Team (Culinary Expert)
+│       Role: "Transform shopping list ingredients into creative meal suggestions"
+│       └── Recipe Suggester Agent
+│           Role: "Create innovative and practical recipe suggestions"
+
+"""
+
 from agno.agent.agent import Agent
 from agno.models.openai.chat import OpenAIChat
 from agno.team import Team
@@ -58,6 +76,7 @@ shopping_list_agent = Agent(
 # Shopping management team - new layer for handling all shopping list modifications
 shopping_mgmt_team = Team(
     name="Shopping Management Team",
+    role="Execute shopping list operations",
     team_id="shopping_management",
     mode="coordinate",
     model=OpenAIChat(id="gpt-4o-mini"),
@@ -118,6 +137,7 @@ def list_items(team: Team) -> str:
 # Create meal planning subteam
 meal_planning_team = Team(
     name="Meal Planning Team",
+    role="Plan meals based on shopping list items",
     team_id="meal_planning",
     mode="coordinate",
     model=OpenAIChat(id="gpt-4o-mini"),
@@ -164,8 +184,10 @@ def add_chore(team: Team, chore: str, priority: str = "medium") -> str:
     return f"Added chore: '{chore}' with {priority} priority"
 
 
+# Orchestrates the entire shopping and meal planning ecosystem
 shopping_team = Team(
     name="Shopping List Team",
+    role="Orchestrate shopping list management and meal planning",
     mode="coordinate",
     model=OpenAIChat(id="gpt-4o-mini"),
     team_session_state={"shopping_list": []},
@@ -179,41 +201,75 @@ shopping_team = Team(
     show_tool_calls=True,
     markdown=True,
     instructions=[
-        "You are a team that manages a shopping list & helps plan meals using that list.",
-        "If you need to add or remove items from the shopping list, forward the full request to the Shopping Management Team.",
-        "IMPORTANT: If the user asks about recipes or what they can make with ingredients, IMMEDIATELY forward the EXACT request to the meal_planning_team with NO additional questions.",
-        "Example: When user asks 'What can I make with these ingredients?', you should simply forward this exact request to meal_planning_team without asking for more information.",
-        "If you need to list the items in the shopping list, use the list_items tool.",
-        "If the user got something from the shopping list, it means it can be removed from the shopping list.",
-        "After each completed task, use the add_chore tool to log exactly what was done with high priority.",
+        "You are the orchestration layer for a comprehensive shopping and meal planning ecosystem",
+        "If you need to add or remove items from the shopping list, forward the full request to the Shopping Management Team",
+        "IMPORTANT: If the user asks about recipes or what they can make with ingredients, IMMEDIATELY forward the EXACT request to the meal_planning_team with NO additional questions",
+        "Example: When user asks 'What can I make with these ingredients?', you should simply forward this exact request to meal_planning_team without asking for more information",
+        "If you need to list the items in the shopping list, use the list_items tool",
+        "If the user got something from the shopping list, it means it can be removed from the shopping list",
+        "After each completed task, use the add_chore tool to log exactly what was done with high priority",
+        "Provide a seamless experience by leveraging your specialized teams for their expertise",
     ],
     show_members_responses=True,
 )
 
-# Example usage
+# =============================================================================
+# DEMONSTRATION
+# =============================================================================
+
+# Example 1: Adding items (demonstrates role-based delegation)
+print("Example 1: Adding Items to Shopping List")
+print("-" * 50)
 shopping_team.print_response(
     "Add milk, eggs, and bread to the shopping list", stream=True
 )
 print(f"Session state: {shopping_team.team_session_state}")
+print()
 
-shopping_team.print_response("I got bread", stream=True)
+# Example 2: Item consumption and removal
+print("Example 2: Item Consumption & Removal")
+print("-" * 50)
+shopping_team.print_response("I got bread from the store", stream=True)
 print(f"Session state: {shopping_team.team_session_state}")
+print()
 
-shopping_team.print_response("I need apples and oranges", stream=True)
+# Example 3: Adding more ingredients
+print("Example 3: Adding Fresh Ingredients")
+print("-" * 50)
+shopping_team.print_response(
+    "I need apples and oranges for my fruit salad", stream=True
+)
 print(f"Session state: {shopping_team.team_session_state}")
+print()
 
-shopping_team.print_response("whats on my list?", stream=True)
+# Example 4: Listing current items
+print("Example 4: Viewing Current Shopping List")
+print("-" * 50)
+shopping_team.print_response("What's on my shopping list right now?", stream=True)
 print(f"Session state: {shopping_team.team_session_state}")
+print()
 
-# Try the meal planning feature
+# Example 5: Recipe suggestions (demonstrates culinary expertise role)
+print("Example 5: Recipe Suggestions from Culinary Team")
+print("-" * 50)
 shopping_team.print_response("What can I make with these ingredients?", stream=True)
 print(f"Session state: {shopping_team.team_session_state}")
+print()
 
+# Example 6: Complete list management
+print("Example 6: Complete List Reset & Restart")
+print("-" * 50)
 shopping_team.print_response(
     "Clear everything from my list and start over with just bananas and yogurt",
     stream=True,
 )
 print(f"Shared Session state: {shopping_team.team_session_state}")
+print()
 
+# Example 7: Quick recipe check with new ingredients
+print("Example 7: Quick Recipe Check with New Ingredients")
+print("-" * 50)
+shopping_team.print_response("What healthy breakfast can I make now?", stream=True)
+print()
 
-print(f"Team session state: {shopping_team.session_state}")
+print(f"Team Session State: {shopping_team.team_session_state}")

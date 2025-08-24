@@ -1,10 +1,11 @@
 from dataclasses import dataclass
 from functools import partial
+from importlib.metadata import version
 from typing import Any, Callable, Dict, List, Literal, Optional, Type, TypeVar, get_type_hints
 
 from docstring_parser import parse
+from packaging.version import Version
 from pydantic import BaseModel, Field, validate_call
-from pydantic._internal._validate_call import ValidateCallWrapper
 
 from agno.exceptions import AgentRunException
 from agno.utils.log import log_debug, log_error, log_exception, log_warning
@@ -152,7 +153,7 @@ class Function(BaseModel):
             param_type_hints = {
                 name: type_hints.get(name)
                 for name in sig.parameters
-                if name != "return" and name not in ["agent", "team"]
+                if name != "return" and name not in ["agent", "team", "self"]
             }
 
             # Parse docstring for parameters
@@ -178,7 +179,9 @@ class Function(BaseModel):
             # If strict=True mark all fields as required
             # See: https://platform.openai.com/docs/guides/structured-outputs/supported-schemas#all-fields-must-be-required
             if strict:
-                parameters["required"] = [name for name in parameters["properties"] if name not in ["agent", "team"]]
+                parameters["required"] = [
+                    name for name in parameters["properties"] if name not in ["agent", "team", "self"]
+                ]
             else:
                 # Mark a field as required if it has no default value (this would include optional fields)
                 parameters["required"] = [
@@ -236,7 +239,7 @@ class Function(BaseModel):
             # log_info(f"Type hints for {self.name}: {type_hints}")
 
             # Filter out return type and only process parameters
-            excluded_params = ["return", "agent", "team"]
+            excluded_params = ["return", "agent", "team", "self"]
             if self.requires_user_input and self.user_input_fields:
                 if len(self.user_input_fields) == 0:
                     excluded_params.extend(list(type_hints.keys()))
@@ -322,21 +325,35 @@ class Function(BaseModel):
     @staticmethod
     def _wrap_callable(func: Callable) -> Callable:
         """Wrap a callable with Pydantic's validate_call decorator, if relevant"""
-        from inspect import isasyncgenfunction
+        from inspect import isasyncgenfunction, iscoroutinefunction
 
-        # Don't wrap async generator with validate_call
+        pydantic_version = Version(version("pydantic"))
+
+        # Don't wrap async generators validate_call
         if isasyncgenfunction(func):
             return func
-        # Don't wrap ValidateCallWrapper with validate_call
-        elif isinstance(func, ValidateCallWrapper):
+
+        # Don't wrap coroutines with validate_call if pydantic version is less than 2.10.0
+        if iscoroutinefunction(func) and pydantic_version < Version("2.10.0"):
+            log_debug(
+                f"Skipping validate_call for {func.__name__} because pydantic version is less than 2.10.0, please consider upgrading to pydantic 2.10.0 or higher"
+            )
+            return func
+
+        # Don't wrap callables that are already wrapped with validate_call
+        elif getattr(func, "_wrapped_for_validation", False):
             return func
         # Wrap the callable with validate_call
         else:
-            return validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
+            wrapped = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
+            wrapped._wrapped_for_validation = True  # Mark as wrapped to avoid infinite recursion
+            return wrapped
 
     def process_schema_for_strict(self):
         self.parameters["additionalProperties"] = False
-        self.parameters["required"] = [name for name in self.parameters["properties"] if name not in ["agent", "team"]]
+        self.parameters["required"] = [
+            name for name in self.parameters["properties"] if name not in ["agent", "team", "self"]
+        ]
 
     def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
         """Generate a cache key based on function name and arguments."""
@@ -516,6 +533,34 @@ class FunctionCall(BaseModel):
             entrypoint_args["fc"] = self
         return entrypoint_args
 
+    def _build_hook_args(self, hook: Callable, name: str, func: Callable, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Build the arguments for the hook."""
+        from inspect import signature
+
+        hook_args = {}
+        # Check if the hook has an agent argument
+        if "agent" in signature(hook).parameters:
+            hook_args["agent"] = self.function._agent
+        # Check if the hook has an team argument
+        if "team" in signature(hook).parameters:
+            hook_args["team"] = self.function._team
+
+        if "name" in signature(hook).parameters:
+            hook_args["name"] = name
+        if "function_name" in signature(hook).parameters:
+            hook_args["function_name"] = name
+        if "function" in signature(hook).parameters:
+            hook_args["function"] = func
+        if "func" in signature(hook).parameters:
+            hook_args["func"] = func
+        if "function_call" in signature(hook).parameters:
+            hook_args["function_call"] = func
+        if "args" in signature(hook).parameters:
+            hook_args["args"] = args
+        if "arguments" in signature(hook).parameters:
+            hook_args["arguments"] = args
+        return hook_args
+
     def _build_nested_execution_chain(self, entrypoint_args: Dict[str, Any]):
         """Build a nested chain of hook executions with the entrypoint at the center.
 
@@ -545,7 +590,9 @@ class FunctionCall(BaseModel):
                 def next_func(**kwargs):
                     return inner_func(name, func, kwargs)
 
-                return hook(name, next_func, args)
+                hook_args = self._build_hook_args(hook, name, next_func, args)
+
+                return hook(**hook_args)
 
             return wrapper
 
@@ -564,7 +611,7 @@ class FunctionCall(BaseModel):
 
     def execute(self) -> FunctionExecutionResult:
         """Runs the function call."""
-        from inspect import isgenerator
+        from inspect import isgenerator, isgeneratorfunction
 
         if self.function.entrypoint is None:
             return FunctionExecutionResult(status="failure", error="Entrypoint is not set")
@@ -577,7 +624,7 @@ class FunctionCall(BaseModel):
         entrypoint_args = self._build_entrypoint_args()
 
         # Check cache if enabled and not a generator function
-        if self.function.cache_results and not isgenerator(self.function.entrypoint):
+        if self.function.cache_results and not isgeneratorfunction(self.function.entrypoint):
             cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
             cache_file = self.function._get_cache_file_path(cache_key)
             cached_result = self.function._get_cached_result(cache_file)
@@ -683,7 +730,7 @@ class FunctionCall(BaseModel):
         Similar to _build_nested_execution_chain but for async execution.
         """
         from functools import reduce
-        from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction
+        from inspect import isasyncgenfunction, iscoroutinefunction
 
         async def execute_entrypoint_async(name, func, args):
             """Execute the entrypoint function asynchronously."""
@@ -692,9 +739,7 @@ class FunctionCall(BaseModel):
                 arguments.update(self.arguments)
 
             result = self.function.entrypoint(**arguments)  # type: ignore
-            if iscoroutinefunction(self.function.entrypoint) and not (
-                isasyncgen(self.function.entrypoint) or isasyncgenfunction(self.function.entrypoint)
-            ):
+            if iscoroutinefunction(self.function.entrypoint) and not isasyncgenfunction(self.function.entrypoint):
                 result = await result
             return result
 
@@ -723,10 +768,12 @@ class FunctionCall(BaseModel):
                     else:
                         return inner_func(name, func, kwargs)
 
+                hook_args = self._build_hook_args(hook, name, next_func, args)
+
                 if iscoroutinefunction(hook):
-                    return await hook(name, next_func, args)
+                    return await hook(**hook_args)
                 else:
-                    return hook(name, next_func, args)
+                    return hook(**hook_args)
 
             return wrapper
 
@@ -742,7 +789,7 @@ class FunctionCall(BaseModel):
 
     async def aexecute(self) -> FunctionExecutionResult:
         """Runs the function call asynchronously."""
-        from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgenerator
+        from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgenerator, isgeneratorfunction
 
         if self.function.entrypoint is None:
             return FunctionExecutionResult(status="failure", error="Entrypoint is not set")
@@ -759,7 +806,7 @@ class FunctionCall(BaseModel):
 
         # Check cache if enabled and not a generator function
         if self.function.cache_results and not (
-            isasyncgen(self.function.entrypoint) or isgenerator(self.function.entrypoint)
+            isasyncgenfunction(self.function.entrypoint) or isgeneratorfunction(self.function.entrypoint)
         ):
             cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
             cache_file = self.function._get_cache_file_path(cache_key)
@@ -781,7 +828,7 @@ class FunctionCall(BaseModel):
                 else:
                     result = self.function.entrypoint(**entrypoint_args, **self.arguments)
 
-                if isasyncgen(self.function.entrypoint) or isasyncgenfunction(self.function.entrypoint):
+                if isasyncgenfunction(self.function.entrypoint):
                     self.result = result  # Store async generator directly
                 else:
                     self.result = await result

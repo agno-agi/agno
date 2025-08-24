@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Optional, Type, Union
+from typing import Any, Dict, Iterator, List, Literal, Optional, Type, Union
 
 import httpx
 from pydantic import BaseModel
@@ -45,6 +45,7 @@ class OpenAIChat(Model):
     # Request parameters
     store: Optional[bool] = None
     reasoning_effort: Optional[str] = None
+    verbosity: Optional[Literal["low", "medium", "high"]] = None
     metadata: Optional[Dict[str, Any]] = None
     frequency_penalty: Optional[float] = None
     logit_bias: Optional[Any] = None
@@ -62,6 +63,7 @@ class OpenAIChat(Model):
     temperature: Optional[float] = None
     user: Optional[str] = None
     top_p: Optional[float] = None
+    service_tier: Optional[str] = None  # "auto" | "default" | "flex" | "priority", defaults to "auto" when not set
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
     request_params: Optional[Dict[str, Any]] = None
@@ -158,6 +160,7 @@ class OpenAIChat(Model):
         base_params = {
             "store": self.store,
             "reasoning_effort": self.reasoning_effort,
+            "verbosity": self.verbosity,
             "frequency_penalty": self.frequency_penalty,
             "logit_bias": self.logit_bias,
             "logprobs": self.logprobs,
@@ -175,6 +178,7 @@ class OpenAIChat(Model):
             "extra_headers": self.extra_headers,
             "extra_query": self.extra_query,
             "metadata": self.metadata,
+            "service_tier": self.service_tier,
         }
 
         # Handle response format - always use JSON schema approach
@@ -225,6 +229,8 @@ class OpenAIChat(Model):
         model_dict.update(
             {
                 "store": self.store,
+                "reasoning_effort": self.reasoning_effort,
+                "verbosity": self.verbosity,
                 "frequency_penalty": self.frequency_penalty,
                 "logit_bias": self.logit_bias,
                 "logprobs": self.logprobs,
@@ -241,6 +247,7 @@ class OpenAIChat(Model):
                 "user": self.user,
                 "extra_headers": self.extra_headers,
                 "extra_query": self.extra_query,
+                "service_tier": self.service_tier,
             }
         )
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
@@ -690,6 +697,9 @@ class OpenAIChat(Model):
                 # Add tool calls
                 if choice_delta.tool_calls is not None:
                     model_response.tool_calls = choice_delta.tool_calls  # type: ignore
+
+                if hasattr(choice_delta, "reasoning_content") and choice_delta.reasoning_content is not None:
+                    model_response.reasoning_content = choice_delta.reasoning_content
 
                 # Add audio if present
                 if hasattr(choice_delta, "audio") and choice_delta.audio is not None:
