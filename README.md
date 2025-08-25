@@ -168,7 +168,7 @@ agent_team.print_response("What's the market outlook and financial performance o
 Install dependencies and run the Agent team:
 
 ```shell
-pip install duckduckgo-search yfinance
+pip install ddgs yfinance
 
 python agent_team.py
 ```
