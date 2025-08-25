@@ -38,8 +38,8 @@ class ImageArtifact(Media):
     mime_type: Optional[str] = None
     alt_text: Optional[str] = None
 
-    def _normalise_content(self) -> str:
-        content_normalised = self.content
+    def _normalise_content(self) -> Union[str, bytes]:
+        content_normalised: Union[str, bytes] = self.content
         if content_normalised and isinstance(content_normalised, bytes):
             from base64 import b64encode
 
