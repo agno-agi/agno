@@ -177,45 +177,62 @@ class PostgresDb(BaseDb):
             log_error(f"Could not create table {db_schema}.{table_name}: {e}")
             raise
 
-    def _get_table(self, table_type: str) -> Table:
+    def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = True) -> Optional[Table]:
         if table_type == "sessions":
             if not hasattr(self, "session_table"):
                 self.session_table = self._get_or_create_table(
-                    table_name=self.session_table_name, table_type="sessions", db_schema=self.db_schema
+                    table_name=self.session_table_name,
+                    table_type="sessions",
+                    db_schema=self.db_schema,
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.session_table
 
         if table_type == "memories":
             if not hasattr(self, "memory_table"):
                 self.memory_table = self._get_or_create_table(
-                    table_name=self.memory_table_name, table_type="memories", db_schema=self.db_schema
+                    table_name=self.memory_table_name,
+                    table_type="memories",
+                    db_schema=self.db_schema,
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.memory_table
 
         if table_type == "metrics":
             if not hasattr(self, "metrics_table"):
                 self.metrics_table = self._get_or_create_table(
-                    table_name=self.metrics_table_name, table_type="metrics", db_schema=self.db_schema
+                    table_name=self.metrics_table_name,
+                    table_type="metrics",
+                    db_schema=self.db_schema,
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.metrics_table
 
         if table_type == "evals":
             if not hasattr(self, "eval_table"):
                 self.eval_table = self._get_or_create_table(
-                    table_name=self.eval_table_name, table_type="evals", db_schema=self.db_schema
+                    table_name=self.eval_table_name,
+                    table_type="evals",
+                    db_schema=self.db_schema,
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.eval_table
 
         if table_type == "knowledge":
             if not hasattr(self, "knowledge_table"):
                 self.knowledge_table = self._get_or_create_table(
-                    table_name=self.knowledge_table_name, table_type="knowledge", db_schema=self.db_schema
+                    table_name=self.knowledge_table_name,
+                    table_type="knowledge",
+                    db_schema=self.db_schema,
+                    create_table_if_not_found=create_table_if_not_found,
                 )
             return self.knowledge_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
-    def _get_or_create_table(self, table_name: str, table_type: str, db_schema: str) -> Table:
+    def _get_or_create_table(
+        self, table_name: str, table_type: str, db_schema: str, create_table_if_not_found: Optional[bool] = True
+    ) -> Optional[Table]:
         """
         Check if the table exists and is valid, else create it.
 
@@ -225,13 +242,16 @@ class PostgresDb(BaseDb):
             db_schema (str): Database schema name
 
         Returns:
-            Table: SQLAlchemy Table object representing the schema.
+            Optional[Table]: SQLAlchemy Table object representing the schema.
         """
 
         with self.Session() as sess, sess.begin():
             table_is_available = is_table_available(session=sess, table_name=table_name, db_schema=db_schema)
 
         if not table_is_available:
+            if not create_table_if_not_found:
+                return None
+
             return self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
 
         if not is_valid_table(
@@ -267,6 +287,8 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
+            if table is None:
+                return False
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
@@ -296,6 +318,8 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
+            if table is None:
+                return
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
@@ -332,6 +356,8 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
+            if table is None:
+                return None
 
             with self.Session() as sess:
                 stmt = select(table).where(table.c.session_id == session_id)
@@ -376,6 +402,7 @@ class PostgresDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
@@ -401,7 +428,9 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="sessions")
+            table = self._get_table(table_type="sessions", create_table_if_not_found=create_table_if_not_found)
+            if table is None:
+                return [] if deserialize else ([], 0)
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -485,6 +514,8 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
+            if table is None:
+                return None
 
             with self.Session() as sess, sess.begin():
                 stmt = (
@@ -548,6 +579,9 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
+            if table is None:
+                return None
+
             session_dict = session.to_dict()
 
             if isinstance(session, AgentSession):
@@ -683,6 +717,8 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="memories")
+            if table is None:
+                return
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id == memory_id)
@@ -708,6 +744,8 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="memories")
+            if table is None:
+                return
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
@@ -721,14 +759,16 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_error(f"Error deleting user memories: {e}")
 
-    def get_all_memory_topics(self) -> List[str]:
+    def get_all_memory_topics(self, create_table_if_not_found: Optional[bool] = True) -> List[str]:
         """Get all memory topics from the database.
 
         Returns:
             List[str]: List of memory topics.
         """
         try:
-            table = self._get_table(table_type="memories")
+            table = self._get_table(table_type="memories", create_table_if_not_found=create_table_if_not_found)
+            if table is None:
+                return []
 
             with self.Session() as sess, sess.begin():
                 stmt = select(func.json_array_elements_text(table.c.topics))
@@ -759,6 +799,8 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="memories")
+            if table is None:
+                return None
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.memory_id == memory_id)
@@ -789,6 +831,7 @@ class PostgresDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
         """Get all memories from the database as UserMemory objects.
 
@@ -803,6 +846,7 @@ class PostgresDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
+            create_table_if_not_found: Whether to create the table if it doesn't exist.
 
         Returns:
             Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
@@ -813,7 +857,9 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="memories")
+            table = self._get_table(table_type="memories", create_table_if_not_found=create_table_if_not_found)
+            if table is None:
+                return [] if deserialize else ([], 0)
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -865,6 +911,8 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="memories")
+            if table is None:
+                return
 
             with self.Session() as sess, sess.begin():
                 sess.execute(table.delete())
@@ -898,6 +946,8 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="memories")
+            if table is None:
+                return [], 0
 
             with self.Session() as sess, sess.begin():
                 stmt = (
@@ -956,6 +1006,8 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="memories")
+            if table is None:
+                return None
 
             with self.Session() as sess, sess.begin():
                 if memory.memory_id is None:
@@ -1018,6 +1070,8 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
+            if table is None:
+                return []
 
             stmt = select(
                 table.c.user_id,
@@ -1087,6 +1141,8 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="metrics")
+            if table is None:
+                return None
 
             starting_date = self._get_metrics_calculation_starting_date(table)
 
@@ -1147,7 +1203,10 @@ class PostgresDb(BaseDb):
             return None
 
     def get_metrics(
-        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
@@ -1162,7 +1221,9 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="metrics")
+            table = self._get_table(table_type="metrics", create_table_if_not_found=create_table_if_not_found)
+            if table is None:
+                return [], None
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -1192,6 +1253,8 @@ class PostgresDb(BaseDb):
             id (str): The ID of the knowledge row to delete.
         """
         table = self._get_table(table_type="knowledge")
+        if table is None:
+            return
 
         try:
             with self.Session() as sess, sess.begin():
@@ -1211,6 +1274,8 @@ class PostgresDb(BaseDb):
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
         """
         table = self._get_table(table_type="knowledge")
+        if table is None:
+            return None
 
         try:
             with self.Session() as sess, sess.begin():
@@ -1231,6 +1296,7 @@ class PostgresDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1239,6 +1305,7 @@ class PostgresDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
+            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
             List[KnowledgeRow]: The knowledge contents.
@@ -1246,7 +1313,9 @@ class PostgresDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
-        table = self._get_table(table_type="knowledge")
+        table = self._get_table(table_type="knowledge", create_table_if_not_found=create_table_if_not_found)
+        if table is None:
+            return [], 0
 
         try:
             with self.Session() as sess, sess.begin():
@@ -1284,6 +1353,9 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="knowledge")
+            if table is None:
+                return None
+
             with self.Session() as sess, sess.begin():
                 # Get the actual table columns to avoid "unconsumed column names" error
                 table_columns = set(table.columns.keys())
@@ -1365,6 +1437,8 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="evals")
+            if table is None:
+                return None
 
             with self.Session() as sess, sess.begin():
                 current_time = int(time.time())
@@ -1389,6 +1463,8 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="evals")
+            if table is None:
+                return
 
             with self.Session() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id == eval_run_id)
@@ -1410,6 +1486,8 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="evals")
+            if table is None:
+                return
 
             with self.Session() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
@@ -1442,6 +1520,8 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="evals")
+            if table is None:
+                return None
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.run_id == eval_run_id)
@@ -1472,6 +1552,7 @@ class PostgresDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
@@ -1487,6 +1568,7 @@ class PostgresDb(BaseDb):
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
@@ -1497,7 +1579,9 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="evals")
+            table = self._get_table(table_type="evals", create_table_if_not_found=create_table_if_not_found)
+            if table is None:
+                return [] if deserialize else ([], 0)
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -1568,6 +1652,9 @@ class PostgresDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="evals")
+            if table is None:
+                return None
+
             with self.Session() as sess, sess.begin():
                 stmt = (
                     table.update().where(table.c.run_id == eval_run_id).values(name=name, updated_at=int(time.time()))

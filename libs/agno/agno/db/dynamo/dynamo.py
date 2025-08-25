@@ -135,7 +135,7 @@ class DynamoDb(BaseDb):
             log_error(f"Error checking if table {table_name} exists: {e}")
             return False
 
-    def _get_table(self, table_type: str) -> str:
+    def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = True) -> Optional[str]:
         """
         Get table name and ensure the table exists, creating it if needed.
 
@@ -164,7 +164,7 @@ class DynamoDb(BaseDb):
             raise ValueError(f"Unknown table type: {table_type}")
 
         # Check if table exists, create if it doesn't
-        if not self._table_exists(table_name):
+        if not self._table_exists(table_name) and create_table_if_not_found:
             schema = get_table_schema_definition(table_type)
             schema["TableName"] = table_name
             create_table_if_not_exists(self.client, table_name, schema)
@@ -295,9 +295,12 @@ class DynamoDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         try:
-            table_name = self._get_table("sessions")
+            table_name = self._get_table("sessions", create_table_if_not_found=create_table_if_not_found)
+            if table_name is None:
+                return [] if deserialize else ([], 0)
 
             # Build filter expression for additional filters
             filter_expression = None
@@ -558,14 +561,16 @@ class DynamoDb(BaseDb):
         except Exception as e:
             log_error(f"Failed to delete user memories: {e}")
 
-    def get_all_memory_topics(self) -> List[str]:
+    def get_all_memory_topics(self, create_table_if_not_found: Optional[bool] = True) -> List[str]:
         """Get all memory topics from the database.
 
         Returns:
             List[str]: List of unique memory topics.
         """
         try:
-            table_name = self._get_table("memories")
+            table_name = self._get_table("memories", create_table_if_not_found=create_table_if_not_found)
+            if table_name is None:
+                return []
 
             # Scan the entire table to get all memories
             response = self.client.scan(TableName=table_name)
@@ -634,6 +639,7 @@ class DynamoDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
         """
         Get user memories from the database as a list of UserMemory objects.
@@ -650,6 +656,7 @@ class DynamoDb(BaseDb):
             sort_by: The field to sort the memories by.
             sort_order: The order to sort the memories by.
             deserialize: Whether to deserialize the memories.
+            create_table_if_not_found: Whether to create the table if it doesn't exist.
 
         Returns:
             Union[List[UserMemory], List[Dict[str, Any]], Tuple[List[Dict[str, Any]], int]]: The user memories data.
@@ -658,7 +665,9 @@ class DynamoDb(BaseDb):
             Exception: If any error occurs while getting the user memories.
         """
         try:
-            table_name = self._get_table("memories")
+            table_name = self._get_table("memories", create_table_if_not_found=create_table_if_not_found)
+            if table_name is None:
+                return [] if deserialize else ([], 0)
 
             # Build filter expressions for component filters
             (
@@ -1130,6 +1139,9 @@ class DynamoDb(BaseDb):
         """
         try:
             table_name = self._get_table("metrics")
+            if table_name is None:
+                return []
+
             results = []
 
             # Process each record individually to handle proper upsert
@@ -1325,8 +1337,11 @@ class DynamoDb(BaseDb):
         return item
 
     def get_metrics(
-        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
-    ) -> Tuple[List[Any], int]:
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        create_table_if_not_found: Optional[bool] = True,
+    ) -> Tuple[List[Any], Optional[int]]:
         """
         Get metrics from the database.
 
@@ -1335,14 +1350,16 @@ class DynamoDb(BaseDb):
             ending_date: The ending date to filter metrics by.
 
         Returns:
-            Tuple[List[Any], int]: A tuple containing the metrics data and the total count.
+            Tuple[List[Any], Optional[int]]: A tuple containing the metrics data and the total count.
 
         Raises:
             Exception: If any error occurs while getting the metrics.
         """
 
         try:
-            table_name = self._get_table("metrics")
+            table_name = self._get_table("metrics", create_table_if_not_found=create_table_if_not_found)
+            if table_name is None:
+                return ([], None)
 
             # Build query parameters
             scan_kwargs: Dict[str, Any] = {"TableName": table_name}
@@ -1436,6 +1453,7 @@ class DynamoDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1444,6 +1462,7 @@ class DynamoDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
+            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1452,7 +1471,10 @@ class DynamoDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table_name = self._get_table("knowledge")
+            table_name = self._get_table("knowledge", create_table_if_not_found=create_table_if_not_found)
+            if table_name is None:
+                return [], 0
+
             response = self.client.scan(TableName=table_name)
             items = response.get("Items", [])
 
@@ -1613,9 +1635,13 @@ class DynamoDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         try:
-            table_name = self._get_table("evals")
+            table_name = self._get_table("evals", create_table_if_not_found=create_table_if_not_found)
+            if table_name is None:
+                return [] if deserialize else ([], 0)
+
             scan_kwargs = {"TableName": table_name}
 
             filter_expressions = []

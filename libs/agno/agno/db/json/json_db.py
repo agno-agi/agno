@@ -53,7 +53,7 @@ class JsonDb(BaseDb):
         # Create the directory where the JSON files will be stored, if it doesn't exist
         self.db_path = Path(db_path or os.path.join(os.getcwd(), "agno_json_db"))
 
-    def _read_json_file(self, filename: str) -> List[Dict[str, Any]]:
+    def _read_json_file(self, filename: str, create_table_if_not_found: Optional[bool] = True) -> List[Dict[str, Any]]:
         """Read data from a JSON file, creating it if it doesn't exist.
 
         Args:
@@ -75,8 +75,9 @@ class JsonDb(BaseDb):
                 return json.load(f)
 
         except FileNotFoundError:
-            with open(file_path, "w") as f:
-                json.dump([], f)
+            if create_table_if_not_found:
+                with open(file_path, "w") as f:
+                    json.dump([], f)
             return []
 
         except json.JSONDecodeError as e:
@@ -221,6 +222,7 @@ class JsonDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions from the JSON file with filtering and pagination.
 
@@ -236,6 +238,7 @@ class JsonDb(BaseDb):
             sort_by (Optional[str]): The field to sort the sessions by.
             sort_order (Optional[str]): The order to sort the sessions by.
             deserialize (Optional[bool]): Whether to deserialize the sessions.
+            create_table_if_not_found (Optional[bool]): Whether to create a json file to track sessions if it doesn't exist.
 
         Returns:
             Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
@@ -423,10 +426,10 @@ class JsonDb(BaseDb):
         except Exception as e:
             log_error(f"Error deleting memories: {e}")
 
-    def get_all_memory_topics(self) -> List[str]:
+    def get_all_memory_topics(self, create_table_if_not_found: Optional[bool] = True) -> List[str]:
         """Get all memory topics from the JSON file."""
         try:
-            memories = self._read_json_file(self.memory_table_name)
+            memories = self._read_json_file(self.memory_table_name, create_table_if_not_found=create_table_if_not_found)
 
             topics = set()
             for memory in memories:
@@ -470,10 +473,11 @@ class JsonDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
         """Get all memories from the JSON file with filtering and pagination."""
         try:
-            memories = self._read_json_file(self.memory_table_name)
+            memories = self._read_json_file(self.memory_table_name, create_table_if_not_found=create_table_if_not_found)
 
             # Apply filters
             filtered_memories = []
@@ -726,11 +730,14 @@ class JsonDb(BaseDb):
             return []
 
     def get_metrics(
-        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range."""
         try:
-            metrics = self._read_json_file(self.metrics_table_name)
+            metrics = self._read_json_file(self.metrics_table_name, create_table_if_not_found=create_table_if_not_found)
 
             filtered_metrics = []
             latest_updated_at = None
@@ -805,6 +812,7 @@ class JsonDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -821,7 +829,9 @@ class JsonDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            knowledge_items = self._read_json_file(self.knowledge_table_name)
+            knowledge_items = self._read_json_file(
+                self.knowledge_table_name, create_table_if_not_found=create_table_if_not_found
+            )
 
             total_count = len(knowledge_items)
 
@@ -966,10 +976,11 @@ class JsonDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the JSON file with filtering and pagination."""
         try:
-            eval_runs = self._read_json_file(self.eval_table_name)
+            eval_runs = self._read_json_file(self.eval_table_name, create_table_if_not_found=create_table_if_not_found)
 
             # Apply filters
             filtered_runs = []

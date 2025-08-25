@@ -28,7 +28,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
     ) -> MetricsResponse:
         try:
             db = get_db(dbs, db_id)
-            metrics, latest_updated_at = db.get_metrics(starting_date=starting_date, ending_date=ending_date)
+            metrics, latest_updated_at = db.get_metrics(
+                starting_date=starting_date, ending_date=ending_date, create_table_if_not_found=False
+            )
 
             return MetricsResponse(
                 metrics=[DayAggregatedMetrics.from_dict(metric) for metric in metrics],

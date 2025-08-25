@@ -72,7 +72,7 @@ class GcsJsonDb(BaseDb):
         """Get the full blob name including prefix for a given filename."""
         return f"{self.prefix}{filename}.json"
 
-    def _read_json_file(self, filename: str) -> List[Dict[str, Any]]:
+    def _read_json_file(self, filename: str, create_table_if_not_found: Optional[bool] = True) -> List[Dict[str, Any]]:
         """Read data from a JSON file in GCS, creating it if it doesn't exist.
 
         Args:
@@ -94,8 +94,9 @@ class GcsJsonDb(BaseDb):
         except Exception as e:
             # Check if it's a 404 (file not found) error
             if "404" in str(e) or "Not Found" in str(e):
-                log_debug(f"Creating new GCS JSON file: {blob_name}")
-                blob.upload_from_string("[]", content_type="application/json")
+                if create_table_if_not_found:
+                    log_debug(f"Creating new GCS JSON file: {blob_name}")
+                    blob.upload_from_string("[]", content_type="application/json")
                 return []
             else:
                 log_error(f"Error reading the {blob_name} JSON file from GCS: {e}")
@@ -236,6 +237,7 @@ class GcsJsonDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions from the GCS JSON file with filtering and pagination.
 
@@ -251,6 +253,7 @@ class GcsJsonDb(BaseDb):
             sort_by (Optional[str]): The field to sort the sessions by.
             sort_order (Optional[str]): The order to sort the sessions by.
             deserialize (Optional[bool]): Whether to deserialize the sessions.
+            create_table_if_not_found (Optional[bool]): Whether to create a file to track sessions if it doesn't exist.
 
         Returns:
             Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
@@ -435,16 +438,17 @@ class GcsJsonDb(BaseDb):
         except Exception as e:
             log_warning(f"Error deleting user memories: {e}")
 
-    def get_all_memory_topics(self) -> List[str]:
+    def get_all_memory_topics(self, create_table_if_not_found: Optional[bool] = True) -> List[str]:
         """Get all memory topics from the GCS JSON file."""
         try:
-            memories = self._read_json_file(self.memory_table_name)
+            memories = self._read_json_file(self.memory_table_name, create_table_if_not_found=create_table_if_not_found)
             topics = set()
             for memory in memories:
                 memory_topics = memory.get("topics", [])
                 if isinstance(memory_topics, list):
                     topics.update(memory_topics)
             return list(topics)
+
         except Exception as e:
             log_warning(f"Exception reading from memory file: {e}")
             return []
@@ -480,10 +484,11 @@ class GcsJsonDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
         """Get all memories from the GCS JSON file with filtering and pagination."""
         try:
-            memories = self._read_json_file(self.memory_table_name)
+            memories = self._read_json_file(self.memory_table_name, create_table_if_not_found=create_table_if_not_found)
 
             # Apply filters
             filtered_memories = []
@@ -732,11 +737,14 @@ class GcsJsonDb(BaseDb):
             return []
 
     def get_metrics(
-        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range."""
         try:
-            metrics = self._read_json_file(self.metrics_table_name)
+            metrics = self._read_json_file(self.metrics_table_name, create_table_if_not_found=create_table_if_not_found)
 
             filtered_metrics = []
             latest_updated_at = None
@@ -791,10 +799,13 @@ class GcsJsonDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the GCS JSON file."""
         try:
-            knowledge_items = self._read_json_file(self.knowledge_table_name)
+            knowledge_items = self._read_json_file(
+                self.knowledge_table_name, create_table_if_not_found=create_table_if_not_found
+            )
 
             total_count = len(knowledge_items)
 
@@ -919,10 +930,11 @@ class GcsJsonDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the GCS JSON file with filtering and pagination."""
         try:
-            eval_runs = self._read_json_file(self.eval_table_name)
+            eval_runs = self._read_json_file(self.eval_table_name, create_table_if_not_found=create_table_if_not_found)
 
             # Apply filters
             filtered_runs = []

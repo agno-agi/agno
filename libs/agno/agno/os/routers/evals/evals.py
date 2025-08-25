@@ -64,6 +64,7 @@ def attach_routes(
             eval_type=eval_types,
             filter_type=filter_type,
             deserialize=False,
+            create_table_if_not_found=False,
         )
 
         return PaginatedResponse(

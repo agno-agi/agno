@@ -73,11 +73,12 @@ class FirestoreDb(BaseDb):
 
     # -- DB methods --
 
-    def _get_collection(self, table_type: str):
+    def _get_collection(self, table_type: str, create_collection_if_not_found: Optional[bool] = True):
         """Get or create a collection based on table type.
 
         Args:
             table_type (str): The type of table to get or create.
+            create_collection_if_not_found (Optional[bool]): Whether to create the collection if it doesn't exist.
 
         Returns:
             CollectionReference: The collection reference.
@@ -87,7 +88,9 @@ class FirestoreDb(BaseDb):
                 if self.session_table_name is None:
                     raise ValueError("Session collection was not provided on initialization")
                 self.session_collection = self._get_or_create_collection(
-                    collection_name=self.session_table_name, collection_type="sessions"
+                    collection_name=self.session_table_name,
+                    collection_type="sessions",
+                    create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.session_collection
 
@@ -96,7 +99,9 @@ class FirestoreDb(BaseDb):
                 if self.memory_table_name is None:
                     raise ValueError("Memory collection was not provided on initialization")
                 self.memory_collection = self._get_or_create_collection(
-                    collection_name=self.memory_table_name, collection_type="memories"
+                    collection_name=self.memory_table_name,
+                    collection_type="memories",
+                    create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.memory_collection
 
@@ -105,7 +110,9 @@ class FirestoreDb(BaseDb):
                 if self.metrics_table_name is None:
                     raise ValueError("Metrics collection was not provided on initialization")
                 self.metrics_collection = self._get_or_create_collection(
-                    collection_name=self.metrics_table_name, collection_type="metrics"
+                    collection_name=self.metrics_table_name,
+                    collection_type="metrics",
+                    create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.metrics_collection
 
@@ -114,7 +121,9 @@ class FirestoreDb(BaseDb):
                 if self.eval_table_name is None:
                     raise ValueError("Eval collection was not provided on initialization")
                 self.eval_collection = self._get_or_create_collection(
-                    collection_name=self.eval_table_name, collection_type="evals"
+                    collection_name=self.eval_table_name,
+                    collection_type="evals",
+                    create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.eval_collection
 
@@ -123,26 +132,33 @@ class FirestoreDb(BaseDb):
                 if self.knowledge_table_name is None:
                     raise ValueError("Knowledge collection was not provided on initialization")
                 self.knowledge_collection = self._get_or_create_collection(
-                    collection_name=self.knowledge_table_name, collection_type="knowledge"
+                    collection_name=self.knowledge_table_name,
+                    collection_type="knowledge",
+                    create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.knowledge_collection
 
         raise ValueError(f"Unknown table type: {table_type}")
 
-    def _get_or_create_collection(self, collection_name: str, collection_type: str):
+    def _get_or_create_collection(
+        self, collection_name: str, collection_type: str, create_collection_if_not_found: Optional[bool] = True
+    ):
         """Get or create a collection with proper indexes.
 
         Args:
             collection_name (str): The name of the collection to get or create.
             collection_type (str): The type of collection to get or create.
+            create_collection_if_not_found (Optional[bool]): Whether to create the collection if it doesn't exist.
 
         Returns:
-            CollectionReference: The collection reference.
+            Optional[CollectionReference]: The collection reference.
         """
         try:
             collection_ref = self.db_client.collection(collection_name)
 
             if not hasattr(self, f"_{collection_name}_initialized"):
+                if not create_collection_if_not_found:
+                    return None
                 create_collection_indexes(self.db_client, collection_name, collection_type)
                 setattr(self, f"_{collection_name}_initialized", True)
 
@@ -277,6 +293,7 @@ class FirestoreDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions.
 
@@ -302,7 +319,12 @@ class FirestoreDb(BaseDb):
             Exception: If there is an error reading the sessions.
         """
         try:
-            collection_ref = self._get_collection(table_type="sessions")
+            collection_ref = self._get_collection(
+                table_type="sessions", create_collection_if_not_found=create_table_if_not_found
+            )
+            if collection_ref is None:
+                return [] if deserialize else ([], 0)
+
             query = collection_ref
 
             if user_id is not None:
@@ -591,7 +613,7 @@ class FirestoreDb(BaseDb):
         except Exception as e:
             log_error(f"Error deleting memories: {e}")
 
-    def get_all_memory_topics(self) -> List[str]:
+    def get_all_memory_topics(self, create_collection_if_not_found: Optional[bool] = True) -> List[str]:
         """Get all memory topics from the database.
 
         Returns:
@@ -602,6 +624,9 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="memories")
+            if collection_ref is None:
+                return []
+
             docs = collection_ref.stream()
 
             all_topics = set()
@@ -662,6 +687,7 @@ class FirestoreDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
         """Get all memories from the database as UserMemory objects.
 
@@ -676,6 +702,7 @@ class FirestoreDb(BaseDb):
             sort_by (Optional[str]): The field to sort the memories by.
             sort_order (Optional[str]): The order to sort the memories by.
             deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
+            create_table_if_not_found: Whether to create the index if it doesn't exist.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A tuple containing the memories and the total count.
@@ -684,7 +711,12 @@ class FirestoreDb(BaseDb):
             Exception: If there is an error getting the memories.
         """
         try:
-            collection_ref = self._get_collection(table_type="memories")
+            collection_ref = self._get_collection(
+                table_type="memories", create_collection_if_not_found=create_table_if_not_found
+            )
+            if collection_ref is None:
+                return [] if deserialize else ([], 0)
+
             query = collection_ref
 
             if user_id is not None:
@@ -985,11 +1017,18 @@ class FirestoreDb(BaseDb):
             raise e
 
     def get_metrics(
-        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range."""
         try:
-            collection_ref = self._get_collection(table_type="metrics")
+            collection_ref = self._get_collection(
+                table_type="metrics", create_collection_if_not_found=create_table_if_not_found
+            )
+            if collection_ref is None:
+                return [], None
 
             query = collection_ref
             if starting_date:
@@ -1070,6 +1109,7 @@ class FirestoreDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1078,6 +1118,7 @@ class FirestoreDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
+            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1086,7 +1127,11 @@ class FirestoreDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            collection_ref = self._get_collection(table_type="knowledge")
+            collection_ref = self._get_collection(
+                table_type="knowledge", create_collection_if_not_found=create_table_if_not_found
+            )
+            if collection_ref is None:
+                return [], 0
 
             query = collection_ref
 
@@ -1265,6 +1310,7 @@ class FirestoreDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
@@ -1280,6 +1326,7 @@ class FirestoreDb(BaseDb):
             eval_type (Optional[List[EvalType]]): The type of eval to filter by.
             filter_type (Optional[EvalFilterType]): The type of filter to apply.
             deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
@@ -1290,7 +1337,12 @@ class FirestoreDb(BaseDb):
             Exception: If there is an error getting the eval runs.
         """
         try:
-            collection_ref = self._get_collection(table_type="evals")
+            collection_ref = self._get_collection(
+                table_type="evals", create_collection_if_not_found=create_table_if_not_found
+            )
+            if collection_ref is None:
+                return [] if deserialize else ([], 0)
+
             query = collection_ref
 
             if agent_id is not None:

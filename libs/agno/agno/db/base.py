@@ -66,6 +66,7 @@ class BaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
@@ -96,7 +97,7 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_all_memory_topics(self) -> List[str]:
+    def get_all_memory_topics(self, create_table_if_not_found: Optional[bool] = True) -> List[str]:
         raise NotImplementedError
 
     @abstractmethod
@@ -118,6 +119,7 @@ class BaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
@@ -138,7 +140,10 @@ class BaseDb(ABC):
     # --- Metrics ---
     @abstractmethod
     def get_metrics(
-        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
         raise NotImplementedError
 
@@ -175,6 +180,7 @@ class BaseDb(ABC):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -233,6 +239,7 @@ class BaseDb(ABC):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
