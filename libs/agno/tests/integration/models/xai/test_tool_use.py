@@ -109,7 +109,7 @@ def test_multiple_tool_calls():
     )
 
     response = agent.run(
-        "What is the current price of TSLA? Also, search for the latest news about it. You can make two tool calls for this."
+        "What is the current price of TSLA? Also, search for the latest news about it. You can make two tool calls for this. You can also make one tool call for this."
     )
 
     # Verify tool usage
