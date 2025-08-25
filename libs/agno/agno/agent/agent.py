@@ -1059,13 +1059,8 @@ class Agent:
             session_id=session_id,
             agent_id=self.id,
             agent_name=self.name,
+            metadata=metadata,
         )
-
-        # Add user-provided metadata
-        if metadata is not None:
-            if run_response.metadata is None:
-                run_response.metadata = {}
-            run_response.metadata.update(metadata)
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
@@ -1104,7 +1099,7 @@ class Agent:
                     files=files,
                     knowledge_filters=effective_filters,
                     add_history_to_context=add_history,
-                    dependencies=run_dependencies,
+                    dependencies=dependencies,
                     add_dependencies_to_context=add_dependencies,
                     **kwargs,
                 )
@@ -1538,13 +1533,8 @@ class Agent:
             session_id=session_id,
             agent_id=self.id,
             agent_name=self.name,
+            metadata=metadata,
         )
-
-        # Add user-provided metadata
-        if metadata is not None:
-            if run_response.metadata is None:
-                run_response.metadata = {}
-            run_response.metadata.update(metadata)
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
@@ -1583,7 +1573,7 @@ class Agent:
                     files=files,
                     knowledge_filters=effective_filters,
                     add_history_to_context=add_history,
-                    dependencies=run_dependencies,
+                    dependencies=dependencies,
                     add_dependencies_to_context=add_dependencies,
                     **kwargs,
                 )
@@ -1738,7 +1728,11 @@ class Agent:
         # Update session state from DB
         session_state = self._update_session_state(session=agent_session, session_state=session_state)
 
-        # Dependencies should already be resolved in main run() method
+        run_dependencies = dependencies if dependencies is not None else self.dependencies
+        
+        # Resolve dependencies
+        if run_dependencies is not None:
+            self._resolve_run_dependencies(dependencies=run_dependencies)
 
         effective_filters = knowledge_filters
 
@@ -2265,10 +2259,9 @@ class Agent:
         6. Save session to storage
         7. Save output to file if save_response_to_file is set
         """
-
-        # Resolving here for async requirement
+        # Resolving dependencies for async requirement
         if dependencies is not None:
-            await self._aresolve_run_dependencies(dependencies=self.dependencies)
+            await self._aresolve_run_dependencies(dependencies)
 
         self.model = cast(Model, self.model)
 
@@ -2350,8 +2343,11 @@ class Agent:
         7. Save session to storage
         """
         # Resolving here for async requirement
-        if dependencies is not None:
-            await self._aresolve_run_dependencies(dependencies=dependencies)
+        run_dependencies = dependencies if dependencies is not None else self.dependencies
+        
+        # Resolve dependencies
+        if run_dependencies is not None:
+            await self._aresolve_run_dependencies(dependencies=run_dependencies)
 
         # Start the Run by yielding a RunContinued event
         if stream_intermediate_steps:
@@ -4489,7 +4485,7 @@ class Agent:
                     session_state=session.session_data.get("session_state")
                     if session.session_data is not None
                     else None,
-                    dependencies=run_dependencies,
+                    dependencies=dependencies,
                 )
 
             return Message(
@@ -6416,11 +6412,6 @@ class Agent:
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
-        run_dependencies = dependencies if dependencies is not None else self.dependencies
-
-        if run_dependencies is not None:
-            self._resolve_run_dependencies(dependencies=run_dependencies)
-
         add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
         if not tags_to_include_in_markdown:
@@ -6459,7 +6450,7 @@ class Agent:
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 console=console,
                 add_history_to_context=add_history,
-                dependencies=run_dependencies,
+                dependencies=dependencies,
                 metadata=metadata,
                 **kwargs,
             )
@@ -6485,7 +6476,7 @@ class Agent:
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 console=console,
                 add_history_to_context=add_history,
-                dependencies=run_dependencies,
+                dependencies=dependencies,
                 metadata=metadata,
                 **kwargs,
             )
@@ -6517,11 +6508,6 @@ class Agent:
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
-        run_dependencies = dependencies if dependencies is not None else self.dependencies
-
-        if run_dependencies is not None:
-            await self._aresolve_run_dependencies(dependencies=run_dependencies)
-
         add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
         if not tags_to_include_in_markdown:
@@ -6560,7 +6546,7 @@ class Agent:
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 console=console,
                 add_history_to_context=add_history,
-                dependencies=run_dependencies,
+                dependencies=dependencies,
                 metadata=metadata,
                 **kwargs,
             )
@@ -6585,7 +6571,7 @@ class Agent:
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 console=console,
                 add_history_to_context=add_history,
-                dependencies=run_dependencies,
+                dependencies=dependencies,
                 metadata=metadata,
                 **kwargs,
             )
