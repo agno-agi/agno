@@ -209,38 +209,38 @@ Run this recipe using:
 python cookbook/getting_started/16_audio_input_output.py
 ```
 
-### Research & Information
-Build powerful research and information gathering agents.
-
-#### 17. Research Agent (`17_research_agent_exa.py`)
-- Creates an AI research agent using Exa
-- Shows how to steer the expected output of the agent
-- **Requires EXA_API_KEY**
-
-Run this recipe using:
-```bash
-python cookbook/getting_started/17_research_agent_exa.py
-```
-
-#### 18. Research Workflow (`18_research_workflow.py`)
-- Creates an AI research workflow
-- Searches using DuckDuckGo and Scrapes web pages using Newspaper4k
-- Shows how to steer the expected output of the agent
-
-Run this recipe using:
-```bash
-python cookbook/getting_started/18_research_workflow.py
-```
-
 ### Multi-Agent Systems
 Scale up to team-based agent architectures.
 
-#### 19. Agent Team (`19_agent_team.py`)
+#### 17. Agent Team (`17_agent_team.py`)
 - Implements an agent team with web and finance agents
 - Shows agent collaboration and role specialization
 - Combines market research with financial data analysis
 
 Run this recipe using:
 ```bash
-python cookbook/getting_started/19_agent_team.py
+python cookbook/getting_started/17_agent_team.py
+```
+
+### Research & Information
+Build powerful research and information gathering agents.
+
+#### 18. Research Agent (`18_research_agent_exa.py`)
+- Creates an AI research agent using Exa
+- Shows how to steer the expected output of the agent
+- **Requires EXA_API_KEY**
+
+Run this recipe using:
+```bash
+python cookbook/getting_started/18_research_agent_exa.py
+```
+
+#### 19. Research Workflow (`19_research_workflow.py`)
+- Creates an AI research workflow
+- Searches using DuckDuckGo and Scrapes web pages using Newspaper4k
+- Shows how to steer the expected output of the agent
+
+Run this recipe using:
+```bash
+python cookbook/getting_started/19_research_workflow.py
 ```
