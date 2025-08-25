@@ -113,6 +113,7 @@ def test_parallel_tool_calls():
     assert response.content is not None
 
 
+@pytest.mark.skip(reason="Groq does not support native structured outputs for tool calls at this time.")
 def test_tool_use_with_native_structured_outputs():
     class StockPrice(BaseModel):
         price: float = Field(..., description="The price of the stock")
