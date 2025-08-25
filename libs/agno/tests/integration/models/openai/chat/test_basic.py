@@ -179,7 +179,7 @@ def test_cache_read_tokens():
     agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
     # Multiple + one large prompt to ensure token caching is triggered
-    agent.run("Share a 2 sentence horror story")
+    agent.run("Share a 2 sentence horror story" * 250)
     response = agent.run("Share a 2 sentence horror story" * 250)
 
     assert response.metrics is not None
