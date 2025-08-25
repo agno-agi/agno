@@ -1026,6 +1026,12 @@ class Team:
         if run_dependencies is not None:
             self._resolve_run_dependencies(run_dependencies)
 
+        # Determine runtime context parameters
+        add_dependencies = (
+            add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+        )
+        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+
         # Extract workflow context from kwargs if present
         workflow_context = kwargs.pop("workflow_context", None)
 
@@ -1067,13 +1073,8 @@ class Team:
             session_id=session_id,
             team_id=self.id,
             team_name=self.name,
+            metadata=metadata,
         )
-
-        # Add user-provided metadata
-        if metadata is not None:
-            if run_response.metadata is None:
-                run_response.metadata = {}
-            run_response.metadata.update(metadata)
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
@@ -1098,7 +1099,7 @@ class Team:
             workflow_context=workflow_context,
             store_member_responses=store_member_responses,
             debug_mode=debug_mode,
-            add_history_to_context=add_history_to_context,
+            add_history_to_context=add_history,
             dependencies=run_dependencies,
         )
 
@@ -1128,9 +1129,9 @@ class Team:
                         videos=videos,
                         files=files,
                         knowledge_filters=effective_filters,
-                        add_history_to_context=add_history_to_context,
+                        add_history_to_context=add_history,
                         dependencies=run_dependencies,
-                        add_dependencies_to_context=add_dependencies_to_context,
+                        add_dependencies_to_context=add_dependencies,
                         **kwargs,
                     )
                 else:
@@ -1144,9 +1145,9 @@ class Team:
                         videos=videos,
                         files=files,
                         knowledge_filters=effective_filters,
-                        add_history_to_context=add_history_to_context,
+                        add_history_to_context=add_history,
                         dependencies=run_dependencies,
-                        add_dependencies_to_context=add_dependencies_to_context,
+                        add_dependencies_to_context=add_dependencies,
                         **kwargs,
                     )
                 if len(run_messages.messages) == 0:
@@ -1520,6 +1521,12 @@ class Team:
         if run_dependencies is not None:
             self._resolve_run_dependencies(dependencies=run_dependencies)
 
+        # Determine runtime context parameters
+        add_dependencies = (
+            add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+        )
+        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+
         # Extract workflow context from kwargs if present
         workflow_context = kwargs.pop("workflow_context", None)
 
@@ -1561,13 +1568,8 @@ class Team:
             session_id=session_id,
             team_id=self.id,
             team_name=self.name,
+            metadata=metadata,
         )
-
-        # Add user-provided metadata
-        if metadata is not None:
-            if run_response.metadata is None:
-                run_response.metadata = {}
-            run_response.metadata.update(metadata)
 
         run_response.model = self.model.id if self.model is not None else None
         run_response.model_provider = self.model.provider if self.model is not None else None
@@ -1621,9 +1623,9 @@ class Team:
                         videos=videos,
                         files=files,
                         knowledge_filters=effective_filters,
-                        add_history_to_context=add_history_to_context,
+                        add_history_to_context=add_history,
                         dependencies=run_dependencies,
-                        add_dependencies_to_context=add_dependencies_to_context,
+                        add_dependencies_to_context=add_dependencies,
                         **kwargs,
                     )
                 else:
@@ -1637,9 +1639,9 @@ class Team:
                         videos=videos,
                         files=files,
                         knowledge_filters=effective_filters,
-                        add_history_to_context=add_history_to_context,
+                        add_history_to_context=add_history,
                         dependencies=run_dependencies,
-                        add_dependencies_to_context=add_dependencies_to_context,
+                        add_dependencies_to_context=add_dependencies,
                         **kwargs,
                     )
 
@@ -2615,11 +2617,6 @@ class Team:
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
-        run_dependencies = dependencies if dependencies is not None else self.dependencies
-
-        if run_dependencies is not None:
-            self._resolve_run_dependencies(run_dependencies)
-
         add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
         if not tags_to_include_in_markdown:
@@ -2657,7 +2654,7 @@ class Team:
                 stream_intermediate_steps=stream_intermediate_steps,
                 knowledge_filters=knowledge_filters,
                 add_history_to_context=add_history,
-                dependencies=run_dependencies,
+                dependencies=dependencies,
                 metadata=metadata,
                 debug_mode=debug_mode,
                 **kwargs,
@@ -2681,7 +2678,7 @@ class Team:
                 markdown=markdown,
                 knowledge_filters=knowledge_filters,
                 add_history_to_context=add_history,
-                dependencies=run_dependencies,
+                dependencies=dependencies,
                 metadata=metadata,
                 debug_mode=debug_mode,
                 **kwargs,
@@ -2713,11 +2710,6 @@ class Team:
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
-        run_dependencies = dependencies if dependencies is not None else self.dependencies
-
-        if run_dependencies is not None:
-            await self._aresolve_run_dependencies(run_dependencies)
-
         add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
         if not tags_to_include_in_markdown:
@@ -2755,7 +2747,7 @@ class Team:
                 stream_intermediate_steps=stream_intermediate_steps,
                 knowledge_filters=knowledge_filters,
                 add_history_to_context=add_history,
-                dependencies=run_dependencies,
+                dependencies=dependencies,
                 metadata=metadata,
                 debug_mode=debug_mode,
                 **kwargs,
@@ -2779,7 +2771,7 @@ class Team:
                 markdown=markdown,
                 knowledge_filters=knowledge_filters,
                 add_history_to_context=add_history,
-                dependencies=run_dependencies,
+                dependencies=dependencies,
                 metadata=metadata,
                 debug_mode=debug_mode,
                 **kwargs,

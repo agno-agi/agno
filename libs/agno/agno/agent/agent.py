@@ -1729,7 +1729,7 @@ class Agent:
         session_state = self._update_session_state(session=agent_session, session_state=session_state)
 
         run_dependencies = dependencies if dependencies is not None else self.dependencies
-        
+
         # Resolve dependencies
         if run_dependencies is not None:
             self._resolve_run_dependencies(dependencies=run_dependencies)
@@ -2344,7 +2344,7 @@ class Agent:
         """
         # Resolving here for async requirement
         run_dependencies = dependencies if dependencies is not None else self.dependencies
-        
+
         # Resolve dependencies
         if run_dependencies is not None:
             await self._aresolve_run_dependencies(dependencies=run_dependencies)
