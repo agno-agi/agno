@@ -1,4 +1,4 @@
-"""Run `pip install ollama duckduckgo-search yfinance pypdf sqlalchemy 'fastapi[standard]' youtube-transcript-api agno` to install dependencies."""
+"""Run `pip install ollama ddgs yfinance pypdf sqlalchemy 'fastapi[standard]' youtube-transcript-api agno` to install dependencies."""
 
 from agno.agent import Agent
 from agno.models.ollama import Ollama

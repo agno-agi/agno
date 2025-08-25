@@ -15,7 +15,7 @@ Example images to try:
 - Breaking news scenes
 - Historical locations
 
-Run `pip install duckduckgo-search agno` to install dependencies.
+Run `pip install ddgs agno` to install dependencies.
 """
 
 from textwrap import dedent

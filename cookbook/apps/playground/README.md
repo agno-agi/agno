@@ -23,7 +23,7 @@ export EXA_API_KEY=***
 ### Install libraries
 
 ```shell
-pip install -U openai exa_py duckduckgo-search yfinance pypdf sqlalchemy 'fastapi[standard]' youtube-transcript-api agno
+pip install -U openai exa_py ddgs yfinance pypdf sqlalchemy 'fastapi[standard]' youtube-transcript-api agno
 ```
 
 ### Authenticate with agno.app

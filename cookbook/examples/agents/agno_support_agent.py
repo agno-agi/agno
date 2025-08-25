@@ -17,7 +17,7 @@ Example prompts to try:
 - "What models does Agno support?"
 - "How do I implement RAG with Agno?"
 
-Run `pip install openai lancedb tantivy pypdf duckduckgo-search inquirer agno` to install dependencies.
+Run `pip install openai lancedb tantivy pypdf ddgs inquirer agno` to install dependencies.
 """
 
 from pathlib import Path
