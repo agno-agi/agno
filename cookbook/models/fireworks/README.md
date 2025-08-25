@@ -18,7 +18,7 @@ export FIREWORKS_API_KEY=***
 ### 3. Install libraries
 
 ```shell
-pip install -U openai duckduckgo-search duckdb yfinance agno
+pip install -U openai ddgs duckdb yfinance agno
 ```
 
 ### 4. Run basic Agent

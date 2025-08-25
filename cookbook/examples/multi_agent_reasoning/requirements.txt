@@ -27,7 +27,7 @@ charset-normalizer==3.4.2
     # via requests
 click==8.2.1
     # via
-    #   duckduckgo-search
+    #   ddgs
     #   rich-toolkit
     #   typer
     #   uvicorn
@@ -41,7 +41,7 @@ dnspython==2.7.0
     # via email-validator
 docstring-parser==0.16
     # via agno
-duckduckgo-search==8.0.2
+ddgs==9.5.4
     # via -r cookbook/examples/multi_agent_reasoning/requirements.in
 email-validator==2.2.0
     # via fastapi
@@ -82,7 +82,7 @@ jiter==0.10.0
     #   anthropic
     #   openai
 lxml==5.4.0
-    # via duckduckgo-search
+    # via ddgs
 markdown-it-py==3.0.0
     # via rich
 markupsafe==3.0.2
@@ -107,7 +107,7 @@ pgvector==0.4.1
 platformdirs==4.3.8
     # via yfinance
 primp==0.15.0
-    # via duckduckgo-search
+    # via ddgs
 protobuf==6.31.1
     # via yfinance
 psycopg==3.2.9
