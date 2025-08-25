@@ -186,7 +186,6 @@ jobs:
       fail-fast: true
     env:
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-      EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -774,15 +773,15 @@ jobs:
         working-directory: .
         run: |
           source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/knowledge/test_csv_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_csv_url_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_docx_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_json_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_md_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_pdf_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_pdf_url_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_pdf_bytes_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_text_knowledge_base.py
+          python -m pytest ./libs/agno/tests/integration/knowledge/test_csv_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_csv_url_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_docx_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_json_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_md_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_pdf_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_pdf_url_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_pdf_bytes_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_text_knowledge.py
 
   test-knowledge-2:
     runs-on: ubuntu-latest
@@ -811,41 +810,12 @@ jobs:
         working-directory: .
         run: |
           source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/knowledge/test_arxiv_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_firecrawl_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_url_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_website_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_youtube_knowledge_base.py
+          python -m pytest ./libs/agno/tests/integration/knowledge/test_arxiv_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_firecrawl_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_url_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_website_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_youtube_knowledge.py
 
-  test-db:
-    runs-on: ubuntu-latest
-    if: false # Disable DB tests until we get postgres set up
-    strategy:
-      matrix:
-        python-version: ["3.12"]
-      fail-fast: true # Stop all matrix jobs if one fails
-    env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-    steps:
-      - uses: actions/checkout@v3
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-      - name: Run dev setup
-        working-directory: .
-        run: |
-          ./scripts/dev_setup.sh
-      - name: Run DB integration tests
-        working-directory: .
-        run: |
-          source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/db
-          
   # Run remaining integration tests
   test-remaining:
     runs-on: ubuntu-latest
@@ -874,4 +844,4 @@ jobs:
         working-directory: .
         run: |
           source .venv/bin/activate
-          python -m pytest --ignore=./libs/agno/tests/integration/db --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/workflows_2 ./libs/agno/tests/integration
+          python -m pytest --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/workflows_2 ./libs/agno/tests/integration
