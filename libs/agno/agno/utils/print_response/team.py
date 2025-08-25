@@ -34,6 +34,10 @@ def print_response(
     files: Optional[Sequence[File]] = None,
     markdown: bool = False,
     knowledge_filters: Optional[Dict[str, Any]] = None,
+    add_history_to_context: Optional[bool] = None,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    debug_mode: Optional[bool] = None,
     **kwargs: Any,
 ) -> None:
     import textwrap
@@ -82,6 +86,10 @@ def print_response(
             session_state=session_state,
             user_id=user_id,
             knowledge_filters=knowledge_filters,
+            add_history_to_context=add_history_to_context,
+            dependencies=dependencies,
+            metadata=metadata,
+            debug_mode=debug_mode,
             **kwargs,
         )
         response_timer.stop()
@@ -307,6 +315,10 @@ def print_response_stream(
     markdown: bool = False,
     stream_intermediate_steps: bool = False,  # type: ignore
     knowledge_filters: Optional[Dict[str, Any]] = None,
+    add_history_to_context: Optional[bool] = None,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    debug_mode: Optional[bool] = None,
     **kwargs: Any,
 ) -> None:
     import textwrap
@@ -372,6 +384,10 @@ def print_response_stream(
             session_state=session_state,
             user_id=user_id,
             knowledge_filters=knowledge_filters,
+            add_history_to_context=add_history_to_context,
+            dependencies=dependencies,
+            metadata=metadata,
+            debug_mode=debug_mode,
             **kwargs,
         )
 
@@ -819,6 +835,10 @@ async def aprint_response(
     files: Optional[Sequence[File]] = None,
     markdown: bool = False,
     knowledge_filters: Optional[Dict[str, Any]] = None,
+    add_history_to_context: Optional[bool] = None,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    debug_mode: Optional[bool] = None,
     **kwargs: Any,
 ) -> None:
     import textwrap
@@ -867,6 +887,10 @@ async def aprint_response(
             session_state=session_state,
             user_id=user_id,
             knowledge_filters=knowledge_filters,
+            add_history_to_context=add_history_to_context,
+            dependencies=dependencies,
+            metadata=metadata,
+            debug_mode=debug_mode,
             **kwargs,
         )
         response_timer.stop()
@@ -1090,6 +1114,10 @@ async def aprint_response_stream(
     markdown: bool = False,
     stream_intermediate_steps: bool = False,  # type: ignore
     knowledge_filters: Optional[Dict[str, Any]] = None,
+    add_history_to_context: Optional[bool] = None,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+    debug_mode: Optional[bool] = None,
     **kwargs: Any,
 ) -> None:
     import textwrap
@@ -1160,6 +1188,10 @@ async def aprint_response_stream(
             session_state=session_state,
             user_id=user_id,
             knowledge_filters=knowledge_filters,
+            add_history_to_context=add_history_to_context,
+            dependencies=dependencies,
+            metadata=metadata,
+            debug_mode=debug_mode,
             **kwargs,
         ):
             run_id = resp.run_id

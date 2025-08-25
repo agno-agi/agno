@@ -933,6 +933,10 @@ class Agent:
         files: Optional[Sequence[File]] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunOutput: ...
@@ -953,8 +957,12 @@ class Agent:
         files: Optional[Sequence[File]] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         yield_run_response: bool = False,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Iterator[Union[RunOutputEvent, RunOutput]]: ...
 
@@ -973,8 +981,12 @@ class Agent:
         files: Optional[Sequence[File]] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         yield_run_response: bool = False,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[RunOutput, Iterator[Union[RunOutputEvent, RunOutput]]]:
         """Run the Agent and return the response."""
@@ -999,9 +1011,17 @@ class Agent:
         # Update session state from DB
         session_state = self._update_session_state(session=agent_session, session_state=session_state)
 
+        # Determine runtime dependencies
+        run_dependencies = dependencies if dependencies is not None else self.dependencies
+
         # Resolve dependencies
-        if self.dependencies is not None:
-            self._resolve_run_dependencies()
+        if run_dependencies is not None:
+            self._resolve_run_dependencies(dependencies=run_dependencies)
+
+        add_dependencies = (
+            add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+        )
+        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
         # Extract workflow context from kwargs if present
         workflow_context = kwargs.pop("workflow_context", None)
@@ -1039,6 +1059,7 @@ class Agent:
             session_id=session_id,
             agent_id=self.id,
             agent_name=self.name,
+            metadata=metadata,
         )
 
         run_response.model = self.model.id if self.model is not None else None
@@ -1077,6 +1098,9 @@ class Agent:
                     videos=videos,
                     files=files,
                     knowledge_filters=effective_filters,
+                    add_history_to_context=add_history,
+                    dependencies=dependencies,
+                    add_dependencies_to_context=add_dependencies,
                     **kwargs,
                 )
                 if len(run_messages.messages) == 0:
@@ -1148,6 +1172,7 @@ class Agent:
         session: AgentSession,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> RunOutput:
         """Run the Agent and yield the RunOutput.
 
@@ -1161,9 +1186,10 @@ class Agent:
         7. Save session to storage
         8. Optional: Save output to file if save_response_to_file is set
         """
+        arun_dependencies = dependencies if dependencies is not None else self.dependencies
         # Resolving here for async requirement
         if self.dependencies is not None:
-            await self._aresolve_run_dependencies()
+            await self._aresolve_run_dependencies(dependencies=arun_dependencies)
 
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
@@ -1242,6 +1268,7 @@ class Agent:
         stream_intermediate_steps: bool = False,
         workflow_context: Optional[Dict] = None,
         yield_run_response: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
         """Run the Agent and yield the RunOutput.
 
@@ -1254,9 +1281,10 @@ class Agent:
         6. Add RunOutput to Agent Session
         7. Save session to storage
         """
+        run_dependencies = dependencies if dependencies is not None else self.dependencies
         # Resolving here for async requirement
         if self.dependencies is not None:
-            await self._aresolve_run_dependencies()
+            await self._aresolve_run_dependencies(dependencies=run_dependencies)
 
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
         # Start the Run by yielding a RunStarted event
@@ -1382,6 +1410,10 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunOutput: ...
@@ -1401,8 +1433,12 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         yield_run_response: Optional[bool] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]: ...
 
@@ -1421,8 +1457,12 @@ class Agent:
         stream_intermediate_steps: Optional[bool] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         yield_run_response: Optional[bool] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
         """Async Run the Agent and return the response."""
@@ -1446,6 +1486,18 @@ class Agent:
 
         # Update session state from DB
         session_state = self._update_session_state(session=agent_session, session_state=session_state)
+
+        # Determine run dependencies
+        run_dependencies = dependencies if dependencies is not None else self.dependencies
+
+        # Resolve callable dependencies if present
+        if run_dependencies is not None:
+            self._resolve_run_dependencies(dependencies=run_dependencies)
+
+        add_dependencies = (
+            add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+        )
+        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
         # Extract workflow context from kwargs if present
         workflow_context = kwargs.pop("workflow_context", None)
@@ -1481,6 +1533,7 @@ class Agent:
             session_id=session_id,
             agent_id=self.id,
             agent_name=self.name,
+            metadata=metadata,
         )
 
         run_response.model = self.model.id if self.model is not None else None
@@ -1519,6 +1572,9 @@ class Agent:
                     videos=videos,
                     files=files,
                     knowledge_filters=effective_filters,
+                    add_history_to_context=add_history,
+                    dependencies=dependencies,
+                    add_dependencies_to_context=add_dependencies,
                     **kwargs,
                 )
                 if len(run_messages.messages) == 0:
@@ -1537,6 +1593,7 @@ class Agent:
                         stream_intermediate_steps=stream_intermediate_steps,
                         workflow_context=workflow_context,
                         yield_run_response=yield_run_response,
+                        dependencies=run_dependencies if add_dependencies else None,
                     )  # type: ignore[assignment]
                 else:
                     return self._arun(  # type: ignore
@@ -1545,6 +1602,7 @@ class Agent:
                         user_id=user_id,
                         session=agent_session,
                         response_format=response_format,
+                        dependencies=run_dependencies if add_dependencies else None,
                     )
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
@@ -1598,6 +1656,7 @@ class Agent:
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> RunOutput: ...
 
     @overload
@@ -1614,6 +1673,7 @@ class Agent:
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Iterator[RunOutputEvent]: ...
 
     def continue_run(
@@ -1629,6 +1689,7 @@ class Agent:
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Union[RunOutput, Iterator[RunOutputEvent]]:
         """Continue a previous run.
 
@@ -1667,9 +1728,11 @@ class Agent:
         # Update session state from DB
         session_state = self._update_session_state(session=agent_session, session_state=session_state)
 
+        run_dependencies = dependencies if dependencies is not None else self.dependencies
+
         # Resolve dependencies
-        if self.dependencies is not None:
-            self._resolve_run_dependencies()
+        if run_dependencies is not None:
+            self._resolve_run_dependencies(dependencies=run_dependencies)
 
         effective_filters = knowledge_filters
 
@@ -1899,6 +1962,11 @@ class Agent:
         6. Add RunOutput to Agent Session
         7. Save session to storage
         """
+
+        # Resolve dependencies if needed
+        if self.dependencies is not None:
+            self._resolve_run_dependencies(dependencies=self.dependencies)
+
         # Start the Run by yielding a RunContinued event
         if stream_intermediate_steps:
             yield self._handle_event(create_run_continued_event(run_response), run_response)
@@ -1972,6 +2040,7 @@ class Agent:
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> RunOutput: ...
 
     @overload
@@ -1988,6 +2057,7 @@ class Agent:
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]: ...
 
     def acontinue_run(  # type: ignore
@@ -2003,6 +2073,7 @@ class Agent:
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Union[RunOutput, AsyncIterator[Union[RunOutputEvent, RunOutput]]]:
         """Continue a previous run.
 
@@ -2121,6 +2192,7 @@ class Agent:
                         session=agent_session,
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
+                        dependencies=run_dependencies if add_dependencies else None,
                     )
                 else:
                     return self._acontinue_run(  # type: ignore
@@ -2129,6 +2201,7 @@ class Agent:
                         user_id=user_id,
                         session=agent_session,
                         response_format=response_format,
+                        dependencies=run_dependencies if add_dependencies else None,
                     )
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
@@ -2173,6 +2246,7 @@ class Agent:
         session: AgentSession,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> RunOutput:
         """Continue a previous run.
 
@@ -2185,10 +2259,9 @@ class Agent:
         6. Save session to storage
         7. Save output to file if save_response_to_file is set
         """
-
-        # Resolving here for async requirement
-        if self.dependencies is not None:
-            await self._aresolve_run_dependencies()
+        # Resolving dependencies for async requirement
+        if dependencies is not None:
+            await self._aresolve_run_dependencies(dependencies)
 
         self.model = cast(Model, self.model)
 
@@ -2256,6 +2329,7 @@ class Agent:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]:
         """Continue a previous run.
 
@@ -2269,8 +2343,11 @@ class Agent:
         7. Save session to storage
         """
         # Resolving here for async requirement
-        if self.dependencies is not None:
-            await self._aresolve_run_dependencies()
+        run_dependencies = dependencies if dependencies is not None else self.dependencies
+
+        # Resolve dependencies
+        if run_dependencies is not None:
+            await self._aresolve_run_dependencies(dependencies=run_dependencies)
 
         # Start the Run by yielding a RunContinued event
         if stream_intermediate_steps:
@@ -3594,37 +3671,38 @@ class Agent:
                 log_debug("Model does not support structured or JSON schema outputs.")
                 return json_response_format
 
-    def _resolve_run_dependencies(self) -> None:
+    def _resolve_run_dependencies(self, dependencies: Dict[str, Any]) -> None:
         from inspect import signature
 
+        # Dependencies should already be resolved in run() method
         log_debug("Resolving dependencies")
-        if not isinstance(self.dependencies, dict):
+        if not isinstance(dependencies, dict):
             log_warning("Dependencies is not a dict")
             return
 
-        for key, value in self.dependencies.items():
+        for key, value in dependencies.items():
             if callable(value):
                 try:
                     sig = signature(value)
                     result = value(agent=self) if "agent" in sig.parameters else value()
                     if result is not None:
-                        self.dependencies[key] = result
+                        dependencies[key] = result
                 except Exception as e:
                     log_warning(f"Failed to resolve dependencies for '{key}': {e}")
             else:
-                self.dependencies[key] = value
+                dependencies[key] = value
 
-    async def _aresolve_run_dependencies(self) -> None:
+    async def _aresolve_run_dependencies(self, dependencies: Dict[str, Any]) -> None:
         from inspect import iscoroutine, signature
 
         log_debug("Resolving context (async)")
-        if not isinstance(self.dependencies, dict):
+        if not isinstance(dependencies, dict):
             log_warning("Context is not a dict")
             return
 
-        for key, value in self.dependencies.items():
+        for key, value in dependencies.items():
             if not callable(value):
-                self.dependencies[key] = value
+                dependencies[key] = value
                 continue
 
             try:
@@ -3634,7 +3712,7 @@ class Agent:
                 if iscoroutine(result):
                     result = await result
 
-                self.dependencies[key] = result
+                dependencies[key] = result
             except Exception as e:
                 log_warning(f"Failed to resolve context for '{key}': {e}")
 
@@ -4062,7 +4140,11 @@ class Agent:
         return self.memory_manager.get_user_memories(user_id=user_id)
 
     def _format_message_with_state_variables(
-        self, message: Any, user_id: Optional[str] = None, session_state: Optional[Dict[str, Any]] = None
+        self,
+        message: Any,
+        user_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> Any:
         """Format a message with the session state variables."""
         import re
@@ -4072,9 +4154,10 @@ class Agent:
         if not isinstance(message, str):
             return message
 
+        # Dependencies should already be resolved and passed from run() method
         format_variables = ChainMap(
             session_state or {},
-            self.dependencies or {},
+            dependencies or {},
             self.metadata or {},
             {"user_id": user_id} if user_id is not None else {},
         )
@@ -4094,7 +4177,9 @@ class Agent:
             log_warning(f"Template substitution failed: {e}")
             return message
 
-    def get_system_message(self, session: AgentSession, user_id: Optional[str] = None) -> Optional[Message]:
+    def get_system_message(
+        self, session: AgentSession, user_id: Optional[str] = None, dependencies: Optional[Dict[str, Any]] = None
+    ) -> Optional[Message]:
         """Return the system message for the Agent.
 
         1. If the system_message is provided, use that.
@@ -4267,6 +4352,7 @@ class Agent:
                 system_message_content,
                 user_id=user_id,
                 session_state=session.session_data.get("session_state") if session.session_data is not None else None,
+                dependencies=dependencies,
             )
 
         # 3.3.7 Then add the expected output
@@ -4367,6 +4453,8 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> Optional[Message]:
         """Return the user message for the Agent.
@@ -4397,6 +4485,7 @@ class Agent:
                     session_state=session.session_data.get("session_state")
                     if session.session_data is not None
                     else None,
+                    dependencies=dependencies,
                 )
 
             return Message(
@@ -4514,6 +4603,7 @@ class Agent:
                         session_state=session.session_data.get("session_state")
                         if session.session_data is not None
                         else None,
+                        dependencies=dependencies,
                     )
 
                 # Convert to string for concatenation operations
@@ -4531,9 +4621,9 @@ class Agent:
                     user_msg_content_str += self._convert_documents_to_string(references.references) + "\n"
                     user_msg_content_str += "</references>"
                 # 4.2 Add context to user message
-                if self.add_dependencies_to_context and self.dependencies is not None:
+                if add_dependencies_to_context and dependencies is not None:
                     user_msg_content_str += "\n\n<additional context>\n"
-                    user_msg_content_str += self._convert_dependencies_to_string(self.dependencies) + "\n"
+                    user_msg_content_str += self._convert_dependencies_to_string(dependencies) + "\n"
                     user_msg_content_str += "</additional context>"
 
                 # Use the string version for the final content
@@ -4562,6 +4652,9 @@ class Agent:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        run_dependencies: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunMessages:
         """This function returns a RunMessages object with the following attributes:
@@ -4592,7 +4685,7 @@ class Agent:
         run_messages = RunMessages()
 
         # 1. Add system message to run_messages
-        system_message = self.get_system_message(session=session, user_id=user_id)
+        system_message = self.get_system_message(session=session, user_id=user_id, dependencies=run_dependencies)
         if system_message is not None:
             run_messages.system_message = system_message
             run_messages.messages.append(system_message)
@@ -4625,7 +4718,7 @@ class Agent:
                     run_response.additional_input.extend(messages_to_add_to_run_response)
 
         # 3. Add history to run_messages
-        if self.add_history_to_context:
+        if add_history_to_context:
             from copy import deepcopy
 
             history: List[Message] = session.get_messages_from_last_n_runs(
@@ -4670,6 +4763,8 @@ class Agent:
                 videos=videos,
                 files=files,
                 knowledge_filters=knowledge_filters,
+                run_dependencies=run_dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,
                 **kwargs,
             )
 
@@ -6311,9 +6406,14 @@ class Agent:
         # Add tags to include in markdown content
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
+        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
 
@@ -6349,6 +6449,9 @@ class Agent:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 console=console,
+                add_history_to_context=add_history,
+                dependencies=dependencies,
+                metadata=metadata,
                 **kwargs,
             )
 
@@ -6372,6 +6475,9 @@ class Agent:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 console=console,
+                add_history_to_context=add_history,
+                dependencies=dependencies,
+                metadata=metadata,
                 **kwargs,
             )
 
@@ -6396,9 +6502,14 @@ class Agent:
         # Add tags to include in markdown content
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
+        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
 
@@ -6434,6 +6545,9 @@ class Agent:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 console=console,
+                add_history_to_context=add_history,
+                dependencies=dependencies,
+                metadata=metadata,
                 **kwargs,
             )
         else:
@@ -6456,6 +6570,9 @@ class Agent:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 console=console,
+                add_history_to_context=add_history,
+                dependencies=dependencies,
+                metadata=metadata,
                 **kwargs,
             )
 
