@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.models.openai.like import OpenAILike
+from agno.models.response import ModelResponse
 
 
 @dataclass
@@ -19,7 +20,8 @@ class DashScope(OpenAILike):
         provider (str): The provider name. Defaults to "Qwen".
         api_key (Optional[str]): The DashScope API key.
         base_url (str): The base URL. Defaults to "https://dashscope-intl.aliyuncs.com/compatible-mode/v1".
-        enable_thinking (Optional[bool]): Enable thinking process (DashScope native parameter). Defaults to None.
+        enable_thinking (bool): Enable thinking process (DashScope native parameter). Defaults to False.
+        include_thoughts (Optional[bool]): Include thinking process in response (alternative parameter). Defaults to None.
     """
 
     id: str = "qwen-plus"
@@ -30,7 +32,9 @@ class DashScope(OpenAILike):
     base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
     # Thinking parameters
-    enable_thinking: Optional[bool] = False
+    enable_thinking: bool = False
+    include_thoughts: Optional[bool] = None
+    thinking_budget: Optional[int] = None
 
     # DashScope supports structured outputs
     supports_native_structured_outputs: bool = True
@@ -73,7 +77,15 @@ class DashScope(OpenAILike):
     ) -> Dict[str, Any]:
         params = super().get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice)
 
-        thinking_value = self.enable_thinking if self.enable_thinking is not None else False
-        params["extra_body"] = {"enable_thinking": thinking_value}
+        if self.include_thoughts is not None:
+            self.enable_thinking = True
+
+        if self.enable_thinking is not None:
+            params["extra_body"] = {
+                "enable_thinking": self.enable_thinking,
+            }
+            
+            if self.thinking_budget is not None:
+                params["extra_body"]["thinking_budget"] = self.thinking_budget
 
         return params
