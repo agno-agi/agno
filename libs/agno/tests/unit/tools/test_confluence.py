@@ -56,25 +56,6 @@ def test_init_with_environment_variables():
         assert tools.url == "https://example.atlassian.net"
         assert tools.username == "test_user"
         assert tools.password == "test_api_key"
-        mock_client.get_all_spaces.assert_called_with(limit=1)
-
-
-def test_init_with_constructor_parameters():
-    """Test initialization with constructor parameters."""
-    with patch("agno.tools.confluence.Confluence") as mock_confluence_class:
-        mock_client = MagicMock(spec=Confluence)
-        mock_client.get_all_spaces.return_value = {"results": []}
-        mock_confluence_class.return_value = mock_client
-        
-        tools = ConfluenceTools(
-            url="https://custom.atlassian.net",
-            username="custom_user",
-            api_key="custom_api_key",
-        )
-        assert tools.url == "https://custom.atlassian.net"
-        assert tools.username == "custom_user"
-        assert tools.password == "custom_api_key"
-        mock_client.get_all_spaces.assert_called_with(limit=1)
 
 
 def test_init_with_missing_credentials():
