@@ -93,27 +93,24 @@ class NebiusTools(Toolkit):
             if data is None:
                 log_warning("Nebius API did not return any data.")
                 return ToolResult(content="Failed to generate image: No data received from API.")
-                
+
             if hasattr(data, "b64_json") and data.b64_json:
                 image_base64 = data.b64_json
                 image_content_bytes = base64.b64decode(image_base64)
                 media_id = str(uuid4())
-                
+
                 # Create ImageArtifact with raw bytes
                 image_artifact = ImageArtifact(
-                    id=media_id,
-                    content=image_content_bytes,
-                    mime_type="image/png",
-                    original_prompt=prompt
+                    id=media_id, content=image_content_bytes, mime_type="image/png", original_prompt=prompt
                 )
-                
+
                 return ToolResult(
                     content="Image generated successfully.",
                     images=[image_artifact],
                 )
-            
+
             return ToolResult(content="Failed to generate image: No content received from API.")
-            
+
         except Exception as e:
             log_error(f"Failed to generate image using {self.image_model}: {e}")
             return ToolResult(content=f"Failed to generate image: {e}")

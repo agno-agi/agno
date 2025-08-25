@@ -149,11 +149,10 @@ class BrightDataTools(Toolkit):
                 mime_type="image/png",
                 original_prompt=f"Screenshot of {url}",
             )
-            
+
             log_debug(f"Screenshot captured and added as artifact with ID: {media_id}")
             return ToolResult(
-                content=f"Screenshot captured and added as artifact with ID: {media_id}",
-                images=[image_artifact]
+                content=f"Screenshot captured and added as artifact with ID: {media_id}", images=[image_artifact]
             )
         except Exception as e:
             return ToolResult(content=f"Error taking screenshot of {url}: {e}")

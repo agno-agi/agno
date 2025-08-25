@@ -4,9 +4,9 @@ from uuid import uuid4
 
 from agno.agent import Agent
 from agno.media import AudioArtifact, ImageArtifact
-from agno.tools.function import ToolResult
 from agno.team.team import Team
 from agno.tools import Toolkit
+from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
@@ -95,7 +95,7 @@ class OpenAITools(Toolkit):
         """
         try:
             import base64
-            
+
             extra_params = {
                 "size": self.image_size,
                 "quality": self.image_quality,
@@ -124,14 +124,14 @@ class OpenAITools(Toolkit):
             if data is None:
                 log_warning("OpenAI API did not return any data.")
                 return ToolResult(content="Failed to generate image: No data received from API.")
-            
+
             if hasattr(data, "b64_json") and data.b64_json:
                 image_base64 = data.b64_json
                 media_id = str(uuid4())
-                
+
                 # Decode base64 to bytes for proper storage
                 image_bytes = base64.b64decode(image_base64)
-                
+
                 # Create ImageArtifact and return in ToolResult
                 image_artifact = ImageArtifact(
                     id=media_id,
@@ -139,12 +139,12 @@ class OpenAITools(Toolkit):
                     mime_type="image/png",
                     original_prompt=prompt,
                 )
-                
+
                 return ToolResult(
                     content="Image generated successfully.",
                     images=[image_artifact],
                 )
-            
+
             return ToolResult(content="Failed to generate image: No content received from API.")
         except Exception as e:
             log_error(f"Failed to generate image using {self.image_model}: {e}")
@@ -182,7 +182,7 @@ class OpenAITools(Toolkit):
                 base64_audio=base64_encoded_audio,
                 mime_type=f"audio/{self.tts_format}",
             )
-            
+
             return ToolResult(
                 content=f"Speech generated successfully with ID: {media_id}",
                 audios=[audio_artifact],

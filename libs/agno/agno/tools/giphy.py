@@ -62,7 +62,7 @@ class GiphyTools(Toolkit):
             data = response.json()
             gif_urls = []
             image_artifacts = []
-            
+
             for gif in data.get("data", []):
                 images = gif.get("images", {})
                 original_image = images["original"]
@@ -73,19 +73,11 @@ class GiphyTools(Toolkit):
                 gif_urls.append(gif_url)
 
                 # Create ImageArtifact for the GIF
-                image_artifact = ImageArtifact(
-                    id=media_id, 
-                    url=gif_url, 
-                    alt_text=alt_text, 
-                    revised_prompt=query
-                )
+                image_artifact = ImageArtifact(id=media_id, url=gif_url, alt_text=alt_text, revised_prompt=query)
                 image_artifacts.append(image_artifact)
 
             if image_artifacts:
-                return ToolResult(
-                    content=f"Found {len(gif_urls)} GIF(s): {gif_urls}",
-                    images=image_artifacts
-                )
+                return ToolResult(content=f"Found {len(gif_urls)} GIF(s): {gif_urls}", images=image_artifacts)
             else:
                 return ToolResult(content="No gifs found")
 

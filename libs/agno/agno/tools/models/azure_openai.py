@@ -128,7 +128,9 @@ class AzureOpenAITools(Toolkit):
         """
         # Check if image generation is properly initialized
         if not hasattr(self, "image_base_url"):
-            return ToolResult(content="Image generation tool not properly initialized. Please check your configuration.")
+            return ToolResult(
+                content="Image generation tool not properly initialized. Please check your configuration."
+            )
 
         # Enforce valid parameters
         params = self._enforce_valid_image_parameters(
@@ -159,20 +161,17 @@ class AzureOpenAITools(Toolkit):
             # Create ImageArtifact objects for generated images
             generated_images = []
             response_str = ""
-            
+
             for img in data.get("data", []):
                 image_url = img.get("url")
                 revised_prompt = img.get("revised_prompt")
-                
+
                 # Create ImageArtifact with URL
                 image_artifact = ImageArtifact(
-                    id=str(uuid4()),
-                    url=image_url,
-                    original_prompt=prompt,
-                    revised_prompt=revised_prompt
+                    id=str(uuid4()), url=image_url, original_prompt=prompt, revised_prompt=revised_prompt
                 )
                 generated_images.append(image_artifact)
-                
+
                 response_str += f"Image has been generated at the URL {image_url}\n"
 
             if generated_images:

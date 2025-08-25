@@ -70,20 +70,14 @@ class FalTools(Toolkit):
                     id=media_id,
                     url=url,
                 )
-                return ToolResult(
-                    content=f"Image generated successfully at {url}",
-                    images=[image_artifact]
-                )
+                return ToolResult(content=f"Image generated successfully at {url}", images=[image_artifact])
             elif "video" in result:
                 url = result.get("video", {}).get("url", "")
                 video_artifact = VideoArtifact(
                     id=media_id,
                     url=url,
                 )
-                return ToolResult(
-                    content=f"Video generated successfully at {url}",
-                    videos=[video_artifact]
-                )
+                return ToolResult(content=f"Video generated successfully at {url}", videos=[video_artifact])
             else:
                 logger.error(f"Unsupported type in result: {result}")
                 return ToolResult(content=f"Unsupported type in result: {result}")
@@ -120,10 +114,7 @@ class FalTools(Toolkit):
                 url=url,
             )
 
-            return ToolResult(
-                content=f"Image generated successfully at {url}",
-                images=[image_artifact]
-            )
+            return ToolResult(content=f"Image generated successfully at {url}", images=[image_artifact])
 
         except Exception as e:
             logger.error(f"Failed to generate image: {e}")

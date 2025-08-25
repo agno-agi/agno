@@ -1136,6 +1136,7 @@ class Model(ABC):
                         audios.append(Audio(url=aud_artifact.url))
                     elif aud_artifact.base64_audio:
                         import base64
+
                         audio_bytes = base64.b64decode(aud_artifact.base64_audio)
                         audios.append(Audio(content=audio_bytes))
 

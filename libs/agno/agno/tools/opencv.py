@@ -280,7 +280,7 @@ class OpenCVTools(Toolkit):
                 os.unlink(temp_filepath)
 
                 media_id = str(uuid4())
-                
+
                 # Create VideoArtifact with base64 encoded content
                 video_artifact = VideoArtifact(
                     id=media_id,
@@ -293,7 +293,7 @@ class OpenCVTools(Toolkit):
                 log_debug(
                     f"Successfully captured and attached video {media_id} ({actual_duration:.1f}s, {frame_count} frames)"
                 )
-                
+
                 return ToolResult(
                     content=f"Video captured successfully and attached as artifact {media_id} ({actual_duration:.1f}s, {frame_count} frames, {successful_codec} codec)",
                     videos=[video_artifact],

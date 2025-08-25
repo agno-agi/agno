@@ -4,9 +4,9 @@ import requests
 from PIL import Image as PILImage
 
 from agno.agent.agent import Agent
+from agno.db.in_memory import InMemoryDb
 from agno.media import Audio, Image, Video
 from agno.models.google import Gemini
-from agno.db.in_memory import InMemoryDb 
 
 
 def test_image_input():
@@ -158,7 +158,7 @@ def test_image_editing():
         telemetry=False,
         build_context=False,
         system_message=None,
-        db=InMemoryDb(), 
+        db=InMemoryDb(),
     )
 
     sample_image_url = "https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"

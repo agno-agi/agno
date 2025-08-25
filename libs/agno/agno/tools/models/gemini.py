@@ -94,7 +94,7 @@ class GeminiTools(Toolkit):
             for generated_image in response.generated_images:
                 if generated_image.image is None or not generated_image.image.image_bytes:
                     continue
-                    
+
                 image_bytes = generated_image.image.image_bytes
                 actual_mime_type = "image/png"
                 media_id = str(uuid4())
@@ -164,13 +164,13 @@ class GeminiTools(Toolkit):
             for video in result.generated_videos:
                 if video.video is None or not video.video.video_bytes:
                     continue
-                    
+
                 generated_video = video.video
                 if generated_video.video_bytes is None:
                     continue
 
                 media_id = str(uuid4())
-                
+
                 # Create VideoArtifact with base64 encoded content
                 video_artifact = VideoArtifact(
                     id=media_id,
@@ -188,7 +188,7 @@ class GeminiTools(Toolkit):
                 )
             else:
                 return ToolResult(content="Failed to generate video: No valid videos were generated.")
-                
+
         except Exception as e:
             log_error(f"Failed to generate video: {e}")
             return ToolResult(content=f"Failed to generate video: {e}")

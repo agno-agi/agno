@@ -19,10 +19,11 @@ Steps to use OpenCV Tools:
 Note: Make sure your webcam is connected and not being used by other applications.
 """
 
+import base64
+
 from agno.agent import Agent
 from agno.tools.opencv import OpenCVTools
 from agno.utils.media import save_base64_data
-import base64
 
 # Example 1: Agent with live preview enabled (interactive mode)
 print("Example 1: Interactive mode with live preview")
@@ -36,11 +37,13 @@ agent = Agent(
     tools=[OpenCVTools(show_preview=True)],  # Enable live preview
 )
 
-response = agent.run("Take a quick test of camera, capture the photo and tell me what you see in the photo.")
+response = agent.run(
+    "Take a quick test of camera, capture the photo and tell me what you see in the photo."
+)
 
 if response and response.images:
-    print('Agent response:', response.content)
-    image_base64 = base64.b64encode(response.images[0].content).decode('utf-8')
+    print("Agent response:", response.content)
+    image_base64 = base64.b64encode(response.images[0].content).decode("utf-8")
     save_base64_data(image_base64, "tmp/test.png")
 
 # Example 2: Capture a video

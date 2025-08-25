@@ -217,7 +217,7 @@ def test_text_to_speech(cartesia_tools, mock_cartesia_client, mock_agent):
     assert result.content == "Audio generated and attached successfully."
     assert result.audios is not None
     assert len(result.audios) == 1
-    
+
     # Check artifact content
     audio_artifact = result.audios[0]
     assert isinstance(audio_artifact, AudioArtifact)
@@ -231,7 +231,7 @@ def test_text_to_speech_error(cartesia_tools, mock_cartesia_client, mock_agent):
     mock_cartesia_client.tts.bytes.side_effect = Exception("TTS API Error")
 
     result = cartesia_tools.text_to_speech(agent=mock_agent, transcript="Error test")
-    
+
     # Verify ToolResult is returned with error message
     assert isinstance(result, ToolResult)
     assert result.content == "Error generating speech: TTS API Error"

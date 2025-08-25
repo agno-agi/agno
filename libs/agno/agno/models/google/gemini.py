@@ -814,9 +814,11 @@ class Gemini(Model):
                 if hasattr(part, "inline_data") and part.inline_data is not None:
                     if model_response.images is None:
                         model_response.images = []
-                    model_response.images.append(ImageArtifact(
-                        id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type
-                    ))
+                    model_response.images.append(
+                        ImageArtifact(
+                            id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type
+                        )
+                    )
 
                 # Extract function call if present
                 if hasattr(part, "function_call") and part.function_call is not None:
@@ -920,9 +922,11 @@ class Gemini(Model):
                     if hasattr(part, "inline_data") and part.inline_data is not None:
                         if model_response.images is None:
                             model_response.images = []
-                        model_response.images.append(ImageArtifact(
-                            id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type
-                        ))
+                        model_response.images.append(
+                            ImageArtifact(
+                                id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type
+                            )
+                        )
 
                     # Extract function call if present
                     if hasattr(part, "function_call") and part.function_call is not None:

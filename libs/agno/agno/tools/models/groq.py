@@ -141,12 +141,9 @@ class GroqTools(Toolkit):
                 base64_audio=base64_encoded_audio,
                 mime_type="audio/wav",
             )
-            
+
             log_debug(f"Successfully generated speech artifact with ID: {media_id}")
-            return ToolResult(
-                content=f"Speech generated successfully with ID: {media_id}",
-                audios=[audio_artifact]
-            )
+            return ToolResult(content=f"Speech generated successfully with ID: {media_id}", audios=[audio_artifact])
 
         except Exception as e:
             log_error(f"Failed to generate speech with Groq: {str(e)}")

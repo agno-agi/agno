@@ -18,8 +18,8 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.tools.dalle import DalleTools
 from agno.run.agent import RunOutput
+from agno.tools.dalle import DalleTools
 
 # Create an Creative AI Artist Agent
 image_agent = Agent(
@@ -54,7 +54,7 @@ run_response = image_agent.get_last_run_output()
 if run_response and isinstance(run_response, RunOutput):
     for image_response in run_response.images:
         image_url = image_response.url
-        print('image_url: ', image_url)
+        print("image_url: ", image_url)
 else:
     print("No images found or images is not a list")
 

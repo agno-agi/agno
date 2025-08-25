@@ -90,7 +90,7 @@ class ModelsLabTools(Toolkit):
     def _create_media_artifacts(self, media_id: str, media_url: str, eta: Optional[str] = None) -> Dict[str, List]:
         """Create appropriate media artifacts based on file type."""
         artifacts = {"images": [], "videos": [], "audios": []}
-        
+
         if self.file_type == FileType.MP4:
             video_artifact = VideoArtifact(id=str(media_id), url=media_url, eta=str(eta))
             artifacts["videos"].append(video_artifact)
@@ -100,7 +100,7 @@ class ModelsLabTools(Toolkit):
         elif self.file_type == FileType.MP3:
             audio_artifact = AudioArtifact(id=str(media_id), url=media_url)
             artifacts["audios"].append(audio_artifact)
-            
+
         return artifacts
 
     def _wait_for_media(self, media_id: str, eta: int) -> bool:
