@@ -720,7 +720,7 @@ def test_intermediate_steps_with_member_agents_collaborate():
     )
 
     response_generator = team.run(
-        message="Start the discussion on the topic: 'What is the best way to learn to code?'",
+        input="Start the discussion on the topic: 'What is the best way to learn to code?'",
         stream=True,
         stream_intermediate_steps=True,
     )
