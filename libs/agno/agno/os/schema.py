@@ -160,7 +160,7 @@ class AgentResponse(BaseModel):
             "add_name_to_context": False,
             "add_datetime_to_context": False,
             "add_location_to_context": False,
-            "add_state_in_messages": False,
+            "resolve_in_context": True,
             # Extra messages defaults
             "user_message_role": "user",
             "build_user_context": True,
@@ -276,7 +276,7 @@ class AgentResponse(BaseModel):
             "add_datetime_to_context": agent.add_datetime_to_context,
             "add_location_to_context": agent.add_location_to_context,
             "timezone_identifier": agent.timezone_identifier,
-            "add_state_in_messages": agent.add_state_in_messages,
+            "resolve_in_context": agent.resolve_in_context,
         }
 
         extra_messages_info = {
@@ -390,7 +390,7 @@ class TeamResponse(BaseModel):
             "markdown": False,
             "add_datetime_to_context": False,
             "add_location_to_context": False,
-            "add_state_in_messages": False,
+            "resolve_in_context": True,
             # Response settings defaults
             "parse_response": True,
             "use_json_mode": False,
@@ -501,7 +501,7 @@ class TeamResponse(BaseModel):
             "markdown": team.markdown,
             "add_datetime_to_context": team.add_datetime_to_context,
             "add_location_to_context": team.add_location_to_context,
-            "add_state_in_messages": team.add_state_in_messages,
+            "resolve_in_context": team.resolve_in_context,
         }
 
         response_settings_info: Dict[str, Any] = {

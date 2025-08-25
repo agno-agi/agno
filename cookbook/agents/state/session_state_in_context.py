@@ -9,7 +9,6 @@ db = PostgresDb(db_url=db_url, session_table="sessions")
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    add_state_in_messages=True,
     instructions="Users name is {user_name} and age is {age}",
     db=db,
 )

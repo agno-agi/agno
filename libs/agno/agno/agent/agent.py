@@ -242,8 +242,8 @@ class Agent:
     add_location_to_context: bool = False
     # Allows for custom timezone for datetime instructions following the TZ Database format (e.g. "Etc/UTC")
     timezone_identifier: Optional[str] = None
-    # If True, add the session state variables in the user and system messages
-    add_state_in_messages: bool = False
+    # If True, resolve session_state, dependencies, and metadata in the user and system messages
+    resolve_in_context: bool = True
 
     # --- Extra Messages ---
     # A list of extra messages added after the system message and before the user message.
@@ -382,7 +382,7 @@ class Agent:
         add_datetime_to_context: bool = False,
         add_location_to_context: bool = False,
         timezone_identifier: Optional[str] = None,
-        add_state_in_messages: bool = False,
+        resolve_in_context: bool = True,
         additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
         user_message: Optional[Union[List, Dict, str, Callable, Message]] = None,
         user_message_role: str = "user",
@@ -477,7 +477,7 @@ class Agent:
         self.add_datetime_to_context = add_datetime_to_context
         self.add_location_to_context = add_location_to_context
         self.timezone_identifier = timezone_identifier
-        self.add_state_in_messages = add_state_in_messages
+        self.resolve_in_context = resolve_in_context
         self.additional_input = additional_input
 
         self.user_message = user_message
@@ -4201,7 +4201,7 @@ class Agent:
                     raise Exception("system_message must return a string")
 
             # Format the system message with the session state variables
-            if self.add_state_in_messages:
+            if self.resolve_in_context:
                 sys_message_content = self._format_message_with_state_variables(
                     sys_message_content,
                     user_id=user_id,
@@ -4347,7 +4347,7 @@ class Agent:
                 system_message_content += f"{_ti}\n"
 
         # Format the system message with the session state variables
-        if self.add_state_in_messages:
+        if self.resolve_in_context:
             system_message_content = self._format_message_with_state_variables(
                 system_message_content,
                 user_id=user_id,
@@ -4478,7 +4478,7 @@ class Agent:
                 if not isinstance(user_message_content, str):
                     raise Exception("user_message must return a string")
 
-            if self.add_state_in_messages:
+            if self.resolve_in_context:
                 user_message_content = self._format_message_with_state_variables(
                     user_message_content,
                     user_id=user_id,
@@ -4596,7 +4596,7 @@ class Agent:
                     except Exception as e:
                         log_warning(f"Failed to get references: {e}")
 
-                if self.add_state_in_messages:
+                if self.resolve_in_context:
                     user_msg_content = self._format_message_with_state_variables(
                         user_msg_content,
                         user_id=user_id,

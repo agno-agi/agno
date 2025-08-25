@@ -68,8 +68,6 @@ agent = Agent(
         "Current User ID: {current_user_id}",
         "Current Session ID: {current_session_id}",
     ],
-    # Important: Add the state in the instructions
-    add_state_in_messages=True,
     markdown=True,
 )
 
