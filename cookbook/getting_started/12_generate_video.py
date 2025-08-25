@@ -49,9 +49,9 @@ video_agent.print_response(
 )
 
 # Retrieve and display generated videos
-videos = video_agent.get_videos()
-if videos:
-    for video in videos:
+run_response = video_agent.get_last_run_output()
+if run_response and run_response.videos:
+    for video in run_response.videos:
         print(f"Generated video URL: {video.url}")
 
 # More example prompts to try:

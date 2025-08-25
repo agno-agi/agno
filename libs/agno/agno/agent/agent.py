@@ -5168,21 +5168,6 @@ class Agent:
             run_response.audio = []
         run_response.audio.append(audio)
 
-    def get_images(self) -> Optional[List[ImageArtifact]]:
-        """Get images from the last run response"""
-        last_run = self.get_last_run_output()
-        return last_run.images if last_run else None
-
-    def get_videos(self) -> Optional[List[VideoArtifact]]:
-        """Get videos from the last run response"""
-        last_run = self.get_last_run_output()
-        return last_run.videos if last_run else None
-
-    def get_audio(self) -> Optional[List[AudioArtifact]]:
-        """Get audio from the last run response"""
-        last_run = self.get_last_run_output()
-        return last_run.audio if last_run else None
-
     ###########################################################################
     # Reasoning
     ###########################################################################
