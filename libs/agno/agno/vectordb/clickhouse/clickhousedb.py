@@ -140,7 +140,7 @@ class Clickhouse(VectorDb):
 
             if isinstance(self.index, HNSW):
                 index = (
-                    f"INDEX embedding_index embedding TYPE vector_similarity('hnsw', 'L2Distance', {self.index.quantization}, "
+                    f"INDEX embedding_index embedding TYPE vector_similarity('hnsw', 'L2Distance', {self.embedder.dimensions}, {self.index.quantization}, "
                     f"{self.index.hnsw_max_connections_per_layer}, {self.index.hnsw_candidate_list_size_for_construction})"
                 )
                 self.client.command("SET allow_experimental_vector_similarity_index = 1")

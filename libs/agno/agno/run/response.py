@@ -420,6 +420,9 @@ class RunResponse:
         messages = data.pop("messages", None)
         messages = [Message.model_validate(message) for message in messages] if messages else None
 
+        citations = data.pop("citations", None)
+        citations = Citations.model_validate(citations) if citations else None
+
         tools = data.pop("tools", [])
         tools = [ToolExecution.from_dict(tool) for tool in tools] if tools else None
 
@@ -441,6 +444,7 @@ class RunResponse:
 
         return cls(
             messages=messages,
+            citations=citations,
             tools=tools,
             images=images,
             audio=audio,
