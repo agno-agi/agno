@@ -251,9 +251,6 @@ class Agent:
     # Note: these are not retained in memory, they are added directly to the messages sent to the model.
     additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None
     # --- User message settings ---
-    # Provide the user message as a string, list, dict, or function
-    # Note: this will ignore the message sent to the run function
-    user_message: Optional[Union[List, Dict, str, Callable, Message]] = None
     # Role for the user message
     user_message_role: str = "user"
     # Set to False to skip building the user context
@@ -384,7 +381,6 @@ class Agent:
         timezone_identifier: Optional[str] = None,
         resolve_in_context: bool = True,
         additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
-        user_message: Optional[Union[List, Dict, str, Callable, Message]] = None,
         user_message_role: str = "user",
         build_user_context: bool = True,
         retries: int = 0,
@@ -480,8 +476,6 @@ class Agent:
         self.resolve_in_context = resolve_in_context
         self.additional_input = additional_input
 
-        self.user_message = user_message
-        self.user_message_role = user_message_role
         self.build_user_context = build_user_context
 
         self.retries = retries
@@ -4466,40 +4460,8 @@ class Agent:
         # Get references from the knowledge base to use in the user message
         references = None
 
-        # 1. If the user_message is provided, use that.
-        if self.user_message is not None:
-            if isinstance(self.user_message, Message):
-                return self.user_message
-
-            user_message_content = self.user_message
-            if callable(self.user_message):
-                user_message_kwargs = {"agent": self, "message": input, "references": references}
-                user_message_content = self.user_message(**user_message_kwargs)
-                if not isinstance(user_message_content, str):
-                    raise Exception("user_message must return a string")
-
-            if self.resolve_in_context:
-                user_message_content = self._format_message_with_state_variables(
-                    user_message_content,
-                    user_id=user_id,
-                    session_state=session.session_data.get("session_state")
-                    if session.session_data is not None
-                    else None,
-                    dependencies=dependencies,
-                )
-
-            return Message(
-                role=self.user_message_role,
-                content=user_message_content,
-                audio=audio,
-                images=images,
-                videos=videos,
-                files=files,
-                **kwargs,
-            )
-
-        # 2. If build_user_context is False or message is a list, return the message as is.
-        elif not self.build_user_context:
+        # 1. If build_user_context is False or message is a list, return the message as is.
+        if not self.build_user_context:
             return Message(
                 role=self.user_message_role,
                 content=input,
@@ -4509,7 +4471,7 @@ class Agent:
                 files=files,
                 **kwargs,
             )
-        # 3. Build the default user message for the Agent
+        # 2. Build the user message for the Agent
         elif input is None:
             # If we have any media, return a message with empty content
             if images is not None or audio is not None or videos is not None or files is not None:

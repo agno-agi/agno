@@ -793,7 +793,7 @@ class Workflow:
         sig = signature(func)
 
         # Build arguments based on what the function actually accepts
-        call_kwargs = {}
+        call_kwargs: Dict[str, Any] = {}
 
         # Only add workflow and execution_input if the function expects them
         if "workflow" in sig.parameters:  # type: ignore
@@ -801,7 +801,7 @@ class Workflow:
         if "execution_input" in sig.parameters:
             call_kwargs["execution_input"] = execution_input  # type: ignore
         if "session_state" in sig.parameters:
-            call_kwargs["session_state"] = self.session_state
+            call_kwargs["session_state"] = self.session_state  # type: ignore
 
         # Add any other kwargs that the function expects
         for param_name in kwargs:
@@ -1166,7 +1166,7 @@ class Workflow:
         sig = signature(func)
 
         # Build arguments based on what the function actually accepts
-        call_kwargs = {}
+        call_kwargs: Dict[str, Any] = {}
 
         # Only add workflow and execution_input if the function expects them
         if "workflow" in sig.parameters:  # type: ignore
@@ -1174,7 +1174,7 @@ class Workflow:
         if "execution_input" in sig.parameters:
             call_kwargs["execution_input"] = execution_input  # type: ignore
         if "session_state" in sig.parameters:
-            call_kwargs["session_state"] = self.session_state
+            call_kwargs["session_state"] = self.session_state  # type: ignore
 
         # Add any other kwargs that the function expects
         for param_name in kwargs:

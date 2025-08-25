@@ -281,7 +281,6 @@ class AgentResponse(BaseModel):
 
         extra_messages_info = {
             "additional_input": additional_input,  # type: ignore
-            "user_message": str(agent.user_message) if agent.user_message else None,
             "user_message_role": agent.user_message_role,
             "build_user_context": agent.build_user_context,
         }

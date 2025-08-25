@@ -612,17 +612,17 @@ def test_structured_output_with_workflow_components(shared_db):
     condition_output = response.step_results[1]
     loop_output = response.step_results[2]
 
-    assert hasattr(steps_output, 'steps') and steps_output.steps
+    assert hasattr(steps_output, "steps") and steps_output.steps
     actual_research_step = steps_output.steps[0]  # Get the actual research step
     assert isinstance(actual_research_step.content, ResearchData)
 
-    # Condition should have processed the structured data - access the nested step content  
-    assert hasattr(condition_output, 'steps') and condition_output.steps
+    # Condition should have processed the structured data - access the nested step content
+    assert hasattr(condition_output, "steps") and condition_output.steps
     actual_analysis_step = condition_output.steps[0]  # Get the actual analysis step
     assert isinstance(actual_analysis_step.content, AnalysisResult)
 
     # Loop should have structured output - access the nested step content
-    assert hasattr(loop_output, 'steps') and loop_output.steps  
+    assert hasattr(loop_output, "steps") and loop_output.steps
     actual_final_step = loop_output.steps[0]  # Get the actual final step
     assert isinstance(actual_final_step.content, FinalReport)
     assert actual_final_step.content.title == "AI Testing Report"
