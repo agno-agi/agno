@@ -208,7 +208,9 @@ class Gemini(Model):
         builtin_tools = []
 
         if self.grounding:
-            log_info("Grounding enabled. This is a legacy tool. For Gemini 2.0+ Please use enable `search` flag instead.")
+            log_info(
+                "Grounding enabled. This is a legacy tool. For Gemini 2.0+ Please use enable `search` flag instead."
+            )
             builtin_tools.append(
                 Tool(
                     google_search=GoogleSearchRetrieval(
@@ -233,13 +235,7 @@ class Gemini(Model):
                 log_error("vertexai_search_datastore must be provided when vertexai_search is enabled.")
                 raise ValueError("vertexai_search_datastore must be provided when vertexai_search is enabled.")
             builtin_tools.append(
-                Tool(
-                    retrieval=Retrieval(
-                        vertex_ai_search=VertexAISearch(
-                            datastore=self.vertexai_search_datastore
-                        )
-                    )
-                )
+                Tool(retrieval=Retrieval(vertex_ai_search=VertexAISearch(datastore=self.vertexai_search_datastore)))
             )
 
         # Set tools in config

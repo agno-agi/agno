@@ -1,4 +1,4 @@
-"""Run `pip install duckduckgo-search pgvector google.genai` to install dependencies."""
+"""Run `pip install ddgs pgvector google.genai` to install dependencies."""
 
 from agno.agent import Agent
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
