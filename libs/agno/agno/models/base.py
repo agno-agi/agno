@@ -21,7 +21,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.exceptions import AgentRunException
-from agno.media import AudioResponse, ImageArtifact
+from agno.media import AudioResponse, ImageArtifact, VideoArtifact
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
@@ -45,6 +45,7 @@ class MessageData:
 
     response_audio: Optional[AudioResponse] = None
     response_image: Optional[ImageArtifact] = None
+    response_video: Optional[VideoArtifact] = None
 
     # Data from the provider that we might need on subsequent messages
     response_provider_data: Optional[Dict[str, Any]] = None
@@ -504,6 +505,8 @@ class Model(ABC):
             model_response.audios = assistant_message.audio_output
         if assistant_message.image_output is not None:
             model_response.images = assistant_message.image_output
+        if assistant_message.video_output is not None:
+            model_response.videos = assistant_message.video_output
         if provider_response.extra is not None:
             if model_response.extra is None:
                 model_response.extra = {}
@@ -554,6 +557,8 @@ class Model(ABC):
             model_response.audios = assistant_message.audio_output
         if assistant_message.image_output is not None:
             model_response.images = assistant_message.image_output
+        if assistant_message.video_output is not None:
+            model_response.videos = assistant_message.video_output
         if provider_response.extra is not None:
             if model_response.extra is None:
                 model_response.extra = {}
@@ -594,6 +599,11 @@ class Model(ABC):
         if provider_response.images is not None:
             if provider_response.images:
                 assistant_message.image_output = provider_response.images[-1]  # Taking last (most recent) image
+
+        # Add video to assistant message
+        if provider_response.videos is not None:
+            if provider_response.videos:
+                assistant_message.video_output = provider_response.videos[-1]  # Taking last (most recent) video
 
         # Add thinking content to assistant message
         if provider_response.thinking is not None:
@@ -1004,6 +1014,10 @@ class Model(ABC):
         if model_response_delta.images:
             if stream_data.response_image is None:
                 stream_data.response_image = model_response_delta.images[-1]
+
+        if model_response_delta.videos:
+            if stream_data.response_video is None:
+                stream_data.response_video = model_response_delta.videos[-1]
 
         if model_response_delta.extra is not None:
             if stream_data.extra is None:
