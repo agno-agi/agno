@@ -25,9 +25,7 @@ class MovieScript(BaseModel):
 
 
 agent = Agent(
-    model=VLLM(
-        id="Qwen/Qwen2.5-7B-Instruct", top_k=20, enable_thinking=False
-    ),
+    model=VLLM(id="Qwen/Qwen2.5-7B-Instruct", top_k=20, enable_thinking=False),
     description="You write movie scripts.",
     output_schema=MovieScript,
 )

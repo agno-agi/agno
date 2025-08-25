@@ -43,7 +43,7 @@ class Portkey(OpenAILike):
                 model_name=self.name,
                 model_id=self.id,
             )
-        
+
         # Create headers using Portkey's createHeaders function
         header_params: Dict[str, Any] = {
             "api_key": self.portkey_api_key,

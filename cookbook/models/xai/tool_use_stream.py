@@ -1,4 +1,3 @@
-
 """Build a Web Search Agent using xAI."""
 
 from agno.agent import Agent
