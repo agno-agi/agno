@@ -86,13 +86,9 @@ class OpenAIResponses(Model):
         return self.id.startswith("o3") or self.id.startswith("o4-mini") or self.id.startswith("gpt-5")
 
     def _reasoning_summary_requested(self) -> bool:
-        """Return True if the request is configured to include a reasoning summary."""
-        try:
-            if self.reasoning is not None and isinstance(self.reasoning, dict):
-                if self.reasoning.get("summary") is not None:
-                    return True
-        except Exception:
-            pass
+        """Return True if a reasoning summary is requested."""
+        if isinstance(self.reasoning, dict) and self.reasoning.get("summary") is not None:
+            return True
         return self.reasoning_summary is not None
 
     def _get_client_params(self) -> Dict[str, Any]:
@@ -201,12 +197,8 @@ class OpenAIResponses(Model):
         if self.reasoning is not None:
             # Respect user-provided dict; only add summary if not present
             base_params["reasoning"] = self.reasoning
-            if (
-                isinstance(base_params["reasoning"], dict)
-                and self.reasoning_summary is not None
-                and base_params["reasoning"].get("summary") is None
-            ):
-                base_params["reasoning"]["summary"] = self.reasoning_summary
+            if isinstance(base_params["reasoning"], dict) and self.reasoning_summary is not None:
+                base_params["reasoning"].setdefault("summary", self.reasoning_summary)
         else:
             # Build a minimal dict when effort/summary are provided
             reasoning_dict: Dict[str, Any] = {}
@@ -214,7 +206,7 @@ class OpenAIResponses(Model):
                 reasoning_dict["effort"] = self.reasoning_effort
             if self.reasoning_summary is not None:
                 reasoning_dict["summary"] = self.reasoning_summary
-            if len(reasoning_dict) > 0:
+            if reasoning_dict:
                 base_params["reasoning"] = reasoning_dict
 
         # Build text parameter
@@ -792,21 +784,14 @@ class OpenAIResponses(Model):
                 model_response.extra.setdefault("tool_call_ids", []).append(output.call_id)
             elif output.type == "reasoning":
                 # Collect reasoning summary text when available
-                try:
-                    summaries = getattr(output, "summary", None)
-                    if summaries:
-                        for s in summaries:
-                            # Support both dicts and typed objects
-                            if isinstance(s, dict):
-                                text_val = s.get("text")
-                            else:
-                                text_val = getattr(s, "text", None)
-                            if text_val:
-                                if summary_text:
-                                    summary_text += "\n\n"
-                                summary_text += text_val
-                except Exception:
-                    pass
+                summaries = getattr(output, "summary", None)
+                if summaries:
+                    for s in summaries:
+                        text_val = s.get("text") if isinstance(s, dict) else getattr(s, "text", None)
+                        if text_val:
+                            if summary_text:
+                                summary_text += "\n\n"
+                            summary_text += text_val
 
         # Populate reasoning_content
         # If a reasoning summary was requested and found, prefer it.
@@ -928,25 +913,19 @@ class OpenAIResponses(Model):
 
             # On completion, capture reasoning summary text if present
             if self._reasoning_summary_requested():
-                try:
-                    summary_text: str = ""
-                    for out in getattr(stream_event.response, "output", []) or []:
-                        if getattr(out, "type", None) == "reasoning":
-                            summaries = getattr(out, "summary", None)
-                            if summaries:
-                                for s in summaries:
-                                    if isinstance(s, dict):
-                                        text_val = s.get("text")
-                                    else:
-                                        text_val = getattr(s, "text", None)
-                                    if text_val:
-                                        if summary_text:
-                                            summary_text += "\n\n"
-                                        summary_text += text_val
-                    if summary_text:
-                        model_response.reasoning_content = summary_text
-                except Exception:
-                    pass
+                summary_text: str = ""
+                for out in getattr(stream_event.response, "output", []) or []:
+                    if getattr(out, "type", None) == "reasoning":
+                        summaries = getattr(out, "summary", None)
+                        if summaries:
+                            for s in summaries:
+                                text_val = s.get("text") if isinstance(s, dict) else getattr(s, "text", None)
+                                if text_val:
+                                    if summary_text:
+                                        summary_text += "\n\n"
+                                    summary_text += text_val
+                if summary_text:
+                    model_response.reasoning_content = summary_text
 
         return model_response, tool_use
 
