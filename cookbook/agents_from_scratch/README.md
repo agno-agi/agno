@@ -16,7 +16,7 @@ source .venv/bin/activate
 Install the required dependencies:
 
 ```bash
-uv pip install -U agno openai duckduckgo-search elevenlabs sqlalchemy 'fastapi[standard]' lancedb pylance tantivy pandas numpy
+uv pip install -U agno openai ddgs elevenlabs sqlalchemy 'fastapi[standard]' lancedb pylance tantivy pandas numpy
 ```
 
 Export your OpenAI API key:

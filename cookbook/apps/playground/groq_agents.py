@@ -1,5 +1,5 @@
 """Usage:
-1. Install libraries: `pip install groq duckduckgo-search yfinance pypdf sqlalchemy 'fastapi[standard]' youtube-transcript-api agno`
+1. Install libraries: `pip install groq ddgs yfinance pypdf sqlalchemy 'fastapi[standard]' youtube-transcript-api agno`
 2. Run the script: `python cookbook/playground/groq_agents.py`
 """
 

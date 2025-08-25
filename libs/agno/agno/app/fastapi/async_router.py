@@ -13,7 +13,7 @@ from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.run.response import RunResponseErrorEvent
 from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
-from agno.run.team import TeamRunResponseEvent
+from agno.run.team import TeamRunResponse, TeamRunResponseEvent
 from agno.run.v2.workflow import WorkflowErrorEvent
 from agno.team.team import Team
 from agno.utils.log import logger
@@ -425,15 +425,18 @@ def get_async_router(
                 )
                 return run_response.to_dict()
             elif team:
-                team_run_response = await team.arun(
-                    message=message,
-                    session_id=session_id,
-                    user_id=user_id,
-                    images=base64_images if base64_images else None,
-                    audio=base64_audios if base64_audios else None,
-                    videos=base64_videos if base64_videos else None,
-                    files=document_files if document_files else None,
-                    stream=False,
+                team_run_response = cast(
+                    TeamRunResponse,
+                    await team.arun(
+                        message=message,
+                        session_id=session_id,
+                        user_id=user_id,
+                        images=base64_images if base64_images else None,
+                        audio=base64_audios if base64_audios else None,
+                        videos=base64_videos if base64_videos else None,
+                        files=document_files if document_files else None,
+                        stream=False,
+                    ),
                 )
                 return team_run_response.to_dict()
             elif workflow:

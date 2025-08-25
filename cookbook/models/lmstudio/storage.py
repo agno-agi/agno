@@ -1,4 +1,4 @@
-"""Run `pip install duckduckgo-search sqlalchemy` to install dependencies."""
+"""Run `pip install ddgs sqlalchemy` to install dependencies."""
 
 from agno.agent import Agent
 from agno.models.lmstudio import LMStudio

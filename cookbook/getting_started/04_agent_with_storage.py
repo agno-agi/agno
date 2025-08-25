@@ -12,7 +12,7 @@ Example prompts to try:
 - "What are essential ingredients for a Thai pantry?"
 - "How do I make Thai basil chicken (Pad Kra Pao)?"
 
-Run `pip install openai lancedb tantivy pypdf duckduckgo-search sqlalchemy agno` to install dependencies.
+Run `pip install openai lancedb tantivy pypdf ddgs sqlalchemy agno` to install dependencies.
 """
 
 from textwrap import dedent

@@ -1,4 +1,4 @@
-from typing import AsyncIterator, Iterator, List, Optional, Dict, Any
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
 
 from agno.document import Document
 from agno.document.reader.gcs.pdf_reader import GCSPDFReader
@@ -93,7 +93,7 @@ class GCSPDFKnowledgeBase(GCSKnowledgeBase):
         document_iterator = self.async_document_lists
         async for document_list in document_iterator:  # type: ignore
             documents_to_load = document_list
-            
+
             # Track metadata for filtering capabilities and collect metadata for filters
             filters_metadata: Optional[Dict[str, Any]] = None
             for doc in document_list:
