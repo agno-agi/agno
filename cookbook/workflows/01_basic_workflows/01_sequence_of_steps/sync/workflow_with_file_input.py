@@ -45,7 +45,7 @@ content_creation_workflow = Workflow(
 # Create and use workflow
 if __name__ == "__main__":
     content_creation_workflow.print_response(
-        input="Summarize the contents of the attached file.",
+        message="Summarize the contents of the attached file.",
         files=[
             File(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf")
         ],
