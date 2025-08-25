@@ -1,4 +1,3 @@
-import base64
 import json
 from dataclasses import asdict
 from io import BytesIO
@@ -17,59 +16,9 @@ from agno.run.team import RunResponseErrorEvent as TeamRunResponseErrorEvent
 from agno.run.team import TeamRunResponse, TeamRunResponseEvent
 from agno.run.v2.workflow import WorkflowErrorEvent
 from agno.team.team import Team
-from agno.utils.log import log_debug, logger
+from agno.utils.log import logger
 from agno.workflow.v2.workflow import Workflow as WorkflowV2
 from agno.workflow.workflow import Workflow
-
-
-def _normalize_image_content(run_response: Union[RunResponse, TeamRunResponse]) -> None:
-    """Normalize image content in run response by converting bytes/bytearray to base64 strings.
-
-    This function ensures that all image content is in a JSON-serializable format by:
-    1. Attempting to decode bytes/bytearray as UTF-8 string
-    2. Falling back to base64 encoding if UTF-8 decoding fails
-
-    Args:
-        run_response: Response object with optional images attribute containing Image objects
-
-    Raises:
-        AttributeError: If run_response doesn't have an images attribute
-    """
-    if not run_response.images:
-        return
-
-    number_of_images = len(run_response.images)
-    log_debug(f"Processing {number_of_images} generated image(s)")
-
-    for i, image in enumerate(run_response.images):
-        if not image.content:
-            logger.warning(f"Image {i} missing content attribute, skipping")
-            continue
-
-        image_content = image.content
-
-        # Only process if content is bytes/bytearray
-        if isinstance(image_content, (bytes, bytearray)):
-            try:
-                # First try to decode as UTF-8
-                decoded_string = image_content.decode("utf-8")
-                log_debug(f"Successfully decoded image {i} content as UTF-8")
-            except UnicodeDecodeError as e:
-                # Fallback to base64 encoding for binary content
-                decoded_string = base64.b64encode(bytes(image_content)).decode("utf-8")
-                log_debug(f"Encoded image {i} content as base64 (UTF-8 decode failed: {e})")
-            except Exception as e:
-                logger.error(f"Unexpected error processing image {i} content: {e}")
-                # Last resort: try to convert to base64
-                try:
-                    decoded_string = base64.b64encode(bytes(image_content)).decode("utf-8")
-                    logger.warning(f"Used base64 fallback for image {i} after error")
-                except Exception as fallback_error:
-                    logger.error(f"Failed to process image {i} content: {fallback_error}")
-                    continue
-
-            # Update the image content
-            image.content = decoded_string
 
 
 async def agent_chat_response_streamer(
@@ -474,7 +423,6 @@ def get_async_router(
                         stream=False,
                     ),
                 )
-                _normalize_image_content(run_response)
                 return run_response.to_dict()
             elif team:
                 team_run_response = cast(
@@ -490,7 +438,6 @@ def get_async_router(
                         stream=False,
                     ),
                 )
-                _normalize_image_content(team_run_response)
                 return team_run_response.to_dict()
             elif workflow:
                 if isinstance(workflow, Workflow):
