@@ -300,6 +300,8 @@ class TeamRunOutput:
     reasoning_messages: Optional[List[Message]] = None
     created_at: int = field(default_factory=lambda: int(time()))
 
+    metadata: Optional[Dict[str, Any]] = None
+
     events: Optional[List[Union[RunOutputEvent, TeamRunOutputEvent]]] = None
 
     status: RunStatus = RunStatus.running

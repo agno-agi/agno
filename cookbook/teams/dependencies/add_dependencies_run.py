@@ -90,3 +90,18 @@ print(response.content)
 # # Run the async test
 # import asyncio
 # asyncio.run(test_async())
+
+# ------------------------------------------------------------
+# PRINT RESPONSE
+# ------------------------------------------------------------
+# team.print_response(
+#     "Please provide me with a personalized summary of today's priorities based on my profile and interests.",
+#     dependencies={
+#         "user_profile": get_user_profile,
+#         "current_context": get_current_context,
+#     },
+#     add_dependencies_to_context=True,
+#     debug_mode=True,
+# )
+
+# print(response.content)

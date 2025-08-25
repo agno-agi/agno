@@ -6410,9 +6410,19 @@ class Agent:
         # Add tags to include in markdown content
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
+        run_dependencies = dependencies if dependencies is not None else self.dependencies
+
+        if run_dependencies is not None:
+            self._resolve_run_dependencies(dependencies=run_dependencies)
+
+        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
 
@@ -6448,6 +6458,9 @@ class Agent:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 console=console,
+                add_history_to_context=add_history,
+                dependencies=run_dependencies,
+                metadata=metadata,
                 **kwargs,
             )
 
@@ -6471,6 +6484,9 @@ class Agent:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 console=console,
+                add_history_to_context=add_history,
+                dependencies=run_dependencies,
+                metadata=metadata,
                 **kwargs,
             )
 
@@ -6495,9 +6511,19 @@ class Agent:
         # Add tags to include in markdown content
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
+        run_dependencies = dependencies if dependencies is not None else self.dependencies
+
+        if run_dependencies is not None:
+            await self._aresolve_run_dependencies(dependencies=run_dependencies)
+
+        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
 
@@ -6533,6 +6559,9 @@ class Agent:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 console=console,
+                add_history_to_context=add_history,
+                dependencies=run_dependencies,
+                metadata=metadata,
                 **kwargs,
             )
         else:
@@ -6555,6 +6584,9 @@ class Agent:
                 show_full_reasoning=show_full_reasoning,
                 tags_to_include_in_markdown=tags_to_include_in_markdown,
                 console=console,
+                add_history_to_context=add_history,
+                dependencies=run_dependencies,
+                metadata=metadata,
                 **kwargs,
             )
 

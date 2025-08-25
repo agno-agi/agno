@@ -2609,8 +2609,19 @@ class Team:
         files: Optional[Sequence[File]] = None,
         markdown: Optional[bool] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
+        run_dependencies = dependencies if dependencies is not None else self.dependencies
+
+        if run_dependencies is not None:
+            self._resolve_run_dependencies(run_dependencies)
+
+        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
 
@@ -2645,6 +2656,10 @@ class Team:
                 markdown=markdown,
                 stream_intermediate_steps=stream_intermediate_steps,
                 knowledge_filters=knowledge_filters,
+                add_history_to_context=add_history,
+                dependencies=run_dependencies,
+                metadata=metadata,
+                debug_mode=debug_mode,
                 **kwargs,
             )
         else:
@@ -2665,6 +2680,10 @@ class Team:
                 files=files,
                 markdown=markdown,
                 knowledge_filters=knowledge_filters,
+                add_history_to_context=add_history,
+                dependencies=run_dependencies,
+                metadata=metadata,
+                debug_mode=debug_mode,
                 **kwargs,
             )
 
@@ -2688,8 +2707,19 @@ class Team:
         files: Optional[Sequence[File]] = None,
         markdown: Optional[bool] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
+        run_dependencies = dependencies if dependencies is not None else self.dependencies
+
+        if run_dependencies is not None:
+            await self._aresolve_run_dependencies(run_dependencies)
+
+        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
+
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
 
@@ -2724,10 +2754,15 @@ class Team:
                 markdown=markdown,
                 stream_intermediate_steps=stream_intermediate_steps,
                 knowledge_filters=knowledge_filters,
+                add_history_to_context=add_history,
+                dependencies=run_dependencies,
+                metadata=metadata,
+                debug_mode=debug_mode,
                 **kwargs,
             )
         else:
             await aprint_response(
+                team=self,
                 input=input,
                 console=console,
                 show_message=show_message,
@@ -2743,6 +2778,10 @@ class Team:
                 files=files,
                 markdown=markdown,
                 knowledge_filters=knowledge_filters,
+                add_history_to_context=add_history,
+                dependencies=run_dependencies,
+                metadata=metadata,
+                debug_mode=debug_mode,
                 **kwargs,
             )
 

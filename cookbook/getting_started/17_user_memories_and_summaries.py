@@ -128,7 +128,9 @@ def print_agent_memory(agent):
                 )
             )
         else:
-            console.print("Session summary: Not yet created (summaries are created after multiple interactions)")
+            console.print(
+                "Session summary: Not yet created (summaries are created after multiple interactions)"
+            )
     except Exception as e:
         console.print(f"Session summary error: {e}")
 
