@@ -167,6 +167,7 @@ def test_multiple_tool_calls():
     response = agent.run("What is the current price of TSLA and what is the latest news about it?")
 
     # Verify tool usage
+    assert response.messages is not None
     tool_calls = []
     for msg in response.messages:
         if msg.tool_calls:
