@@ -3108,6 +3108,18 @@ class Agent:
                         session.session_data["session_state"], model_response_event.updated_session_state
                     )
 
+                if model_response_event.images is not None:
+                    for image in model_response_event.images:
+                        self._add_image(image, run_response)
+
+                if model_response_event.videos is not None:
+                    for video in model_response_event.videos:
+                        self._add_video(video, run_response)
+
+                if model_response_event.audios is not None:
+                    for audio in model_response_event.audios:
+                        self._add_audio(audio, run_response)
+
                 reasoning_step: Optional[ReasoningStep] = None
 
                 tool_executions_list = model_response_event.tool_executions
