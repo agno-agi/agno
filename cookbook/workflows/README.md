@@ -29,6 +29,7 @@ Welcome to **Agno Workflows 2.0** - the next generation of intelligent, flexible
     - [Additional Data](#additional-data)
     - [Streaming Support](#streaming-support)
     - [Session State Management](#session-state-management)
+    - [Background Execution](#background-execution)
     - [Structured Inputs](#structured-inputs)
   - [Best Practices](#best-practices)
     - [When to Use Each Pattern](#when-to-use-each-pattern)
@@ -40,7 +41,7 @@ Welcome to **Agno Workflows 2.0** - the next generation of intelligent, flexible
 
 Agno Workflows 2.0 provides a powerful, declarative way to orchestrate multi-step AI processes. Unlike traditional linear workflows, you can now create sophisticated branching logic, parallel execution, and dynamic routing based on content analysis.
 
-![Workflows 2.0 flow](/cookbook/workflows_2/assets/workflows_v2_flow.png)
+![Workflows 2.0 flow](assets/workflows_flow.png)
 
 ### Key Features
 
@@ -109,12 +110,12 @@ workflow.print_response("Analyze the competitive landscape for fintech startups"
 ```
 
 **See Examples**:
-- [`sequence_of_functions_and_agents.py`](/cookbook/workflows_2/sync/01_basic_workflows/sequence_of_functions_and_agents.py)
-- [`sequence_of_functions_and_agents_stream.py`](/cookbook/workflows_2/sync/01_basic_workflows/sequence_of_functions_and_agents_stream.py)
+- [`sequence_of_functions_and_agents.py`](01_basic_workflows/01_sequence_of_steps/sync/sequence_of_functions_and_agents.py)
+- [`sequence_of_functions_and_agents_stream.py`](01_basic_workflows/01_sequence_of_steps/sync/sequence_of_functions_and_agents_stream.py)
 
 
 > **Note**: `StepInput` and `StepOutput` provides standardized interfaces for data flow between steps:
-![Workflows Step IO](/cookbook/workflows_2/assets/step_io_flow.png)
+![Workflows Step IO](assets/step_io_flow.png)
 
 > So if you make a custom function as an executor for a step, do make sure that the input and output types are compatible with the `StepInput` and `StepOutput` interfaces. This will ensure that your custom function can seamlessly integrate into the workflow system.
 
@@ -140,8 +141,8 @@ workflow.print_response("Evaluate the market potential for quantum computing app
 ```
 
 **See Examples**:
-- [`function_instead_of_steps.py`](/cookbook/workflows_2/sync/01_basic_workflows/function_instead_of_steps.py) - Complete function-based workflow
-- [`function_instead_of_steps_stream.py`](/cookbook/workflows_2/sync/01_basic_workflows/function_instead_of_steps_stream.py) - Streaming version
+- [`function_instead_of_steps.py`](01_basic_workflows/03_function_instead_of_steps/sync/function_instead_of_steps.py) - Complete function-based workflow
+- [`function_instead_of_steps_stream.py`](01_basic_workflows/03_function_instead_of_steps/sync/function_instead_of_steps_stream.py) - Streaming version
 
 For migration to 2.0 refer to this section- [Migration from Workflows 1.0](#migration-from-workflows-10)
 
@@ -169,10 +170,10 @@ workflow.print_response(
 ```
 
 **See Examples**:
-- [`sequence_of_steps.py`](cookbook/workflows_2/sync/01_basic_workflows/sequence_of_steps.py)
-- [`sequence_of_steps_stream.py`](cookbook/workflows_2/sync/01_basic_workflows/sequence_of_steps_stream.py)
-- [`step_with_function.py`](/cookbook/workflows_2/sync/01_basic_workflows/step_with_function.py)
-- [`step_with_function_stream.py`](/cookbook/workflows_2/sync/01_basic_workflows/step_with_function_stream.py)
+- [`sequence_of_steps.py`](01_basic_workflows/01_sequence_of_steps/sync/sequence_of_steps.py)
+- [`sequence_of_steps_stream.py`](01_basic_workflows/01_sequence_of_steps/sync/sequence_of_steps_stream.py)
+- [`step_with_function.py`](01_basic_workflows/02_step_with_function/sync/step_with_function.py)
+- [`step_with_function_stream.py`](01_basic_workflows/02_step_with_function/sync/step_with_function_stream.py)
 
 ### 4. Parallel Execution
 
@@ -180,7 +181,7 @@ workflow.print_response(
 
 **Example**: Multiple research sources, parallel content creation
 
-![Parallel Steps](/cookbook/workflows_2/assets/parallel_steps.png)
+![Parallel Steps](assets/parallel_steps.png)
 
 ```python
 from agno.workflow import Parallel, Step, Workflow
@@ -202,8 +203,8 @@ workflow.print_response("Write about the latest AI developments", markdown=True)
 ```
 
 **See Examples**:
-- [`parallel_steps_workflow.py`](/cookbook/workflows_2/sync/04_workflows_parallel_execution/parallel_steps_workflow.py)
-- [`parallel_steps_workflow_stream.py`](/cookbook/workflows_2/sync/04_workflows_parallel_execution/parallel_steps_workflow_stream.py)
+- [`parallel_steps_workflow.py`](04_workflows_parallel_execution/sync/parallel_steps_workflow.py)
+- [`parallel_steps_workflow_stream.py`](04_workflows_parallel_execution/sync/parallel_steps_workflow_stream.py)
 
 ### 5. Conditional Steps
 
@@ -211,7 +212,7 @@ workflow.print_response("Write about the latest AI developments", markdown=True)
 
 **Example**: Topic-specific research strategies, content type routing
 
-![Condition Steps](/cookbook/workflows_2/assets/condition_steps.png)
+![Condition Steps](assets/condition_steps.png)
 
 ```python
 from agno.workflow import Condition, Step, Workflow
@@ -236,8 +237,8 @@ workflow.print_response("Comprehensive analysis of AI and machine learning trend
 ```
 
 **See Examples**:
-- [`condition_with_list_of_steps.py`](/cookbook/workflows_2/sync/02_workflows_conditional_execution/condition_with_list_of_steps.py)
-- [`condition_steps_workflow_stream.py`](/cookbook/workflows_2/sync/02_workflows_conditional_execution/condition_steps_workflow_stream.py)
+- [`condition_with_list_of_steps.py`](02_workflows_conditional_execution/sync/condition_with_list_of_steps.py)
+- [`condition_steps_workflow_stream.py`](02_workflows_conditional_execution/sync/condition_steps_workflow_stream.py)
 
 ### 6. Loop/Iteration Workflows
 
@@ -245,7 +246,7 @@ workflow.print_response("Comprehensive analysis of AI and machine learning trend
 
 **Example**: Research until sufficient quality, iterative improvement
 
-![Loop Steps](/cookbook/workflows_2/assets/loop_steps.png)
+![Loop Steps](assets/loop_steps.png)
 
 ```python
 from agno.workflow import Loop, Step, Workflow
@@ -271,8 +272,8 @@ workflow.print_response("Research the impact of renewable energy on global marke
 ```
 
 **See Examples**:
-- [`loop_steps_workflow.py`](/cookbook/workflows_2/sync/03_workflows_loop_execution/loop_steps_workflow.py)
-- [`loop_steps_workflow_stream.py`](/cookbook/workflows_2/sync/03_workflows_loop_execution/loop_steps_workflow_stream.py)
+- [`loop_steps_workflow.py`](03_workflows_loop_execution/sync/loop_steps_workflow.py)
+- [`loop_steps_workflow_stream.py`](03_workflows_loop_execution/sync/loop_steps_workflow_stream.py)
 
 ### 7. Condition-Based Branching
 
@@ -280,7 +281,7 @@ workflow.print_response("Research the impact of renewable energy on global marke
 
 **Example**: Content type detection, expertise routing
 
-![Router Steps](/cookbook/workflows_2/assets/router_steps.png)
+![Router Steps](assets/router_steps.png)
 
 ```python
 from agno.workflow import Router, Step, Workflow
@@ -311,8 +312,8 @@ workflow.print_response("Latest developments in artificial intelligence and mach
 ```
 
 **See Examples**:
-- [`router_steps_workflow.py`](/cookbook/workflows_2/sync/05_workflows_conditional_branching/router_steps_workflow.py)
-- [`router_steps_workflow_stream.py`](/cookbook/workflows_2/sync/05_workflows_conditional_branching/router_steps_workflow_stream.py)
+- [`router_steps_workflow.py`](05_workflows_conditional_branching/sync/router_steps_workflow.py)
+- [`router_steps_workflow_stream.py`](05_workflows_conditional_branching/sync/router_steps_workflow_stream.py)
 
 ### 8. Steps: Grouping a list of steps
 
@@ -401,9 +402,9 @@ media_workflow.print_response("Create a cinematic video of city timelapse", mark
 ```
 
 **See Examples**
-- [`workflow_using_steps.py`](/cookbook/workflows_2/sync/01_basic_workflows/workflow_using_steps.py)
-- [`workflow_using_steps_nested.py`](/cookbook/workflows_2/sync/01_basic_workflows/workflow_using_steps_nested.py)
-- [`selector_for_image_video_generation_pipelines.py`](/cookbook/workflows_2/sync/05_workflows_conditional_branching/selector_for_image_video_generation_pipelines.py)
+- [`workflow_using_steps.py`](01_basic_workflows/01_sequence_of_steps/sync/workflow_using_steps.py)
+- [`workflow_using_steps_nested.py`](01_basic_workflows/01_sequence_of_steps/sync/workflow_using_steps_nested.py)
+- [`selector_for_image_video_generation_pipelines.py`](05_workflows_conditional_branching/sync/selector_for_image_video_generation_pipelines.py)
 
 ### 9. Complex Combinations
 
@@ -494,9 +495,9 @@ workflow.print_response("Create a comprehensive analysis of sustainable technolo
 ```
 
 **See Examples**:
-- [`condition_and_parallel_steps_stream.py`](/cookbook/workflows_2/sync/02_workflows_conditional_execution/condition_and_parallel_steps_stream.py)
-- [`loop_with_parallel_steps_stream.py`](/cookbook/workflows_2/sync/03_workflows_loop_execution/loop_with_parallel_steps_stream.py)
-- [`router_with_loop_steps.py`](/cookbook/workflows_2/sync/05_workflows_conditional_branching/router_with_loop_steps.py)
+- [`condition_and_parallel_steps_stream.py`](02_workflows_conditional_execution/sync/condition_and_parallel_steps_stream.py)
+- [`loop_with_parallel_steps_stream.py`](03_workflows_loop_execution/sync/loop_with_parallel_steps_stream.py)
+- [`router_with_loop_steps.py`](05_workflows_conditional_branching/sync/router_with_loop_steps.py)
 
 ## Advanced Features
 
@@ -504,7 +505,7 @@ workflow.print_response("Create a comprehensive analysis of sustainable technolo
 
 Workflows can be terminated early when certain conditions are met, preventing unnecessary processing and ensuring safety gates work properly. Any step can trigger early termination by returning `StepOutput(stop=True)`.
 
-![Early Stop Workflows](/cookbook/workflows_2/assets/early_stop.png)
+![Early Stop Workflows](assets/early_stop.png)
 
 ```python
 from agno.workflow import Step, Workflow
@@ -541,9 +542,9 @@ workflow.print_response("Scan this code: exec(input('Enter command: '))")
 ```
 
 **See Examples**:
-- [`early_stop_workflow_with_agents.py`](/cookbook/workflows_2/sync/06_workflows_advanced_concepts/early_stop_workflow_with_agents.py)
-- [`early_stop_workflow_with_loop.py`](/cookbook/workflows_2/sync/06_workflows_advanced_concepts/early_stop_workflow_with_loop.py)
-- [`early_stop_workflow_with_router.py`](/cookbook/workflows_2/sync/06_workflows_advanced_concepts/early_stop_workflow_with_router.py)
+- [`early_stop_workflow_with_agents.py`](06_advanced_concepts/02_early_stopping/early_stop_workflow_with_agents.py)
+- [`early_stop_workflow_with_loop.py`](06_advanced_concepts/02_early_stopping/early_stop_workflow_with_loop.py)
+- [`early_stop_workflow_with_router.py`](06_advanced_concepts/02_early_stopping/early_stop_workflow_with_router.py)
 
 ### Access Multiple Previous Steps Output
 
@@ -673,7 +674,7 @@ fast_workflow = Workflow(
 ```
 
 **See Examples**:
-- [`store_events_and_events_to_skip_in_a_workflow.py`](/cookbook/workflows_2/sync/06_workflows_advanced_concepts/store_events_and_events_to_skip_in_a_workflow.py)
+- [`store_events_and_events_to_skip_in_a_workflow.py`](06_advanced_concepts/06_other/store_events_and_events_to_skip_in_a_workflow.py)
 
 ### Additional Data
 
@@ -757,7 +758,7 @@ workflow.print_response(
 )
 ```
 
-**See**: [`step_with_function_additional_data.py`](/cookbook/workflows_2/sync/01_basic_workflows/step_with_function_additional_data.py)
+**See**: [`step_with_function_additional_data.py`](01_basic_workflows/02_step_with_function/sync/step_with_function_additional_data.py)
 
 ### Streaming Support
 
@@ -842,8 +843,40 @@ workflow.print_response("Add apples and oranges to my shopping list")
 ```
 
 **See**:
-- [`shared_session_state_with_agent.py`](/cookbook/workflows_2/sync/06_workflows_advanced_concepts/shared_session_state_with_agent.py)
-- [`shared_session_state_with_team.py`](/cookbook/workflows_2/sync/06_workflows_advanced_concepts/shared_session_state_with_team.py)
+- [`shared_session_state_with_agent.py`](06_advanced_concepts/04_shared_session_state/shared_session_state_with_agent.py)
+- [`shared_session_state_with_team.py`](06_advanced_concepts/04_shared_session_state/shared_session_state_with_team.py)
+
+### Background Execution
+
+Execute workflows asynchronously in the background and monitor their progress using polling or real-time updates:
+
+```python
+import asyncio
+from agno.workflow import Workflow
+
+# Start workflow execution in background
+async def main():
+    bg_response = await workflow.arun(
+        input="AI trends in 2024", 
+        background=True
+    )
+    print(f"Run ID: {bg_response.run_id}")
+    
+    # Poll for completion
+    while True:
+        result = workflow.get_run(bg_response.run_id)
+        
+        if result and result.has_completed():
+            break
+            
+        await asyncio.sleep(5)  # Poll every 5 seconds
+    
+    print("Workflow completed!")
+```
+
+**See**:
+- [`background_execution_poll.py`](06_advanced_concepts/05_background_execution/background_execution_poll.py)
+- [`background_execution_websocket.py`](06_advanced_concepts/05_background_execution/background_execution_websocket.py)
 
 ### Structured Inputs
 
@@ -866,7 +899,7 @@ workflow.print_response(
 )
 ```
 
-**See**: [`pydantic_model_as_input.py`](/cookbook/workflows_2/sync/06_workflows_advanced_concepts/pydantic_model_as_input.py)
+**See**: [`pydantic_model_as_input.py`](06_advanced_concepts/01_structured_io_at_each_level/pydantic_model_as_input.py)
 
 ## Best Practices
 
@@ -900,4 +933,12 @@ workflow.print_response(
 4. **Enable streaming**: For event-based information
 5. **Add state management**: Use `session_state` for data sharing
 
-For more examples and advanced patterns, explore the [`cookbook/workflows/sync/`](/cookbook/workflows_2/sync) and [`cookbook/workflows/async/`](/cookbook/workflows_2/async) directory. Each file demonstrates a specific pattern with detailed comments and real-world use cases.
+For more examples and advanced patterns, explore the following directories- 
+- [`01_basic_workflows/`](01_basic_workflows) 
+- [`02_workflows_conditional_execution/`](02_workflows_conditional_execution) 
+- [`03_workflows_loop_execution/`](03_workflows_loop_execution) 
+- [`04_workflows_parallel_execution/`](04_workflows_parallel_execution) 
+- [`05_workflows_conditional_branching/`](05_workflows_conditional_branching) 
+- [`06_advanced_concepts/`](06_advanced_concepts) 
+
+Each file demonstrates a specific pattern with detailed comments and real-world use cases.
