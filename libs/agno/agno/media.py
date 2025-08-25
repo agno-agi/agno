@@ -38,21 +38,23 @@ class ImageArtifact(Media):
     mime_type: Optional[str] = None
     alt_text: Optional[str] = None
 
-    def _normalise_content(self) -> Union[str, bytes]:
+    def _normalise_content(self) -> Optional[Union[str, bytes]]:
+        if self.content is None:
+            return None
         content_normalised: Union[str, bytes] = self.content
         if content_normalised and isinstance(content_normalised, bytes):
             from base64 import b64encode
 
             try:
                 # First try to decode as UTF-8
-                content_normalised = content_normalised.decode("utf-8")
+                content_normalised = content_normalised.decode("utf-8")  # type: ignore
             except UnicodeDecodeError:
                 # Fallback to base64 encoding for binary content
-                content_normalised = b64encode(bytes(content_normalised)).decode("utf-8")
+                content_normalised = b64encode(bytes(content_normalised)).decode("utf-8")  # type: ignore
             except Exception:
                 # Last resort: try to convert to base64
                 try:
-                    content_normalised = b64encode(bytes(content_normalised)).decode("utf-8")
+                    content_normalised = b64encode(bytes(content_normalised)).decode("utf-8")  # type: ignore
                 except Exception:
                     pass
         return content_normalised
