@@ -5,15 +5,8 @@ from agno.media import File
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
 from agno.storage.sqlite import SqliteStorage
-from agno.utils.media import download_file
 from agno.workflow.v2.step import Step
 from agno.workflow.v2.workflow import Workflow
-
-pdf_path = Path(__file__).parent.joinpath("ThaiRecipes.pdf")
-
-download_file(
-    "https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf", str(pdf_path)
-)
 
 # Define agents
 read_agent = Agent(
@@ -56,6 +49,6 @@ content_creation_workflow = Workflow(
 if __name__ == "__main__":
     content_creation_workflow.print_response(
         message="Summarize the contents of the attached file.",
-        files=[File(content=pdf_path.read_bytes(), format="pdf", name="Thai Recipes")],
+        files=[File(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf")],
         markdown=True,
     )
