@@ -767,7 +767,7 @@ class RunSchema(BaseModel):
     agent_session_id: Optional[str]
     user_id: Optional[str]
     run_input: Optional[str]
-    content: Optional[str]
+    content: Optional[Union[str, dict]]
     run_response_format: Optional[str]
     reasoning_content: Optional[str]
     metrics: Optional[dict]
@@ -801,7 +801,7 @@ class RunSchema(BaseModel):
 class TeamRunSchema(BaseModel):
     run_id: str
     parent_run_id: Optional[str]
-    content: Optional[str]
+    content: Optional[Union[str, dict]]
     reasoning_content: Optional[str]
     run_input: Optional[str]
     run_response_format: Optional[str]
@@ -836,7 +836,7 @@ class WorkflowRunSchema(BaseModel):
     run_id: str
     run_input: Optional[str]
     user_id: Optional[str]
-    content: Optional[str]
+    content: Optional[Union[str, dict]]
     content_type: Optional[str]
     status: Optional[str]
     step_results: Optional[list[dict]]
