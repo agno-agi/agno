@@ -179,57 +179,54 @@ class SqliteDb(BaseDb):
             log_error(f"Could not create table '{table_name}': {e}")
             raise
 
-    def _get_table(self, table_type: str) -> Table:
+    def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
         if table_type == "sessions":
-            if not hasattr(self, "session_table"):
-                if self.session_table_name is None:
-                    raise ValueError("Session table was not provided on initialization")
-
-                self.session_table = self._get_or_create_table(
-                    table_name=self.session_table_name, table_type=table_type
-                )
-
+            self.session_table = self._get_or_create_table(
+                table_name=self.session_table_name,
+                table_type=table_type,
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.session_table
 
         elif table_type == "memories":
-            if not hasattr(self, "memory_table"):
-                if self.memory_table_name is None:
-                    raise ValueError("Memory table was not provided on initialization")
-
-                self.memory_table = self._get_or_create_table(table_name=self.memory_table_name, table_type="memories")
-
+            self.memory_table = self._get_or_create_table(
+                table_name=self.memory_table_name,
+                table_type="memories",
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.memory_table
 
         elif table_type == "metrics":
-            if not hasattr(self, "metrics_table"):
-                if self.metrics_table_name is None:
-                    raise ValueError("Metrics table was not provided on initialization")
-
-                self.metrics_table = self._get_or_create_table(table_name=self.metrics_table_name, table_type="metrics")
-
+            self.metrics_table = self._get_or_create_table(
+                table_name=self.metrics_table_name,
+                table_type="metrics",
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.metrics_table
 
         elif table_type == "evals":
-            if not hasattr(self, "eval_table"):
-                if self.eval_table_name is None:
-                    raise ValueError("Eval table was not provided on initialization")
-
-                self.eval_table = self._get_or_create_table(table_name=self.eval_table_name, table_type="evals")
+            self.eval_table = self._get_or_create_table(
+                table_name=self.eval_table_name,
+                table_type="evals",
+                create_table_if_not_found=create_table_if_not_found,
+            )
 
             return self.eval_table
 
         elif table_type == "knowledge":
-            if not hasattr(self, "knowledge_table"):
-                self.knowledge_table = self._get_or_create_table(
-                    table_name=self.knowledge_table_name, table_type="knowledge"
-                )
-
+            self.knowledge_table = self._get_or_create_table(
+                table_name=self.knowledge_table_name,
+                table_type="knowledge",
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.knowledge_table
 
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
 
-    def _get_or_create_table(self, table_name: str, table_type: str) -> Table:
+    def _get_or_create_table(
+        self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
+    ) -> Optional[Table]:
         """
         Check if the table exists and is valid, else create it.
 
@@ -244,6 +241,8 @@ class SqliteDb(BaseDb):
             table_is_available = is_table_available(session=sess, table_name=table_name)
 
         if not table_is_available:
+            if not create_table_if_not_found:
+                return None
             return self._create_table(table_name=table_name, table_type=table_type)
 
         # SQLite version of table validation (no schema)
@@ -273,6 +272,8 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
+            if table is None:
+                return False
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
@@ -300,6 +301,8 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
+            if table is None:
+                return
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
@@ -336,6 +339,8 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
+            if table is None:
+                return None
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.session_id == session_id)
@@ -395,6 +400,7 @@ class SqliteDb(BaseDb):
             sort_by (Optional[str]): The field to sort by. Defaults to None.
             sort_order (Optional[str]): The sort order. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
+            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
             List[Session]:
@@ -406,6 +412,8 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
+            if table is None:
+                return [] if deserialize else ([], 0)
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -446,7 +454,7 @@ class SqliteDb(BaseDb):
 
                 records = sess.execute(stmt).fetchall()
                 if records is None:
-                    return [], 0
+                    return [] if deserialize else ([], 0)
 
                 sessions_raw = [deserialize_session_json_fields(dict(record._mapping)) for record in records]
                 if not sessions_raw or not deserialize:
@@ -487,6 +495,9 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
+            if table is None:
+                return None
+
             with self.Session() as sess, sess.begin():
                 # Update session_name inside the session_data JSON field
                 stmt = (
@@ -544,7 +555,10 @@ class SqliteDb(BaseDb):
             Exception: If an error occurs during upserting.
         """
         try:
-            table = self._get_table(table_type="sessions")
+            table = self._get_table(table_type="sessions", create_table_if_not_found=True)
+            if table is None:
+                return None
+
             serialized_session = serialize_session_json_fields(session.to_dict())
 
             if isinstance(session, AgentSession):
@@ -676,6 +690,8 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="memories")
+            if table is None:
+                return
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id == memory_id)
@@ -701,6 +717,8 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="memories")
+            if table is None:
+                return
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
@@ -719,6 +737,8 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="memories")
+            if table is None:
+                return []
 
             with self.Session() as sess, sess.begin():
                 stmt = select(func.json_array_elements_text(table.c.topics))
@@ -749,6 +769,8 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="memories")
+            if table is None:
+                return None
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.memory_id == memory_id)
@@ -793,6 +815,7 @@ class SqliteDb(BaseDb):
             sort_order (Optional[str]): The order to sort by.
             deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
 
+
         Returns:
             Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
                 - When deserialize=True: List of UserMemory objects
@@ -803,6 +826,8 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="memories")
+            if table is None:
+                return [] if deserialize else ([], 0)
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -875,6 +900,8 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="memories")
+            if table is None:
+                return [], 0
 
             with self.Session() as sess, sess.begin():
                 stmt = (
@@ -932,7 +959,10 @@ class SqliteDb(BaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = self._get_table(table_type="memories")
+            table = self._get_table(table_type="memories", create_table_if_not_found=True)
+            if table is None:
+                return None
+
             if memory.memory_id is None:
                 memory.memory_id = str(uuid4())
 
@@ -983,6 +1013,9 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="memories")
+            if table is None:
+                return
+
             with self.Session() as sess, sess.begin():
                 sess.execute(table.delete())
 
@@ -1011,6 +1044,8 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
+            if table is None:
+                return []
 
             stmt = select(
                 table.c.user_id,
@@ -1078,6 +1113,8 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="metrics")
+            if table is None:
+                return None
 
             starting_date = self._get_metrics_calculation_starting_date(table)
             if starting_date is None:
@@ -1135,7 +1172,9 @@ class SqliteDb(BaseDb):
             raise e
 
     def get_metrics(
-        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
@@ -1151,6 +1190,8 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="metrics")
+            if table is None:
+                return [], None
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -1184,6 +1225,8 @@ class SqliteDb(BaseDb):
             Exception: If an error occurs during deletion.
         """
         table = self._get_table(table_type="knowledge")
+        if table is None:
+            return
 
         try:
             with self.Session() as sess, sess.begin():
@@ -1206,6 +1249,8 @@ class SqliteDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         table = self._get_table(table_type="knowledge")
+        if table is None:
+            return None
 
         try:
             with self.Session() as sess, sess.begin():
@@ -1242,6 +1287,8 @@ class SqliteDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         table = self._get_table(table_type="knowledge")
+        if table is None:
+            return [], 0
 
         try:
             with self.Session() as sess, sess.begin():
@@ -1278,7 +1325,9 @@ class SqliteDb(BaseDb):
             Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
         """
         try:
-            table = self._get_table(table_type="knowledge")
+            table = self._get_table(table_type="knowledge", create_table_if_not_found=True)
+            if table is None:
+                return None
 
             with self.Session() as sess, sess.begin():
                 update_fields = {
@@ -1331,6 +1380,8 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="evals")
+            if table is None:
+                return None
 
             with self.Session() as sess, sess.begin():
                 current_time = int(time.time())
@@ -1356,6 +1407,8 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="evals")
+            if table is None:
+                return
 
             with self.Session() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id == eval_run_id)
@@ -1377,6 +1430,8 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="evals")
+            if table is None:
+                return
 
             with self.Session() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
@@ -1409,6 +1464,8 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="evals")
+            if table is None:
+                return None
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.run_id == eval_run_id)
@@ -1454,6 +1511,7 @@ class SqliteDb(BaseDb):
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
@@ -1465,6 +1523,8 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="evals")
+            if table is None:
+                return [] if deserialize else ([], 0)
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -1537,6 +1597,9 @@ class SqliteDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="evals")
+            if table is None:
+                return None
+
             with self.Session() as sess, sess.begin():
                 stmt = (
                     table.update().where(table.c.run_id == eval_run_id).values(name=name, updated_at=int(time.time()))

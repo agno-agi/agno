@@ -602,7 +602,9 @@ class InMemoryDb(BaseDb):
             return []
 
     def get_metrics(
-        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range."""
         try:

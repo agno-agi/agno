@@ -85,7 +85,9 @@ class MongoDb(BaseDb):
 
     # -- DB methods --
 
-    def _get_collection(self, table_type: str) -> Collection:
+    def _get_collection(
+        self, table_type: str, create_collection_if_not_found: Optional[bool] = True
+    ) -> Optional[Collection]:
         """Get or create a collection based on table type.
 
         Args:
@@ -99,7 +101,9 @@ class MongoDb(BaseDb):
                 if self.session_table_name is None:
                     raise ValueError("Session collection was not provided on initialization")
                 self.session_collection = self._get_or_create_collection(
-                    collection_name=self.session_table_name, collection_type="sessions"
+                    collection_name=self.session_table_name,
+                    collection_type="sessions",
+                    create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.session_collection
 
@@ -108,7 +112,9 @@ class MongoDb(BaseDb):
                 if self.memory_table_name is None:
                     raise ValueError("Memory collection was not provided on initialization")
                 self.memory_collection = self._get_or_create_collection(
-                    collection_name=self.memory_table_name, collection_type="memories"
+                    collection_name=self.memory_table_name,
+                    collection_type="memories",
+                    create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.memory_collection
 
@@ -117,7 +123,9 @@ class MongoDb(BaseDb):
                 if self.metrics_table_name is None:
                     raise ValueError("Metrics collection was not provided on initialization")
                 self.metrics_collection = self._get_or_create_collection(
-                    collection_name=self.metrics_table_name, collection_type="metrics"
+                    collection_name=self.metrics_table_name,
+                    collection_type="metrics",
+                    create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.metrics_collection
 
@@ -126,7 +134,9 @@ class MongoDb(BaseDb):
                 if self.eval_table_name is None:
                     raise ValueError("Eval collection was not provided on initialization")
                 self.eval_collection = self._get_or_create_collection(
-                    collection_name=self.eval_table_name, collection_type="evals"
+                    collection_name=self.eval_table_name,
+                    collection_type="evals",
+                    create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.eval_collection
 
@@ -135,26 +145,33 @@ class MongoDb(BaseDb):
                 if self.knowledge_table_name is None:
                     raise ValueError("Knowledge collection was not provided on initialization")
                 self.knowledge_collection = self._get_or_create_collection(
-                    collection_name=self.knowledge_table_name, collection_type="knowledge"
+                    collection_name=self.knowledge_table_name,
+                    collection_type="knowledge",
+                    create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.knowledge_collection
 
         raise ValueError(f"Unknown table type: {table_type}")
 
-    def _get_or_create_collection(self, collection_name: str, collection_type: str) -> Collection:
+    def _get_or_create_collection(
+        self, collection_name: str, collection_type: str, create_collection_if_not_found: Optional[bool] = True
+    ) -> Optional[Collection]:
         """Get or create a collection with proper indexes.
 
         Args:
             collection_name (str): The name of the collection to get or create.
             collection_type (str): The type of collection to get or create.
+            create_collection_if_not_found (Optional[bool]): Whether to create the collection if it doesn't exist.
 
         Returns:
-            Collection: The collection object.
+            Optional[Collection]: The collection object.
         """
         try:
             collection = self.database[collection_name]
 
             if not hasattr(self, f"_{collection_name}_initialized"):
+                if not create_collection_if_not_found:
+                    return None
                 create_collection_indexes(collection, collection_type)
                 setattr(self, f"_{collection_name}_initialized", True)
                 log_debug(f"Initialized collection '{collection_name}'")
@@ -183,6 +200,9 @@ class MongoDb(BaseDb):
         """
         try:
             collection = self._get_collection(table_type="sessions")
+            if collection is None:
+                return False
+
             result = collection.delete_one({"session_id": session_id})
             if result.deleted_count == 0:
                 log_debug(f"No session found to delete with session_id: {session_id}")
@@ -203,6 +223,9 @@ class MongoDb(BaseDb):
         """
         try:
             collection = self._get_collection(table_type="sessions")
+            if collection is None:
+                return
+
             result = collection.delete_many({"session_id": {"$in": session_ids}})
             log_debug(f"Successfully deleted {result.deleted_count} sessions")
 
@@ -234,6 +257,8 @@ class MongoDb(BaseDb):
         """
         try:
             collection = self._get_collection(table_type="sessions")
+            if collection is None:
+                return None
 
             query = {"session_id": session_id}
             if user_id is not None:
@@ -289,6 +314,7 @@ class MongoDb(BaseDb):
             sort_by (Optional[str]): The field to sort the sessions by.
             sort_order (Optional[str]): The order to sort the sessions by.
             deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
+            create_table_if_not_found (Optional[bool]): Whether to create the collection if it doesn't exist.
 
         Returns:
             Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
@@ -300,6 +326,8 @@ class MongoDb(BaseDb):
         """
         try:
             collection = self._get_collection(table_type="sessions")
+            if collection is None:
+                return [] if deserialize else ([], 0)
 
             # Filtering
             query: Dict[str, Any] = {}
@@ -392,6 +420,8 @@ class MongoDb(BaseDb):
         """
         try:
             collection = self._get_collection(table_type="sessions")
+            if collection is None:
+                return None
 
             try:
                 result = collection.find_one_and_update(
@@ -442,7 +472,10 @@ class MongoDb(BaseDb):
             Exception: If there is an error upserting the session.
         """
         try:
-            collection = self._get_collection(table_type="sessions")
+            collection = self._get_collection(table_type="sessions", create_collection_if_not_found=True)
+            if collection is None:
+                return None
+
             serialized_session_dict = serialize_session_json_fields(session.to_dict())
 
             if isinstance(session, AgentSession):
@@ -564,6 +597,9 @@ class MongoDb(BaseDb):
         """
         try:
             collection = self._get_collection(table_type="memories")
+            if collection is None:
+                return
+
             result = collection.delete_one({"memory_id": memory_id})
 
             success = result.deleted_count > 0
@@ -586,6 +622,9 @@ class MongoDb(BaseDb):
         """
         try:
             collection = self._get_collection(table_type="memories")
+            if collection is None:
+                return
+
             result = collection.delete_many({"memory_id": {"$in": memory_ids}})
 
             if result.deleted_count == 0:
@@ -605,6 +644,9 @@ class MongoDb(BaseDb):
         """
         try:
             collection = self._get_collection(table_type="memories")
+            if collection is None:
+                return []
+
             topics = collection.distinct("topics")
             return [topic for topic in topics if topic]
 
@@ -629,6 +671,9 @@ class MongoDb(BaseDb):
         """
         try:
             collection = self._get_collection(table_type="memories")
+            if collection is None:
+                return None
+
             result = collection.find_one({"memory_id": memory_id})
             if result is None or not deserialize:
                 return result
@@ -665,6 +710,7 @@ class MongoDb(BaseDb):
             sort_by (Optional[str]): The field to sort the memories by.
             sort_order (Optional[str]): The order to sort the memories by.
             deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
+            create_table_if_not_found: Whether to create the collection if it doesn't exist.
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: A tuple containing the memories and the total count.
@@ -674,6 +720,8 @@ class MongoDb(BaseDb):
         """
         try:
             collection = self._get_collection(table_type="memories")
+            if collection is None:
+                return [] if deserialize else ([], 0)
 
             query: Dict[str, Any] = {}
             if user_id is not None:
@@ -733,6 +781,8 @@ class MongoDb(BaseDb):
         """
         try:
             collection = self._get_collection(table_type="memories")
+            if collection is None:
+                return [], 0
 
             pipeline = [
                 {"$match": {"user_id": {"$ne": None}}},
@@ -792,7 +842,9 @@ class MongoDb(BaseDb):
             Exception: If there is an error upserting the memory.
         """
         try:
-            collection = self._get_collection(table_type="memories")
+            collection = self._get_collection(table_type="memories", create_collection_if_not_found=True)
+            if collection is None:
+                return None
 
             if memory.memory_id is None:
                 memory.memory_id = str(uuid4())
@@ -829,6 +881,9 @@ class MongoDb(BaseDb):
         """
         try:
             collection = self._get_collection(table_type="memories")
+            if collection is None:
+                return
+
             collection.delete_many({})
 
         except Exception as e:
@@ -844,6 +899,8 @@ class MongoDb(BaseDb):
         """Get all sessions of all types for metrics calculation."""
         try:
             collection = self._get_collection(table_type="sessions")
+            if collection is None:
+                return []
 
             query = {}
             if start_timestamp is not None:
@@ -898,6 +955,8 @@ class MongoDb(BaseDb):
         """Calculate metrics for all dates without complete metrics."""
         try:
             collection = self._get_collection(table_type="metrics")
+            if collection is None:
+                return None
 
             starting_date = self._get_metrics_calculation_starting_date(collection)
             if starting_date is None:
@@ -952,11 +1011,15 @@ class MongoDb(BaseDb):
             raise e
 
     def get_metrics(
-        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range."""
         try:
             collection = self._get_collection(table_type="metrics")
+            if collection is None:
+                return [], None
 
             query = {}
             if starting_date:
@@ -993,6 +1056,9 @@ class MongoDb(BaseDb):
         """
         try:
             collection = self._get_collection(table_type="knowledge")
+            if collection is None:
+                return
+
             collection.delete_one({"id": id})
 
             log_debug(f"Deleted knowledge content with id '{id}'")
@@ -1015,6 +1081,9 @@ class MongoDb(BaseDb):
         """
         try:
             collection = self._get_collection(table_type="knowledge")
+            if collection is None:
+                return None
+
             result = collection.find_one({"id": id})
             if result is None:
                 return None
@@ -1039,6 +1108,7 @@ class MongoDb(BaseDb):
             page (Optional[int]): The page number.
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
+            create_table_if_not_found (Optional[bool]): Whether to create the collection if it doesn't exist.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1048,6 +1118,8 @@ class MongoDb(BaseDb):
         """
         try:
             collection = self._get_collection(table_type="knowledge")
+            if collection is None:
+                return [], 0
 
             query: Dict[str, Any] = {}
 
@@ -1090,7 +1162,9 @@ class MongoDb(BaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            collection = self._get_collection(table_type="knowledge")
+            collection = self._get_collection(table_type="knowledge", create_collection_if_not_found=True)
+            if collection is None:
+                return None
 
             update_doc = knowledge_row.model_dump()
             collection.replace_one({"id": knowledge_row.id}, update_doc, upsert=True)
@@ -1107,6 +1181,8 @@ class MongoDb(BaseDb):
         """Create an EvalRunRecord in the database."""
         try:
             collection = self._get_collection(table_type="evals")
+            if collection is None:
+                return None
 
             current_time = int(time.time())
             eval_dict = eval_run.model_dump()
@@ -1127,6 +1203,9 @@ class MongoDb(BaseDb):
         """Delete an eval run from the database."""
         try:
             collection = self._get_collection(table_type="evals")
+            if collection is None:
+                return
+
             result = collection.delete_one({"run_id": eval_run_id})
 
             if result.deleted_count == 0:
@@ -1142,6 +1221,9 @@ class MongoDb(BaseDb):
         """Delete multiple eval runs from the database."""
         try:
             collection = self._get_collection(table_type="evals")
+            if collection is None:
+                return
+
             result = collection.delete_many({"run_id": {"$in": eval_run_ids}})
 
             if result.deleted_count == 0:
@@ -1157,6 +1239,9 @@ class MongoDb(BaseDb):
         """Get an eval run from the database as a raw dictionary."""
         try:
             collection = self._get_collection(table_type="evals")
+            if collection is None:
+                return None
+
             result = collection.find_one({"run_id": eval_run_id})
             return result
 
@@ -1181,6 +1266,9 @@ class MongoDb(BaseDb):
         """
         try:
             collection = self._get_collection(table_type="evals")
+            if collection is None:
+                return None
+
             eval_run_raw = collection.find_one({"run_id": eval_run_id})
 
             if not eval_run_raw:
@@ -1223,6 +1311,7 @@ class MongoDb(BaseDb):
             eval_type (Optional[List[EvalType]]): The type of eval to filter by.
             filter_type (Optional[EvalFilterType]): The type of filter to apply.
             deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            create_table_if_not_found (Optional[bool]): Whether to create the collection if it doesn't exist.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
@@ -1234,6 +1323,8 @@ class MongoDb(BaseDb):
         """
         try:
             collection = self._get_collection(table_type="evals")
+            if collection is None:
+                return [] if deserialize else ([], 0)
 
             query: Dict[str, Any] = {}
             if agent_id is not None:
@@ -1307,6 +1398,8 @@ class MongoDb(BaseDb):
         """
         try:
             collection = self._get_collection(table_type="evals")
+            if collection is None:
+                return None
 
             result = collection.find_one_and_update(
                 {"run_id": eval_run_id}, {"$set": {"name": name, "updated_at": int(time.time())}}

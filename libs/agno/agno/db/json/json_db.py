@@ -53,7 +53,7 @@ class JsonDb(BaseDb):
         # Create the directory where the JSON files will be stored, if it doesn't exist
         self.db_path = Path(db_path or os.path.join(os.getcwd(), "agno_json_db"))
 
-    def _read_json_file(self, filename: str) -> List[Dict[str, Any]]:
+    def _read_json_file(self, filename: str, create_table_if_not_found: Optional[bool] = True) -> List[Dict[str, Any]]:
         """Read data from a JSON file, creating it if it doesn't exist.
 
         Args:
@@ -75,8 +75,9 @@ class JsonDb(BaseDb):
                 return json.load(f)
 
         except FileNotFoundError:
-            with open(file_path, "w") as f:
-                json.dump([], f)
+            if create_table_if_not_found:
+                with open(file_path, "w") as f:
+                    json.dump([], f)
             return []
 
         except json.JSONDecodeError as e:
@@ -236,6 +237,7 @@ class JsonDb(BaseDb):
             sort_by (Optional[str]): The field to sort the sessions by.
             sort_order (Optional[str]): The order to sort the sessions by.
             deserialize (Optional[bool]): Whether to deserialize the sessions.
+            create_table_if_not_found (Optional[bool]): Whether to create a json file to track sessions if it doesn't exist.
 
         Returns:
             Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
@@ -342,7 +344,7 @@ class JsonDb(BaseDb):
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Insert or update a session in the JSON file."""
         try:
-            sessions = self._read_json_file(self.session_table_name)
+            sessions = self._read_json_file(self.session_table_name, create_table_if_not_found=True)
             session_dict = session.to_dict()
 
             # Add session_type based on session instance type
@@ -557,7 +559,7 @@ class JsonDb(BaseDb):
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """Upsert a user memory in the JSON file."""
         try:
-            memories = self._read_json_file(self.memory_table_name)
+            memories = self._read_json_file(self.memory_table_name, create_table_if_not_found=True)
 
             if memory.memory_id is None:
                 memory.memory_id = str(uuid4())
@@ -726,7 +728,9 @@ class JsonDb(BaseDb):
             return []
 
     def get_metrics(
-        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range."""
         try:
@@ -854,7 +858,7 @@ class JsonDb(BaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            knowledge_items = self._read_json_file(self.knowledge_table_name)
+            knowledge_items = self._read_json_file(self.knowledge_table_name, create_table_if_not_found=True)
             knowledge_dict = knowledge_row.model_dump()
 
             # Find existing item to update

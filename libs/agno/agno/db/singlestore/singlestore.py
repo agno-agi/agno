@@ -263,45 +263,61 @@ class SingleStoreDb(BaseDb):
             log_error(f"Could not create table {table_ref}: {e}")
             raise
 
-    def _get_table(self, table_type: str) -> Table:
+    def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
         if table_type == "sessions":
-            if not hasattr(self, "session_table"):
-                self.session_table = self._get_or_create_table(
-                    table_name=self.session_table_name, table_type="sessions", db_schema=self.db_schema
-                )
+            self.session_table = self._get_or_create_table(
+                table_name=self.session_table_name,
+                table_type="sessions",
+                db_schema=self.db_schema,
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.session_table
 
         if table_type == "memories":
-            if not hasattr(self, "memory_table"):
-                self.memory_table = self._get_or_create_table(
-                    table_name=self.memory_table_name, table_type="memories", db_schema=self.db_schema
-                )
-                return self.memory_table
+            self.memory_table = self._get_or_create_table(
+                table_name=self.memory_table_name,
+                table_type="memories",
+                db_schema=self.db_schema,
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.memory_table
 
         if table_type == "metrics":
-            if not hasattr(self, "metrics_table"):
-                self.metrics_table = self._get_or_create_table(
-                    table_name=self.metrics_table_name, table_type="metrics", db_schema=self.db_schema
-                )
+            self.metrics_table = self._get_or_create_table(
+                table_name=self.metrics_table_name,
+                table_type="metrics",
+                db_schema=self.db_schema,
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.metrics_table
 
         if table_type == "evals":
-            if not hasattr(self, "eval_table"):
-                self.eval_table = self._get_or_create_table(
-                    table_name=self.eval_table_name, table_type="evals", db_schema=self.db_schema
-                )
+            self.eval_table = self._get_or_create_table(
+                table_name=self.eval_table_name,
+                table_type="evals",
+                db_schema=self.db_schema,
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.eval_table
 
         if table_type == "knowledge":
-            if not hasattr(self, "knowledge_table"):
-                self.knowledge_table = self._get_or_create_table(
-                    table_name=self.knowledge_table_name, table_type="knowledge", db_schema=self.db_schema
-                )
+            self.knowledge_table = self._get_or_create_table(
+                table_name=self.knowledge_table_name,
+                table_type="knowledge",
+                db_schema=self.db_schema,
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.knowledge_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
-    def _get_or_create_table(self, table_name: str, table_type: str, db_schema: Optional[str]) -> Table:
+    def _get_or_create_table(
+        self,
+        table_name: str,
+        table_type: str,
+        db_schema: Optional[str],
+        create_table_if_not_found: Optional[bool] = False,
+    ) -> Optional[Table]:
         """
         Check if the table exists and is valid, else create it.
 
@@ -318,6 +334,8 @@ class SingleStoreDb(BaseDb):
             table_is_available = is_table_available(session=sess, table_name=table_name, db_schema=db_schema)
 
         if not table_is_available:
+            if not create_table_if_not_found:
+                return None
             return self._create_table(table_name=table_name, table_type=table_type, db_schema=db_schema)
 
         if not is_valid_table(
@@ -353,6 +371,8 @@ class SingleStoreDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
+            if table is None:
+                return False
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
@@ -380,6 +400,8 @@ class SingleStoreDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
+            if table is None:
+                return
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
@@ -416,6 +438,8 @@ class SingleStoreDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
+            if table is None:
+                return None
 
             with self.Session() as sess:
                 stmt = select(table).where(table.c.session_id == session_id)
@@ -476,7 +500,7 @@ class SingleStoreDb(BaseDb):
             sort_by (Optional[str]): The field to sort by. Defaults to None.
             sort_order (Optional[str]): The sort order. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the sessions. Defaults to True.
-
+            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
             Union[List[Session], Tuple[List[Dict], int]]:
@@ -488,6 +512,8 @@ class SingleStoreDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
+            if table is None:
+                return [] if deserialize else ([], 0)
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -531,7 +557,7 @@ class SingleStoreDb(BaseDb):
 
                 records = sess.execute(stmt).fetchall()
                 if records is None:
-                    return [], 0
+                    return [] if deserialize else ([], 0)
 
                 session = [dict(record._mapping) for record in records]
                 if not deserialize:
@@ -572,6 +598,8 @@ class SingleStoreDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
+            if table is None:
+                return None
 
             with self.Session() as sess, sess.begin():
                 stmt = (
@@ -627,7 +655,10 @@ class SingleStoreDb(BaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = self._get_table(table_type="sessions")
+            table = self._get_table(table_type="sessions", create_table_if_not_found=True)
+            if table is None:
+                return None
+
             session_dict = session.to_dict()
 
             if isinstance(session, AgentSession):
@@ -778,6 +809,8 @@ class SingleStoreDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="memories")
+            if table is None:
+                return
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id == memory_id)
@@ -803,6 +836,8 @@ class SingleStoreDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="memories")
+            if table is None:
+                return
 
             with self.Session() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.memory_id.in_(memory_ids))
@@ -821,6 +856,8 @@ class SingleStoreDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="memories")
+            if table is None:
+                return []
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table.c.topics)
@@ -856,6 +893,8 @@ class SingleStoreDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="memories")
+            if table is None:
+                return None
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.memory_id == memory_id)
@@ -900,6 +939,7 @@ class SingleStoreDb(BaseDb):
             sort_order (Optional[str]): The order to sort by.
             deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
 
+
         Returns:
             Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
                 - When deserialize=True: List of UserMemory objects
@@ -910,6 +950,8 @@ class SingleStoreDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="memories")
+            if table is None:
+                return [] if deserialize else ([], 0)
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -980,6 +1022,8 @@ class SingleStoreDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="memories")
+            if table is None:
+                return [], 0
 
             with self.Session() as sess, sess.begin():
                 stmt = (
@@ -1037,7 +1081,9 @@ class SingleStoreDb(BaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = self._get_table(table_type="memories")
+            table = self._get_table(table_type="memories", create_table_if_not_found=True)
+            if table is None:
+                return None
 
             with self.Session() as sess, sess.begin():
                 if memory.memory_id is None:
@@ -1091,6 +1137,9 @@ class SingleStoreDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="memories")
+            if table is None:
+                return
+
             with self.Session() as sess, sess.begin():
                 sess.execute(table.delete())
 
@@ -1116,6 +1165,8 @@ class SingleStoreDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="sessions")
+            if table is None:
+                return []
 
             stmt = select(
                 table.c.user_id,
@@ -1186,6 +1237,8 @@ class SingleStoreDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="metrics")
+            if table is None:
+                return None
 
             starting_date = self._get_metrics_calculation_starting_date(table)
             if starting_date is None:
@@ -1237,7 +1290,9 @@ class SingleStoreDb(BaseDb):
             raise e
 
     def get_metrics(
-        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
@@ -1246,13 +1301,15 @@ class SingleStoreDb(BaseDb):
             ending_date (Optional[date]): The ending date to filter metrics by.
 
         Returns:
-            Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
+            Tuple[List[dict], int]: A tuple containing the metrics and the timestamp of the latest update.
 
         Raises:
             Exception: If an error occurs during retrieval.
         """
         try:
             table = self._get_table(table_type="metrics")
+            if table is None:
+                return [], 0
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -1283,6 +1340,8 @@ class SingleStoreDb(BaseDb):
             id (str): The ID of the knowledge row to delete.
         """
         table = self._get_table(table_type="knowledge")
+        if table is None:
+            return
 
         with self.Session() as sess, sess.begin():
             stmt = table.delete().where(table.c.id == id)
@@ -1300,6 +1359,8 @@ class SingleStoreDb(BaseDb):
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
         """
         table = self._get_table(table_type="knowledge")
+        if table is None:
+            return None
 
         with self.Session() as sess, sess.begin():
             stmt = select(table).where(table.c.id == id)
@@ -1330,6 +1391,8 @@ class SingleStoreDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         table = self._get_table(table_type="knowledge")
+        if table is None:
+            return [], 0
 
         try:
             with self.Session() as sess, sess.begin():
@@ -1369,7 +1432,9 @@ class SingleStoreDb(BaseDb):
             Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
         """
         try:
-            table = self._get_table(table_type="knowledge")
+            table = self._get_table(table_type="knowledge", create_table_if_not_found=True)
+            if table is None:
+                return None
 
             with self.Session() as sess, sess.begin():
                 # Only include fields that are not None in the update
@@ -1420,6 +1485,8 @@ class SingleStoreDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="evals")
+            if table is None:
+                return None
 
             with self.Session() as sess, sess.begin():
                 current_time = int(time.time())
@@ -1444,6 +1511,8 @@ class SingleStoreDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="evals")
+            if table is None:
+                return
 
             with self.Session() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id == eval_run_id)
@@ -1465,6 +1534,8 @@ class SingleStoreDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="evals")
+            if table is None:
+                return
 
             with self.Session() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
@@ -1497,6 +1568,8 @@ class SingleStoreDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="evals")
+            if table is None:
+                return None
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.run_id == eval_run_id)
@@ -1542,6 +1615,7 @@ class SingleStoreDb(BaseDb):
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            create_table_if_not_found (Optional[bool]): Whether to create the table if it doesn't exist.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
@@ -1553,6 +1627,8 @@ class SingleStoreDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="evals")
+            if table is None:
+                return [] if deserialize else ([], 0)
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table)
@@ -1623,6 +1699,9 @@ class SingleStoreDb(BaseDb):
         """
         try:
             table = self._get_table(table_type="evals")
+            if table is None:
+                return None
+
             with self.Session() as sess, sess.begin():
                 stmt = (
                     table.update().where(table.c.run_id == eval_run_id).values(name=name, updated_at=int(time.time()))

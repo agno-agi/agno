@@ -72,7 +72,7 @@ class GcsJsonDb(BaseDb):
         """Get the full blob name including prefix for a given filename."""
         return f"{self.prefix}{filename}.json"
 
-    def _read_json_file(self, filename: str) -> List[Dict[str, Any]]:
+    def _read_json_file(self, filename: str, create_table_if_not_found: Optional[bool] = False) -> List[Dict[str, Any]]:
         """Read data from a JSON file in GCS, creating it if it doesn't exist.
 
         Args:
@@ -94,8 +94,9 @@ class GcsJsonDb(BaseDb):
         except Exception as e:
             # Check if it's a 404 (file not found) error
             if "404" in str(e) or "Not Found" in str(e):
-                log_debug(f"Creating new GCS JSON file: {blob_name}")
-                blob.upload_from_string("[]", content_type="application/json")
+                if create_table_if_not_found:
+                    log_debug(f"Creating new GCS JSON file: {blob_name}")
+                    blob.upload_from_string("[]", content_type="application/json")
                 return []
             else:
                 log_error(f"Error reading the {blob_name} JSON file from GCS: {e}")
@@ -251,6 +252,7 @@ class GcsJsonDb(BaseDb):
             sort_by (Optional[str]): The field to sort the sessions by.
             sort_order (Optional[str]): The order to sort the sessions by.
             deserialize (Optional[bool]): Whether to deserialize the sessions.
+            create_table_if_not_found (Optional[bool]): Whether to create a file to track sessions if it doesn't exist.
 
         Returns:
             Union[List[AgentSession], List[TeamSession], List[WorkflowSession], Tuple[List[Dict[str, Any]], int]]:
@@ -357,7 +359,7 @@ class GcsJsonDb(BaseDb):
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Insert or update a session in the GCS JSON file."""
         try:
-            sessions = self._read_json_file(self.session_table_name)
+            sessions = self._read_json_file(self.session_table_name, create_table_if_not_found=True)
             session_dict = session.to_dict()
 
             # Add session_type based on session instance type
@@ -445,6 +447,7 @@ class GcsJsonDb(BaseDb):
                 if isinstance(memory_topics, list):
                     topics.update(memory_topics)
             return list(topics)
+
         except Exception as e:
             log_warning(f"Exception reading from memory file: {e}")
             return []
@@ -567,7 +570,7 @@ class GcsJsonDb(BaseDb):
     ) -> Optional[Union[UserMemory, Dict[str, Any]]]:
         """Upsert a user memory in the GCS JSON file."""
         try:
-            memories = self._read_json_file(self.memory_table_name)
+            memories = self._read_json_file(self.memory_table_name, create_table_if_not_found=True)
 
             if memory.memory_id is None:
                 memory.memory_id = str(uuid4())
@@ -732,7 +735,9 @@ class GcsJsonDb(BaseDb):
             return []
 
     def get_metrics(
-        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range."""
         try:
@@ -817,7 +822,7 @@ class GcsJsonDb(BaseDb):
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
         """Upsert knowledge content in the GCS JSON file."""
         try:
-            knowledge_items = self._read_json_file(self.knowledge_table_name)
+            knowledge_items = self._read_json_file(self.knowledge_table_name, create_table_if_not_found=True)
             knowledge_dict = knowledge_row.model_dump()
 
             # Find existing item to update

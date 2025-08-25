@@ -5,7 +5,7 @@ from typing import Optional
 class Timer:
     """Timer class for timing code execution"""
 
-    def __init__(self) -> None:
+    def __init__(self):
         self.start_time: Optional[float] = None
         self.end_time: Optional[float] = None
         self.elapsed_time: Optional[float] = None
