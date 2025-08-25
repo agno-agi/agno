@@ -143,8 +143,8 @@ class Team:
     # If True, cache the current Team session in memory for faster access
     cache_session: bool = False
 
-    # If True, add the session state variables in the user and system messages
-    add_state_in_messages: bool = False
+    # If True, resolve the session_state, dependencies, and metadata in the user and system messages
+    resolve_in_context: bool = True
 
     # --- System message settings ---
     # A description of the Team that is added to the start of the system message.
@@ -339,7 +339,7 @@ class Team:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
-        add_state_in_messages: bool = False,
+        resolve_in_context: bool = True,
         cache_session: bool = False,
         description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
@@ -421,7 +421,7 @@ class Team:
         self.user_id = user_id
         self.session_id = session_id
         self.session_state = session_state
-        self.add_state_in_messages = add_state_in_messages
+        self.resolve_in_context = resolve_in_context
         self.cache_session = cache_session
 
         self.description = description
@@ -3616,7 +3616,7 @@ class Team:
                     raise Exception("system_message must return a string")
 
             # Format the system message with the session state variables
-            if self.add_state_in_messages:
+            if self.resolve_in_context:
                 sys_message_content = self._format_message_with_state_variables(sys_message_content, user_id=user_id)
 
             # type: ignore
@@ -3839,7 +3839,7 @@ class Team:
                 system_message_content += f"{_ti}\n"
 
         # Format the system message with the session state variables
-        if self.add_state_in_messages:
+        if self.resolve_in_context:
             system_message_content = self._format_message_with_state_variables(system_message_content, user_id=user_id)
 
         system_message_from_model = self.model.get_system_message_for_model(self._tools_for_model)
@@ -4076,7 +4076,7 @@ class Team:
                     except Exception as e:
                         log_warning(f"Failed to get references: {e}")
 
-                if self.add_state_in_messages:
+                if self.resolve_in_context:
                     user_msg_content = self._format_message_with_state_variables(
                         user_msg_content,
                         user_id=user_id,

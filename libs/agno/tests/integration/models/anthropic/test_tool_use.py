@@ -43,7 +43,7 @@ def test_tool_use_stream():
         responses.append(chunk)
 
         # Check for ToolCallStartedEvent or ToolCallCompletedEvent
-        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:  # type: ignore
             if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
 
@@ -167,6 +167,7 @@ def test_multiple_tool_calls():
     response = agent.run("What is the current price of TSLA and what is the latest news about it?")
 
     # Verify tool usage
+    assert response.messages is not None
     tool_calls = []
     for msg in response.messages:
         if msg.tool_calls:

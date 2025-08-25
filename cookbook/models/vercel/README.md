@@ -9,6 +9,11 @@ python3 -m venv ~/.venvs/aienv
 source ~/.venvs/aienv/bin/activate
 ```
 
+### Obtain a V0 API key
+
+- Go to [V0](https://v0.app)
+- Go to settings and obtain an API key
+
 ### 2. Export your `V0_API_KEY`
 
 ```shell

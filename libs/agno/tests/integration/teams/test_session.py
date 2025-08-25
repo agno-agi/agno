@@ -130,8 +130,6 @@ def test_team_with_state_on_team(shared_db):
         members=[],
         tools=[add_item],
         instructions="Current state (shopping list) is: {shopping_list}",
-        # Add the state to the messages
-        add_state_in_messages=True,
         markdown=True,
     )
     team.run("Add oranges to my shopping list")
@@ -161,8 +159,6 @@ def test_team_with_state_on_team_stream(shared_db):
         members=[],
         tools=[add_item],
         instructions="Current state (shopping list) is: {shopping_list}",
-        # Add the state to the messages
-        add_state_in_messages=True,
         markdown=True,
     )
     for _ in team.run("Add oranges to my shopping list", stream=True):
@@ -201,8 +197,6 @@ def test_team_with_state_on_run(shared_db):
         tools=[add_item],
         members=[],
         instructions="Current state (shopping list) is: {shopping_list}",
-        # Add the state to the messages
-        add_state_in_messages=True,
         markdown=True,
     )
     team.run("Add oranges to my shopping list", session_id="session_1", session_state={"shopping_list": []})
@@ -238,8 +232,6 @@ def test_team_with_state_on_run_stream(shared_db):
         tools=[add_item],
         members=[],
         instructions="Current state (shopping list) is: {shopping_list}",
-        # Add the state to the messages
-        add_state_in_messages=True,
         markdown=True,
     )
     for response in team.run(
@@ -281,8 +273,6 @@ async def test_team_with_state_on_run_async(shared_db):
         tools=[add_item],
         members=[],
         instructions="Current state (shopping list) is: {shopping_list}",
-        # Add the state to the messages
-        add_state_in_messages=True,
         markdown=True,
     )
     await team.arun("Add oranges to my shopping list", session_id="session_1", session_state={"shopping_list": []})
@@ -318,8 +308,6 @@ async def test_team_with_state_on_run_stream_async(shared_db):
         tools=[add_item],
         members=[],
         instructions="Current state (shopping list) is: {shopping_list}",
-        # Add the state to the messages
-        add_state_in_messages=True,
         markdown=True,
     )
     async for response in team.arun(

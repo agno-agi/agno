@@ -107,7 +107,7 @@ def test_basic_intermediate_steps_events_persisted(shared_db):
 
 def test_intermediate_steps_with_tools():
     team = Team(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="o3-mini"),
         members=[],
         tools=[YFinanceTools(cache_results=True)],
         telemetry=False,
@@ -142,7 +142,7 @@ def test_intermediate_steps_with_tools():
 
 def test_intermediate_steps_with_tools_events_persisted(shared_db):
     team = Team(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="o3-mini"),
         db=shared_db,
         store_events=True,
         members=[],
@@ -701,18 +701,18 @@ def test_intermediate_steps_with_member_agents_collaborate():
 
     agent_1 = Agent(
         name="Web Researcher",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="o3-mini"),
         instructions="You are an expert web researcher with strong analytical skills! Use your tools to find answers to questions.",
         tools=[get_news_from_duckduckgo],
     )
     agent_2 = Agent(
         name="Hackernews Researcher",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="o3-mini"),
         instructions="You are an expert hackernews researcher with strong analytical skills! Use your tools to find answers to questions.",
         tools=[get_news_from_hackernews],
     )
     team = Team(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="o3-mini"),
         members=[agent_1, agent_2],
         telemetry=False,
         mode="collaborate",

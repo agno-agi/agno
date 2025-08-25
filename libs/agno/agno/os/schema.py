@@ -160,7 +160,7 @@ class AgentResponse(BaseModel):
             "add_name_to_context": False,
             "add_datetime_to_context": False,
             "add_location_to_context": False,
-            "add_state_in_messages": False,
+            "resolve_in_context": True,
             # Extra messages defaults
             "user_message_role": "user",
             "build_user_context": True,
@@ -276,12 +276,11 @@ class AgentResponse(BaseModel):
             "add_datetime_to_context": agent.add_datetime_to_context,
             "add_location_to_context": agent.add_location_to_context,
             "timezone_identifier": agent.timezone_identifier,
-            "add_state_in_messages": agent.add_state_in_messages,
+            "resolve_in_context": agent.resolve_in_context,
         }
 
         extra_messages_info = {
             "additional_input": additional_input,  # type: ignore
-            "user_message": str(agent.user_message) if agent.user_message else None,
             "user_message_role": agent.user_message_role,
             "build_user_context": agent.build_user_context,
         }
@@ -390,7 +389,7 @@ class TeamResponse(BaseModel):
             "markdown": False,
             "add_datetime_to_context": False,
             "add_location_to_context": False,
-            "add_state_in_messages": False,
+            "resolve_in_context": True,
             # Response settings defaults
             "parse_response": True,
             "use_json_mode": False,
@@ -501,7 +500,7 @@ class TeamResponse(BaseModel):
             "markdown": team.markdown,
             "add_datetime_to_context": team.add_datetime_to_context,
             "add_location_to_context": team.add_location_to_context,
-            "add_state_in_messages": team.add_state_in_messages,
+            "resolve_in_context": team.resolve_in_context,
         }
 
         response_settings_info: Dict[str, Any] = {
@@ -768,7 +767,7 @@ class RunSchema(BaseModel):
     agent_session_id: Optional[str]
     user_id: Optional[str]
     run_input: Optional[str]
-    content: Optional[str]
+    content: Optional[Union[str, dict]]
     run_response_format: Optional[str]
     reasoning_content: Optional[str]
     metrics: Optional[dict]
@@ -802,7 +801,7 @@ class RunSchema(BaseModel):
 class TeamRunSchema(BaseModel):
     run_id: str
     parent_run_id: Optional[str]
-    content: Optional[str]
+    content: Optional[Union[str, dict]]
     reasoning_content: Optional[str]
     run_input: Optional[str]
     run_response_format: Optional[str]
@@ -837,7 +836,7 @@ class WorkflowRunSchema(BaseModel):
     run_id: str
     run_input: Optional[str]
     user_id: Optional[str]
-    content: Optional[str]
+    content: Optional[Union[str, dict]]
     content_type: Optional[str]
     status: Optional[str]
     step_results: Optional[list[dict]]

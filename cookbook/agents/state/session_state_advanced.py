@@ -51,7 +51,6 @@ agent = Agent(
 
         Current shopping list: {shopping_list}
     """),
-    add_state_in_messages=True,
     markdown=True,
 )
 

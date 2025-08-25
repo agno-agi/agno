@@ -33,7 +33,7 @@ classifiers = [
 dependencies = [
   "docstring-parser",
   "gitpython",
-  "httpx",  
+  "httpx",
   "packaging",
   "pydantic-settings",
   "pydantic",

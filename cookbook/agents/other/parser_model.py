@@ -63,7 +63,6 @@ agent = Agent(
     parser_model=OpenAIChat(id="gpt-4o"),
 )
 
-breakpoint()
 
 # Get the response in a variable
 national_parks = [
