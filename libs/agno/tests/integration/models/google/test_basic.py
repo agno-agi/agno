@@ -201,7 +201,7 @@ def test_history():
     assert run_output.messages is not None
     assert len(run_output.messages) == 8
 
-
+@pytest.mark.skip(reason="Missing VertexAI credentials in Github Actions")
 def test_custom_client_params():
     generation_config = types.GenerateContentConfig(
         temperature=0,
@@ -233,12 +233,11 @@ def test_custom_client_params():
         ),
     ]
 
-    # simple agent
+    # Simple agent
     agent = Agent(
         model=Gemini(
-            id="gemini-1.5-flash",
+            id="gemini-2.0-flash",
             vertexai=True,
-            location="us-central1",
             generation_config=generation_config,
             safety_settings=safety_settings,
         ),
