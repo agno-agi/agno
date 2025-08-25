@@ -2740,8 +2740,8 @@ class Agent:
             for video in model_response.videos:
                 self._add_video(video, run_response)
 
-        if model_response.audio is not None:
-            for audio in model_response.audio:
+        if model_response.audios is not None:
+            for audio in model_response.audios:
                 self._add_audio(audio, run_response)
 
         # Update the run_response audio with the model response audio

@@ -605,6 +605,10 @@ class Model(ABC):
             if provider_response.videos:
                 assistant_message.video_output = provider_response.videos[-1]  # Taking last (most recent) video
 
+        if provider_response.audios is not None:
+            if provider_response.audios:
+                assistant_message.audio_output = provider_response.audios[-1]  # Taking last (most recent) audio
+
         # Add thinking content to assistant message
         if provider_response.thinking is not None:
             assistant_message.thinking = provider_response.thinking
@@ -1019,6 +1023,10 @@ class Model(ABC):
             if stream_data.response_video is None:
                 stream_data.response_video = model_response_delta.videos[-1]
 
+        if model_response_delta.audios is not None:
+            if stream_data.response_audio is None:
+                stream_data.response_audio = model_response_delta.audios[-1]
+
         if model_response_delta.extra is not None:
             if stream_data.extra is None:
                 stream_data.extra = {}
@@ -1093,7 +1101,7 @@ class Model(ABC):
         # Include media artifacts from function execution result in the tool message
         images = None
         videos = None
-        audio = None
+        audios = None
 
         if success and function_execution_result:
             # Convert ImageArtifacts to Images for message compatibility
@@ -1119,15 +1127,17 @@ class Model(ABC):
                         videos.append(Video(content=vid_artifact.content))
 
             # Convert AudioArtifacts to Audio for message compatibility
-            if function_execution_result.audio:
+            if function_execution_result.audios:
                 from agno.media import Audio
 
-                audio = []
-                for aud_artifact in function_execution_result.audio:
+                audios = []
+                for aud_artifact in function_execution_result.audios:
                     if aud_artifact.url:
-                        audio.append(Audio(url=aud_artifact.url))
-                    elif aud_artifact.content:
-                        audio.append(Audio(content=aud_artifact.content))
+                        audios.append(Audio(url=aud_artifact.url))
+                    elif aud_artifact.base64_audio:
+                        import base64
+                        audio_bytes = base64.b64decode(aud_artifact.base64_audio)
+                        audios.append(Audio(content=audio_bytes))
 
         return Message(
             role=self.tool_message_role,
@@ -1139,7 +1149,7 @@ class Model(ABC):
             stop_after_tool_call=function_call.function.stop_after_tool_call,
             images=images,
             videos=videos,
-            audio=audio,
+            audio=audios,
             **kwargs,  # type: ignore
         )
 
@@ -1232,8 +1242,8 @@ class Model(ABC):
                     function_execution_result.images = tool_result.images
                 if tool_result.videos:
                     function_execution_result.videos = tool_result.videos
-                if tool_result.audio:
-                    function_execution_result.audio = tool_result.audio
+                if tool_result.audios:
+                    function_execution_result.audios = tool_result.audios
             else:
                 function_call_output = str(function_execution_result.result) if function_execution_result.result else ""
 
@@ -1266,7 +1276,7 @@ class Model(ABC):
             # Add media artifacts from function execution
             images=function_execution_result.images,
             videos=function_execution_result.videos,
-            audio=function_execution_result.audio,
+            audios=function_execution_result.audios,
         )
 
         # Add function call to function call results

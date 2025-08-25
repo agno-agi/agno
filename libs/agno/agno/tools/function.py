@@ -437,7 +437,7 @@ class FunctionExecutionResult(BaseModel):
     # New fields for media artifacts
     images: Optional[List[ImageArtifact]] = None
     videos: Optional[List[VideoArtifact]] = None
-    audio: Optional[List[AudioArtifact]] = None
+    audios: Optional[List[AudioArtifact]] = None
 
 
 class FunctionCall(BaseModel):
@@ -906,4 +906,4 @@ class ToolResult(BaseModel):
     content: str
     images: Optional[List[ImageArtifact]] = None
     videos: Optional[List[VideoArtifact]] = None
-    audio: Optional[List[AudioArtifact]] = None
+    audios: Optional[List[AudioArtifact]] = None
