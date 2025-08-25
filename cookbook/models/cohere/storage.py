@@ -1,4 +1,4 @@
-"""Run `pip install duckduckgo-search sqlalchemy cohere` to install dependencies."""
+"""Run `pip install ddgs sqlalchemy cohere` to install dependencies."""
 
 from agno.agent import Agent
 from agno.models.cohere import Cohere

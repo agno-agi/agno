@@ -5,9 +5,9 @@ from agno.tools import Toolkit
 from agno.utils.log import log_debug
 
 try:
-    from duckduckgo_search import DDGS
+    from ddgs import DDGS
 except ImportError:
-    raise ImportError("`duckduckgo-search` not installed. Please install using `pip install duckduckgo-search`")
+    raise ImportError("`duckduckgo-search` not installed. Please install using `pip install ddgs`")
 
 
 class DuckDuckGoTools(Toolkit):
@@ -18,9 +18,7 @@ class DuckDuckGoTools(Toolkit):
         news (bool): Enable DuckDuckGo news function.
         modifier (Optional[str]): A modifier to be used in the search request.
         fixed_max_results (Optional[int]): A fixed number of maximum results.
-        headers (Optional[Any]): Headers to be used in the search request.
         proxy (Optional[str]): Proxy to be used in the search request.
-        proxies (Optional[Any]): A list of proxies to be used in the search request.
         timeout (Optional[int]): The maximum number of seconds to wait for a response.
 
     """
@@ -31,16 +29,12 @@ class DuckDuckGoTools(Toolkit):
         news: bool = True,
         modifier: Optional[str] = None,
         fixed_max_results: Optional[int] = None,
-        headers: Optional[Any] = None,
         proxy: Optional[str] = None,
-        proxies: Optional[Any] = None,
         timeout: Optional[int] = 10,
         verify_ssl: bool = True,
         **kwargs,
     ):
-        self.headers: Optional[Any] = headers
         self.proxy: Optional[str] = proxy
-        self.proxies: Optional[Any] = proxies
         self.timeout: Optional[int] = timeout
         self.fixed_max_results: Optional[int] = fixed_max_results
         self.modifier: Optional[str] = modifier
@@ -68,11 +62,10 @@ class DuckDuckGoTools(Toolkit):
         search_query = f"{self.modifier} {query}" if self.modifier else query
 
         log_debug(f"Searching DDG for: {search_query}")
-        ddgs = DDGS(
-            headers=self.headers, proxy=self.proxy, proxies=self.proxies, timeout=self.timeout, verify=self.verify_ssl
-        )
+        with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
+            results = ddgs.text(search_query, max_results=actual_max_results)
 
-        return json.dumps(ddgs.text(keywords=search_query, max_results=actual_max_results), indent=2)
+        return json.dumps(results, indent=2)
 
     def duckduckgo_news(self, query: str, max_results: int = 5) -> str:
         """Use this function to get the latest news from DuckDuckGo.
@@ -87,8 +80,7 @@ class DuckDuckGoTools(Toolkit):
         actual_max_results = self.fixed_max_results or max_results
 
         log_debug(f"Searching DDG news for: {query}")
-        ddgs = DDGS(
-            headers=self.headers, proxy=self.proxy, proxies=self.proxies, timeout=self.timeout, verify=self.verify_ssl
-        )
+        with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
+            results = ddgs.news(query, max_results=actual_max_results)
 
-        return json.dumps(ddgs.news(keywords=query, max_results=actual_max_results), indent=2)
+        return json.dumps(results, indent=2)
