@@ -51,15 +51,15 @@ response = requests.get(url)
 response.raise_for_status()
 
 # Process the audio and get a response
-agent.run(
+run_response = agent.run(
     "What's in this recording? Please analyze the content and tone.",
     audio=[Audio(content=response.content, format="wav")],
 )
 
 # Save the audio response if available
-if agent.run_response.response_audio is not None:
+if run_response.response_audio is not None:
     write_audio_to_file(
-        audio=agent.run_response.response_audio.content, filename="tmp/response.wav"
+        audio=run_response.response_audio.content, filename="tmp/response.wav"
     )
 
 # More example interactions to try:

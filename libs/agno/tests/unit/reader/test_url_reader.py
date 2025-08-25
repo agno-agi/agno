@@ -3,8 +3,8 @@ from unittest.mock import Mock, patch
 import httpx
 import pytest
 
-from agno.document.chunking.fixed import FixedSizeChunking
-from agno.document.reader.url_reader import URLReader
+from agno.knowledge.chunking.fixed import FixedSizeChunking
+from agno.knowledge.reader.url_reader import URLReader
 
 
 @pytest.fixture

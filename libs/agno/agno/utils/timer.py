@@ -5,7 +5,7 @@ from typing import Optional
 class Timer:
     """Timer class for timing code execution"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.start_time: Optional[float] = None
         self.end_time: Optional[float] = None
         self.elapsed_time: Optional[float] = None
@@ -24,11 +24,11 @@ class Timer:
             self.elapsed_time = self.end_time - self.start_time
         return self.end_time
 
-    def __enter__(self):
+    def __enter__(self) -> "Timer":
         self.start_time = perf_counter()
         return self
 
-    def __exit__(self, *args):
+    def __exit__(self, *args) -> None:
         self.end_time = perf_counter()
         if self.start_time is not None:
             self.elapsed_time = self.end_time - self.start_time

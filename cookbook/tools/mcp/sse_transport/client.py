@@ -20,7 +20,7 @@ async def run_agent(message: str) -> None:
             tools=[mcp_tools],
             markdown=True,
         )
-        await agent.aprint_response(message=message, stream=True, markdown=True)
+        await agent.aprint_response(input=message, stream=True, markdown=True)
 
 
 # Using MultiMCPTools, we can connect to multiple MCP servers at once, even if they use different transports.
@@ -36,7 +36,7 @@ async def run_agent_with_multimcp(message: str) -> None:
             tools=[mcp_tools],
             markdown=True,
         )
-        await agent.aprint_response(message=message, stream=True, markdown=True)
+        await agent.aprint_response(input=message, stream=True, markdown=True)
 
 
 if __name__ == "__main__":

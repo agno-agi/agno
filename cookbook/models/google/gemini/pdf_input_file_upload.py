@@ -20,7 +20,10 @@ client = genai.Client()
 upload_result = client.files.upload(file=pdf_path)
 
 # Get the file from Google GenAI
-retrieved_file = client.files.get(name=upload_result.name)
+if upload_result and upload_result.name:
+    retrieved_file = client.files.get(name=upload_result.name)
+else:
+    retrieved_file = None
 
 # Retry up to 3 times if file is not ready
 retries = 0
@@ -28,13 +31,16 @@ wait_time = 5
 while retrieved_file is None and retries < 3:
     retries += 1
     sleep(wait_time)
-    retrieved_file = client.files.get(name=upload_result.name)
+    if upload_result and upload_result.name:
+        retrieved_file = client.files.get(name=upload_result.name)
+    else:
+        retrieved_file = None
 
 if retrieved_file is not None:
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-exp"),
         markdown=True,
-        add_history_to_messages=True,
+        add_history_to_context=True,
     )
 
     agent.print_response(

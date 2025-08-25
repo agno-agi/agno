@@ -10,6 +10,7 @@ from agno.utils.log import log_info, logger
 class LinearTools(Toolkit):
     def __init__(
         self,
+        api_key: Optional[str] = None,
         get_user_details: bool = True,
         get_teams_details: bool = True,
         get_issue_details: bool = True,
@@ -20,14 +21,13 @@ class LinearTools(Toolkit):
         get_high_priority_issues: bool = True,
         **kwargs,
     ):
-        self.api_token = getenv("LINEAR_API_KEY")
+        self.api_key = api_key or getenv("LINEAR_API_KEY")
 
-        if not self.api_token:
-            api_error_message = "API token 'LINEAR_API_KEY' is missing. Please set it as an environment variable."
-            logger.error(api_error_message)
+        if not self.api_key:
+            raise ValueError("Linear API key is required")
 
         self.endpoint = "https://api.linear.app/graphql"
-        self.headers = {"Authorization": f"{self.api_token}"}
+        self.headers = {"Authorization": f"{self.api_key}"}
 
         tools: List[Any] = []
         if get_user_details:
@@ -47,7 +47,7 @@ class LinearTools(Toolkit):
         if get_high_priority_issues:
             tools.append(self.get_high_priority_issues)
 
-        super().__init__(name="linear tools", tools=tools, **kwargs)
+        super().__init__(name="linear_tools", tools=tools, **kwargs)
 
     def _execute_query(self, query, variables=None):
         """Helper method to execute GraphQL queries with optional variables."""

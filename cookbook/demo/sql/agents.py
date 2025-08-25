@@ -4,24 +4,21 @@ from textwrap import dedent
 from typing import Optional
 
 from agno.agent import Agent
-from agno.embedder.openai import OpenAIEmbedder
-from agno.knowledge.combined import CombinedKnowledgeBase
-from agno.knowledge.json import JSONKnowledgeBase
-from agno.knowledge.text import TextKnowledgeBase
-from agno.memory.v2.db.postgres import PostgresMemoryDb
-from agno.memory.v2.memory import Memory
+from agno.db.postgres import PostgresDb
+from agno.knowledge.embedder.openai import OpenAIEmbedder
+from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.groq import Groq
 from agno.models.openai import OpenAIChat
-from agno.storage.agent.postgres import PostgresAgentStorage
 from agno.tools.file import FileTools
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.sql import SQLTools
 from agno.vectordb.pgvector import PgVector, SearchType
 
-# ************* Database Connection *************
+# ************* Database Setup *************
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url=db_url)
 # *******************************
 
 # ************* Paths *************
@@ -33,27 +30,8 @@ output_dir = cwd.joinpath("output")
 output_dir.mkdir(parents=True, exist_ok=True)
 # *******************************
 
-# ************* Storage & Knowledge *************
-sql_agent_storage = PostgresAgentStorage(
-    db_url=db_url,
-    table_name="sql_agent_sessions",
-    schema="ai",
-)
-reasoning_sql_agent_storage = PostgresAgentStorage(
-    db_url=db_url,
-    table_name="reasoning_sql_agent_sessions",
-    schema="ai",
-)
-agent_knowledge = CombinedKnowledgeBase(
-    sources=[
-        # Reads text files, SQL files, and markdown files
-        TextKnowledgeBase(
-            path=knowledge_dir,
-            formats=[".txt", ".sql", ".md"],
-        ),
-        # Reads JSON files
-        JSONKnowledgeBase(path=knowledge_dir),
-    ],
+# ************* Knowledge *************
+agent_knowledge = Knowledge(
     # Store agent knowledge in the ai.sql_agent_knowledge table
     vector_db=PgVector(
         db_url=db_url,
@@ -62,18 +40,11 @@ agent_knowledge = CombinedKnowledgeBase(
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
     # 5 references are added to the prompt
-    num_documents=5,
+    max_results=5,
 )
+agent_knowledge.add_content(path=str(knowledge_dir))
 # *******************************
 
-# ************* Memory *************
-memory = Memory(
-    model=OpenAIChat(id="gpt-4.1"),
-    db=PostgresMemoryDb(table_name="user_memories", db_url=db_url),
-    delete_memories=True,
-    clear_memories=True,
-)
-# *******************************
 
 # ************* Semantic Model *************
 # The semantic model helps the agent identify the tables and columns to use
@@ -121,7 +92,7 @@ description = dedent("""\
     You combine deep F1 knowledge with advanced SQL expertise to uncover insights from decades of racing data.
 """)
 
-instructions = dedent(f"""\
+instructions = dedent("""\
     You are a SQL expert focused on writing precise, efficient queries.
 
     When a user messages you, determine if you need query the database or can respond directly.
@@ -220,16 +191,14 @@ def get_sql_agent(
     if reasoning:
         tools.append(ReasoningTools(add_instructions=True, add_few_shot=True))
 
-    storage = reasoning_sql_agent_storage if reasoning else sql_agent_storage
-
     return Agent(
         name=name,
         model=model,
         user_id=user_id,
-        agent_id=name,
+        id=name,
         session_id=session_id,
-        memory=memory,
-        storage=storage,
+        db=db,
+        enable_user_memories=True,
         knowledge=agent_knowledge,
         tools=tools,
         description=description,
@@ -244,6 +213,6 @@ def get_sql_agent(
         # Enable the ability to read the tool call history
         read_tool_call_history=True,
         debug_mode=debug_mode,
-        add_history_to_messages=True,
-        add_datetime_to_instructions=True,
+        add_history_to_context=True,
+        add_datetime_to_context=True,
     )

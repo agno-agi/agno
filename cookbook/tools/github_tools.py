@@ -35,7 +35,6 @@ agent = Agent(
         "Do not create any issues or pull requests unless explicitly asked to do so",
     ],
     tools=[GithubTools()],
-    show_tool_calls=True,
 )
 
 # Basic repository listing

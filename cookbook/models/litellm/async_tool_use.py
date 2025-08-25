@@ -3,7 +3,6 @@ import asyncio
 from agno.agent import Agent
 from agno.models.litellm import LiteLLM
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.yfinance import YFinanceTools
 
 agent = Agent(
     model=LiteLLM(

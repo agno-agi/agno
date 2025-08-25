@@ -23,15 +23,14 @@ custom_dalle = DalleTools(
 agent_custom = Agent(
     tools=[custom_dalle],
     name="Custom DALL-E Generator",
-    show_tool_calls=True,
 )
 
 response = agent_custom.run(
     "Create a panoramic nature scene showing a peaceful mountain lake at sunset",
     markdown=True,
 )
-if response.images:
+if response.images and response.images[0].url:
     download_image(
         url=response.images[0].url,
-        output_path=Path(__file__).parent.joinpath("tmp/nature.jpg"),
+        output_path=str(Path(__file__).parent.joinpath("tmp/nature.jpg")),
     )

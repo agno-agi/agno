@@ -1,6 +1,6 @@
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from pydantic import BaseModel
 
@@ -12,7 +12,7 @@ from agno.utils.log import log_error
 
 
 @dataclass
-class BaseRunResponseEvent:
+class BaseRunOutputEvent:
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
             k: v
@@ -22,7 +22,7 @@ class BaseRunResponseEvent:
             not in [
                 "tools",
                 "tool",
-                "extra_data",
+                "metadata",
                 "image",
                 "images",
                 "videos",
@@ -33,10 +33,20 @@ class BaseRunResponseEvent:
             ]
         }
 
-        if hasattr(self, "extra_data") and self.extra_data is not None:
-            _dict["extra_data"] = (
-                self.extra_data.to_dict() if isinstance(self.extra_data, RunResponseExtraData) else self.extra_data
-            )
+        if hasattr(self, "metadata") and self.metadata is not None:
+            _dict["metadata"] = self.metadata
+
+        if hasattr(self, "additional_input") and self.additional_input is not None:
+            _dict["additional_input"] = [m.to_dict() for m in self.additional_input]
+
+        if hasattr(self, "reasoning_messages") and self.reasoning_messages is not None:
+            _dict["reasoning_messages"] = [m.to_dict() for m in self.reasoning_messages]
+
+        if hasattr(self, "reasoning_steps") and self.reasoning_steps is not None:
+            _dict["reasoning_steps"] = [rs.model_dump() for rs in self.reasoning_steps]
+
+        if hasattr(self, "references") and self.references is not None:
+            _dict["references"] = [r.model_dump() for r in self.references]
 
         if hasattr(self, "member_responses") and self.member_responses:
             _dict["member_responses"] = [response.to_dict() for response in self.member_responses]
@@ -139,9 +149,21 @@ class BaseRunResponseEvent:
         if response_audio:
             data["response_audio"] = AudioResponse.model_validate(response_audio)
 
-        extra_data = data.pop("extra_data", None)
-        if extra_data:
-            data["extra_data"] = RunResponseExtraData.from_dict(extra_data)
+        additional_input = data.pop("additional_input", None)
+        if additional_input is not None:
+            data["additional_input"] = [Message.model_validate(message) for message in additional_input]
+
+        reasoning_steps = data.pop("reasoning_steps", None)
+        if reasoning_steps is not None:
+            data["reasoning_steps"] = [ReasoningStep.model_validate(step) for step in reasoning_steps]
+
+        reasoning_messages = data.pop("reasoning_messages", None)
+        if reasoning_messages is not None:
+            data["reasoning_messages"] = [Message.model_validate(message) for message in reasoning_messages]
+
+        references = data.pop("references", None)
+        if references is not None:
+            data["references"] = [MessageReferences.model_validate(reference) for reference in references]
 
         # To make it backwards compatible
         if "event" in data:
@@ -156,51 +178,6 @@ class BaseRunResponseEvent:
     @property
     def is_cancelled(self):
         return False
-
-
-@dataclass
-class RunResponseExtraData:
-    references: Optional[List[MessageReferences]] = None
-    add_messages: Optional[List[Message]] = None
-    reasoning_steps: Optional[List[ReasoningStep]] = None
-    reasoning_messages: Optional[List[Message]] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        _dict = {}
-        if self.add_messages is not None:
-            _dict["add_messages"] = [m.to_dict() for m in self.add_messages]
-        if self.reasoning_messages is not None:
-            _dict["reasoning_messages"] = [m.to_dict() for m in self.reasoning_messages]
-        if self.reasoning_steps is not None:
-            _dict["reasoning_steps"] = [rs.model_dump() for rs in self.reasoning_steps]
-        if self.references is not None:
-            _dict["references"] = [r.model_dump() for r in self.references]
-        return _dict
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "RunResponseExtraData":
-        add_messages = data.pop("add_messages", None)
-        if add_messages is not None:
-            add_messages = [Message.model_validate(message) for message in add_messages]
-
-        reasoning_steps = data.pop("reasoning_steps", None)
-        if reasoning_steps is not None:
-            reasoning_steps = [ReasoningStep.model_validate(step) for step in reasoning_steps]
-
-        reasoning_messages = data.pop("reasoning_messages", None)
-        if reasoning_messages is not None:
-            reasoning_messages = [Message.model_validate(message) for message in reasoning_messages]
-
-        references = data.pop("references", None)
-        if references is not None:
-            references = [MessageReferences.model_validate(reference) for reference in references]
-
-        return cls(
-            add_messages=add_messages,
-            reasoning_steps=reasoning_steps,
-            reasoning_messages=reasoning_messages,
-            references=references,
-        )
 
 
 class RunStatus(str, Enum):

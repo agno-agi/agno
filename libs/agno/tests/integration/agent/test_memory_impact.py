@@ -3,6 +3,7 @@ import tracemalloc
 from typing import List, Tuple
 
 from agno.agent.agent import Agent
+from agno.db.base import SessionType
 from agno.models.openai.chat import OpenAIChat
 
 
@@ -94,7 +95,7 @@ class MemoryMonitor:
         }
 
 
-def test_agent_memory_impact_with_gc_monitoring(agent_storage, memory):
+def test_agent_memory_impact_with_gc_monitoring(shared_db):
     """
     Test that creates an agent with memory and storage, runs a series of prompts,
     and monitors memory usage to verify garbage collection is working correctly.
@@ -102,8 +103,7 @@ def test_agent_memory_impact_with_gc_monitoring(agent_storage, memory):
     # Create agent with memory and storage
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        storage=agent_storage,
-        memory=memory,
+        db=shared_db,
         enable_user_memories=True,
     )
 
@@ -139,7 +139,6 @@ def test_agent_memory_impact_with_gc_monitoring(agent_storage, memory):
 
             assert response is not None
             assert response.content is not None
-            assert response.run_id is not None
 
             monitor.take_reading(f"after_prompt_{i + 1}")
 
@@ -185,35 +184,34 @@ def test_agent_memory_impact_with_gc_monitoring(agent_storage, memory):
 
         # Verify that the agent's memory and storage are working correctly
         # Check that memories were created
-        user_memories = memory.get_user_memories(user_id=user_id)
+        user_memories = shared_db.get_user_memories(user_id=user_id)
         assert len(user_memories) > 0, "No user memories were created"
 
         # Check that sessions were stored
-        session_from_storage = agent_storage.read(session_id=session_id)
+        session_from_storage = shared_db.get_session(session_id=session_id, session_type=SessionType.AGENT)
         assert session_from_storage is not None, "Session was not stored"
 
         # Check that runs are in memory
-        assert session_id in memory.runs, "Session runs not found in memory"
-        assert len(memory.runs[session_id]) == len(prompts), (
-            f"Expected {len(prompts)} runs, got {len(memory.runs[session_id])}"
+        assert session_id in session_from_storage.runs, "Session runs not found in memory"
+        assert len(session_from_storage.runs[session_id]) == len(prompts), (
+            f"Expected {len(prompts)} runs, got {len(session_from_storage.runs[session_id])}"
         )
 
         print("✅ Memory impact test completed successfully")
         print(f"✅ Created {len(user_memories)} user memories")
-        print(f"✅ Stored {len(memory.runs[session_id])} runs in memory")
+        print(f"✅ Stored {len(session_from_storage.runs[session_id])} runs in memory")
 
     finally:
         monitor.stop_monitoring()
 
 
-def test_agent_memory_cleanup_after_session_switch(agent_storage, memory):
+def test_agent_memory_cleanup_after_session_switch(shared_db):
     """
     Test that verifies memory is properly cleaned up when switching between sessions.
     """
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        storage=agent_storage,
-        memory=memory,
+        db=shared_db,
         enable_user_memories=True,
     )
 
@@ -261,9 +259,9 @@ def test_agent_memory_cleanup_after_session_switch(agent_storage, memory):
 
         # Verify all sessions are properly stored
         for session_id in sessions:
-            session_from_storage = agent_storage.read(session_id=session_id)
+            session_from_storage = shared_db.get_session(session_id=session_id, session_type=SessionType.AGENT)
             assert session_from_storage is not None, f"Session {session_id} was not stored"
-            assert session_id in memory.runs, f"Session {session_id} runs not found in memory"
+            assert session_id in session_from_storage.runs, f"Session {session_id} runs not found in memory"
 
         print("✅ Session switching memory test completed successfully")
 

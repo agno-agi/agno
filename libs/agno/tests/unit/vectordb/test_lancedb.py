@@ -4,7 +4,7 @@ from typing import List
 
 import pytest
 
-from agno.document import Document
+from agno.knowledge.document import Document
 from agno.vectordb.lancedb import LanceDb
 from agno.vectordb.search import SearchType
 
@@ -130,6 +130,175 @@ def test_name_exists(lance_db, sample_documents):
     lance_db.insert([sample_documents[0]])
     assert lance_db.name_exists("tom_kha") is True
     assert lance_db.name_exists("nonexistent") is False
+
+
+def test_id_exists(lance_db, sample_documents):
+    """Test ID existence check"""
+    lance_db.insert([sample_documents[0]])
+
+    # Get the actual ID that was generated (MD5 hash of content)
+    from hashlib import md5
+
+    cleaned_content = sample_documents[0].content.replace("\x00", "\ufffd")
+    expected_id = md5(cleaned_content.encode()).hexdigest()
+
+    assert lance_db.id_exists(expected_id) is True
+    assert lance_db.id_exists("nonexistent_id") is False
+
+
+def test_delete_by_id(lance_db, sample_documents):
+    """Test deleting documents by ID"""
+    lance_db.insert(sample_documents)
+    assert lance_db.get_count() == 3
+
+    # Get the actual ID that was generated for the first document
+    from hashlib import md5
+
+    cleaned_content = sample_documents[0].content.replace("\x00", "\ufffd")
+    doc_id = md5(cleaned_content.encode()).hexdigest()
+
+    # Delete by ID
+    result = lance_db.delete_by_id(doc_id)
+    assert result is True
+    assert lance_db.get_count() == 2
+    assert lance_db.id_exists(doc_id) is False
+
+    # Try to delete non-existent ID
+    result = lance_db.delete_by_id("nonexistent_id")
+    assert result is True  # LanceDB delete doesn't fail for non-existent IDs
+    assert lance_db.get_count() == 2
+
+
+def test_delete_by_name(lance_db, sample_documents):
+    """Test deleting documents by name"""
+    lance_db.insert(sample_documents)
+    assert lance_db.get_count() == 3
+
+    # Delete by name
+    result = lance_db.delete_by_name("tom_kha")
+    assert result is True
+    assert lance_db.get_count() == 2
+    assert lance_db.name_exists("tom_kha") is False
+
+    # Try to delete non-existent name
+    result = lance_db.delete_by_name("nonexistent")
+    assert result is False
+    assert lance_db.get_count() == 2
+
+
+def test_delete_by_metadata(lance_db, sample_documents):
+    """Test deleting documents by metadata"""
+    lance_db.insert(sample_documents)
+    assert lance_db.get_count() == 3
+
+    # Delete by metadata - should delete all Thai cuisine documents
+    result = lance_db.delete_by_metadata({"cuisine": "Thai"})
+    assert result is True
+    assert lance_db.get_count() == 0
+
+    # Insert again and test partial metadata match
+    lance_db.insert(sample_documents)
+    assert lance_db.get_count() == 3
+
+    # Delete by specific metadata combination
+    result = lance_db.delete_by_metadata({"cuisine": "Thai", "type": "soup"})
+    assert result is True
+    assert lance_db.get_count() == 2  # Should only delete tom_kha
+
+    # Try to delete by non-existent metadata
+    result = lance_db.delete_by_metadata({"cuisine": "Italian"})
+    assert result is False
+    assert lance_db.get_count() == 2
+
+
+def test_delete_by_content_id(lance_db, sample_documents):
+    """Test deleting documents by content ID"""
+    # Add content_id to sample documents
+    sample_documents[0].content_id = "recipe_1"
+    sample_documents[1].content_id = "recipe_2"
+    sample_documents[2].content_id = "recipe_3"
+
+    lance_db.insert(sample_documents)
+    assert lance_db.get_count() == 3
+
+    # Delete by content_id
+    result = lance_db.delete_by_content_id("recipe_1")
+    assert result is True
+    assert lance_db.get_count() == 2
+
+    # Try to delete non-existent content_id
+    result = lance_db.delete_by_content_id("nonexistent_content_id")
+    assert result is False
+    assert lance_db.get_count() == 2
+
+
+def test_delete_by_name_multiple_documents(lance_db):
+    """Test deleting multiple documents with the same name"""
+    # Create multiple documents with the same name
+    docs = [
+        Document(
+            content="First version of Tom Kha Gai",
+            meta_data={"version": "1"},
+            name="tom_kha",
+            content_id="recipe_1_v1",
+        ),
+        Document(
+            content="Second version of Tom Kha Gai",
+            meta_data={"version": "2"},
+            name="tom_kha",
+            content_id="recipe_1_v2",
+        ),
+        Document(
+            content="Pad Thai recipe",
+            meta_data={"version": "1"},
+            name="pad_thai",
+            content_id="recipe_2_v1",
+        ),
+    ]
+
+    lance_db.insert(docs)
+    assert lance_db.get_count() == 3
+
+    # Delete all documents with name "tom_kha"
+    result = lance_db.delete_by_name("tom_kha")
+    assert result is True
+    assert lance_db.get_count() == 1
+    assert lance_db.name_exists("tom_kha") is False
+    assert lance_db.name_exists("pad_thai") is True
+
+
+def test_delete_by_metadata_complex(lance_db):
+    """Test deleting documents with complex metadata matching"""
+    docs = [
+        Document(
+            content="Thai soup recipe",
+            meta_data={"cuisine": "Thai", "type": "soup", "spicy": True},
+            name="recipe_1",
+        ),
+        Document(
+            content="Thai noodle recipe",
+            meta_data={"cuisine": "Thai", "type": "noodles", "spicy": False},
+            name="recipe_2",
+        ),
+        Document(
+            content="Italian pasta recipe",
+            meta_data={"cuisine": "Italian", "type": "pasta", "spicy": False},
+            name="recipe_3",
+        ),
+    ]
+
+    lance_db.insert(docs)
+    assert lance_db.get_count() == 3
+
+    # Delete only spicy Thai dishes
+    result = lance_db.delete_by_metadata({"cuisine": "Thai", "spicy": True})
+    assert result is True
+    assert lance_db.get_count() == 2
+
+    # Delete all non-spicy dishes
+    result = lance_db.delete_by_metadata({"spicy": False})
+    assert result is True
+    assert lance_db.get_count() == 0
 
 
 def test_get_count(lance_db, sample_documents):

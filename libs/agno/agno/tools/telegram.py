@@ -1,4 +1,4 @@
-import os
+from os import getenv
 from typing import Any, List, Optional, Union
 
 import httpx
@@ -11,7 +11,7 @@ class TelegramTools(Toolkit):
     base_url = "https://api.telegram.org"
 
     def __init__(self, chat_id: Union[str, int], token: Optional[str] = None, **kwargs):
-        self.token = token or os.getenv("TELEGRAM_TOKEN")
+        self.token = token or getenv("TELEGRAM_TOKEN")
         if not self.token:
             logger.error("TELEGRAM_TOKEN not set. Please set the TELEGRAM_TOKEN environment variable.")
 

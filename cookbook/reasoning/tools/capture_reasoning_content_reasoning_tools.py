@@ -1,6 +1,6 @@
 """Test for reasoning_content generation
 
-This script tests whether reasoning_content is properly populated in the RunResponse
+This script tests whether reasoning_content is properly populated in the RunOutput
 when using ReasoningTools. It tests both streaming and non-streaming modes.
 """
 
@@ -10,7 +10,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.reasoning import ReasoningTools
 
-"""Test function to verify reasoning_content is populated in RunResponse."""
+"""Test function to verify reasoning_content is populated in RunOutput."""
 print("\n=== Testing reasoning_content generation ===\n")
 
 # Create an agent with ReasoningTools
@@ -40,11 +40,11 @@ if hasattr(response, "reasoning_content") and response.reasoning_content:
 else:
     print("❌ reasoning_content NOT FOUND in non-streaming response")
 
-# Test 2: Streaming mode with a fresh agent
-print("\nRunning with stream=True...")
+# Process streaming responses to find the final one
+print("\n\n=== Test 2: Processing stream to find final response ===\n")
 
-# Create a fresh agent for streaming test
-streaming_agent = Agent(
+# Create another fresh agent
+streaming_agent_alt = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[ReasoningTools(add_instructions=True)],
     instructions=dedent("""\
@@ -54,31 +54,29 @@ streaming_agent = Agent(
     """),
 )
 
-# Consume all streaming responses
-_ = list(
-    streaming_agent.run(
-        "What is the value of 5! (factorial)?",
-        stream=True,
-        stream_intermediate_steps=True,
-    )
-)
+# Process streaming responses and look for the final RunOutput
+final_response = None
+for event in streaming_agent_alt.run(
+    "What is the value of 3! (factorial)?",
+    stream=True,
+    stream_intermediate_steps=True,
+):
+    # The final event in the stream should be a RunOutput object
+    if hasattr(event, "reasoning_content"):
+        final_response = event
 
-# Check the agent's run_response directly after streaming is complete
-if hasattr(streaming_agent, "run_response") and streaming_agent.run_response:
-    if (
-        hasattr(streaming_agent.run_response, "reasoning_content")
-        and streaming_agent.run_response.reasoning_content
-    ):
-        print("✅ reasoning_content FOUND in agent's run_response after streaming")
-        print(
-            f"   Length: {len(streaming_agent.run_response.reasoning_content)} characters"
-        )
-        print("\n=== reasoning_content preview (streaming) ===")
-        preview = streaming_agent.run_response.reasoning_content[:1000]
-        if len(streaming_agent.run_response.reasoning_content) > 1000:
-            preview += "..."
-        print(preview)
-    else:
-        print("❌ reasoning_content NOT FOUND in agent's run_response after streaming")
+print("--- Checking reasoning_content from final stream event ---")
+if (
+    final_response
+    and hasattr(final_response, "reasoning_content")
+    and final_response.reasoning_content
+):
+    print("✅ reasoning_content FOUND in final stream event")
+    print(f"   Length: {len(final_response.reasoning_content)} characters")
+    print("\n=== reasoning_content preview (final stream event) ===")
+    preview = final_response.reasoning_content[:1000]
+    if len(final_response.reasoning_content) > 1000:
+        preview += "..."
+    print(preview)
 else:
-    print("❌ Agent's run_response is not accessible after streaming")
+    print("❌ reasoning_content NOT FOUND in final stream event")

@@ -1,5 +1,5 @@
 import json
-import os
+from os import getenv
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
@@ -38,7 +38,7 @@ class TodoistTools(Toolkit):
             get_active_tasks: Whether to register the get_active_tasks function
             get_projects: Whether to register the get_projects function
         """
-        self.api_token = api_token or os.getenv("TODOIST_API_TOKEN")
+        self.api_token = api_token or getenv("TODOIST_API_TOKEN")
         if not self.api_token:
             raise ValueError("TODOIST_API_TOKEN not set. Please set the TODOIST_API_TOKEN environment variable.")
 

@@ -4,7 +4,6 @@ from agno.tools.hackernews import HackerNewsTools
 agent = Agent(
     name="Hackernews Team",
     tools=[HackerNewsTools()],
-    show_tool_calls=True,
     markdown=True,
 )
 agent.print_response(

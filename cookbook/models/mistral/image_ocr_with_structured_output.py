@@ -22,7 +22,7 @@ agent = Agent(
     instructions=[
         "Extract the text elements described by the user from the picture",
     ],
-    response_model=GroceryListElements,
+    output_schema=GroceryListElements,
     markdown=True,
 )
 

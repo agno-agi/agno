@@ -66,8 +66,7 @@ finance_agent = Agent(
         - Note market uncertainties
         - Mention relevant regulatory concerns
     """),
-    add_datetime_to_instructions=True,
-    show_tool_calls=True,
+    add_datetime_to_context=True,
     markdown=True,
 )
 

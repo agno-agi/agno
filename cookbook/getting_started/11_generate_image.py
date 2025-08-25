@@ -39,7 +39,6 @@ image_agent = Agent(
         Always aim to create visually striking and meaningful images that capture the user's vision!\
     """),
     markdown=True,
-    show_tool_calls=True,
 )
 
 # Example usage

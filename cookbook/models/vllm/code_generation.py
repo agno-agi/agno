@@ -5,10 +5,10 @@ Run vLLM model: vllm serve deepseek-ai/deepseek-coder-6.7b-instruct \
 """
 
 from agno.agent import Agent
-from agno.models.vllm import vLLM
+from agno.models.vllm import VLLM
 
 agent = Agent(
-    model=vLLM(id="deepseek-ai/deepseek-coder-6.7b-instruct"),
+    model=VLLM(id="deepseek-ai/deepseek-coder-6.7b-instruct"),
     description="You are an expert Python developer.",
     markdown=True,
 )

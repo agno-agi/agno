@@ -4,7 +4,8 @@ from time import time
 from typing import Any, Dict, List, Optional
 
 from agno.media import AudioResponse, ImageArtifact
-from agno.models.message import Citations, MessageMetrics
+from agno.models.message import Citations
+from agno.models.metrics import Metrics
 from agno.tools.function import UserInputField
 
 
@@ -26,7 +27,7 @@ class ToolExecution:
     tool_args: Optional[Dict[str, Any]] = None
     tool_call_error: Optional[bool] = None
     result: Optional[str] = None
-    metrics: Optional[MessageMetrics] = None
+    metrics: Optional[Metrics] = None
 
     # If True, the agent will stop executing after this tool call.
     stop_after_tool_call: bool = False
@@ -74,7 +75,7 @@ class ToolExecution:
             if "user_input_schema" in data
             else None,
             external_execution_required=data.get("external_execution_required"),
-            metrics=MessageMetrics(**(data.get("metrics", {}) or {})),
+            metrics=Metrics(**(data.get("metrics", {}) or {})),
         )
 
 
@@ -105,11 +106,13 @@ class ModelResponse:
 
     citations: Optional[Citations] = None
 
-    response_usage: Optional[Any] = None
+    response_usage: Optional[Metrics] = None
 
     created_at: int = int(time())
 
     extra: Optional[Dict[str, Any]] = None
+
+    updated_session_state: Optional[Dict[str, Any]] = None
 
 
 class FileType(str, Enum):

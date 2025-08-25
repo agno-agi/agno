@@ -1,42 +1,127 @@
-from typing import Iterator
-
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.utils.log import logger
-from agno.utils.pprint import pprint_run_response
-from agno.workflow import Workflow
+from agno.team import Team
+from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.tools.hackernews import HackerNewsTools
+from agno.workflow import Step, StepInput, StepOutput, Workflow
+
+# Define agents
+hackernews_agent = Agent(
+    name="Hackernews Agent",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[HackerNewsTools()],
+    instructions="Extract key insights and content from Hackernews posts",
+)
+
+web_agent = Agent(
+    name="Web Agent",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[DuckDuckGoTools()],
+    instructions="Search the web for the latest news and trends",
+)
+
+# Define research team for complex analysis
+research_team = Team(
+    name="Research Team",
+    mode="coordinate",
+    members=[hackernews_agent, web_agent],
+    instructions="Analyze content and create comprehensive social media strategy",
+)
+
+content_planner = Agent(
+    name="Content Planner",
+    model=OpenAIChat(id="gpt-4o"),
+    instructions=[
+        "Plan a content schedule over 4 weeks for the provided topic and research content",
+        "Ensure that I have posts for 3 posts per week",
+    ],
+)
 
 
-class CacheWorkflow(Workflow):
-    # Add agents or teams as attributes on the workflow
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"))
+def custom_content_planning_function(step_input: StepInput) -> StepOutput:
+    """
+    Custom function that does intelligent content planning with context awareness
+    """
+    message = step_input.input
+    previous_step_content = step_input.previous_step_content
 
-    # Write the logic in the `run()` method
-    def run(self, message: str) -> Iterator[RunResponse]:
-        logger.info(f"Checking cache for '{message}'")
-        # Check if the output is already cached
-        if self.session_state.get(message):
-            logger.info(f"Cache hit for '{message}'")
-            yield RunResponse(
-                run_id=self.run_id, content=self.session_state.get(message)
-            )
-            return
+    # Create intelligent planning prompt
+    planning_prompt = f"""
+        STRATEGIC CONTENT PLANNING REQUEST:
 
-        logger.info(f"Cache miss for '{message}'")
-        # Run the agent and yield the response
-        yield from self.agent.run(message, stream=True)
+        Core Topic: {message}
 
-        # Cache the output after response is yielded
-        self.session_state[message] = self.agent.run_response.content
+        Research Results: {previous_step_content[:500] if previous_step_content else "No research results"}
+
+        Planning Requirements:
+        1. Create a comprehensive content strategy based on the research
+        2. Leverage the research findings effectively
+        3. Identify content formats and channels
+        4. Provide timeline and priority recommendations
+        5. Include engagement and distribution strategies
+
+        Please create a detailed, actionable content plan.
+    """
+
+    try:
+        response = content_planner.run(planning_prompt)
+
+        enhanced_content = f"""
+            ## Strategic Content Plan
+
+            **Planning Topic:** {message}
+
+            **Research Integration:** {"✓ Research-based" if previous_step_content else "✗ No research foundation"}
+
+            **Content Strategy:**
+            {response.content}
+
+            **Custom Planning Enhancements:**
+            - Research Integration: {"High" if previous_step_content else "Baseline"}
+            - Strategic Alignment: Optimized for multi-channel distribution
+            - Execution Ready: Detailed action items included
+        """.strip()
+
+        return StepOutput(content=enhanced_content, response=response)
+
+    except Exception as e:
+        return StepOutput(
+            content=f"Custom content planning failed: {str(e)}",
+            success=False,
+        )
 
 
+# Define steps using different executor types
+
+research_step = Step(
+    name="Research Step",
+    team=research_team,
+)
+
+content_planning_step = Step(
+    name="Content Planning Step",
+    executor=custom_content_planning_function,
+)
+
+
+# Define and use examples
 if __name__ == "__main__":
-    workflow = CacheWorkflow()
-    # Run workflow (this is takes ~1s)
-    response: Iterator[RunResponse] = workflow.run(message="Tell me a joke.")
-    # Print the response
-    pprint_run_response(response, markdown=True, show_time=True)
-    # Run workflow again (this is immediate because of caching)
-    response: Iterator[RunResponse] = workflow.run(message="Tell me a joke.")
-    # Print the response
-    pprint_run_response(response, markdown=True, show_time=True)
+    content_creation_workflow = Workflow(
+        name="Content Creation Workflow",
+        description="Automated content creation with custom execution options",
+        db=SqliteDb(
+            session_table="workflow_session",
+            db_file="tmp/workflow.db",
+        ),
+        # Define the sequence of steps
+        # First run the research_step, then the content_planning_step
+        # You can mix and match agents, teams, and even regular python functions directly as steps
+        steps=[research_step, content_planning_step],
+    )
+    content_creation_workflow.print_response(
+        input="AI trends in 2024",
+        markdown=True,
+    )
+
+    print("\n" + "=" * 60 + "\n")

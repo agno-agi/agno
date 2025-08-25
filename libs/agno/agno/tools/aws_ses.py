@@ -15,8 +15,9 @@ class AWSSESTool(Toolkit):
         sender_email: Optional[str] = None,
         sender_name: Optional[str] = None,
         region_name: str = "us-east-1",
+        **kwargs,
     ):
-        super().__init__(name="aws_ses_tool", tools=[self.send_email])
+        super().__init__(name="aws_ses_tool", tools=[self.send_email], **kwargs)
         self.client = boto3.client("ses", region_name=region_name)
         self.sender_email = sender_email
         self.sender_name = sender_name

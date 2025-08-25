@@ -11,7 +11,7 @@ Run `pip install openai agno` to install dependencies.
 from textwrap import dedent
 from typing import List
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.openai import OpenAIChat
 from pydantic import BaseModel, Field
 
@@ -78,7 +78,7 @@ json_mode_agent = Agent(
 
         Transform every location into an unforgettable cinematic experience!\
     """),
-    response_model=MovieScript,
+    output_schema=MovieScript,
     use_json_mode=True,
 )
 
@@ -117,7 +117,7 @@ structured_output_agent = Agent(
 
         Transform every location into an unforgettable cinematic experience!\
     """),
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 # Example usage with different locations
@@ -137,7 +137,7 @@ Creative location prompts to explore:
 # To get the response in a variable:
 # from rich.pretty import pprint
 
-# json_mode_response: RunResponse = json_mode_agent.run("New York")
+# json_mode_response: RunOutput = json_mode_agent.run("New York")
 # pprint(json_mode_response.content)
-# structured_output_response: RunResponse = structured_output_agent.run("New York")
+# structured_output_response: RunOutput = structured_output_agent.run("New York")
 # pprint(structured_output_response.content)

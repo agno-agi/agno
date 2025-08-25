@@ -12,7 +12,6 @@ from agno.tools.firecrawl import FirecrawlTools
 
 agent = Agent(
     tools=[FirecrawlTools(scrape=False, crawl=True, search=True, poll_interval=2)],
-    show_tool_calls=True,
     markdown=True,
 )
 

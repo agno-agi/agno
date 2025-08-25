@@ -1,5 +1,5 @@
-import os
 import uuid
+from os import getenv
 from typing import Any, List, Optional, Union
 
 import httpx
@@ -25,7 +25,7 @@ class GiphyTools(Toolkit):
             limit: Number of GIFs to return. Defaults to 1.
             search_gifs: Whether to enable GIF search functionality. Defaults to True.
         """
-        self.api_key = api_key or os.getenv("GIPHY_API_KEY")
+        self.api_key = api_key or getenv("GIPHY_API_KEY")
         if not self.api_key:
             logger.error("No Giphy API key provided")
 

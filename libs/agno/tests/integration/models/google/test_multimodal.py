@@ -15,7 +15,6 @@ def test_image_input():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run(
@@ -23,6 +22,7 @@ def test_image_input():
         images=[Image(url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg")],
     )
 
+    assert response.content is not None
     assert "golden" in response.content.lower()
 
 
@@ -40,7 +40,6 @@ def test_audio_input_bytes():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
     response = agent.run("What is in this audio?", audio=[Audio(content=wav_data, format="wav")])
 
@@ -54,7 +53,6 @@ def test_audio_input_url():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run(
@@ -72,7 +70,6 @@ def test_video_input_bytes():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     url = "https://videos.pexels.com/video-files/5752729/5752729-uhd_2560_1440_30fps.mp4"
@@ -100,8 +97,7 @@ def test_image_generation():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
-        create_default_system_message=False,
+        build_context=False,
         system_message=None,
     )
 
@@ -127,8 +123,7 @@ def test_image_generation_streaming():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
-        create_default_system_message=False,
+        build_context=False,
         system_message=None,
     )
 
@@ -136,11 +131,11 @@ def test_image_generation_streaming():
 
     image_received = False
     for chunk in response:
-        if chunk.image:
+        if hasattr(chunk, "image") and chunk.image:  # type: ignore
             image_received = True
-            assert chunk.image is not None
+            assert chunk.image is not None  # type: ignore
 
-            image = PILImage.open(BytesIO(chunk.image.content))
+            image = PILImage.open(BytesIO(chunk.image.content))  # type: ignore
             assert image.format in ["JPEG", "PNG"]
 
     assert image_received, "No image was received in the stream"
@@ -157,8 +152,7 @@ def test_image_editing():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
-        create_default_system_message=False,
+        build_context=False,
         system_message=None,
     )
 
@@ -186,8 +180,7 @@ def test_image_generation_with_detailed_prompt():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
-        create_default_system_message=False,
+        build_context=False,
         system_message=None,
     )
 
@@ -220,9 +213,7 @@ def test_combined_text_and_image_generation():
         exponential_backoff=True,
         delay_between_retries=5,
         markdown=True,
-        telemetry=False,
-        monitoring=False,
-        create_default_system_message=False,
+        build_context=False,
         system_message=None,
     )
 

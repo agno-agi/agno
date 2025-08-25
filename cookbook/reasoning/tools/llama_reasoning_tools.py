@@ -20,7 +20,6 @@ reasoning_agent = Agent(
     ],
     instructions="Use tables where possible",
     markdown=True,
-    show_tool_calls=True,
 )
 reasoning_agent.print_response(
     "What is the NVDA stock price? Write me a report",

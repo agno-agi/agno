@@ -31,11 +31,10 @@ async def run_agent(message: str) -> None:
                 - Be concise and focus on relevant information\
             """),
             markdown=True,
-            show_tool_calls=True,
         )
 
         # Run an interactive command-line interface to interact with the agent.
-        await agent.acli_app(message=message, stream=True)
+        await agent.acli_app(input=message, stream=True)
 
 
 if __name__ == "__main__":

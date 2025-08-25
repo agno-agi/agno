@@ -1,28 +1,28 @@
 import pytest
 from pydantic import BaseModel, Field
 
-from agno.agent import Agent, RunResponse
+from agno.agent import Agent, RunOutput
+from agno.db.sqlite import SqliteDb
 from agno.models.litellm import LiteLLMOpenAI
-from agno.storage.sqlite import SqliteStorage
 
 
-def _assert_metrics(response: RunResponse):
+def _assert_metrics(response: RunOutput):
     """Helper function to assert metrics are present and valid"""
     # Check that metrics dictionary exists
     assert response.metrics is not None
 
     # Check that we have some token counts
-    assert "input_tokens" in response.metrics
-    assert "output_tokens" in response.metrics
-    assert "total_tokens" in response.metrics
+    assert response.metrics.input_tokens is not None
+    assert response.metrics.output_tokens is not None
+    assert response.metrics.total_tokens is not None
 
     # Check that we have timing information
-    assert "time" in response.metrics
+    assert response.metrics.duration is not None
 
     # Check that the total tokens is the sum of input and output tokens
-    input_tokens = sum(response.metrics.get("input_tokens", []))
-    output_tokens = sum(response.metrics.get("output_tokens", []))
-    total_tokens = sum(response.metrics.get("total_tokens", []))
+    input_tokens = response.metrics.input_tokens
+    output_tokens = response.metrics.output_tokens
+    total_tokens = response.metrics.total_tokens
 
     # The total should be at least the sum of input and output
     assert total_tokens >= input_tokens + output_tokens - 5  # Allow small margin of error
@@ -30,12 +30,13 @@ def _assert_metrics(response: RunResponse):
 
 def test_basic():
     """Test basic functionality with LiteLLM Proxy"""
-    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False)
 
     # Get the response
-    response: RunResponse = agent.run("Share a 2 sentence horror story")
+    response: RunOutput = agent.run("Share a 2 sentence horror story")
 
     assert response.content is not None
+    assert response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
 
@@ -44,7 +45,7 @@ def test_basic():
 
 def test_basic_stream():
     """Test streaming functionality with LiteLLM Proxy"""
-    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -56,17 +57,16 @@ def test_basic_stream():
     for response in responses:
         assert response.content is not None
 
-    _assert_metrics(agent.run_response)
-
 
 @pytest.mark.asyncio
 async def test_async_basic():
     """Test async functionality with LiteLLM"""
-    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
     assert response.content is not None
+    assert response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
     _assert_metrics(response)
@@ -75,23 +75,20 @@ async def test_async_basic():
 @pytest.mark.asyncio
 async def test_async_basic_stream():
     """Test async streaming functionality with LiteLLM"""
-    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False, monitoring=False)
+    agent = Agent(model=LiteLLMOpenAI(id="gpt-4o"), markdown=True, telemetry=False)
 
-    response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
-
-    async for response in response_stream:
+    async for response in agent.arun("Share a 2 sentence horror story", stream=True):
         assert response.content is not None
-    _assert_metrics(agent.run_response)
 
 
 def test_with_memory():
     agent = Agent(
+        db=SqliteDb(db_file="tmp/test_with_memory.db"),
         model=LiteLLMOpenAI(id="gpt-4o"),
-        add_history_to_messages=True,
-        num_history_responses=5,
+        add_history_to_context=True,
+        num_history_runs=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # First interaction
@@ -100,6 +97,7 @@ def test_with_memory():
 
     # Second interaction should remember the name
     response2 = agent.run("What's my name?")
+    assert response2.content is not None
     assert "John Smith" in response2.content
 
     # Verify memories were created
@@ -110,7 +108,7 @@ def test_with_memory():
     _assert_metrics(response2)
 
 
-def test_response_model():
+def test_output_schema():
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
@@ -120,8 +118,7 @@ def test_response_model():
         model=LiteLLMOpenAI(id="gpt-4o"),
         markdown=True,
         telemetry=False,
-        monitoring=False,
-        response_model=MovieScript,
+        output_schema=MovieScript,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -136,16 +133,19 @@ def test_response_model():
 def test_history():
     agent = Agent(
         model=LiteLLMOpenAI(id="gpt-4o"),
-        storage=SqliteStorage(table_name="agent_sessions_storage", db_file="tmp/data.db"),
-        add_history_to_messages=True,
+        db=SqliteDb(db_file="tmp/litellm_openai/test_basic.db"),
+        add_history_to_context=True,
         telemetry=False,
-        monitoring=False,
     )
-    agent.run("Hello")
-    assert len(agent.run_response.messages) == 2
-    agent.run("Hello 2")
-    assert len(agent.run_response.messages) == 4
-    agent.run("Hello 3")
-    assert len(agent.run_response.messages) == 6
-    agent.run("Hello 4")
-    assert len(agent.run_response.messages) == 8
+    run_output = agent.run("Hello")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 2
+    run_output = agent.run("Hello 2")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 4
+    run_output = agent.run("Hello 3")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 6
+    run_output = agent.run("Hello 4")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 8

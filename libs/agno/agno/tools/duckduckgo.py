@@ -7,7 +7,7 @@ from agno.utils.log import log_debug
 try:
     from ddgs import DDGS
 except ImportError:
-    raise ImportError("`duckduckgo-search` not installed. Please install using `pip install ddgs`")
+    raise ImportError("`ddgs` not installed. Please install using `pip install ddgs`")
 
 
 class DuckDuckGoTools(Toolkit):
@@ -63,7 +63,7 @@ class DuckDuckGoTools(Toolkit):
 
         log_debug(f"Searching DDG for: {search_query}")
         with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
-            results = ddgs.text(search_query, max_results=actual_max_results)
+            results = ddgs.text(query=search_query, max_results=actual_max_results)
 
         return json.dumps(results, indent=2)
 
@@ -81,6 +81,6 @@ class DuckDuckGoTools(Toolkit):
 
         log_debug(f"Searching DDG news for: {query}")
         with DDGS(proxy=self.proxy, timeout=self.timeout, verify=self.verify_ssl) as ddgs:
-            results = ddgs.news(query, max_results=actual_max_results)
+            results = ddgs.news(query=query, max_results=actual_max_results)
 
         return json.dumps(results, indent=2)

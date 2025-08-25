@@ -7,7 +7,7 @@ except ImportError:
 
 from typing import Any, List, Optional
 
-from agno.tools.toolkit import Toolkit
+from agno.tools import Toolkit
 from agno.utils.log import log_info, logger
 
 

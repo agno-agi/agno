@@ -45,17 +45,14 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     # Each function in the context is evaluated when the agent is run,
     # think of it as dependency injection for Agents
-    context={"top_hackernews_stories": get_top_hackernews_stories},
-    # Alternatively, you can manually add the context to the instructions
+    dependencies={"top_hackernews_stories": get_top_hackernews_stories},
+    # Alternatively, you can manually add the context to the instructions. This gets resolved automatically
     instructions=dedent("""\
         You are an insightful tech trend observer! 📰
 
         Here are the top stories on HackerNews:
         {top_hackernews_stories}\
     """),
-    # add_state_in_messages will make the `top_hackernews_stories` variable
-    # available in the instructions
-    add_state_in_messages=True,
     markdown=True,
 )
 

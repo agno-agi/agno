@@ -91,8 +91,7 @@ agent = Agent(
     Date: {current_date}\
     """),
     markdown=True,
-    show_tool_calls=True,
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     save_response_to_file=str(tmp.joinpath("{message}.md")),
 )
 

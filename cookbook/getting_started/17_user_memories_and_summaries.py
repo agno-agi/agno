@@ -23,14 +23,14 @@ Run: `pip install openai sqlalchemy agno` to install dependencies
 
 import json
 from textwrap import dedent
-from typing import Optional
+from typing import List, Optional
 
 import typer
 from agno.agent import Agent
-from agno.memory.v2.db.sqlite import SqliteMemoryDb
-from agno.memory.v2.memory import Memory
+from agno.db.base import SessionType
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
-from agno.storage.sqlite import SqliteStorage
+from agno.session import AgentSession
 from rich.console import Console
 from rich.json import JSON
 from rich.panel import Panel
@@ -44,29 +44,24 @@ def create_agent(user: str = "user"):
     new = typer.confirm("Do you want to start a new session?")
 
     # Initialize storage for both agent sessions and memories
-    agent_storage = SqliteStorage(table_name="agent_memories", db_file="tmp/agents.db")
+    db = SqliteDb(db_file="tmp/agents.db")
 
     if not new:
-        existing_sessions = agent_storage.get_all_session_ids(user)
+        existing_sessions: List[AgentSession] = db.get_sessions(
+            user_id=user, session_type=SessionType.AGENT
+        )  # type: ignore
         if len(existing_sessions) > 0:
-            session_id = existing_sessions[0]
+            session_id = existing_sessions[0].session_id
 
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         user_id=user,
         session_id=session_id,
-        # Configure memory system with SQLite storage
-        memory=Memory(
-            db=SqliteMemoryDb(
-                table_name="agent_memory",
-                db_file="tmp/agent_memory.db",
-            ),
-        ),
         enable_user_memories=True,
         enable_session_summaries=True,
-        storage=agent_storage,
-        add_history_to_messages=True,
-        num_history_responses=3,
+        db=db,
+        add_history_to_context=True,
+        num_history_runs=3,
         # Enhanced system prompt for better personality and memory usage
         description=dedent("""\
         You are a helpful and friendly AI assistant with excellent memory.
@@ -92,66 +87,52 @@ def print_agent_memory(agent):
     """Print the current state of agent's memory systems"""
     console = Console()
 
-    messages = []
-    session_id = agent.session_id
-    session_run = agent.memory.runs[session_id][-1]
-    for m in session_run.messages:
-        message_dict = m.to_dict()
-        messages.append(message_dict)
-
     # Print chat history
+    messages = agent.get_messages_for_session()
     console.print(
         Panel(
             JSON(
                 json.dumps(
-                    messages,
+                    [m.model_dump(include={"role", "content"}) for m in messages],
+                    indent=4,
                 ),
-                indent=4,
             ),
-            title=f"Chat History for session_id: {session_run.session_id}",
+            title=f"Chat History for session_id: {agent.session_id}",
             expand=True,
         )
     )
 
     # Print user memories
-    for user_id in list(agent.memory.memories.keys()):
+    user_memories = agent.get_user_memories(user_id=agent.user_id)
+    if user_memories:
+        memories_data = [memory.to_dict() for memory in user_memories]
         console.print(
             Panel(
-                JSON(
-                    json.dumps(
-                        [
-                            user_memory.to_dict()
-                            for user_memory in agent.memory.get_user_memories(
-                                user_id=user_id
-                            )
-                        ],
-                        indent=4,
-                    ),
-                ),
-                title=f"Memories for user_id: {user_id}",
+                JSON(json.dumps(memories_data, indent=4)),
+                title=f"Memories for user_id: {agent.user_id}",
                 expand=True,
             )
         )
 
-    # Print session summary
-    for user_id in list(agent.memory.summaries.keys()):
-        console.print(
-            Panel(
-                JSON(
-                    json.dumps(
-                        [
-                            summary.to_dict()
-                            for summary in agent.memory.get_session_summaries(
-                                user_id=user_id
-                            )
-                        ],
-                        indent=4,
+    # Print session summaries
+    try:
+        session_summary = agent.get_session_summary()
+        if session_summary:
+            console.print(
+                Panel(
+                    JSON(
+                        json.dumps(session_summary.to_dict(), indent=4),
                     ),
-                ),
-                title=f"Summary for session_id: {agent.session_id}",
-                expand=True,
+                    title=f"Session Summary for session_id: {agent.session_id}",
+                    expand=True,
+                )
             )
-        )
+        else:
+            console.print(
+                "Session summary: Not yet created (summaries are created after multiple interactions)"
+            )
+    except Exception as e:
+        console.print(f"Session summary error: {e}")
 
 
 def main(user: str = "user"):
@@ -170,7 +151,7 @@ def main(user: str = "user"):
         if message in exit_on:
             break
 
-        agent.print_response(message=message, stream=True, markdown=True)
+        agent.print_response(input=message, stream=True, markdown=True)
         print_agent_memory(agent)
 
 

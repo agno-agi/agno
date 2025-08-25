@@ -13,7 +13,6 @@ Args:
 """
 agent = Agent(
     tools=[CustomApiTools(base_url="https://dog.ceo/api", make_request=True)],
-    show_tool_calls=True,
     markdown=True,
 )
 

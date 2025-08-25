@@ -65,7 +65,6 @@ agent = Agent(
         Remember to analyze the HN stories thoroughly while keeping the tech enthusiasm high!\
     """),
     tools=[get_top_hackernews_stories],
-    show_tool_calls=True,
     markdown=True,
 )
 

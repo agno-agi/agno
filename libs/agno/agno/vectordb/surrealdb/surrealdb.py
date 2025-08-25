@@ -11,8 +11,8 @@ except ImportError as e:
     msg = "The `surrealdb` package is not installed. Please install it via `pip install surrealdb`."
     raise ImportError(msg) from e
 
-from agno.document import Document
-from agno.embedder import Embedder
+from agno.knowledge.document import Document
+from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_info
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
@@ -98,7 +98,7 @@ class SurrealDb(VectorDb):
         """
         # Embedder for embedding the document contents
         if embedder is None:
-            from agno.embedder.openai import OpenAIEmbedder
+            from agno.knowledge.embedder.openai import OpenAIEmbedder
 
             embedder = OpenAIEmbedder()
             log_info("Embedder not provided, using OpenAIEmbedder as default.")
@@ -491,3 +491,54 @@ class SurrealDb(VectorDb):
 
         """
         return True
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for documents with the given content_id.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        try:
+            # Query for documents with the given content_id
+            query = f"SELECT * FROM {self.collection} WHERE content_id = $content_id"
+            result = self.client.query(query, {"content_id": content_id})
+
+            if not result or not result[0].get("result"):
+                log_debug(f"No documents found with content_id: {content_id}")
+                return
+
+            documents = result[0]["result"]
+            updated_count = 0
+
+            # Update each matching document
+            for doc in documents:
+                doc_id = doc["id"]
+                current_metadata = doc.get("meta_data", {})
+                current_filters = doc.get("filters", {})
+
+                # Merge existing metadata with new metadata
+                if isinstance(current_metadata, dict):
+                    updated_metadata = current_metadata.copy()
+                    updated_metadata.update(metadata)
+                else:
+                    updated_metadata = metadata
+
+                # Merge existing filters with new metadata
+                if isinstance(current_filters, dict):
+                    updated_filters = current_filters.copy()
+                    updated_filters.update(metadata)
+                else:
+                    updated_filters = metadata
+
+                # Update the document
+                update_query = f"UPDATE {doc_id} SET meta_data = $metadata, filters = $filters"
+                self.client.query(update_query, {"metadata": updated_metadata, "filters": updated_filters})
+                updated_count += 1
+
+            log_debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
+
+        except Exception as e:
+            log_error(f"Error updating metadata for content_id '{content_id}': {e}")
+            raise

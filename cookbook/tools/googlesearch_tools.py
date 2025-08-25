@@ -9,6 +9,5 @@ agent = Agent(
         "Search for 10 news items and select the top 4 unique items.",
         "Search in English and in French.",
     ],
-    show_tool_calls=True,
 )
 agent.print_response("Mistral AI", markdown=True)

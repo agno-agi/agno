@@ -1,11 +1,6 @@
-# groq transcription agent
-
-import asyncio
-import os
-from pathlib import Path
+"""Run `pip install groq` to install dependencies."""
 
 from agno.agent import Agent
-from agno.models.groq import Groq
 from agno.models.openai import OpenAIChat
 from agno.tools.models.groq import GroqTools
 

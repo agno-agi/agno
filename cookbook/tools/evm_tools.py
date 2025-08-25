@@ -19,7 +19,6 @@ from agno.tools.evm import EvmTools
 # Option 1: Use environment variables (recommended)
 agent = Agent(
     tools=[EvmTools()],  # Will use EVM_PRIVATE_KEY and EVM_RPC_URL from env
-    show_tool_calls=True,
 )
 
 # Option 2: Pass credentials directly (for testing only)
@@ -32,7 +31,6 @@ agent = Agent(
 #             rpc_url=rpc_url,
 #         )
 #     ],
-#     show_tool_calls=True,
 # )
 
 # Convert 0.001 ETH to wei (1 ETH = 10^18 wei)
