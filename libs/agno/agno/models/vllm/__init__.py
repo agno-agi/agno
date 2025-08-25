@@ -1,3 +1,3 @@
-from agno.models.vllm.vllm import vLLM
+from agno.models.vllm.vllm import VLLM
 
-__all__ = ["vLLM"]
+__all__ = ["VLLM"]

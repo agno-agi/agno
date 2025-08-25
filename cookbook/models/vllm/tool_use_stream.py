@@ -1,11 +1,13 @@
 """Build a Web Search Agent using xAI."""
 
 from agno.agent import Agent
-from agno.models.vercel import V0
+from agno.models.vllm import VLLM
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
-    model=V0(id="v0-1.0-md"),
+    model=VLLM(
+        id="NousResearch/Nous-Hermes-2-Mistral-7B-DPO", top_k=20, enable_thinking=False
+    ),
     tools=[DuckDuckGoTools()],
     markdown=True,
 )

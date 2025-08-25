@@ -1,3 +1,4 @@
+
 """Build a Web Search Agent using xAI."""
 
 from agno.agent import Agent
@@ -9,4 +10,4 @@ agent = Agent(
     tools=[DuckDuckGoTools()],
     markdown=True,
 )
-agent.print_response("Whats happening in France?")
+agent.print_response("Whats happening in France?", stream=True)

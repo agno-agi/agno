@@ -43,14 +43,7 @@ class Portkey(OpenAILike):
                 model_name=self.name,
                 model_id=self.id,
             )
-
-        if not self.virtual_key:
-            raise ModelProviderError(
-                message="PORTKEY_VIRTUAL_KEY not set. Please set the PORTKEY_VIRTUAL_KEY environment variable.",
-                model_name=self.name,
-                model_id=self.id,
-            )
-
+        
         # Create headers using Portkey's createHeaders function
         header_params: Dict[str, Any] = {
             "api_key": self.portkey_api_key,
