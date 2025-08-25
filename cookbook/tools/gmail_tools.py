@@ -1,5 +1,7 @@
 """
 Gmail Agent that can read, draft and send emails using the Gmail.
+
+Check Example 3 to see how to send credentials from oauth from frontend directly to tool.
 """
 
 from agno.agent import Agent
@@ -7,6 +9,9 @@ from agno.models.google import Gemini
 from agno.models.openai import OpenAIChat
 from agno.tools.gmail import GmailTools
 from pydantic import BaseModel, Field
+
+# For example 3
+from google.oauth2.credentials import Credentials
 
 
 class FindEmailOutput(BaseModel):
@@ -57,3 +62,26 @@ agent.print_response(
 #     markdown=True,
 #     stream=True,
 # )
+
+
+# Example 3: Using tool directly from already created credential from oauth from frontend
+
+# creds = Credentials(
+#         token="<replace_with_access_token>",
+#         refresh_token="<replace_with_refresh_token>",
+#         token_uri="https://oauth2.googleapis.com/token",
+#         client_id="<replace_with_client_id>",
+#         client_secret="<replace_with_client_secret>",
+#         scopes=[
+#             "https://www.googleapis.com/auth/gmail.readonly",
+#             "https://www.googleapis.com/auth/gmail.send",
+#             "https://www.googleapis.com/auth/calendar",
+#         ],
+#     )
+
+# For refresh token flow, you can use the below code
+# if creds.expired and creds.refresh_token:
+#     creds.refresh(Request())
+
+
+# tools=[GmailTools(creds=creds)],
