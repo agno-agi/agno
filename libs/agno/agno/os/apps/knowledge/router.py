@@ -1,13 +1,14 @@
 import json
 import math
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Path, Query, UploadFile
 
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.reader.base import Reader
+from agno.knowledge.reader import ReaderFactory
+from agno.knowledge.utils import get_all_readers_info, get_content_types_to_readers_mapping
 from agno.os.apps.knowledge.schemas import (
     ConfigResponseSchema,
     ContentResponseSchema,
@@ -31,6 +32,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         file: Optional[UploadFile] = File(None),
         text_content: Optional[str] = Form(None),
         reader_id: Optional[str] = Form(None),
+        chunker: Optional[str] = Form(None),
     ):
         content_id = str(uuid4())
         log_info(f"Adding content: {name}, {description}, {url}, {metadata} with ID: {content_id}")
@@ -96,8 +98,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
             file_data=file_data,
             size=file.size if file else None if text_content else None,
         )
-
-        background_tasks.add_task(process_content, knowledge, content_id, content, reader_id)
+        background_tasks.add_task(process_content, knowledge, content_id, content, reader_id, chunker)
 
         response = ContentResponseSchema(
             id=content_id,
@@ -140,7 +141,7 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
         )
 
         if update_data.reader_id:
-            if knowledge.readers and update_data.reader_id in knowledge.readers:
+            if update_data.reader_id in knowledge.readers:
                 content.reader = knowledge.readers[update_data.reader_id]
             else:
                 raise HTTPException(status_code=400, detail=f"Invalid reader_id: {update_data.reader_id}")
@@ -266,23 +267,101 @@ def attach_routes(router: APIRouter, knowledge: Knowledge) -> APIRouter:
 
     @router.get("/config", status_code=200)
     def get_config() -> ConfigResponseSchema:
-        readers_dict: Dict[str, Reader] = knowledge.get_readers() or {}
+        # Get factory readers info
+        readers_info = get_all_readers_info()
+        reader_schemas = []
+        print("HERE")
+        # Add factory readers
+        for reader_info in readers_info:
+            print("reader_info", reader_info)
+            reader_schemas.append(
+                ReaderSchema(
+                    id=reader_info["id"],
+                    name=reader_info["name"],
+                    description=reader_info.get("description"),
+                    chunking_strategies=reader_info.get("chunking_strategies", []),
+                )
+            )
+
+        # Add custom readers from knowledge.readers
+        if knowledge.readers:
+            for reader_id, reader in knowledge.readers.items():
+                # Get chunking strategies from the reader
+                chunking_strategies = []
+                try:
+                    strategies = reader.get_supported_chunking_strategies()
+                    chunking_strategies = [strategy.value for strategy in strategies]
+                except Exception:
+                    chunking_strategies = []
+
+                # Check if this reader ID already exists in factory readers
+                existing_ids = [schema.id for schema in reader_schemas]
+                if reader_id not in existing_ids:
+                    reader_schemas.append(
+                        ReaderSchema(
+                            id=reader_id,
+                            name=getattr(reader, "name", reader.__class__.__name__),
+                            description=getattr(reader, "description", f"Custom {reader.__class__.__name__}"),
+                            chunking_strategies=chunking_strategies,
+                        )
+                    )
+
+        # Get content types to readers mapping
+
+        types_of_readers = get_content_types_to_readers_mapping()
+
         return ConfigResponseSchema(
-            readers=[ReaderSchema(id=k, name=v.name, description=v.description) for k, v in readers_dict.items()],
+            readers=reader_schemas,
+            readersForType=types_of_readers,
             filters=knowledge.get_filters(),
         )
 
     return router
 
 
-async def process_content(knowledge: Knowledge, content_id: str, content: Content, reader_id: Optional[str] = None):
+async def process_content(
+    knowledge: Knowledge,
+    content_id: str,
+    content: Content,
+    reader_id: Optional[str] = None,
+    chunker: Optional[str] = None,
+):
     """Background task to process the content"""
     log_info(f"Processing content {content_id}")
     try:
-        content.id = content_id or str(uuid4())
-        if reader_id and knowledge.readers:
-            content.reader = knowledge.readers[reader_id]
+        content.id = content_id
+        if reader_id:
+            reader = None
+            if knowledge.readers and reader_id in knowledge.readers:
+                reader = knowledge.readers[reader_id]
+            else:
+                key = reader_id.lower().strip().replace("-", "_").replace(" ", "_")
+                candidates = [key] + ([key[:-6]] if key.endswith("reader") else [])
+                for cand in candidates:
+                    try:
+                        reader = ReaderFactory.create_reader(cand)
+                        log_debug(f"Resolved reader: {reader.__class__.__name__}")
+                        break
+                    except Exception:
+                        continue
+            if reader:
+                content.reader = reader
+        if chunker and content.reader:
+            # Set the chunker name on the reader - let the reader handle it internally
+            content.reader.set_chunking_strategy_from_string(chunker)
+            log_debug(f"Set chunking strategy: {chunker}")
+
+        log_debug(f"Using reader: {content.reader.__class__.__name__}")
         await knowledge._load_content(content, upsert=False, skip_if_exists=True)
         log_info(f"Content {content_id} processed successfully")
     except Exception as e:
         log_info(f"Error processing content {content_id}: {e}")
+        # Mark content as failed in the contents DB
+        try:
+            content.status = ContentStatus.FAILED
+            content.status_message = str(e)
+            content.id = content_id
+            knowledge.patch_content(content)
+        except Exception:
+            # Swallow any secondary errors to avoid crashing the background task
+            pass

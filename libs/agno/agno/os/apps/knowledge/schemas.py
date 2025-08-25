@@ -102,8 +102,10 @@ class ReaderSchema(BaseModel):
     id: str
     name: Optional[str] = None
     description: Optional[str] = None
+    chunking_strategies: Optional[List[str]] = None
 
 
 class ConfigResponseSchema(BaseModel):
     readers: Optional[List[ReaderSchema]] = None
+    readersForType: Optional[Dict[str, List[str]]] = None
     filters: Optional[List[str]] = None

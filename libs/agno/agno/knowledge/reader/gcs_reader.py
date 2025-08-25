@@ -3,8 +3,11 @@ from io import BytesIO
 from typing import List, Optional
 from uuid import uuid4
 
+from agno.knowledge.chunking.fixed import FixedSizeChunking
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.types import ContentType
 from agno.utils.log import log_info
 
 try:
@@ -19,6 +22,24 @@ except ImportError:
 
 
 class GCSReader(Reader):
+    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = FixedSizeChunking(), **kwargs):
+        super().__init__(chunking_strategy=chunking_strategy, **kwargs)
+
+    @classmethod
+    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+        """Get the list of supported chunking strategies for GCS readers."""
+        return [
+            ChunkingStrategyType.FIXED_SIZE_CHUNKING,
+            ChunkingStrategyType.AGENTIC_CHUNKING,
+            ChunkingStrategyType.DOCUMENT_CHUNKING,
+            ChunkingStrategyType.RECURSIVE_CHUNKING,
+            ChunkingStrategyType.SEMANTIC_CHUNKING,
+        ]
+
+    @classmethod
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.FILE, ContentType.URL]
+
     def read(self, name: Optional[str], blob: storage.Blob) -> List[Document]:
         log_info(f"Reading: gs://{blob.bucket.name}/{blob.name}")
         data = blob.download_as_bytes()
