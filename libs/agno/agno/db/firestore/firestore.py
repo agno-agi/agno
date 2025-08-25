@@ -293,7 +293,6 @@ class FirestoreDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions.
 
@@ -319,9 +318,7 @@ class FirestoreDb(BaseDb):
             Exception: If there is an error reading the sessions.
         """
         try:
-            collection_ref = self._get_collection(
-                table_type="sessions", create_collection_if_not_found=create_table_if_not_found
-            )
+            collection_ref = self._get_collection(table_type="sessions")
             if collection_ref is None:
                 return [] if deserialize else ([], 0)
 
@@ -467,7 +464,7 @@ class FirestoreDb(BaseDb):
             Exception: If there is an error upserting the session.
         """
         try:
-            collection_ref = self._get_collection(table_type="sessions")
+            collection_ref = self._get_collection(table_type="sessions", create_collection_if_not_found=True)
             serialized_session_dict = serialize_session_json_fields(session.to_dict())
 
             if isinstance(session, AgentSession):
@@ -687,7 +684,6 @@ class FirestoreDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
         """Get all memories from the database as UserMemory objects.
 
@@ -711,9 +707,7 @@ class FirestoreDb(BaseDb):
             Exception: If there is an error getting the memories.
         """
         try:
-            collection_ref = self._get_collection(
-                table_type="memories", create_collection_if_not_found=create_table_if_not_found
-            )
+            collection_ref = self._get_collection(table_type="memories")
             if collection_ref is None:
                 return [] if deserialize else ([], 0)
 
@@ -831,7 +825,9 @@ class FirestoreDb(BaseDb):
             Exception: If there is an error upserting the memory.
         """
         try:
-            collection_ref = self._get_collection(table_type="memories")
+            collection_ref = self._get_collection(table_type="memories", create_collection_if_not_found=True)
+            if collection_ref is None:
+                return None
 
             if memory.memory_id is None:
                 memory.memory_id = str(uuid4())
@@ -1020,13 +1016,10 @@ class FirestoreDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range."""
         try:
-            collection_ref = self._get_collection(
-                table_type="metrics", create_collection_if_not_found=create_table_if_not_found
-            )
+            collection_ref = self._get_collection(table_type="metrics")
             if collection_ref is None:
                 return [], None
 
@@ -1109,7 +1102,6 @@ class FirestoreDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1127,9 +1119,7 @@ class FirestoreDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            collection_ref = self._get_collection(
-                table_type="knowledge", create_collection_if_not_found=create_table_if_not_found
-            )
+            collection_ref = self._get_collection(table_type="knowledge")
             if collection_ref is None:
                 return [], 0
 
@@ -1165,7 +1155,10 @@ class FirestoreDb(BaseDb):
             Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
         """
         try:
-            collection_ref = self._get_collection(table_type="knowledge")
+            collection_ref = self._get_collection(table_type="knowledge", create_collection_if_not_found=True)
+            if collection_ref is None:
+                return None
+
             update_doc = knowledge_row.model_dump()
 
             # Find existing document or create new one
@@ -1310,7 +1303,6 @@ class FirestoreDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
@@ -1337,9 +1329,7 @@ class FirestoreDb(BaseDb):
             Exception: If there is an error getting the eval runs.
         """
         try:
-            collection_ref = self._get_collection(
-                table_type="evals", create_collection_if_not_found=create_table_if_not_found
-            )
+            collection_ref = self._get_collection(table_type="evals")
             if collection_ref is None:
                 return [] if deserialize else ([], 0)
 

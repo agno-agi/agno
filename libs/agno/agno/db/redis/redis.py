@@ -626,7 +626,7 @@ class RedisDb(BaseDb):
         except Exception as e:
             log_error(f"Error deleting user memories: {e}")
 
-    def get_all_memory_topics(self, create_table_if_not_found: Optional[bool] = True) -> List[str]:
+    def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from Redis.
 
         Returns:
@@ -684,7 +684,6 @@ class RedisDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
         """Get all memories from Redis as UserMemory objects.
 
@@ -1003,7 +1002,6 @@ class RedisDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
@@ -1089,7 +1087,6 @@ class RedisDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1272,7 +1269,6 @@ class RedisDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from Redis.
 

@@ -88,7 +88,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
             sort_by=sort_by,
             sort_order=sort_order,
             deserialize=False,
-            create_table_if_not_found=False,
         )
         return PaginatedResponse(
             data=[UserMemorySchema.from_dict(user_memory) for user_memory in user_memories],  # type: ignore
@@ -117,7 +116,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> List[str]:
         db = get_db(dbs, db_id)
-        return db.get_all_memory_topics(create_table_if_not_found=False)
+        return db.get_all_memory_topics()
 
     @router.patch("/memories/{memory_id}", response_model=UserMemorySchema, status_code=200)
     async def update_memory(

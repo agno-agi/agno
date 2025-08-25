@@ -52,7 +52,6 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
             sort_by=sort_by,
             sort_order=sort_order,
             deserialize=False,
-            create_table_if_not_found=False,
         )
 
         return PaginatedResponse(

@@ -95,6 +95,15 @@ def test_create_table_with_indexes(postgres_db_real):
         assert any("updated_at" in idx for idx in indexes)
 
 
+def test_get_table_with_create_table_if_not_found(postgres_db_real):
+    """Test getting a table with create_table_if_not_found=True"""
+    table = postgres_db_real._get_table("sessions", create_table_if_not_found=False)
+    assert table is None
+
+    table = postgres_db_real._get_table("sessions", create_table_if_not_found=True)
+    assert table is not None
+
+
 def test_get_or_create_existing_table(postgres_db_real):
     """Test getting an existing table"""
     # First create the table
@@ -112,14 +121,6 @@ def test_get_or_create_existing_table(postgres_db_real):
         mock_create.assert_not_called()
 
     assert table.name == "test_sessions"
-
-
-def test_create_table_if_not_found_flag(postgres_db_real):
-    """Ensure the "create_table_if_not_exist" flag works as expected"""
-    table = postgres_db_real._get_or_create_table(
-        "test_create_table_flag", "sessions", "test_schema", create_table_if_not_found=False
-    )
-    assert table is None
 
 
 def test_full_workflow(postgres_db_real):

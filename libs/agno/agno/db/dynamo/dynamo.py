@@ -295,10 +295,9 @@ class DynamoDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         try:
-            table_name = self._get_table("sessions", create_table_if_not_found=create_table_if_not_found)
+            table_name = self._get_table("sessions")
             if table_name is None:
                 return [] if deserialize else ([], 0)
 
@@ -488,7 +487,7 @@ class DynamoDb(BaseDb):
             Optional[Session]: The upserted session if successful, None otherwise.
         """
         try:
-            table_name = self._get_table("sessions")
+            table_name = self._get_table("sessions", create_table_if_not_found=True)
 
             # Get session if it already exists in the db.
             # We need to do this to handle updating nested fields.
@@ -561,14 +560,14 @@ class DynamoDb(BaseDb):
         except Exception as e:
             log_error(f"Failed to delete user memories: {e}")
 
-    def get_all_memory_topics(self, create_table_if_not_found: Optional[bool] = True) -> List[str]:
+    def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from the database.
 
         Returns:
             List[str]: List of unique memory topics.
         """
         try:
-            table_name = self._get_table("memories", create_table_if_not_found=create_table_if_not_found)
+            table_name = self._get_table("memories")
             if table_name is None:
                 return []
 
@@ -639,7 +638,6 @@ class DynamoDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
         """
         Get user memories from the database as a list of UserMemory objects.
@@ -656,7 +654,6 @@ class DynamoDb(BaseDb):
             sort_by: The field to sort the memories by.
             sort_order: The order to sort the memories by.
             deserialize: Whether to deserialize the memories.
-            create_table_if_not_found: Whether to create the table if it doesn't exist.
 
         Returns:
             Union[List[UserMemory], List[Dict[str, Any]], Tuple[List[Dict[str, Any]], int]]: The user memories data.
@@ -665,7 +662,7 @@ class DynamoDb(BaseDb):
             Exception: If any error occurs while getting the user memories.
         """
         try:
-            table_name = self._get_table("memories", create_table_if_not_found=create_table_if_not_found)
+            table_name = self._get_table("memories")
             if table_name is None:
                 return [] if deserialize else ([], 0)
 
@@ -848,7 +845,7 @@ class DynamoDb(BaseDb):
             Optional[Dict[str, Any]]: The upserted memory data if successful, None otherwise.
         """
         try:
-            table_name = self._get_table("memories")
+            table_name = self._get_table("memories", create_table_if_not_found=True)
             memory_dict = memory.to_dict()
             memory_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
             item = serialize_to_dynamo_item(memory_dict)
@@ -1340,7 +1337,6 @@ class DynamoDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Tuple[List[Any], Optional[int]]:
         """
         Get metrics from the database.
@@ -1357,7 +1353,7 @@ class DynamoDb(BaseDb):
         """
 
         try:
-            table_name = self._get_table("metrics", create_table_if_not_found=create_table_if_not_found)
+            table_name = self._get_table("metrics")
             if table_name is None:
                 return ([], None)
 
@@ -1453,7 +1449,6 @@ class DynamoDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1471,7 +1466,7 @@ class DynamoDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table_name = self._get_table("knowledge", create_table_if_not_found=create_table_if_not_found)
+            table_name = self._get_table("knowledge")
             if table_name is None:
                 return [], 0
 
@@ -1530,7 +1525,7 @@ class DynamoDb(BaseDb):
             Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
         """
         try:
-            table_name = self._get_table("knowledge")
+            table_name = self._get_table("knowledge", create_table_if_not_found=True)
             item = serialize_knowledge_row(knowledge_row)
 
             self.client.put_item(TableName=table_name, Item=item)
@@ -1635,10 +1630,9 @@ class DynamoDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         try:
-            table_name = self._get_table("evals", create_table_if_not_found=create_table_if_not_found)
+            table_name = self._get_table("evals")
             if table_name is None:
                 return [] if deserialize else ([], 0)
 

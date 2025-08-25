@@ -1233,7 +1233,7 @@ class Knowledge:
         if self.contents_db is None:
             raise ValueError("No contents db provided")
         contents, count = self.contents_db.get_knowledge_contents(
-            limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, create_table_if_not_found=False
+            limit=limit, page=page, sort_by=sort_by, sort_order=sort_order
         )
 
         result = []

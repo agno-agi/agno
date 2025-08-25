@@ -138,7 +138,6 @@ class InMemoryDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions from in-memory storage with filtering and pagination.
 
@@ -325,7 +324,7 @@ class InMemoryDb(BaseDb):
         except Exception as e:
             log_error(f"Error deleting memories: {e}")
 
-    def get_all_memory_topics(self, create_table_if_not_found: Optional[bool] = True) -> List[str]:
+    def get_all_memory_topics(self) -> List[str]:
         try:
             topics = set()
             for memory in self._memories:
@@ -366,7 +365,6 @@ class InMemoryDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
         try:
             # Apply filters
@@ -607,7 +605,6 @@ class InMemoryDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range."""
         try:
@@ -680,7 +677,6 @@ class InMemoryDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from in-memory storage.
 
@@ -816,7 +812,6 @@ class InMemoryDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from in-memory storage with filtering and pagination."""
         try:

@@ -177,61 +177,56 @@ class PostgresDb(BaseDb):
             log_error(f"Could not create table {db_schema}.{table_name}: {e}")
             raise
 
-    def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = True) -> Optional[Table]:
+    def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = False) -> Optional[Table]:
         if table_type == "sessions":
-            if not hasattr(self, "session_table"):
-                self.session_table = self._get_or_create_table(
-                    table_name=self.session_table_name,
-                    table_type="sessions",
-                    db_schema=self.db_schema,
-                    create_table_if_not_found=create_table_if_not_found,
-                )
+            self.session_table = self._get_or_create_table(
+                table_name=self.session_table_name,
+                table_type="sessions",
+                db_schema=self.db_schema,
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.session_table
 
         if table_type == "memories":
-            if not hasattr(self, "memory_table"):
-                self.memory_table = self._get_or_create_table(
-                    table_name=self.memory_table_name,
-                    table_type="memories",
-                    db_schema=self.db_schema,
-                    create_table_if_not_found=create_table_if_not_found,
-                )
+            self.memory_table = self._get_or_create_table(
+                table_name=self.memory_table_name,
+                table_type="memories",
+                db_schema=self.db_schema,
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.memory_table
 
         if table_type == "metrics":
-            if not hasattr(self, "metrics_table"):
-                self.metrics_table = self._get_or_create_table(
-                    table_name=self.metrics_table_name,
-                    table_type="metrics",
-                    db_schema=self.db_schema,
-                    create_table_if_not_found=create_table_if_not_found,
-                )
+            self.metrics_table = self._get_or_create_table(
+                table_name=self.metrics_table_name,
+                table_type="metrics",
+                db_schema=self.db_schema,
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.metrics_table
 
         if table_type == "evals":
-            if not hasattr(self, "eval_table"):
-                self.eval_table = self._get_or_create_table(
-                    table_name=self.eval_table_name,
-                    table_type="evals",
-                    db_schema=self.db_schema,
-                    create_table_if_not_found=create_table_if_not_found,
-                )
+            self.eval_table = self._get_or_create_table(
+                table_name=self.eval_table_name,
+                table_type="evals",
+                db_schema=self.db_schema,
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.eval_table
 
         if table_type == "knowledge":
-            if not hasattr(self, "knowledge_table"):
-                self.knowledge_table = self._get_or_create_table(
-                    table_name=self.knowledge_table_name,
-                    table_type="knowledge",
-                    db_schema=self.db_schema,
-                    create_table_if_not_found=create_table_if_not_found,
-                )
+            self.knowledge_table = self._get_or_create_table(
+                table_name=self.knowledge_table_name,
+                table_type="knowledge",
+                db_schema=self.db_schema,
+                create_table_if_not_found=create_table_if_not_found,
+            )
             return self.knowledge_table
 
         raise ValueError(f"Unknown table type: {table_type}")
 
     def _get_or_create_table(
-        self, table_name: str, table_type: str, db_schema: str, create_table_if_not_found: Optional[bool] = True
+        self, table_name: str, table_type: str, db_schema: str, create_table_if_not_found: Optional[bool] = False
     ) -> Optional[Table]:
         """
         Check if the table exists and is valid, else create it.
@@ -402,7 +397,6 @@ class PostgresDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
@@ -428,7 +422,7 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="sessions", create_table_if_not_found=create_table_if_not_found)
+            table = self._get_table(table_type="sessions")
             if table is None:
                 return [] if deserialize else ([], 0)
 
@@ -578,7 +572,7 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = self._get_table(table_type="sessions")
+            table = self._get_table(table_type="sessions", create_table_if_not_found=True)
             if table is None:
                 return None
 
@@ -759,14 +753,14 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_error(f"Error deleting user memories: {e}")
 
-    def get_all_memory_topics(self, create_table_if_not_found: Optional[bool] = True) -> List[str]:
+    def get_all_memory_topics(self) -> List[str]:
         """Get all memory topics from the database.
 
         Returns:
             List[str]: List of memory topics.
         """
         try:
-            table = self._get_table(table_type="memories", create_table_if_not_found=create_table_if_not_found)
+            table = self._get_table(table_type="memories")
             if table is None:
                 return []
 
@@ -831,7 +825,6 @@ class PostgresDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
         """Get all memories from the database as UserMemory objects.
 
@@ -846,7 +839,7 @@ class PostgresDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             deserialize (Optional[bool]): Whether to serialize the memories. Defaults to True.
-            create_table_if_not_found: Whether to create the table if it doesn't exist.
+
 
         Returns:
             Union[List[UserMemory], Tuple[List[Dict[str, Any]], int]]:
@@ -857,7 +850,7 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="memories", create_table_if_not_found=create_table_if_not_found)
+            table = self._get_table(table_type="memories")
             if table is None:
                 return [] if deserialize else ([], 0)
 
@@ -1005,7 +998,7 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = self._get_table(table_type="memories")
+            table = self._get_table(table_type="memories", create_table_if_not_found=True)
             if table is None:
                 return None
 
@@ -1206,7 +1199,6 @@ class PostgresDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
@@ -1221,7 +1213,7 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="metrics", create_table_if_not_found=create_table_if_not_found)
+            table = self._get_table(table_type="metrics")
             if table is None:
                 return [], None
 
@@ -1296,7 +1288,6 @@ class PostgresDb(BaseDb):
         page: Optional[int] = None,
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1313,7 +1304,7 @@ class PostgresDb(BaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
-        table = self._get_table(table_type="knowledge", create_table_if_not_found=create_table_if_not_found)
+        table = self._get_table(table_type="knowledge")
         if table is None:
             return [], 0
 
@@ -1352,7 +1343,7 @@ class PostgresDb(BaseDb):
             Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
         """
         try:
-            table = self._get_table(table_type="knowledge")
+            table = self._get_table(table_type="knowledge", create_table_if_not_found=True)
             if table is None:
                 return None
 
@@ -1552,7 +1543,6 @@ class PostgresDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
-        create_table_if_not_found: Optional[bool] = True,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
@@ -1579,7 +1569,7 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="evals", create_table_if_not_found=create_table_if_not_found)
+            table = self._get_table(table_type="evals")
             if table is None:
                 return [] if deserialize else ([], 0)
 
