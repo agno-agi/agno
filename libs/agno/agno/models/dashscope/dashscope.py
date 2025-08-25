@@ -78,7 +78,7 @@ class DashScope(OpenAILike):
         params = super().get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice)
 
         if self.include_thoughts is not None:
-            self.enable_thinking = True
+            self.enable_thinking = self.include_thoughts
 
         if self.enable_thinking is not None:
             params["extra_body"] = {
