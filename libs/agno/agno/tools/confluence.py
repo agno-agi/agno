@@ -64,18 +64,13 @@ class ConfluenceTools(Toolkit):
 
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-        try:
-            self.confluence = Confluence(
-                url=self.url,
-                username=self.username,
-                password=self.password,
-                session=session,
-            )
-            # Test connection
-            self.confluence.get_all_spaces(limit=1)
-        except Exception as e:
-            logger.error(f"Failed to initialize Confluence connection: {e}")
-            raise
+        self.confluence = Confluence(
+            url=self.url,
+            username=self.username,
+            password=self.password,
+            verify_ssl=verify_ssl,
+            session=session,
+        )
 
         tools: List[Any] = []
         tools.append(self.get_page_content)
