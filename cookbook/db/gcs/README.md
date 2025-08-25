@@ -14,7 +14,7 @@ pip install google-cloud-storage
 from agno.agent import Agent
 from agno.storage.gcs_json import GCSJsonStorage
 
-storage = GCSJsonStorage(
+db = GCSJsonStorage(
     bucket_name="your-bucket-name",
     project="your_project",
     credentials="your_cred's",
