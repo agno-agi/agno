@@ -211,7 +211,7 @@ class E2BTools(Toolkit):
 
             # Add image artifact to the agent
             image_id = str(uuid4())
-            agent.add_image(
+            agent._add_image(
                 ImageArtifact(
                     id=image_id, url=file_url, original_prompt=f"Generated from code execution result {result_index}"
                 )
@@ -295,7 +295,7 @@ class E2BTools(Toolkit):
 
                 # Add image artifact to the agent
                 image_id = str(uuid4())
-                agent.add_image(
+                agent._add_image(
                     ImageArtifact(
                         id=image_id, url=file_url, original_prompt=f"Interactive {chart_type} chart from code execution"
                     )

@@ -81,7 +81,7 @@ class ReplicateTools(Toolkit):
         media_id = str(uuid4())
 
         if ext in image_extensions:
-            agent.add_image(
+            agent._add_image(
                 ImageArtifact(
                     id=media_id,
                     url=output.url,
@@ -89,7 +89,7 @@ class ReplicateTools(Toolkit):
             )
             media_type = "image"
         elif ext in video_extensions:
-            agent.add_video(
+            agent._add_video(
                 VideoArtifact(
                     id=media_id,
                     url=output.url,

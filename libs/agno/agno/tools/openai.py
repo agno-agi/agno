@@ -125,7 +125,7 @@ class OpenAITools(Toolkit):
                 image_base64 = data.b64_json
                 media_id = str(uuid4())
                 # Store base64-encoded content as bytes for later saving
-                agent.add_image(
+                agent._add_image(
                     ImageArtifact(
                         id=media_id,
                         content=image_base64.encode("utf-8"),
@@ -165,7 +165,7 @@ class OpenAITools(Toolkit):
 
             # Create and add AudioArtifact using base64_audio field
             media_id = str(uuid4())
-            agent.add_audio(
+            agent._add_audio(
                 AudioArtifact(
                     id=media_id,
                     base64_audio=base64_encoded_audio,

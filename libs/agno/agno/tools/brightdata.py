@@ -140,7 +140,7 @@ class BrightDataTools(Toolkit):
 
             media_id = str(uuid4())
 
-            agent.add_image(
+            agent._add_image(
                 ImageArtifact(
                     id=media_id,
                     content=base64_encoded_image.encode("utf-8"),

@@ -97,7 +97,7 @@ class GeminiTools(Toolkit):
                 actual_mime_type = "image/png"
 
                 media_id = str(uuid4())
-                agent.add_image(
+                agent._add_image(
                     ImageArtifact(
                         id=media_id,
                         content=base64_encoded_image_bytes,
@@ -161,7 +161,7 @@ class GeminiTools(Toolkit):
                 media_id = str(uuid4())
                 encoded_video = base64.b64encode(generated_video.video_bytes).decode("utf-8")
 
-                agent.add_video(
+                agent._add_video(
                     VideoArtifact(
                         id=media_id,
                         content=encoded_video,

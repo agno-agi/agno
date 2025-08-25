@@ -13,7 +13,7 @@ from agno.tools.models.nebius import NebiusTools
 @pytest.fixture
 def mock_agent():
     agent = MagicMock(spec=Agent)
-    agent.add_image = MagicMock()
+    agent._add_image = MagicMock()
     return agent
 
 
@@ -150,8 +150,8 @@ def test_generate_image_success(mock_nebius_tools, mock_agent, mock_successful_r
             quality="standard",
         )
 
-        mock_agent.add_image.assert_called_once()
-        call_args = mock_agent.add_image.call_args[0]
+        mock_agent._add_image.assert_called_once()
+        call_args = mock_agent._add_image.call_args[0]
         image_artifact = call_args[0]
 
         assert isinstance(image_artifact, ImageArtifact)
@@ -172,7 +172,7 @@ def test_generate_image_no_data(mock_nebius_tools, mock_agent, mock_failed_respo
 
     assert result == "Failed to generate image: No data received from API."
     mock_client.images.generate.assert_called_once()
-    mock_agent.add_image.assert_not_called()
+    mock_agent._add_image.assert_not_called()
 
 
 def test_generate_image_api_error(mock_nebius_tools, mock_agent):
@@ -188,7 +188,7 @@ def test_generate_image_api_error(mock_nebius_tools, mock_agent):
     expected_error = f"Failed to generate image: {error_message}"
     assert result == expected_error
     mock_client.images.generate.assert_called_once()
-    mock_agent.add_image.assert_not_called()
+    mock_agent._add_image.assert_not_called()
 
 
 # Test with different image parameters

@@ -91,11 +91,11 @@ class ModelsLabTools(Toolkit):
     ) -> None:
         """Add appropriate media artifact based on file type."""
         if self.file_type == FileType.MP4:
-            agent.add_video(VideoArtifact(id=str(media_id), url=media_url, eta=str(eta)))
+            agent._add_video(VideoArtifact(id=str(media_id), url=media_url, eta=str(eta)))
         elif self.file_type == FileType.GIF:
-            agent.add_image(ImageArtifact(id=str(media_id), url=media_url))
+            agent._add_image(ImageArtifact(id=str(media_id), url=media_url))
         elif self.file_type == FileType.MP3:
-            agent.add_audio(AudioArtifact(id=str(media_id), url=media_url))
+            agent._add_audio(AudioArtifact(id=str(media_id), url=media_url))
 
     def _wait_for_media(self, media_id: str, eta: int) -> bool:
         """Wait for media generation to complete."""

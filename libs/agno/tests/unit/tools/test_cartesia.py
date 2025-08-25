@@ -67,7 +67,7 @@ def cartesia_tools(mock_cartesia_client):
 @pytest.fixture
 def mock_agent():
     agent = MagicMock(spec=Agent)
-    agent.add_audio = MagicMock()
+    agent._add_audio = MagicMock()
     return agent
 
 
@@ -213,9 +213,9 @@ def test_text_to_speech(cartesia_tools, mock_cartesia_client, mock_agent):
     assert output_format["encoding"] == "mp3"
 
     # Verify agent interaction
-    mock_agent.add_audio.assert_called_once()
+    mock_agent._add_audio.assert_called_once()
     # Check artifact content
-    artifact_call_args = mock_agent.add_audio.call_args[0][0]
+    artifact_call_args = mock_agent._add_audio.call_args[0][0]
     assert isinstance(artifact_call_args, AudioArtifact)
     assert artifact_call_args.mime_type == "audio/mpeg"
     expected_base64 = b64encode(b"audio data").decode("utf-8")
@@ -231,7 +231,7 @@ def test_text_to_speech_error(cartesia_tools, mock_cartesia_client, mock_agent):
 
     result = cartesia_tools.text_to_speech(agent=mock_agent, transcript="Error test")
 
-    mock_agent.add_audio.assert_not_called()
+    mock_agent._add_audio.assert_not_called()
     assert result == "Error generating speech: TTS API Error"
 
 

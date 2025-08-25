@@ -112,7 +112,7 @@ def test_generate_image_success(mock_post, azure_openai_tools, mock_agent):
     assert kwargs["json"]["n"] == 1  # Default value
 
     # Verify the agent interaction
-    mock_agent.add_image.assert_called_once()
+    mock_agent._add_image.assert_called_once()
 
     # Check the return string
     assert "https://test-image-url.com/image.png" in result
@@ -167,7 +167,7 @@ def test_generate_image_failure(mock_post, azure_openai_tools, mock_agent):
     assert "Bad Request: Invalid prompt" in result
 
     # Make sure no image was added to the agent
-    mock_agent.add_image.assert_not_called()
+    mock_agent._add_image.assert_not_called()
 
 
 def test_invalid_parameters(azure_openai_tools, mock_agent):

@@ -65,7 +65,7 @@ class FalTools(Toolkit):
 
             if "image" in result:
                 url = result.get("image", {}).get("url", "")
-                agent.add_image(
+                agent._add_image(
                     ImageArtifact(
                         id=media_id,
                         url=url,
@@ -74,7 +74,7 @@ class FalTools(Toolkit):
                 media_type = "image"
             elif "video" in result:
                 url = result.get("video", {}).get("url", "")
-                agent.add_video(
+                agent._add_video(
                     VideoArtifact(
                         id=media_id,
                         url=url,
@@ -113,7 +113,7 @@ class FalTools(Toolkit):
             )
             url = result.get("images", [{}])[0].get("url", "")
             media_id = str(uuid4())
-            agent.add_image(
+            agent._add_image(
                 ImageArtifact(
                     id=media_id,
                     url=url,

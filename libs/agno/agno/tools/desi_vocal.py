@@ -91,7 +91,7 @@ class DesiVocalTools(Toolkit):
             response_json = response.json()
             audio_url = response_json["s3_path"]
 
-            agent.add_audio(AudioArtifact(id=str(uuid4()), url=audio_url))
+            agent._add_audio(AudioArtifact(id=str(uuid4()), url=audio_url))
 
             return audio_url
         except Exception as e:

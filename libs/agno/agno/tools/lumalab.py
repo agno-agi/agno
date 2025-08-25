@@ -103,7 +103,7 @@ class LumaLabTools(Toolkit):
                 if generation.state == "completed" and generation.assets:
                     video_url = generation.assets.video
                     if video_url:
-                        agent.add_video(VideoArtifact(id=video_id, url=video_url, eta="completed"))
+                        agent._add_video(VideoArtifact(id=video_id, url=video_url, eta="completed"))
                         return f"Video generated successfully: {video_url}"
                 elif generation.state == "failed":
                     return f"Generation failed: {generation.failure_reason}"
@@ -155,7 +155,7 @@ class LumaLabTools(Toolkit):
                 if generation.state == "completed" and generation.assets:
                     video_url = generation.assets.video
                     if video_url:
-                        agent.add_video(VideoArtifact(id=video_id, url=video_url, state="completed"))
+                        agent._add_video(VideoArtifact(id=video_id, url=video_url, state="completed"))
                         return f"Video generated successfully: {video_url}"
                 elif generation.state == "failed":
                     return f"Generation failed: {generation.failure_reason}"

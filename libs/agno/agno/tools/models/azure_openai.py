@@ -162,7 +162,7 @@ class AzureOpenAITools(Toolkit):
                 revised_prompt = img.get("revised_prompt")
 
                 # Add image to agent
-                agent.add_image(
+                agent._add_image(
                     ImageArtifact(id=str(uuid4()), url=image_url, original_prompt=prompt, revised_prompt=revised_prompt)
                 )
 

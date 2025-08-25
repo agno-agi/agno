@@ -136,7 +136,7 @@ class GroqTools(Toolkit):
             base64_encoded_audio = base64.b64encode(audio_data).decode("utf-8")
 
             media_id = str(uuid4())
-            agent.add_audio(
+            agent._add_audio(
                 AudioArtifact(
                     id=media_id,
                     base64_audio=base64_encoded_audio,
