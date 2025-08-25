@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Union
 from fastapi import WebSocket
 from pydantic import BaseModel
 
-from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
+from agno.media import AudioArtifact, File, ImageArtifact, VideoArtifact
 from agno.models.metrics import Metrics
 from agno.utils.log import log_warning
 
@@ -22,6 +22,7 @@ class WorkflowExecutionInput:
     images: Optional[List[ImageArtifact]] = None
     videos: Optional[List[VideoArtifact]] = None
     audio: Optional[List[AudioArtifact]] = None
+    files: Optional[List[File]] = None
 
     def get_input_as_string(self) -> Optional[str]:
         """Convert input to string representation"""
@@ -74,6 +75,7 @@ class StepInput:
     images: Optional[List[ImageArtifact]] = None
     videos: Optional[List[VideoArtifact]] = None
     audio: Optional[List[AudioArtifact]] = None
+    files: Optional[List[File]] = None
 
     def get_input_as_string(self) -> Optional[str]:
         """Convert input to string representation"""
@@ -203,6 +205,7 @@ class StepInput:
             "images": [img.to_dict() for img in self.images] if self.images else None,
             "videos": [vid.to_dict() for vid in self.videos] if self.videos else None,
             "audio": [aud.to_dict() for aud in self.audio] if self.audio else None,
+            "files": [file for file in self.files] if self.files else None,
         }
 
 
@@ -225,6 +228,7 @@ class StepOutput:
     images: Optional[List[ImageArtifact]] = None
     videos: Optional[List[VideoArtifact]] = None
     audio: Optional[List[AudioArtifact]] = None
+    files: Optional[List[File]] = None
 
     # Metrics for this step execution
     metrics: Optional[Metrics] = None
@@ -263,6 +267,7 @@ class StepOutput:
             "success": self.success,
             "error": self.error,
             "stop": self.stop,
+            "files": [file for file in self.files] if self.files else None,
         }
 
         # Add nested steps if they exist
@@ -286,6 +291,10 @@ class StepOutput:
         audio = data.get("audio")
         if audio:
             audio = [AudioArtifact.model_validate(aud) for aud in audio]
+
+        files = data.get("files")
+        if files:
+            files = [File.model_validate(file) for file in files]
 
         metrics_data = data.get("metrics")
         metrics = None
@@ -316,6 +325,7 @@ class StepOutput:
             images=images,
             videos=videos,
             audio=audio,
+            files=files,
             metrics=metrics,
             success=data.get("success", True),
             error=data.get("error"),

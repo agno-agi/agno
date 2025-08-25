@@ -19,7 +19,7 @@ Example prompts to try:
 - "Explore the evolution of cybersecurity threats and defenses"
 - "Research the development of autonomous vehicle technology"
 
-Dependencies: `pip install openai duckduckgo-search newspaper4k lxml_html_clean agno`
+Dependencies: `pip install openai ddgs newspaper4k lxml_html_clean agno`
 """
 
 from textwrap import dedent

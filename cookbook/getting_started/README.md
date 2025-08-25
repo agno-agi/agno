@@ -16,7 +16,11 @@ source .venv/bin/activate
 Install the required dependencies:
 
 ```bash
+<<<<<<< HEAD
 pip install openai ddgs fastapi pylance yfinance lancedb tantivy pypdf requests exa-py newspaper4k lxml_html_clean sqlalchemy agno
+=======
+pip install openai ddgs yfinance lancedb tantivy pypdf requests exa-py newspaper4k lxml_html_clean sqlalchemy agno
+>>>>>>> 6901605678366bab6617a4cda9d874d8118bef13
 ```
 
 Export your OpenAI API key:

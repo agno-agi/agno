@@ -1,3 +1,5 @@
+"""Run `pip install ddgs openai` to install dependencies."""
+
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.litellm import LiteLLM

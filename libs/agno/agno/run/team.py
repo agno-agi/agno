@@ -294,6 +294,8 @@ class TeamRunOutput:
 
     citations: Optional[Citations] = None
 
+    metadata: Optional[Dict[str, Any]] = None
+
     references: Optional[List[MessageReferences]] = None
     additional_input: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None

@@ -1,4 +1,4 @@
-"""Run `pip install duckduckgo-search` to install dependencies."""
+"""Run `pip install ddgs` to install dependencies."""
 
 import asyncio
 

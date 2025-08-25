@@ -4,7 +4,7 @@ AgentOS Demo
 Set the OS_SECURITY_KEY environment variable to your OS security key to enable authentication.
 
 Prerequisites:
-pip install -U fastapi uvicorn sqlalchemy pgvector psycopg openai duckduckgo-search yfinance
+pip install -U fastapi uvicorn sqlalchemy pgvector psycopg openai ddgs yfinance
 """
 
 from agno.agent import Agent

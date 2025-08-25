@@ -254,6 +254,7 @@ class Step:
                             images=images,
                             videos=videos,
                             audio=audios,
+                            files=step_input.files,
                             session_id=session_id,
                             user_id=user_id,
                             session_state=session_state_copy,  # Send a copy to the executor
@@ -397,6 +398,7 @@ class Step:
                             images=images,
                             videos=videos,
                             audio=audios,
+                            files=step_input.files,
                             session_id=session_id,
                             user_id=user_id,
                             session_state=session_state_copy,  # Send a copy to the executor
@@ -583,6 +585,7 @@ class Step:
                             images=images,
                             videos=videos,
                             audio=audios,
+                            files=step_input.files,
                             session_id=session_id,
                             user_id=user_id,
                             session_state=session_state_copy,
@@ -744,6 +747,7 @@ class Step:
                             images=images,
                             videos=videos,
                             audio=audios,
+                            files=step_input.files,
                             session_id=session_id,
                             user_id=user_id,
                             session_state=session_state_copy,

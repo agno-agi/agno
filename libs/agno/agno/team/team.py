@@ -6653,9 +6653,12 @@ class Team:
         """Get the telemetry data for the team"""
         return {
             "team_id": self.id,
+            "db_type": self.db.__class__.__name__ if self.db else None,
             "model_provider": self.model.provider if self.model else None,
             "model_name": self.model.name if self.model else None,
             "model_id": self.model.id if self.model else None,
+            "parser_model": self.parser_model.to_dict() if self.parser_model else None,
+            "output_model": self.output_model.to_dict() if self.output_model else None,
             "member_count": len(self.members) if self.members else 0,
             "has_knowledge": self.knowledge is not None,
             "has_tools": self.tools is not None,

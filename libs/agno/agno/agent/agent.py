@@ -6791,16 +6791,18 @@ class Agent:
         """Get the telemetry data for the agent"""
         return {
             "agent_id": self.id,
+            "db_type": self.db.__class__.__name__ if self.db else None,
             "model_provider": self.model.provider if self.model else None,
             "model_name": self.model.name if self.model else None,
             "model_id": self.model.id if self.model else None,
+            "parser_model": self.parser_model.to_dict() if self.parser_model else None,
+            "output_model": self.output_model.to_dict() if self.output_model else None,
             "has_tools": self.tools is not None,
             "has_memory": self.enable_user_memories is not None,
             "has_reasoning": self.reasoning is not None,
             "has_knowledge": self.knowledge is not None,
             "has_input_schema": self.input_schema is not None,
             "has_output_schema": self.output_schema is not None,
-            "has_parser_model": self.parser_model is not None,
             "has_team": self.team_id is not None,
         }
 

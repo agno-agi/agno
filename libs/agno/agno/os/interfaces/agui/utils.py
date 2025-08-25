@@ -129,7 +129,7 @@ def _create_events_from_chunk(
     Process a single chunk and return events to emit + updated message_started state.
     Returns: (events_to_emit, new_message_started_state)
     """
-    events_to_emit = []
+    events_to_emit: List[BaseEvent] = []
 
     # Extract content if the contextual event is a content event
     if chunk.event == RunEvent.run_content:
