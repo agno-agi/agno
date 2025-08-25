@@ -1534,6 +1534,7 @@ def test_search_code(mock_github):
     mock_code_results.totalCount = 2
     mock_code_results.__getitem__.return_value = [mock_code1, mock_code2]
     mock_code_results.__iter__.return_value = [mock_code1, mock_code2]
+    mock_code_results.get_page.side_effect = lambda page: [mock_code1, mock_code2] if page == 0 else []
 
     mock_client.search_code.return_value = mock_code_results
 

@@ -38,7 +38,7 @@ charset-normalizer==3.4.1
     # via requests
 click==8.1.8
     # via
-    #   duckduckgo-search
+    #   ddgs
     #   rich-toolkit
     #   streamlit
     #   typer
@@ -54,7 +54,7 @@ dnspython==2.7.0
     # via email-validator
 docstring-parser==0.16
     # via agno
-duckduckgo-search==8.0.1
+ddgs==8.0.1
     # via -r cookbook/demo/requirements.in
 elevenlabs==1.57.0
     # via -r cookbook/demo/requirements.in
@@ -121,7 +121,7 @@ jsonschema-specifications==2024.10.1
     # via jsonschema
 lxml==5.3.2
     # via
-    #   duckduckgo-search
+    #   ddgs
     #   python-docx
 markdown-it-py==3.0.0
     # via rich
@@ -167,7 +167,7 @@ platformdirs==4.3.7
 pluggy==1.5.0
     # via pytest
 primp==0.15.0
-    # via duckduckgo-search
+    # via ddgs
 protobuf==5.29.4
     # via streamlit
 psycopg==3.2.6

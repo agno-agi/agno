@@ -118,7 +118,7 @@ class Steps:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         session_state: Optional[Dict[str, Any]] = None,
-        store_executor_responses: bool = True,
+        store_executor_outputs: bool = True,
     ) -> StepOutput:
         """Execute all steps in sequence and return the final result"""
         log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
@@ -146,7 +146,7 @@ class Steps:
                     session_id=session_id,
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
-                    store_executor_responses=store_executor_responses,
+                    store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                 )
 
@@ -202,7 +202,7 @@ class Steps:
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
         step_index: Optional[Union[int, tuple]] = None,
-        store_executor_responses: bool = True,
+        store_executor_outputs: bool = True,
         parent_step_id: Optional[str] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute all steps in sequence with streaming support"""
@@ -258,7 +258,7 @@ class Steps:
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
-                    store_executor_responses=store_executor_responses,
+                    store_executor_outputs=store_executor_outputs,
                     parent_step_id=steps_id,
                 ):
                     if isinstance(event, StepOutput):
@@ -336,7 +336,7 @@ class Steps:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         session_state: Optional[Dict[str, Any]] = None,
-        store_executor_responses: bool = True,
+        store_executor_outputs: bool = True,
     ) -> StepOutput:
         """Execute all steps in sequence asynchronously and return the final result"""
         log_debug(f"Steps Start: {self.name} ({len(self.steps)} steps)", center=True, symbol="-")
@@ -364,7 +364,7 @@ class Steps:
                     session_id=session_id,
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
-                    store_executor_responses=store_executor_responses,
+                    store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                 )
 
@@ -419,7 +419,7 @@ class Steps:
         user_id: Optional[str] = None,
         stream_intermediate_steps: bool = False,
         step_index: Optional[Union[int, tuple]] = None,
-        store_executor_responses: bool = True,
+        store_executor_outputs: bool = True,
         parent_step_id: Optional[str] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Execute all steps in sequence with async streaming support"""
@@ -475,7 +475,7 @@ class Steps:
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
-                    store_executor_responses=store_executor_responses,
+                    store_executor_outputs=store_executor_outputs,
                     parent_step_id=steps_id,
                 ):
                     if isinstance(event, StepOutput):

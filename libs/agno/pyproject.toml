@@ -33,8 +33,7 @@ classifiers = [
 dependencies = [
   "docstring-parser",
   "gitpython",
-  # Required to avoid `SyncHttpxClientWrapper` error
-  "httpx==0.27.2",  
+  "httpx",  
   "packaging",
   "pydantic-settings",
   "pydantic",
@@ -54,7 +53,7 @@ os = ["fastapi", "uvicorn"]
 # Models integration test dependencies
 integration-tests = [
     "exa_py",
-    "duckduckgo-search",
+    "ddgs",
     "yfinance",
     "sqlalchemy",
     "Pillow"
@@ -93,7 +92,7 @@ brave = ["brave-search"]
 browserbase = ["browserbase", "playwright"]
 cartesia = ["cartesia"]
 confluence = ["atlassian-python-api"]
-ddg = ["duckduckgo-search"]
+ddg = ["ddgs"]
 duckdb = ["duckdb"]
 elevenlabs = ["elevenlabs"]
 evm = ["web3"]
@@ -361,7 +360,7 @@ module = [
   "docker.*",
   "docx.*",
   "duckdb.*",
-  "duckduckgo_search.*",
+  "ddgs.*",
   "email_validator.*",
   "e2b_code_interpreter.*",
   "eth_account.*",

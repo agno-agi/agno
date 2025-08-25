@@ -2,7 +2,7 @@
 Use JSON files as the database for a Workflow.
 Useful for simple demos where performance is not critical.
 
-Run `pip install duckduckgo-search openai` to install dependencies.
+Run `pip install ddgs openai` to install dependencies.
 """
 
 from agno.agent import Agent

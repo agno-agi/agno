@@ -6,7 +6,7 @@ to provide comprehensive financial analysis and news reporting. The team consist
 2. Finance Agent: Analyzes financial data and market trends
 3. Lead Editor: Coordinates and combines insights from both agents
 
-Run: `pip install openai duckduckgo-search yfinance agno` to install the dependencies
+Run: `pip install openai ddgs yfinance agno` to install the dependencies
 """
 
 from textwrap import dedent

@@ -9,8 +9,9 @@ from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifac
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
+from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
-from agno.run.base import BaseRunOutputEvent, RunOutputMetaData, RunStatus
+from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
 
 
 class TeamRunEvent(str, Enum):
@@ -97,7 +98,10 @@ class RunContentEvent(BaseTeamRunEvent):
     citations: Optional[Citations] = None
     response_audio: Optional[AudioResponse] = None  # Model audio response
     image: Optional[ImageArtifact] = None  # Image attached to the response
-    metadata: Optional[RunOutputMetaData] = None
+    references: Optional[List[MessageReferences]] = None
+    additional_input: Optional[List[Message]] = None
+    reasoning_steps: Optional[List[ReasoningStep]] = None
+    reasoning_messages: Optional[List[Message]] = None
 
 
 @dataclass
@@ -119,7 +123,10 @@ class RunCompletedEvent(BaseTeamRunEvent):
     videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
     audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
     response_audio: Optional[AudioResponse] = None  # Model audio response
-    metadata: Optional[RunOutputMetaData] = None
+    references: Optional[List[MessageReferences]] = None
+    additional_input: Optional[List[Message]] = None
+    reasoning_steps: Optional[List[ReasoningStep]] = None
+    reasoning_messages: Optional[List[Message]] = None
     member_responses: List[Union["TeamRunOutput", RunOutput]] = field(default_factory=list)
 
 
@@ -287,7 +294,12 @@ class TeamRunOutput:
 
     citations: Optional[Citations] = None
 
-    metadata: Optional[RunOutputMetaData] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+    references: Optional[List[MessageReferences]] = None
+    additional_input: Optional[List[Message]] = None
+    reasoning_steps: Optional[List[ReasoningStep]] = None
+    reasoning_messages: Optional[List[Message]] = None
     created_at: int = field(default_factory=lambda: int(time()))
 
     events: Optional[List[Union[RunOutputEvent, TeamRunOutputEvent]]] = None
@@ -324,6 +336,10 @@ class TeamRunOutput:
                 "response_audio",
                 "citations",
                 "events",
+                "additional_input",
+                "reasoning_steps",
+                "reasoning_messages",
+                "references",
             ]
         }
         if self.events is not None:
@@ -336,7 +352,19 @@ class TeamRunOutput:
             _dict["messages"] = [m.to_dict() for m in self.messages]
 
         if self.metadata is not None:
-            _dict["metadata"] = self.metadata.to_dict()
+            _dict["metadata"] = self.metadata
+
+        if self.additional_input is not None:
+            _dict["additional_input"] = [m.to_dict() for m in self.additional_input]
+
+        if self.reasoning_messages is not None:
+            _dict["reasoning_messages"] = [m.to_dict() for m in self.reasoning_messages]
+
+        if self.reasoning_steps is not None:
+            _dict["reasoning_steps"] = [rs.model_dump() for rs in self.reasoning_steps]
+
+        if self.references is not None:
+            _dict["references"] = [r.model_dump() for r in self.references]
 
         if self.images is not None:
             _dict["images"] = [img.to_dict() for img in self.images]
@@ -406,9 +434,21 @@ class TeamRunOutput:
                 else:
                     parsed_member_responses.append(cls.from_dict(response))
 
-        metadata = data.pop("metadata", None)
-        if metadata is not None:
-            metadata = RunOutputMetaData.from_dict(metadata)
+        additional_input = data.pop("additional_input", None)
+        if additional_input is not None:
+            additional_input = [Message.model_validate(message) for message in additional_input]
+
+        reasoning_steps = data.pop("reasoning_steps", None)
+        if reasoning_steps is not None:
+            reasoning_steps = [ReasoningStep.model_validate(step) for step in reasoning_steps]
+
+        reasoning_messages = data.pop("reasoning_messages", None)
+        if reasoning_messages is not None:
+            reasoning_messages = [Message.model_validate(message) for message in reasoning_messages]
+
+        references = data.pop("references", None)
+        if references is not None:
+            references = [MessageReferences.model_validate(reference) for reference in references]
 
         images = data.pop("images", [])
         images = [ImageArtifact.model_validate(image) for image in images] if images else None
@@ -436,7 +476,10 @@ class TeamRunOutput:
             messages=messages,
             metrics=metrics,
             member_responses=parsed_member_responses,
-            metadata=metadata,
+            additional_input=additional_input,
+            reasoning_steps=reasoning_steps,
+            reasoning_messages=reasoning_messages,
+            references=references,
             images=images,
             videos=videos,
             audio=audio,

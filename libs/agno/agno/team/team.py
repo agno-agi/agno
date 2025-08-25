@@ -41,7 +41,7 @@ from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
-from agno.run.base import RunOutputMetaData, RunStatus
+from agno.run.base import RunStatus
 from agno.run.messages import RunMessages
 from agno.run.team import TeamRunEvent, TeamRunOutput, TeamRunOutputEvent
 from agno.session import SessionSummaryManager, TeamSession
@@ -315,6 +315,14 @@ class Team:
     # Enable member logs - Sets the debug_mode for team and members
     show_members_responses: bool = False
 
+    # --- Team Response Settings ---
+    # Number of retries to attempt
+    retries: int = 0
+    # Delay between retries (in seconds)
+    delay_between_retries: int = 1
+    # Exponential backoff: if True, the delay between retries is doubled each time
+    exponential_backoff: bool = False
+
     # --- Telemetry ---
     # telemetry=True logs minimal telemetry for analytics
     # This helps us improve the Teams implementation and provide better support
@@ -395,6 +403,9 @@ class Team:
         debug_mode: bool = False,
         debug_level: Literal[1, 2] = 1,
         show_members_responses: bool = False,
+        retries: int = 0,
+        delay_between_retries: int = 1,
+        exponential_backoff: bool = False,
         telemetry: bool = True,
     ):
         self.members = members
@@ -494,6 +505,10 @@ class Team:
             debug_level = 1
         self.debug_level = debug_level
         self.show_members_responses = show_members_responses
+
+        self.retries = retries
+        self.delay_between_retries = delay_between_retries
+        self.exponential_backoff = exponential_backoff
 
         self.telemetry = telemetry
 
@@ -783,7 +798,8 @@ class Team:
         # 6. Save session to storage
         self.save_session(session=session)
 
-        # TODO: Log team run
+        # Log Team Telemetry
+        self._log_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -898,7 +914,8 @@ class Team:
         if yield_run_response:
             yield run_response
 
-        # TODO: Log team run
+        # Log Team Telemetry
+        self._log_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1061,7 +1078,8 @@ class Team:
             store_member_responses=store_member_responses,
         )
 
-        retries = retries or 3
+        # If no retries are set, use the team's default retries
+        retries = retries if retries is not None else self.retries
 
         # Run the team
         last_exception = None
@@ -1136,8 +1154,12 @@ class Team:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
 
                 last_exception = e
-                if attempt < num_attempts - 1:
-                    time.sleep(2**attempt)
+                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
+                    if self.exponential_backoff:
+                        delay = 2**attempt * self.delay_between_retries
+                    else:
+                        delay = self.delay_between_retries
+                    time.sleep(delay)
             except (KeyboardInterrupt, RunCancelledException):
                 run_response.content = "Operation cancelled by user"
                 run_response.status = RunStatus.cancelled
@@ -1235,8 +1257,8 @@ class Team:
         # 7. Save session to storage
         self.save_session(session=session)
 
-        # 8. Log Team Run
-        await self._alog_team_run(session_id=session.session_id, user_id=user_id)
+        # 8. Log Team Telemetry
+        await self._alog_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1354,8 +1376,8 @@ class Team:
         if yield_run_response:
             yield run_response
 
-        # 7. Log Team Run
-        await self._alog_team_run(session_id=session.session_id, user_id=user_id)
+        # 7. Log Team Telemetry
+        await self._alog_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1513,7 +1535,8 @@ class Team:
             store_member_responses=store_member_responses,
         )
 
-        retries = retries or 3
+        # If no retries are set, use the team's default retries
+        retries = retries if retries is not None else self.retries
 
         # Run the team
         last_exception = None
@@ -1577,10 +1600,14 @@ class Team:
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
                 last_exception = e
-                if attempt < num_attempts - 1:
+                if attempt < num_attempts - 1:  # Don't sleep on the last attempt
+                    if self.exponential_backoff:
+                        delay = 2**attempt * self.delay_between_retries
+                    else:
+                        delay = self.delay_between_retries
                     import time
 
-                    time.sleep(2**attempt)
+                    time.sleep(delay)
             except (KeyboardInterrupt, RunCancelledException):
                 run_response.status = RunStatus.cancelled
                 run_response.content = "Operation cancelled by user"
@@ -1720,8 +1747,8 @@ class Team:
 
         if stream_intermediate_steps and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
-            if run_response.metadata and hasattr(run_response.metadata, "reasoning_steps"):
-                all_reasoning_steps = cast(List[ReasoningStep], run_response.metadata.reasoning_steps)
+            if run_response.reasoning_steps:
+                all_reasoning_steps = cast(List[ReasoningStep], run_response.reasoning_steps)
 
             if all_reasoning_steps:
                 add_reasoning_metrics_to_metadata(run_response, reasoning_state["reasoning_time_taken"])
@@ -1814,8 +1841,8 @@ class Team:
 
         if stream_intermediate_steps and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
-            if run_response.metadata and hasattr(run_response.metadata, "reasoning_steps"):
-                all_reasoning_steps = cast(List[ReasoningStep], run_response.metadata.reasoning_steps)
+            if run_response.reasoning_steps:
+                all_reasoning_steps = cast(List[ReasoningStep], run_response.reasoning_steps)
 
             if all_reasoning_steps:
                 add_reasoning_metrics_to_metadata(run_response, reasoning_state["reasoning_time_taken"])
@@ -3898,12 +3925,10 @@ class Team:
             # Add the extra messages to the run_response
             if len(messages_to_add_to_run_response) > 0:
                 log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
-                if run_response.metadata is None:
-                    run_response.metadata = RunOutputMetaData(additional_input=messages_to_add_to_run_response)
-                    if run_response.metadata.additional_input is None:
-                        run_response.metadata.additional_input = messages_to_add_to_run_response
-                    else:
-                        run_response.metadata.additional_input.extend(messages_to_add_to_run_response)
+                if run_response.additional_input is None:
+                    run_response.additional_input = messages_to_add_to_run_response
+                else:
+                    run_response.additional_input.extend(messages_to_add_to_run_response)
 
         # 3. Add history to run_messages
         if self.add_history_to_context:
@@ -4043,11 +4068,9 @@ class Team:
                                 time=round(retrieval_timer.elapsed, 4),
                             )
                             # Add the references to the run_response
-                            if run_response.metadata is None:
-                                run_response.metadata = RunOutputMetaData()
-                            if run_response.metadata.references is None:
-                                run_response.metadata.references = []
-                            run_response.metadata.references.append(references)
+                            if run_response.references is None:
+                                run_response.references = []
+                            run_response.references.append(references)
                         retrieval_timer.stop()
                         log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
                     except Exception as e:
@@ -6340,11 +6363,9 @@ class Team:
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
                 # Add the references to the run_response
-                if run_response.metadata is None:
-                    run_response.metadata = RunOutputMetaData()
-                if run_response.metadata.references is None:
-                    run_response.metadata.references = []
-                run_response.metadata.references.append(references)
+                if run_response.references is None:
+                    run_response.references = []
+                run_response.references.append(references)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 
@@ -6368,11 +6389,9 @@ class Team:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
-                if run_response.metadata is None:
-                    run_response.metadata = RunOutputMetaData()
-                if run_response.metadata.references is None:
-                    run_response.metadata.references = []
-                run_response.metadata.references.append(references)
+                if run_response.references is None:
+                    run_response.references = []
+                run_response.references.append(references)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 
@@ -6416,11 +6435,9 @@ class Team:
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
                 # Add the references to the run_response
-                if run_response.metadata is None:
-                    run_response.metadata = RunOutputMetaData()
-                if run_response.metadata.references is None:
-                    run_response.metadata.references = []
-                run_response.metadata.references.append(references)
+                if run_response.references is None:
+                    run_response.references = []
+                run_response.references.append(references)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 
@@ -6447,11 +6464,9 @@ class Team:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
-                if run_response.metadata is None:
-                    run_response.metadata = RunOutputMetaData()
-                if run_response.metadata.references is None:
-                    run_response.metadata.references = []
-                run_response.metadata.references.append(references)
+                if run_response.references is None:
+                    run_response.references = []
+                run_response.references.append(references)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 
@@ -6486,46 +6501,49 @@ class Team:
     # Api functions
     ###########################################################################
 
-    def _log_team_run(self, session_id: str, user_id: Optional[str] = None) -> None:
-        self._set_telemetry()
+    def _get_telemetry_data(self) -> Dict[str, Any]:
+        """Get the telemetry data for the team"""
+        return {
+            "team_id": self.id,
+            "db_type": self.db.__class__.__name__ if self.db else None,
+            "model_provider": self.model.provider if self.model else None,
+            "model_name": self.model.name if self.model else None,
+            "model_id": self.model.id if self.model else None,
+            "parser_model": self.parser_model.to_dict() if self.parser_model else None,
+            "output_model": self.output_model.to_dict() if self.output_model else None,
+            "member_count": len(self.members) if self.members else 0,
+            "has_knowledge": self.knowledge is not None,
+            "has_tools": self.tools is not None,
+        }
 
+    def _log_team_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
+        """Send a telemetry event to the API for a created Team run"""
+
+        self._set_telemetry()
         if not self.telemetry:
             return
 
-        # from agno.api.team import TeamRunCreate, create_team_run
-        #
-        # try:
-        #     team_session: TeamSession = self.team_session or self.__read_or_create_session(
-        #         session_id=session_id, user_id=user_id
-        #     )
-        #
-        #     create_team_run(
-        #         run=TeamRunCreate(
-        #             session_id=team_session.session_id,
-        #             team_data=team_session.telemetry_data(),
-        #         ),
-        #     )
-        # except Exception as e:
-        #     log_debug(f"Could not create agent event: {e}")
+        from agno.api.team import TeamRunCreate, create_team_run
 
-    async def _alog_team_run(self, session_id: str, user_id: Optional[str] = None) -> None:
+        try:
+            create_team_run(
+                run=TeamRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data()),
+            )
+        except Exception as e:
+            log_debug(f"Could not create Team run telemetry event: {e}")
+
+    async def _alog_team_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
+        """Send a telemetry event to the API for a created Team async run"""
+
         self._set_telemetry()
-
         if not self.telemetry:
             return
 
-        # from agno.api.team import TeamRunCreate, acreate_team_run
-        #
-        # try:
-        #     team_session: TeamSession = self.team_session or self.__read_or_create_session(
-        #         session_id=session_id, user_id=user_id
-        #     )
-        #
-        #     await acreate_team_run(
-        #         run=TeamRunCreate(
-        #             session_id=team_session.session_id,
-        #             team_data=team_session.telemetry_data(),
-        #         ),
-        #     )
-        # except Exception as e:
-        #     log_debug(f"Could not create agent event: {e}")
+        from agno.api.team import TeamRunCreate, acreate_team_run
+
+        try:
+            await acreate_team_run(
+                run=TeamRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data())
+            )
+        except Exception as e:
+            log_debug(f"Could not create Team run telemetry event: {e}")

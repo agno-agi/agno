@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
@@ -41,6 +41,7 @@ class AgentOS:
         apps: Optional[List[BaseApp]] = None,
         settings: Optional[AgnoAPISettings] = None,
         fastapi_app: Optional[FastAPI] = None,
+        telemetry: bool = True,
     ):
         if not agents and not workflows and not teams:
             raise ValueError("Either agents, teams or workflows must be provided.")
@@ -57,6 +58,8 @@ class AgentOS:
 
         self.os_id: Optional[str] = os_id
         self.description = description
+
+        self.telemetry = telemetry
 
         self.interfaces_loaded: List[Tuple[str, str]] = []
         self.apps_loaded: List[Tuple[str, str]] = []
@@ -88,6 +91,20 @@ class AgentOS:
             for workflow in self.workflows:
                 if not workflow.id:
                     workflow.id = generate_id(workflow.name)
+
+        if self.telemetry:
+            from agno.api.os import OSLaunch, log_os_telemetry
+
+            log_os_telemetry(launch=OSLaunch(os_id=self.os_id, data=self._get_telemetry_data()))
+
+    def _get_telemetry_data(self) -> Dict[str, Any]:
+        """Get the telemetry data for the OS"""
+        return {
+            "agents": [agent.id for agent in self.agents] if self.agents else None,
+            "teams": [team.id for team in self.teams] if self.teams else None,
+            "workflows": [workflow.id for workflow in self.workflows] if self.workflows else None,
+            "interfaces": [interface.type for interface in self.interfaces] if self.interfaces else None,
+        }
 
     def _auto_discover_apps(self) -> List[BaseApp]:
         """Auto-discover apps from agents, teams, and workflows."""
