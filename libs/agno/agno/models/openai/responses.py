@@ -44,6 +44,7 @@ class OpenAIResponses(Model):
     reasoning: Optional[Dict[str, Any]] = None
     verbosity: Optional[Literal["low", "medium", "high"]] = None
     reasoning_effort: Optional[Literal["minimal", "medium", "high"]] = None
+    reasoning_summary: Optional[Literal["auto", "concise", "detailed"]] = None
     store: Optional[bool] = None
     temperature: Optional[float] = None
     top_p: Optional[float] = None
@@ -83,6 +84,18 @@ class OpenAIResponses(Model):
     def _using_reasoning_model(self) -> bool:
         """Return True if the contextual used model is a known reasoning model."""
         return self.id.startswith("o3") or self.id.startswith("o4-mini") or self.id.startswith("gpt-5")
+
+    def _set_reasoning_request_param(self, base_params: Dict[str, Any]) -> Dict[str, Any]:
+        """Set the reasoning request parameter."""
+        base_params["reasoning"] = self.reasoning or {}
+
+        if self.reasoning_effort is not None:
+            base_params["reasoning"]["effort"] = self.reasoning_effort
+
+        if self.reasoning_summary is not None:
+            base_params["reasoning"]["summary"] = self.reasoning_summary
+
+        return base_params
 
     def _get_client_params(self) -> Dict[str, Any]:
         """
@@ -185,12 +198,8 @@ class OpenAIResponses(Model):
             "user": self.user,
             "service_tier": self.service_tier,
         }
-
-        # Handle reasoning parameter - convert reasoning_effort to reasoning format
-        if self.reasoning is not None:
-            base_params["reasoning"] = self.reasoning
-        elif self.reasoning_effort is not None:
-            base_params["reasoning"] = {"effort": self.reasoning_effort}
+        # Populate the reasoning parameter
+        base_params = self._set_reasoning_request_param(base_params)
 
         # Build text parameter
         text_params: Dict[str, Any] = {}
@@ -478,7 +487,6 @@ class OpenAIResponses(Model):
             request_params = self.get_request_params(
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
-
             return self.get_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
@@ -730,7 +738,10 @@ class OpenAIResponses(Model):
 
         # Add role
         model_response.role = "assistant"
+        reasoning_summary: str = ""
+
         for output in response.output:
+            # Add content
             if output.type == "message":
                 model_response.content = response.output_text
 
@@ -746,6 +757,8 @@ class OpenAIResponses(Model):
                                 citations.urls.append(UrlCitation(url=annotation.url, title=annotation.title))
                         if citations.urls or citations.documents:
                             model_response.citations = citations
+
+            # Add tool calls
             elif output.type == "function_call":
                 if model_response.tool_calls is None:
                     model_response.tool_calls = []
@@ -765,10 +778,24 @@ class OpenAIResponses(Model):
                 model_response.extra = model_response.extra or {}
                 model_response.extra.setdefault("tool_call_ids", []).append(output.call_id)
 
-        # i.e. we asked for reasoning, so we need to add the reasoning content
-        if self.reasoning is not None:
+            # Add reasoning summary
+            elif output.type == "reasoning":
+                if reasoning_summaries := getattr(output, "summary", None):
+                    for summary in reasoning_summaries:
+                        if isinstance(summary, dict):
+                            summary_text = summary.get("text")
+                        else:
+                            summary_text = getattr(summary, "text", None)
+                        if summary_text:
+                            reasoning_summary = (reasoning_summary or "") + summary_text
+
+        # Add reasoning content
+        if reasoning_summary is not None:
+            model_response.reasoning_content = reasoning_summary
+        elif self.reasoning is not None:
             model_response.reasoning_content = response.output_text
 
+        # Add metrics
         if response.usage is not None:
             model_response.response_usage = response.usage
 
@@ -835,7 +862,8 @@ class OpenAIResponses(Model):
             model_response.content = stream_event.delta
             stream_data.response_content += stream_event.delta
 
-            if self.reasoning is not None:
+            # Treat the output_text deltas as reasoning content if the reasoning summary is not requested.
+            if self.reasoning is not None and self.reasoning_summary is None:
                 model_response.reasoning_content = stream_event.delta
                 stream_data.response_thinking += stream_event.delta
 
@@ -868,7 +896,24 @@ class OpenAIResponses(Model):
 
         elif stream_event.type == "response.completed":
             model_response = ModelResponse()
-            # Add usage metrics if present
+
+            # Add reasoning summary
+            if self.reasoning_summary is not None:
+                summary_text: str = ""
+                for out in getattr(stream_event.response, "output", []) or []:
+                    if getattr(out, "type", None) == "reasoning":
+                        summaries = getattr(out, "summary", None)
+                        if summaries:
+                            for s in summaries:
+                                text_val = s.get("text") if isinstance(s, dict) else getattr(s, "text", None)
+                                if text_val:
+                                    if summary_text:
+                                        summary_text += "\n\n"
+                                    summary_text += text_val
+                if summary_text:
+                    model_response.reasoning_content = summary_text
+
+            # Add metrics
             if stream_event.response.usage is not None:
                 model_response.response_usage = stream_event.response.usage
 
