@@ -1175,7 +1175,7 @@ class Agent:
         7. Save session to storage
         8. Optional: Save output to file if save_response_to_file is set
         """
-        arun_dependencies = dependencies if dependencies is not None else self.dependencies
+        run_dependencies = dependencies if dependencies is not None else self.dependencies
         # Resolving here for async requirement
         if self.dependencies is not None:
             await self._aresolve_run_dependencies(dependencies=arun_dependencies)
