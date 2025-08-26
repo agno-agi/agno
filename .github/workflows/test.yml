@@ -46,6 +46,7 @@ jobs:
       - name: Mypy
         run: |
           mypy .
+          
   style-check-cookbook:
     runs-on: ubuntu-latest
     strategy:
@@ -78,6 +79,7 @@ jobs:
       - name: Mypy
         run: |
           mypy .
+
   style-check-agno-infra:
     runs-on: ubuntu-latest
     strategy:
