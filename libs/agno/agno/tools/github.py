@@ -1698,20 +1698,32 @@ class GithubTools(Toolkit):
             log_debug(f"Final search query: {search_query}")
             code_results = self.g.search_code(search_query)
 
-            # Process results
-            results = []
-            # Limit to 50 results to prevent timeouts
-            for code in code_results[:50]:
-                code_info = {
-                    "repository": code.repository.full_name,
-                    "path": code.path,
-                    "name": code.name,
-                    "sha": code.sha,
-                    "html_url": code.html_url,
-                    "git_url": code.git_url,
-                    "score": code.score,
-                }
-                results.append(code_info)
+            results: list[dict] = []
+            limit = 60
+            max_pages = 2  # GitHub returns 30 items per page, so 2 pages covers our limit
+            page_index = 0
+
+            while len(results) < limit and page_index < max_pages:
+                # Fetch one page of results from GitHub API
+                page_items = code_results.get_page(page_index)
+
+                # Stop if no more results available
+                if not page_items:
+                    break
+
+                # Process each code result in the current page
+                for code in page_items:
+                    code_info = {
+                        "repository": code.repository.full_name,
+                        "path": code.path,
+                        "name": code.name,
+                        "sha": code.sha,
+                        "html_url": code.html_url,
+                        "git_url": code.git_url,
+                        "score": code.score,
+                    }
+                    results.append(code_info)
+                page_index += 1
 
             # Return search results
             return json.dumps(

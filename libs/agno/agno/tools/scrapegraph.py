@@ -123,13 +123,13 @@ class ScrapeGraphTools(Toolkit):
         ai_extraction: bool = False,
     ) -> str:
         """Perform agentic crawling with automated browser actions and optional AI extraction.
-        
+
         This tool can:
         1. Navigate to a website
         2. Perform a series of automated actions (like filling forms, clicking buttons)
         3. Extract the resulting HTML content as markdown
         4. Optionally use AI to extract structured data
-        
+
         Args:
             url (str): The URL to scrape
             steps (List[str]): List of steps to perform on the webpage (e.g., ["Type email in input box", "click login"])
@@ -137,7 +137,7 @@ class ScrapeGraphTools(Toolkit):
             user_prompt (Optional[str]): Prompt for AI extraction (only used when ai_extraction=True)
             output_schema (Optional[dict]): Schema for structured data extraction (only used when ai_extraction=True)
             ai_extraction (bool): Whether to use AI for data extraction from the scraped content (default: False)
-            
+
         Returns:
             JSON string containing the scraping results, including request_id, status, and extracted data
         """
@@ -145,38 +145,33 @@ class ScrapeGraphTools(Toolkit):
             # Validate required parameters for AI extraction
             if ai_extraction and not user_prompt:
                 return json.dumps({"error": "user_prompt is required when ai_extraction=True"})
-            
+
             # Validate URL format
             if not url.strip():
                 return json.dumps({"error": "URL cannot be empty"})
             if not (url.startswith("http://") or url.startswith("https://")):
                 return json.dumps({"error": "Invalid URL - must start with http:// or https://"})
-            
+
             # Validate steps
             if not steps:
                 return json.dumps({"error": "Steps cannot be empty"})
             if any(not step.strip() for step in steps):
                 return json.dumps({"error": "All steps must contain valid instructions"})
-            
+
             # Prepare parameters for the API call
-            params = {
-                "url": url,
-                "steps": steps,
-                "use_session": use_session,
-                "ai_extraction": ai_extraction
-            }
-            
+            params = {"url": url, "steps": steps, "use_session": use_session, "ai_extraction": ai_extraction}
+
             # Add optional parameters only if they are provided
             if user_prompt:
                 params["user_prompt"] = user_prompt
             if output_schema:
                 params["output_schema"] = output_schema
-            
+
             # Call the agentic scraper API
             response = self.client.agenticscraper(**params)
-            
+
             return json.dumps(response, indent=2)
-            
+
         except Exception as e:
             return json.dumps({"error": str(e)})
 
