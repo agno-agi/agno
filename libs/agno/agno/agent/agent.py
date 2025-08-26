@@ -1042,6 +1042,15 @@ class Agent:
         response_format = self._get_response_format() if self.parser_model is None else None
         self.model = cast(Model, self.model)
 
+        # Merge agent metadata with run metadata
+        from agno.utils.merge_dict import merge_dictionaries
+
+        if self.metadata is not None:
+            if metadata is None:
+                metadata = self.metadata
+            else:
+                merge_dictionaries(metadata, self.metadata)
+
         # Create a new run_response for this attempt
         run_response = RunOutput(
             run_id=run_id,
@@ -1516,6 +1525,15 @@ class Agent:
         response_format = self._get_response_format() if self.parser_model is None else None
         self.model = cast(Model, self.model)
 
+        # Merge agent metadata with run metadata
+        from agno.utils.merge_dict import merge_dictionaries
+
+        if self.metadata is not None:
+            if metadata is None:
+                metadata = self.metadata
+            else:
+                merge_dictionaries(metadata, self.metadata)
+
         # Create a new run_response for this attempt
         run_response = RunOutput(
             run_id=run_id,
@@ -1582,7 +1600,7 @@ class Agent:
                         stream_intermediate_steps=stream_intermediate_steps,
                         workflow_context=workflow_context,
                         yield_run_response=yield_run_response,
-                        dependencies=run_dependencies if add_dependencies else None,
+                        dependencies=run_dependencies,
                     )  # type: ignore[assignment]
                 else:
                     return self._arun(  # type: ignore
@@ -1591,7 +1609,7 @@ class Agent:
                         user_id=user_id,
                         session=agent_session,
                         response_format=response_format,
-                        dependencies=run_dependencies if add_dependencies else None,
+                        dependencies=run_dependencies,
                     )
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
@@ -1644,8 +1662,8 @@ class Agent:
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        metadata: Optional[Dict[str, Any]] = None,
     ) -> RunOutput: ...
 
     @overload
@@ -1661,8 +1679,8 @@ class Agent:
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        metadata: Optional[Dict[str, Any]] = None,
     ) -> Iterator[RunOutputEvent]: ...
 
     def continue_run(
@@ -1677,8 +1695,8 @@ class Agent:
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        metadata: Optional[Dict[str, Any]] = None,
     ) -> Union[RunOutput, Iterator[RunOutputEvent]]:
         """Continue a previous run.
 
@@ -1692,6 +1710,7 @@ class Agent:
             session_id: The session id to continue the run for.
             retries: The number of retries to continue the run for.
             knowledge_filters: The knowledge filters to use for the run.
+            dependencies: The dependencies to use for the run.
             debug_mode: Whether to enable debug mode.
         """
         if run_response is None and run_id is None:
@@ -1805,6 +1824,7 @@ class Agent:
                         session=agent_session,
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
+                        dependencies=run_dependencies,
                     )
                     return response_iterator
                 else:
@@ -1814,6 +1834,7 @@ class Agent:
                         user_id=user_id,
                         session=agent_session,
                         response_format=response_format,
+                        dependencies=run_dependencies,
                     )
                     return response
             except ModelProviderError as e:
@@ -1939,6 +1960,7 @@ class Agent:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> Iterator[RunOutputEvent]:
         """Continue a previous run.
 
@@ -1952,9 +1974,8 @@ class Agent:
         7. Save session to storage
         """
 
-        # Resolve dependencies if needed
-        if self.dependencies is not None:
-            self._resolve_run_dependencies(dependencies=self.dependencies)
+        if dependencies is not None:
+            self._resolve_run_dependencies(dependencies=dependencies)
 
         # Start the Run by yielding a RunContinued event
         if stream_intermediate_steps:
@@ -2028,8 +2049,8 @@ class Agent:
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        metadata: Optional[Dict[str, Any]] = None,
     ) -> RunOutput: ...
 
     @overload
@@ -2045,8 +2066,8 @@ class Agent:
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        metadata: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[Union[RunOutputEvent, RunOutput]]: ...
 
     def acontinue_run(  # type: ignore
@@ -2061,8 +2082,8 @@ class Agent:
         session_id: Optional[str] = None,
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
-        metadata: Optional[Dict[str, Any]] = None,
     ) -> Union[RunOutput, AsyncIterator[Union[RunOutputEvent, RunOutput]]]:
         """Continue a previous run.
 
@@ -2076,6 +2097,7 @@ class Agent:
             session_id: The session id to continue the run for.
             retries: The number of retries to continue the run for.
             knowledge_filters: The knowledge filters to use for the run.
+            dependencies: The dependencies to use for continuing the run.
             debug_mode: Whether to enable debug mode.
         """
         if run_response is None and run_id is None:
@@ -2099,6 +2121,12 @@ class Agent:
 
         # Update session state from DB
         session_state = self._update_session_state(session=agent_session, session_state=session_state)
+
+        run_dependencies = dependencies if dependencies is not None else self.dependencies
+
+        # Resolve dependencies
+        if run_dependencies is not None:
+            self._resolve_run_dependencies(dependencies=run_dependencies)
 
         effective_filters = knowledge_filters
 
@@ -2181,7 +2209,7 @@ class Agent:
                         session=agent_session,
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
-                        dependencies=run_dependencies if add_dependencies else None,
+                        dependencies=run_dependencies,
                     )
                 else:
                     return self._acontinue_run(  # type: ignore
@@ -2190,7 +2218,7 @@ class Agent:
                         user_id=user_id,
                         session=agent_session,
                         response_format=response_format,
-                        dependencies=run_dependencies if add_dependencies else None,
+                        dependencies=run_dependencies,
                     )
             except ModelProviderError as e:
                 log_warning(f"Attempt {attempt + 1}/{num_attempts} failed: {str(e)}")
