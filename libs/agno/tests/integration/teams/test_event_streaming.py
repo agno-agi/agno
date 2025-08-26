@@ -143,7 +143,7 @@ def test_intermediate_steps_with_tools():
 def test_intermediate_steps_with_tools_events_persisted(shared_db):
     team = Team(
         model=OpenAIChat(id="o3-mini"),
-        storage=team_storage,
+        db=shared_db,
         store_events=True,
         members=[],
         tools=[YFinanceTools(cache_results=True)],
