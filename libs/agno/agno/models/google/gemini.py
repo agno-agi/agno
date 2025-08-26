@@ -793,12 +793,18 @@ class Gemini(Model):
                 grounding_metadata = response.candidates[0].grounding_metadata.model_dump()
                 citations_raw["grounding_metadata"] = grounding_metadata
 
-                chunks = grounding_metadata.get("grounding_chunks", [])
-                citation_pairs = [
-                    (chunk.get("web", {}).get("uri"), chunk.get("web", {}).get("title"))
-                    for chunk in chunks
-                    if chunk.get("web", {}).get("uri")
-                ]
+                chunks = grounding_metadata.get("grounding_chunks", []) or []
+                citation_pairs = []
+                for chunk in chunks:
+                    if not isinstance(chunk, dict):
+                        continue
+                    web = chunk.get("web")
+                    if not isinstance(web, dict):
+                        continue
+                    uri = web.get("uri")
+                    title = web.get("title")
+                    if uri:
+                        citation_pairs.append((uri, title))
 
                 # Create citation objects from filtered pairs
                 grounding_urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
@@ -907,11 +913,17 @@ class Gemini(Model):
 
                 # Extract url and title
                 chunks = grounding_metadata.pop("grounding_chunks", None) or []
-                citation_pairs = [
-                    (chunk.get("web", {}).get("uri"), chunk.get("web", {}).get("title"))
-                    for chunk in chunks
-                    if chunk.get("web", {}).get("uri")
-                ]
+                citation_pairs = []
+                for chunk in chunks:
+                    if not isinstance(chunk, dict):
+                        continue
+                    web = chunk.get("web")
+                    if not isinstance(web, dict):
+                        continue
+                    uri = web.get("uri")
+                    title = web.get("title")
+                    if uri:
+                        citation_pairs.append((uri, title))
 
                 # Create citation objects from filtered pairs
                 citations.urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
