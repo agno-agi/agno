@@ -13,10 +13,3 @@ agent.print_response(
     debug_mode=True,
 )
 
-# response = agent.run(
-#     "Generate an image of a dog and tell me the color.",
-#     markdown=True,
-#     debug_mode=True
-# )
-
-# print('--> response: ', response)
