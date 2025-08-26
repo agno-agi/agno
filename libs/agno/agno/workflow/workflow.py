@@ -28,6 +28,7 @@ from agno.db.base import BaseDb, SessionType
 from agno.media import Audio, AudioArtifact, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.models.message import Message
 from agno.models.metrics import Metrics
+from agno.run.agent import RunEvent
 from agno.run.base import RunStatus
 from agno.run.workflow import (
     StepOutputEvent,
@@ -136,7 +137,7 @@ class Workflow:
     # Persist the events on the run response
     store_events: bool = False
     # Events to skip when persisting the events on the run response
-    events_to_skip: Optional[List[WorkflowRunEvent]] = None
+    events_to_skip: Optional[List[Union[WorkflowRunEvent, RunEvent]]] = None
 
     # Control whether to store executor responses (agent/team responses) in flattened runs
     store_executor_outputs: bool = True
@@ -168,7 +169,7 @@ class Workflow:
         stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
         store_events: bool = False,
-        events_to_skip: Optional[List[WorkflowRunEvent]] = None,
+        events_to_skip: Optional[List[Union[WorkflowRunEvent, RunEvent]]] = None,   
         store_executor_outputs: bool = True,
         input_schema: Optional[Type[BaseModel]] = None,
         metadata: Optional[Dict[str, Any]] = None,

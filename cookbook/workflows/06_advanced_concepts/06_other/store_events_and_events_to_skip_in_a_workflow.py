@@ -7,8 +7,8 @@ from agno.run.agent import (
     ToolCallStartedEvent,
 )
 from agno.run.workflow import WorkflowRunEvent, WorkflowRunOutput
-from agno.tools.googlesearch import GoogleSearchTools
 from agno.tools.hackernews import HackerNewsTools
+from agno.run.agent import RunEvent
 from agno.workflow.parallel import Parallel
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
@@ -24,7 +24,6 @@ news_agent = Agent(
 search_agent = Agent(
     name="Search Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[GoogleSearchTools()],
     instructions="You are a search specialist. Find relevant information on given topics.",
 )
 
@@ -76,6 +75,9 @@ step_workflow = Workflow(
     events_to_skip=[
         WorkflowRunEvent.step_started,
         WorkflowRunEvent.workflow_completed,
+        RunEvent.run_content,
+        RunEvent.run_started,
+        RunEvent.run_completed,
     ],  # Skip step started events to reduce noise
 )
 
