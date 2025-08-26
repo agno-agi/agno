@@ -41,23 +41,17 @@ class AgentOS:
         if not agents and not workflows and not teams:
             raise ValueError("Either agents, teams or workflows must be provided.")
 
-        if config:
-            if isinstance(config, str):
-                self.config = self._load_yaml_config(config)
-            else:
-                self.config = config
+        self.config = self._load_yaml_config(config) if isinstance(config, str) else config
+        self.os_id: Optional[str] = os_id
+        self.description = description
 
         self.agents: Optional[List[Agent]] = agents
         self.workflows: Optional[List[Workflow]] = workflows
         self.teams: Optional[List[Team]] = teams
+        self.interfaces = interfaces or []
 
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
         self.fastapi_app: Optional[FastAPI] = fastapi_app
-
-        self.interfaces = interfaces or []
-
-        self.os_id: Optional[str] = os_id
-        self.description = description
 
         self.interfaces_loaded: List[Tuple[str, str]] = []
 

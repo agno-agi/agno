@@ -40,30 +40,38 @@ class AgentSummaryResponse(BaseModel):
     id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
+    db_id: Optional[str] = None
 
     @classmethod
     def from_agent(cls, agent: Agent) -> "AgentSummaryResponse":
-        return cls(id=agent.id, name=agent.name, description=agent.description)
+        return cls(id=agent.id, name=agent.name, description=agent.description, db_id=agent.db.id if agent.db else None)
 
 
 class TeamSummaryResponse(BaseModel):
     id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
+    db_id: Optional[str] = None
 
     @classmethod
     def from_team(cls, team: Team) -> "TeamSummaryResponse":
-        return cls(id=team.id, name=team.name, description=team.description)
+        return cls(id=team.id, name=team.name, description=team.description, db_id=team.db.id if team.db else None)
 
 
 class WorkflowSummaryResponse(BaseModel):
     id: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
+    db_id: Optional[str] = None
 
     @classmethod
     def from_workflow(cls, workflow: Workflow) -> "WorkflowSummaryResponse":
-        return cls(id=workflow.id, name=workflow.name, description=workflow.description)
+        return cls(
+            id=workflow.id,
+            name=workflow.name,
+            description=workflow.description,
+            db_id=workflow.db.id if workflow.db else None,
+        )
 
 
 class ConfigResponse(BaseModel):
