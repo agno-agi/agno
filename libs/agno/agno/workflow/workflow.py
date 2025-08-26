@@ -25,7 +25,7 @@ from pydantic import BaseModel
 
 from agno.agent.agent import Agent
 from agno.db.base import BaseDb, SessionType
-from agno.media import Audio, AudioArtifact, Image, ImageArtifact, Video, VideoArtifact
+from agno.media import Audio, AudioArtifact, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.models.message import Message
 from agno.models.metrics import Metrics
 from agno.run.base import RunStatus
@@ -139,7 +139,7 @@ class Workflow:
     events_to_skip: Optional[List[WorkflowRunEvent]] = None
 
     # Control whether to store executor responses (agent/team responses) in flattened runs
-    store_executor_responses: bool = True
+    store_executor_outputs: bool = True
 
     websocket_handler: Optional[WebSocketHandler] = None
 
@@ -148,6 +148,11 @@ class Workflow:
 
     # Metadata stored with this workflow
     metadata: Optional[Dict[str, Any]] = None
+
+    # --- Telemetry ---
+    # telemetry=True logs minimal telemetry for analytics
+    # This helps us improve the Agent and provide better support
+    telemetry: bool = True
 
     def __init__(
         self,
@@ -164,10 +169,11 @@ class Workflow:
         stream_intermediate_steps: bool = False,
         store_events: bool = False,
         events_to_skip: Optional[List[WorkflowRunEvent]] = None,
-        store_executor_responses: bool = True,
+        store_executor_outputs: bool = True,
         input_schema: Optional[Type[BaseModel]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         cache_session: bool = False,
+        telemetry: bool = True,
     ):
         self.id = id
         self.name = name
@@ -181,11 +187,12 @@ class Workflow:
         self.events_to_skip = events_to_skip or []
         self.stream = stream
         self.stream_intermediate_steps = stream_intermediate_steps
-        self.store_executor_responses = store_executor_responses
+        self.store_executor_outputs = store_executor_outputs
         self.input_schema = input_schema
         self.metadata = metadata
         self.cache_session = cache_session
         self.db = db
+        self.telemetry = telemetry
 
         self._workflow_session: Optional[WorkflowSession] = None
 
@@ -677,6 +684,13 @@ class Workflow:
         else:
             set_log_level_to_info(source_type="workflow")
 
+    def _set_telemetry(self) -> None:
+        """Override telemetry settings based on environment variables."""
+
+        telemetry_env = getenv("AGNO_TELEMETRY")
+        if telemetry_env is not None:
+            self.telemetry = telemetry_env.lower() == "true"
+
     def _propagate_debug_to_step(self, step):
         """Recursively propagate debug mode to steps and nested primitives"""
         # Handle direct Step objects
@@ -706,6 +720,7 @@ class Workflow:
         shared_images: Optional[List[ImageArtifact]] = None,
         shared_videos: Optional[List[VideoArtifact]] = None,
         shared_audio: Optional[List[AudioArtifact]] = None,
+        shared_files: Optional[List[File]] = None,
     ) -> StepInput:
         """Helper method to create StepInput with enhanced data flow support"""
 
@@ -723,6 +738,7 @@ class Workflow:
             images=shared_images or [],
             videos=shared_videos or [],
             audio=shared_audio or [],
+            files=shared_files or [],
         )
 
     def _get_step_count(self) -> int:
@@ -777,13 +793,15 @@ class Workflow:
         sig = signature(func)
 
         # Build arguments based on what the function actually accepts
-        call_kwargs = {}
+        call_kwargs: Dict[str, Any] = {}
 
         # Only add workflow and execution_input if the function expects them
         if "workflow" in sig.parameters:  # type: ignore
             call_kwargs["workflow"] = self
         if "execution_input" in sig.parameters:
             call_kwargs["execution_input"] = execution_input  # type: ignore
+        if "session_state" in sig.parameters:
+            call_kwargs["session_state"] = self.session_state  # type: ignore
 
         # Add any other kwargs that the function expects
         for param_name in kwargs:
@@ -846,6 +864,8 @@ class Workflow:
                 output_videos: List[VideoArtifact] = (execution_input.videos or []).copy()  # Start with input videos
                 shared_audio: List[AudioArtifact] = execution_input.audio or []
                 output_audio: List[AudioArtifact] = (execution_input.audio or []).copy()  # Start with input audio
+                shared_files: List[File] = execution_input.files or []
+                output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
 
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     step_name = getattr(step, "name", f"step_{i + 1}")
@@ -858,6 +878,7 @@ class Workflow:
                         shared_images=shared_images,
                         shared_videos=shared_videos,
                         shared_audio=shared_audio,
+                        shared_files=shared_files,
                     )
 
                     step_output = step.execute(  # type: ignore[union-attr]
@@ -866,7 +887,7 @@ class Workflow:
                         user_id=self.user_id,
                         workflow_run_response=workflow_run_response,
                         session_state=session_state,
-                        store_executor_responses=self.store_executor_responses,
+                        store_executor_outputs=self.store_executor_outputs,
                     )
 
                     # Update the workflow-level previous_step_outputs dictionary
@@ -879,9 +900,11 @@ class Workflow:
                     shared_images.extend(step_output.images or [])
                     shared_videos.extend(step_output.videos or [])
                     shared_audio.extend(step_output.audio or [])
+                    shared_files.extend(step_output.files or [])
                     output_images.extend(step_output.images or [])
                     output_videos.extend(step_output.videos or [])
                     output_audio.extend(step_output.audio or [])
+                    output_files.extend(step_output.files or [])
 
                     collected_step_outputs.append(step_output)
 
@@ -923,6 +946,10 @@ class Workflow:
                 self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
                 session.upsert_run(run=workflow_run_response)
                 self.save_session(session=session)
+
+        # Log Workflow Telemetry
+        if self.telemetry:
+            self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
 
         return workflow_run_response
 
@@ -977,6 +1004,8 @@ class Workflow:
                 output_videos: List[VideoArtifact] = (execution_input.videos or []).copy()  # Start with input videos
                 shared_audio: List[AudioArtifact] = execution_input.audio or []
                 output_audio: List[AudioArtifact] = (execution_input.audio or []).copy()  # Start with input audio
+                shared_files: List[File] = execution_input.files or []
+                output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
 
                 early_termination = False
 
@@ -991,6 +1020,7 @@ class Workflow:
                         shared_images=shared_images,
                         shared_videos=shared_videos,
                         shared_audio=shared_audio,
+                        shared_files=shared_files,
                     )
 
                     # Execute step with streaming and yield all events
@@ -1002,7 +1032,7 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         session_state=session_state,
                         step_index=i,
-                        store_executor_responses=self.store_executor_responses,
+                        store_executor_outputs=self.store_executor_outputs,
                     ):
                         # Handle events
                         if isinstance(event, StepOutput):
@@ -1023,9 +1053,11 @@ class Workflow:
                                 shared_images.extend(step_output.images or [])
                                 shared_videos.extend(step_output.videos or [])
                                 shared_audio.extend(step_output.audio or [])
+                                shared_files.extend(step_output.files or [])
                                 output_images.extend(step_output.images or [])
                                 output_videos.extend(step_output.videos or [])
                                 output_audio.extend(step_output.audio or [])
+                                output_files.extend(step_output.files or [])
 
                                 # Only yield StepOutputEvent for function executors, not for agents/teams
                                 if getattr(step, "executor_type", None) == "function":
@@ -1039,9 +1071,11 @@ class Workflow:
                             shared_images.extend(step_output.images or [])
                             shared_videos.extend(step_output.videos or [])
                             shared_audio.extend(step_output.audio or [])
+                            shared_files.extend(step_output.files or [])
                             output_images.extend(step_output.images or [])
                             output_videos.extend(step_output.videos or [])
                             output_audio.extend(step_output.audio or [])
+                            output_files.extend(step_output.files or [])
 
                             # Only yield StepOutputEvent for generator functions, not for agents/teams
                             if getattr(step, "executor_type", None) == "function":
@@ -1119,6 +1153,10 @@ class Workflow:
         session.upsert_run(run=workflow_run_response)
         self.save_session(session=session)
 
+        # Log Workflow Telemetry
+        if self.telemetry:
+            self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
+
     async def _acall_custom_function(
         self, func: Callable, execution_input: WorkflowExecutionInput, **kwargs: Any
     ) -> Any:
@@ -1128,13 +1166,15 @@ class Workflow:
         sig = signature(func)
 
         # Build arguments based on what the function actually accepts
-        call_kwargs = {}
+        call_kwargs: Dict[str, Any] = {}
 
         # Only add workflow and execution_input if the function expects them
         if "workflow" in sig.parameters:  # type: ignore
             call_kwargs["workflow"] = self
         if "execution_input" in sig.parameters:
             call_kwargs["execution_input"] = execution_input  # type: ignore
+        if "session_state" in sig.parameters:
+            call_kwargs["session_state"] = self.session_state  # type: ignore
 
         # Add any other kwargs that the function expects
         for param_name in kwargs:
@@ -1217,6 +1257,8 @@ class Workflow:
                 output_videos: List[VideoArtifact] = (execution_input.videos or []).copy()  # Start with input videos
                 shared_audio: List[AudioArtifact] = execution_input.audio or []
                 output_audio: List[AudioArtifact] = (execution_input.audio or []).copy()  # Start with input audio
+                shared_files: List[File] = execution_input.files or []
+                output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
 
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
                     step_name = getattr(step, "name", f"step_{i + 1}")
@@ -1229,6 +1271,7 @@ class Workflow:
                         shared_images=shared_images,
                         shared_videos=shared_videos,
                         shared_audio=shared_audio,
+                        shared_files=shared_files,
                     )
 
                     step_output = await step.aexecute(  # type: ignore[union-attr]
@@ -1237,7 +1280,7 @@ class Workflow:
                         user_id=self.user_id,
                         workflow_run_response=workflow_run_response,
                         session_state=session_state,
-                        store_executor_responses=self.store_executor_responses,
+                        store_executor_outputs=self.store_executor_outputs,
                     )
 
                     # Update the workflow-level previous_step_outputs dictionary
@@ -1250,9 +1293,11 @@ class Workflow:
                     shared_images.extend(step_output.images or [])
                     shared_videos.extend(step_output.videos or [])
                     shared_audio.extend(step_output.audio or [])
+                    shared_files.extend(step_output.files or [])
                     output_images.extend(step_output.images or [])
                     output_videos.extend(step_output.videos or [])
                     output_audio.extend(step_output.audio or [])
+                    output_files.extend(step_output.files or [])
 
                     collected_step_outputs.append(step_output)
 
@@ -1289,6 +1334,10 @@ class Workflow:
         self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
         session.upsert_run(run=workflow_run_response)
         self.save_session(session=session)
+
+        # Log Workflow Telemetry
+        if self.telemetry:
+            await self._alog_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
 
         return workflow_run_response
 
@@ -1352,6 +1401,8 @@ class Workflow:
                 output_videos: List[VideoArtifact] = (execution_input.videos or []).copy()  # Start with input videos
                 shared_audio: List[AudioArtifact] = execution_input.audio or []
                 output_audio: List[AudioArtifact] = (execution_input.audio or []).copy()  # Start with input audio
+                shared_files: List[File] = execution_input.files or []
+                output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
 
                 early_termination = False
 
@@ -1366,6 +1417,7 @@ class Workflow:
                         shared_images=shared_images,
                         shared_videos=shared_videos,
                         shared_audio=shared_audio,
+                        shared_files=shared_files,
                     )
 
                     # Execute step with streaming and yield all events
@@ -1377,7 +1429,7 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         session_state=session_state,
                         step_index=i,
-                        store_executor_responses=self.store_executor_responses,
+                        store_executor_outputs=self.store_executor_outputs,
                     ):
                         if isinstance(event, StepOutput):
                             step_output = event
@@ -1397,9 +1449,11 @@ class Workflow:
                                 shared_images.extend(step_output.images or [])
                                 shared_videos.extend(step_output.videos or [])
                                 shared_audio.extend(step_output.audio or [])
+                                shared_files.extend(step_output.files or [])
                                 output_images.extend(step_output.images or [])
                                 output_videos.extend(step_output.videos or [])
                                 output_audio.extend(step_output.audio or [])
+                                output_files.extend(step_output.files or [])
 
                                 if getattr(step, "executor_type", None) == "function":
                                     yield step_output_event
@@ -1412,9 +1466,11 @@ class Workflow:
                             shared_images.extend(step_output.images or [])
                             shared_videos.extend(step_output.videos or [])
                             shared_audio.extend(step_output.audio or [])
+                            shared_files.extend(step_output.files or [])
                             output_images.extend(step_output.images or [])
                             output_videos.extend(step_output.videos or [])
                             output_audio.extend(step_output.audio or [])
+                            output_files.extend(step_output.files or [])
 
                             # Only yield StepOutputEvent for generator functions, not for agents/teams
                             if getattr(step, "executor_type", None) == "function":
@@ -1492,6 +1548,10 @@ class Workflow:
         session.upsert_run(run=workflow_run_response)
         self.save_session(session=session)
 
+        # Log Workflow Telemetry
+        if self.telemetry:
+            await self._alog_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
+
     async def _arun_background(
         self,
         input: Optional[Union[str, Dict[str, Any], List[Any], BaseModel, List[Message]]] = None,
@@ -1502,6 +1562,7 @@ class Workflow:
         audio: Optional[List[Audio]] = None,
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
+        files: Optional[List[File]] = None,
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Execute workflow in background using asyncio.create_task()"""
@@ -1544,6 +1605,7 @@ class Workflow:
             audio=audio,  # type: ignore
             images=images,  # type: ignore
             videos=videos,  # type: ignore
+            files=files,  # type: ignore
         )
 
         self.update_agents_and_teams_session_info()
@@ -1588,6 +1650,7 @@ class Workflow:
         audio: Optional[List[Audio]] = None,
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
+        files: Optional[List[File]] = None,
         stream_intermediate_steps: bool = False,
         websocket_handler: Optional[WebSocketHandler] = None,
         **kwargs: Any,
@@ -1632,6 +1695,7 @@ class Workflow:
             audio=audio,  # type: ignore
             images=images,  # type: ignore
             videos=videos,  # type: ignore
+            files=files,  # type: ignore
         )
 
         self.update_agents_and_teams_session_info()
@@ -1695,6 +1759,7 @@ class Workflow:
         audio: Optional[List[Audio]] = None,
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
+        files: Optional[List[File]] = None,
         stream: Literal[False] = False,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
@@ -1711,6 +1776,7 @@ class Workflow:
         audio: Optional[List[Audio]] = None,
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
+        files: Optional[List[File]] = None,
         stream: Literal[True] = True,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
@@ -1726,6 +1792,7 @@ class Workflow:
         audio: Optional[List[Audio]] = None,
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
+        files: Optional[List[File]] = None,
         stream: bool = False,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
@@ -1787,6 +1854,7 @@ class Workflow:
             audio=audio,  # type: ignore
             images=images,  # type: ignore
             videos=videos,  # type: ignore
+            files=files,  # type: ignore
         )
         log_debug(
             f"Created pipeline input with session state keys: {list(session_state.keys()) if session_state else 'None'}"
@@ -1823,6 +1891,7 @@ class Workflow:
         audio: Optional[List[Audio]] = None,
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
+        files: Optional[List[File]] = None,
         stream: Literal[False] = False,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
@@ -1840,6 +1909,7 @@ class Workflow:
         audio: Optional[List[Audio]] = None,
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
+        files: Optional[List[File]] = None,
         stream: Literal[True] = True,
         stream_intermediate_steps: Optional[bool] = None,
         background: Optional[bool] = False,
@@ -1856,6 +1926,7 @@ class Workflow:
         audio: Optional[List[Audio]] = None,
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
+        files: Optional[List[File]] = None,
         stream: bool = False,
         stream_intermediate_steps: Optional[bool] = False,
         background: Optional[bool] = False,
@@ -1885,6 +1956,7 @@ class Workflow:
                     audio=audio,
                     images=images,
                     videos=videos,
+                    files=files,
                     stream_intermediate_steps=stream_intermediate_steps or False,
                     websocket_handler=websocket_handler,
                     **kwargs,
@@ -1902,6 +1974,7 @@ class Workflow:
                     audio=audio,
                     images=images,
                     videos=videos,
+                    files=files,
                     **kwargs,
                 )
 
@@ -1965,6 +2038,7 @@ class Workflow:
                 session=workflow_session,
                 stream_intermediate_steps=stream_intermediate_steps,
                 websocket=websocket,
+                files=files,
                 session_state=session_state,
                 **kwargs,
             )
@@ -1974,6 +2048,7 @@ class Workflow:
                 workflow_run_response=workflow_run_response,
                 session=workflow_session,
                 websocket=websocket,
+                files=files,
                 session_state=session_state,
                 **kwargs,
             )
@@ -2015,6 +2090,7 @@ class Workflow:
         audio: Optional[List[Audio]] = None,
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
+        files: Optional[List[File]] = None,
         stream: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         markdown: bool = True,
@@ -2057,6 +2133,7 @@ class Workflow:
                 audio=audio,
                 images=images,
                 videos=videos,
+                files=files,
                 stream_intermediate_steps=stream_intermediate_steps,
                 markdown=markdown,
                 show_time=show_time,
@@ -2074,6 +2151,7 @@ class Workflow:
                 audio=audio,
                 images=images,
                 videos=videos,
+                files=files,
                 markdown=markdown,
                 show_time=show_time,
                 show_step_details=show_step_details,
@@ -2090,6 +2168,7 @@ class Workflow:
         audio: Optional[List[Audio]] = None,
         images: Optional[List[Image]] = None,
         videos: Optional[List[Video]] = None,
+        files: Optional[List[File]] = None,
         stream: Optional[bool] = None,
         stream_intermediate_steps: Optional[bool] = None,
         markdown: bool = True,
@@ -2131,6 +2210,7 @@ class Workflow:
                 audio=audio,
                 images=images,
                 videos=videos,
+                files=files,
                 stream_intermediate_steps=stream_intermediate_steps,
                 markdown=markdown,
                 show_time=show_time,
@@ -2148,6 +2228,7 @@ class Workflow:
                 audio=audio,
                 images=images,
                 videos=videos,
+                files=files,
                 markdown=markdown,
                 show_time=show_time,
                 show_step_details=show_step_details,
@@ -2270,3 +2351,47 @@ class Workflow:
                         for member in active_executor.members:
                             if hasattr(member, "workflow_id"):
                                 member.workflow_id = self.id
+
+    ###########################################################################
+    # Telemetry functions
+    ###########################################################################
+
+    def _get_telemetry_data(self) -> Dict[str, Any]:
+        """Get the telemetry data for the workflow"""
+        return {
+            "workflow_id": self.id,
+            "db_type": self.db.__class__.__name__ if self.db else None,
+            "has_input_schema": self.input_schema is not None,
+        }
+
+    def _log_workflow_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
+        """Send a telemetry event to the API for a created Workflow run"""
+
+        self._set_telemetry()
+        if not self.telemetry:
+            return
+
+        from agno.api.workflow import WorkflowRunCreate, create_workflow_run
+
+        try:
+            create_workflow_run(
+                workflow=WorkflowRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data()),
+            )
+        except Exception as e:
+            log_debug(f"Could not create Workflow run telemetry event: {e}")
+
+    async def _alog_workflow_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
+        """Send a telemetry event to the API for a created Workflow async run"""
+
+        self._set_telemetry()
+        if not self.telemetry:
+            return
+
+        from agno.api.workflow import WorkflowRunCreate, acreate_workflow_run
+
+        try:
+            await acreate_workflow_run(
+                workflow=WorkflowRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data())
+            )
+        except Exception as e:
+            log_debug(f"Could not create Workflow run telemetry event: {e}")

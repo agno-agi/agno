@@ -2,8 +2,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
-from fastapi import UploadFile
-
 from agno.knowledge.reader import Reader
 from agno.knowledge.remote_content.remote_content import RemoteContent
 
@@ -20,6 +18,8 @@ class ContentStatus(str, Enum):
 class FileData:
     content: Optional[Union[str, bytes]] = None
     type: Optional[str] = None
+    filename: Optional[str] = None
+    size: Optional[int] = None
 
 
 @dataclass
@@ -36,7 +36,6 @@ class Content:
     url: Optional[str] = None
     auth: Optional[ContentAuth] = None
     file_data: Optional[FileData] = None
-    upload_file: Optional[UploadFile] = None
     metadata: Optional[Dict[str, Any]] = None
     topics: Optional[List[str]] = None
     remote_content: Optional[RemoteContent] = None
@@ -60,7 +59,6 @@ class Content:
             url=data.get("url"),
             auth=data.get("auth"),
             file_data=data.get("file_data"),
-            upload_file=data.get("upload_file"),
             metadata=data.get("metadata"),
             topics=data.get("topics"),
             remote_content=data.get("remote_content"),

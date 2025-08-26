@@ -149,7 +149,7 @@ class Router:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         session_state: Optional[Dict[str, Any]] = None,
-        store_executor_responses: bool = True,
+        store_executor_outputs: bool = True,
     ) -> StepOutput:
         """Execute the router and its selected steps with sequential chaining"""
         log_debug(f"Router Start: {self.name}", center=True, symbol="-")
@@ -182,7 +182,7 @@ class Router:
                     session_id=session_id,
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
-                    store_executor_responses=store_executor_responses,
+                    store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                 )
 
@@ -241,7 +241,7 @@ class Router:
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
-        store_executor_responses: bool = True,
+        store_executor_outputs: bool = True,
         parent_step_id: Optional[str] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the router with streaming support"""
@@ -302,7 +302,7 @@ class Router:
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
                     step_index=step_index,
-                    store_executor_responses=store_executor_responses,
+                    store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                     parent_step_id=router_step_id,
                 ):
@@ -385,7 +385,7 @@ class Router:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         session_state: Optional[Dict[str, Any]] = None,
-        store_executor_responses: bool = True,
+        store_executor_outputs: bool = True,
     ) -> StepOutput:
         """Async execute the router and its selected steps with sequential chaining"""
         log_debug(f"Router Start: {self.name}", center=True, symbol="-")
@@ -419,7 +419,7 @@ class Router:
                     session_id=session_id,
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
-                    store_executor_responses=store_executor_responses,
+                    store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                 )
                 # Handle both single StepOutput and List[StepOutput]
@@ -480,7 +480,7 @@ class Router:
         stream_intermediate_steps: bool = False,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
-        store_executor_responses: bool = True,
+        store_executor_outputs: bool = True,
         parent_step_id: Optional[str] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, TeamRunOutputEvent, RunOutputEvent, StepOutput]]:
         """Async execute the router with streaming support"""
@@ -543,7 +543,7 @@ class Router:
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_run_response=workflow_run_response,
                     step_index=step_index,
-                    store_executor_responses=store_executor_responses,
+                    store_executor_outputs=store_executor_outputs,
                     session_state=session_state,
                     parent_step_id=router_step_id,
                 ):

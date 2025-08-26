@@ -330,7 +330,7 @@ investment_workflow = Workflow(
         db_file="tmp/workflows.db",
     ),
     steps=investment_analysis_execution,
-    workflow_session_state={},  # Initialize empty workflow session state
+    session_state={},  # Initialize empty workflow session state
 )
 
 

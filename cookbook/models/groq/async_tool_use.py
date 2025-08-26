@@ -1,5 +1,5 @@
 """Please install dependencies using:
-pip install openai duckduckgo-search newspaper4k lxml_html_clean agno
+pip install openai ddgs newspaper4k lxml_html_clean agno
 """
 
 import asyncio

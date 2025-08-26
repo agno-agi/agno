@@ -42,7 +42,7 @@ from agno.run.agent import (
     RunOutput,
     RunOutputEvent,
 )
-from agno.run.base import RunOutputMetaData, RunStatus
+from agno.run.base import RunStatus
 from agno.run.messages import RunMessages
 from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager
@@ -242,8 +242,8 @@ class Agent:
     add_location_to_context: bool = False
     # Allows for custom timezone for datetime instructions following the TZ Database format (e.g. "Etc/UTC")
     timezone_identifier: Optional[str] = None
-    # If True, add the session state variables in the user and system messages
-    add_state_in_messages: bool = False
+    # If True, resolve session_state, dependencies, and metadata in the user and system messages
+    resolve_in_context: bool = True
 
     # --- Extra Messages ---
     # A list of extra messages added after the system message and before the user message.
@@ -251,9 +251,6 @@ class Agent:
     # Note: these are not retained in memory, they are added directly to the messages sent to the model.
     additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None
     # --- User message settings ---
-    # Provide the user message as a string, list, dict, or function
-    # Note: this will ignore the message sent to the run function
-    user_message: Optional[Union[List, Dict, str, Callable, Message]] = None
     # Role for the user message
     user_message_role: str = "user"
     # Set to False to skip building the user context
@@ -382,9 +379,8 @@ class Agent:
         add_datetime_to_context: bool = False,
         add_location_to_context: bool = False,
         timezone_identifier: Optional[str] = None,
-        add_state_in_messages: bool = False,
+        resolve_in_context: bool = True,
         additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
-        user_message: Optional[Union[List, Dict, str, Callable, Message]] = None,
         user_message_role: str = "user",
         build_user_context: bool = True,
         retries: int = 0,
@@ -477,11 +473,9 @@ class Agent:
         self.add_datetime_to_context = add_datetime_to_context
         self.add_location_to_context = add_location_to_context
         self.timezone_identifier = timezone_identifier
-        self.add_state_in_messages = add_state_in_messages
+        self.resolve_in_context = resolve_in_context
         self.additional_input = additional_input
 
-        self.user_message = user_message
-        self.user_message_role = user_message_role
         self.build_user_context = build_user_context
 
         self.retries = retries
@@ -784,8 +778,8 @@ class Agent:
         # 8. Save session to memory
         self.save_session(session=session)
 
-        # Log Agent Run
-        self._log_agent_run(user_id=user_id, session_id=session.session_id)
+        # Log Agent Telemetry
+        self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -912,8 +906,8 @@ class Agent:
         if yield_run_response:
             yield run_response
 
-        # Log Agent Run
-        self._log_agent_run(user_id=user_id, session_id=session.session_id)
+        # Log Agent Telemetry
+        self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1225,8 +1219,8 @@ class Agent:
         # 8. Save session to storage
         self.save_session(session=session)
 
-        # Log Agent Run
-        await self._alog_agent_run(user_id=user_id, session_id=session.session_id)
+        # Log Agent Telemetry
+        await self._alog_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1361,8 +1355,8 @@ class Agent:
         if yield_run_response:
             yield run_response
 
-        # Log Agent Run
-        await self._alog_agent_run(user_id=user_id, session_id=session.session_id)
+        # Log Agent Telemetry
+        await self._alog_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1874,8 +1868,8 @@ class Agent:
         # 7. Save session to storage
         self.save_session(session=session)
 
-        # Log Agent Run
-        self._log_agent_run(user_id=user_id, session_id=session.session_id)
+        # Log Agent Telemetry
+        self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         return run_response
 
@@ -1953,8 +1947,8 @@ class Agent:
         if stream_intermediate_steps:
             yield completed_event
 
-        # Log Agent Run
-        self._log_agent_run(user_id=user_id, session_id=session.session_id)
+        # Log Agent Telemetry
+        self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -2241,8 +2235,8 @@ class Agent:
         # 6. Save session to storage
         self.save_session(session=session)
 
-        # Log Agent Run
-        await self._alog_agent_run(user_id=user_id, session_id=session.session_id)
+        # Log Agent Telemetry
+        await self._alog_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -2331,8 +2325,8 @@ class Agent:
         if stream_intermediate_steps:
             yield completed_event
 
-        # Log Agent Run
-        await self._alog_agent_run(user_id=user_id, session_id=session.session_id)
+        # Log Agent Telemetry
+        await self._alog_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -2818,8 +2812,8 @@ class Agent:
         # Determine reasoning completed
         if stream_intermediate_steps and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
-            if run_response and run_response.metadata and hasattr(run_response.metadata, "reasoning_steps"):
-                all_reasoning_steps = cast(List[ReasoningStep], run_response.metadata.reasoning_steps)
+            if run_response and run_response.reasoning_steps:
+                all_reasoning_steps = cast(List[ReasoningStep], run_response.reasoning_steps)
 
             if all_reasoning_steps:
                 add_reasoning_metrics_to_metadata(
@@ -2896,8 +2890,8 @@ class Agent:
 
         if stream_intermediate_steps and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
-            if run_response and run_response.metadata and hasattr(run_response.metadata, "reasoning_steps"):
-                all_reasoning_steps = cast(List[ReasoningStep], run_response.metadata.reasoning_steps)
+            if run_response and run_response.reasoning_steps:
+                all_reasoning_steps = cast(List[ReasoningStep], run_response.reasoning_steps)
 
             if all_reasoning_steps:
                 add_reasoning_metrics_to_metadata(
@@ -4116,7 +4110,7 @@ class Agent:
                     raise Exception("system_message must return a string")
 
             # Format the system message with the session state variables
-            if self.add_state_in_messages:
+            if self.resolve_in_context:
                 sys_message_content = self._format_message_with_state_variables(
                     sys_message_content,
                     user_id=user_id,
@@ -4262,7 +4256,7 @@ class Agent:
                 system_message_content += f"{_ti}\n"
 
         # Format the system message with the session state variables
-        if self.add_state_in_messages:
+        if self.resolve_in_context:
             system_message_content = self._format_message_with_state_variables(
                 system_message_content,
                 user_id=user_id,
@@ -4378,39 +4372,8 @@ class Agent:
         # Get references from the knowledge base to use in the user message
         references = None
 
-        # 1. If the user_message is provided, use that.
-        if self.user_message is not None:
-            if isinstance(self.user_message, Message):
-                return self.user_message
-
-            user_message_content = self.user_message
-            if callable(self.user_message):
-                user_message_kwargs = {"agent": self, "message": input, "references": references}
-                user_message_content = self.user_message(**user_message_kwargs)
-                if not isinstance(user_message_content, str):
-                    raise Exception("user_message must return a string")
-
-            if self.add_state_in_messages:
-                user_message_content = self._format_message_with_state_variables(
-                    user_message_content,
-                    user_id=user_id,
-                    session_state=session.session_data.get("session_state")
-                    if session.session_data is not None
-                    else None,
-                )
-
-            return Message(
-                role=self.user_message_role,
-                content=user_message_content,
-                audio=audio,
-                images=images,
-                videos=videos,
-                files=files,
-                **kwargs,
-            )
-
-        # 2. If build_user_context is False or message is a list, return the message as is.
-        elif not self.build_user_context:
+        # 1. If build_user_context is False or message is a list, return the message as is.
+        if not self.build_user_context:
             return Message(
                 role=self.user_message_role,
                 content=input,
@@ -4420,7 +4383,7 @@ class Agent:
                 files=files,
                 **kwargs,
             )
-        # 3. Build the default user message for the Agent
+        # 2. Build the user message for the Agent
         elif input is None:
             # If we have any media, return a message with empty content
             if images is not None or audio is not None or videos is not None or files is not None:
@@ -4499,17 +4462,15 @@ class Agent:
                                 time=round(retrieval_timer.elapsed, 4),
                             )
                             # Add the references to the run_response
-                            if run_response.metadata is None:
-                                run_response.metadata = RunOutputMetaData()
-                            if run_response.metadata.references is None:
-                                run_response.metadata.references = []
-                            run_response.metadata.references.append(references)
+                            if run_response.references is None:
+                                run_response.references = []
+                            run_response.references.append(references)
                         retrieval_timer.stop()
                         log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
                     except Exception as e:
                         log_warning(f"Failed to get references: {e}")
 
-                if self.add_state_in_messages:
+                if self.resolve_in_context:
                     user_msg_content = self._format_message_with_state_variables(
                         user_msg_content,
                         user_id=user_id,
@@ -4621,13 +4582,10 @@ class Agent:
             # Add the extra messages to the run_response
             if len(messages_to_add_to_run_response) > 0:
                 log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
-                if run_response.metadata is None:
-                    run_response.metadata = RunOutputMetaData(additional_input=messages_to_add_to_run_response)
+                if run_response.additional_input is None:
+                    run_response.additional_input = messages_to_add_to_run_response
                 else:
-                    if run_response.metadata.additional_input is None:
-                        run_response.metadata.additional_input = messages_to_add_to_run_response
-                    else:
-                        run_response.metadata.additional_input.extend(messages_to_add_to_run_response)
+                    run_response.additional_input.extend(messages_to_add_to_run_response)
 
         # 3. Add history to run_messages
         if self.add_history_to_context:
@@ -6092,11 +6050,9 @@ class Agent:
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
                 # Add the references to the run_response
-                if run_response.metadata is None:
-                    run_response.metadata = RunOutputMetaData()
-                if run_response.metadata.references is None:
-                    run_response.metadata.references = []
-                run_response.metadata.references.append(references)
+                if run_response.references is None:
+                    run_response.references = []
+                run_response.references.append(references)
             retrieval_timer.stop()
             from agno.utils.log import log_debug
 
@@ -6122,11 +6078,9 @@ class Agent:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
-                if run_response.metadata is None:
-                    run_response.metadata = RunOutputMetaData()
-                if run_response.metadata.references is None:
-                    run_response.metadata.references = []
-                run_response.metadata.references.append(references)
+                if run_response.references is None:
+                    run_response.references = []
+                run_response.references.append(references)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 
@@ -6167,11 +6121,9 @@ class Agent:
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
                 # Add the references to the run_response
-                if run_response.metadata is None:
-                    run_response.metadata = RunOutputMetaData()
-                if run_response.metadata.references is None:
-                    run_response.metadata.references = []
-                run_response.metadata.references.append(references)
+                if run_response.references is None:
+                    run_response.references = []
+                run_response.references.append(references)
             retrieval_timer.stop()
             from agno.utils.log import log_debug
 
@@ -6200,11 +6152,9 @@ class Agent:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
-                if run_response.metadata is None:
-                    run_response.metadata = RunOutputMetaData()
-                if run_response.metadata.references is None:
-                    run_response.metadata.references = []
-                run_response.metadata.references.append(references)
+                if run_response.references is None:
+                    run_response.references = []
+                run_response.references.append(references)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 
@@ -6547,7 +6497,7 @@ class Agent:
             append_to_reasoning_content(run_response=run_response, content=formatted_content)
             return reasoning_step
 
-        # Case 3: ThinkingTools.think (simple format, just has 'thought')
+        # Case 3: ReasoningTool.think (simple format, just has 'thought')
         elif tool_name.lower() == "think" and "thought" in tool_args:
             thought = tool_args["thought"]
             reasoning_step = ReasoningStep(
@@ -6669,46 +6619,54 @@ class Agent:
     # Api functions
     ###########################################################################
 
-    def _log_agent_run(self, session_id: str, user_id: Optional[str] = None) -> None:
-        self._set_telemetry()
+    def _get_telemetry_data(self) -> Dict[str, Any]:
+        """Get the telemetry data for the agent"""
+        return {
+            "agent_id": self.id,
+            "db_type": self.db.__class__.__name__ if self.db else None,
+            "model_provider": self.model.provider if self.model else None,
+            "model_name": self.model.name if self.model else None,
+            "model_id": self.model.id if self.model else None,
+            "parser_model": self.parser_model.to_dict() if self.parser_model else None,
+            "output_model": self.output_model.to_dict() if self.output_model else None,
+            "has_tools": self.tools is not None,
+            "has_memory": self.enable_user_memories is not None,
+            "has_reasoning": self.reasoning is not None,
+            "has_knowledge": self.knowledge is not None,
+            "has_input_schema": self.input_schema is not None,
+            "has_output_schema": self.output_schema is not None,
+            "has_team": self.team_id is not None,
+        }
 
+    def _log_agent_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
+        """Send a telemetry event to the API for a created Agent run"""
+
+        self._set_telemetry()
         if not self.telemetry:
             return
 
-        # # from agno.api.agent import AgentRunCreate, create_agent_run
+        from agno.api.agent import AgentRunCreate, create_agent_run
 
-        # try:
-        #     # agent_session: Optional[AgentSession] = self.agent_session or self._read_or_create_session(
-        #     #     session_id=session_id, user_id=user_id
-        #     # )
+        try:
+            create_agent_run(
+                run=AgentRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data()),
+            )
+        except Exception as e:
+            log_debug(f"Could not create Agent run telemetry event: {e}")
 
-        #     # TODO: Telemetry data
-        #     # create_agent_run(
-        #     #     run=AgentRunCreate(
-        #     #         agent_data=agent_session.telemetry_data(),
-        #     #     ),
-        #     # )
-        # except Exception as e:
-        #     log_debug(f"Could not create agent event: {e}")
+    async def _alog_agent_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
+        """Send a telemetry event to the API for a created Agent async run"""
 
-    async def _alog_agent_run(self, session_id: str, user_id: Optional[str] = None) -> None:
         self._set_telemetry()
-
         if not self.telemetry:
             return
 
-        # from agno.api.agent import AgentRunCreate, acreate_agent_run
+        from agno.api.agent import AgentRunCreate, acreate_agent_run
 
-        # try:
-        #     agent_session: Optional[AgentSession] = self.agent_session or self._read_or_create_session(
-        #         session_id=session_id, user_id=user_id
-        #     )
+        try:
+            await acreate_agent_run(
+                run=AgentRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data())
+            )
 
-        #     # TODO: Telemetry data
-        #     # await acreate_agent_run(
-        #     #     run=AgentRunCreate(
-        #     #         agent_data=agent_session.telemetry_data(),
-        #     #     ),
-        #     # )
-        # except Exception as e:
-        #     log_debug(f"Could not create agent event: {e}")
+        except Exception as e:
+            log_debug(f"Could not create Agent run telemetry event: {e}")

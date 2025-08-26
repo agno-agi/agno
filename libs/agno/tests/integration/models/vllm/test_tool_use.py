@@ -3,7 +3,7 @@ from typing import Optional
 import pytest
 
 from agno.agent import Agent
-from agno.models.vllm import vLLM
+from agno.models.vllm import VLLM
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
@@ -13,7 +13,7 @@ VLLM_MODEL_ID = "Qwen/Qwen2.5-7B-Instruct"
 
 def test_tool_use():
     agent = Agent(
-        model=vLLM(id=VLLM_MODEL_ID),
+        model=VLLM(id=VLLM_MODEL_ID),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -30,7 +30,7 @@ def test_tool_use():
 
 def test_tool_use_stream():
     agent = Agent(
-        model=vLLM(id=VLLM_MODEL_ID),
+        model=VLLM(id=VLLM_MODEL_ID),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -53,7 +53,7 @@ def test_tool_use_stream():
 @pytest.mark.asyncio
 async def test_async_tool_use():
     agent = Agent(
-        model=vLLM(id=VLLM_MODEL_ID),
+        model=VLLM(id=VLLM_MODEL_ID),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -71,7 +71,7 @@ async def test_async_tool_use():
 @pytest.mark.asyncio
 async def test_async_tool_use_stream():
     agent = Agent(
-        model=vLLM(id=VLLM_MODEL_ID),
+        model=VLLM(id=VLLM_MODEL_ID),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -93,7 +93,7 @@ async def test_async_tool_use_stream():
 
 def test_parallel_tool_calls():
     agent = Agent(
-        model=vLLM(id=VLLM_MODEL_ID),
+        model=VLLM(id=VLLM_MODEL_ID),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -114,7 +114,7 @@ def test_parallel_tool_calls():
 
 def test_multiple_tool_calls():
     agent = Agent(
-        model=vLLM(id=VLLM_MODEL_ID),
+        model=VLLM(id=VLLM_MODEL_ID),
         tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
         markdown=True,
         telemetry=False,
@@ -141,7 +141,7 @@ def test_tool_call_custom_tool_no_parameters():
         return "It is currently 70 degrees and cloudy in Tokyo"
 
     agent = Agent(
-        model=vLLM(id=VLLM_MODEL_ID),
+        model=VLLM(id=VLLM_MODEL_ID),
         tools=[get_the_weather_in_tokyo],
         markdown=True,
         telemetry=False,
@@ -170,7 +170,7 @@ def test_tool_call_custom_tool_optional_parameters():
             return f"It is currently 70 degrees and cloudy in {city}"
 
     agent = Agent(
-        model=vLLM(id=VLLM_MODEL_ID),
+        model=VLLM(id=VLLM_MODEL_ID),
         tools=[get_the_weather],
         markdown=True,
         telemetry=False,
@@ -187,7 +187,7 @@ def test_tool_call_custom_tool_optional_parameters():
 
 def test_tool_call_list_parameters():
     agent = Agent(
-        model=vLLM(id=VLLM_MODEL_ID),
+        model=VLLM(id=VLLM_MODEL_ID),
         tools=[ExaTools()],
         instructions="Use a single tool call if possible",
         markdown=True,

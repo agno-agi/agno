@@ -19,8 +19,8 @@ import asyncio
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.reranker import CohereReranker
 from agno.models.openai import OpenAIChat
-from agno.reranker.cohere import CohereReranker
 from agno.team.team import Team
 from agno.utils.print_response.team import aprint_response, print_response
 from agno.vectordb.lancedb import LanceDb, SearchType

@@ -2,7 +2,7 @@
 
 > Note: Fork and clone this repository if needed
 >
-> This cookbook is for testing Gemini models. You can also
+> This cookbook is for testing Gemini models.
 
 ### 1. Create and activate a virtual environment
 
@@ -30,7 +30,7 @@ export GOOGLE_CLOUD_LOCATION="your-location"
 ### 3. Install libraries
 
 ```shell
-pip install -U google-generativeai duckduckgo-search yfinance agno
+pip install -U google-generativeai ddgs yfinance agno
 ```
 
 ### 4. Run basic Agent
@@ -119,5 +119,23 @@ python cookbook/models/google/gemini/url_context.py
 
 ```shell
 python cookbook/models/google/gemini/url_context_with_search.py
+```
+
+### 16. Run agent with Google Search
+
+```shell
+python cookbook/models/google/gemini/search.py
+```
+
+### 17. Run agent with Google Search Grounding
+
+```shell
+python cookbook/models/google/gemini/grounding.py
+```
+
+### 18. Run agent with Vertex AI Search
+
+```shell
+python cookbook/models/google/gemini/vertex_ai_search.py
 ```
 

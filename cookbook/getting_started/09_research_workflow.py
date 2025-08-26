@@ -17,7 +17,7 @@ Example research topics to try:
 - "Investigate the environmental impact of space tourism"
 - "Explore the latest findings in longevity research"
 
-Run `pip install openai duckduckgo-search newspaper4k lxml_html_clean sqlalchemy agno` to install dependencies.
+Run `pip install openai ddgs newspaper4k lxml_html_clean sqlalchemy agno` to install dependencies.
 """
 
 import json

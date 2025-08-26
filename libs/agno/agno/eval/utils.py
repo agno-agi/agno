@@ -48,7 +48,7 @@ def log_eval_run(
         log_debug(f"Could not create agent event: {e}")
 
 
-async def async_log_eval_run(
+async def async_log_eval(
     db: BaseDb,
     run_id: str,
     run_data: dict,

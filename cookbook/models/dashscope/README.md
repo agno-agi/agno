@@ -18,7 +18,7 @@ export DASHSCOPE_API_KEY=***
 ### 3. Install libraries
 
 ```shell
-pip install -U openai duckduckgo-search agno
+pip install -U openai ddgs agno
 ```
 
 ### 4. Run basic Agent

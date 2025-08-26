@@ -1,5 +1,3 @@
-from typing import Iterator
-
 from agno.agent import Agent, RunOutput
 from agno.models.meta import Llama
 from agno.tools.yfinance import YFinanceTools

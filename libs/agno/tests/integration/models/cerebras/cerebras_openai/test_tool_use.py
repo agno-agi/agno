@@ -1,60 +1,64 @@
 import pytest
 
-from agno.agent import Agent, RunOutput  # noqa
+from agno.agent import Agent
 from agno.models.cerebras import CerebrasOpenAI
-from agno.tools.googlesearch import GoogleSearchTools
+from agno.tools.yfinance import YFinanceTools
 
 
 def test_tool_use():
     agent = Agent(
         model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
-        tools=[GoogleSearchTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True)],
         telemetry=False,
     )
 
-    response = agent.run("What's happening in France?")
+    response = agent.run("What is the current price of TSLA?")
 
     # Verify tool usage
     assert response.messages is not None
-    assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)
+    assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
-    assert "France" in response.content
+    assert "TSLA" in response.content
 
 
 def test_tool_use_stream():
     agent = Agent(
         model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
-        tools=[GoogleSearchTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True)],
+        markdown=True,
         telemetry=False,
     )
 
-    response_stream = agent.run("What's happening in France?", stream=True, stream_intermediate_steps=True)
+    response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
 
     responses = []
     tool_call_seen = False
 
     for chunk in response_stream:
         responses.append(chunk)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
+
+        # Check for ToolCallStartedEvent or ToolCallCompletedEvent
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:  # type: ignore
+            if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("France" in r.content for r in responses if r.content)
+    assert any("TSLA" in r.content for r in responses if r.content)
 
 
 @pytest.mark.asyncio
 async def test_async_tool_use():
     agent = Agent(
         model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
-        tools=[GoogleSearchTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True)],
         telemetry=False,
     )
 
     response = await agent.arun("What's happening in France?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages if msg.role == "assistant")
     assert response.content is not None
     assert "France" in response.content
@@ -64,30 +68,32 @@ async def test_async_tool_use():
 async def test_async_tool_use_stream():
     agent = Agent(
         model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
-        tools=[GoogleSearchTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True)],
         telemetry=False,
     )
 
-    response_stream = await agent.arun("What's happening in France?", stream=True)
-
-    responses = []
-    tool_call_seen = False
-
-    async for chunk in response_stream:
-        responses.append(chunk)
-        if chunk.tools:
-            if any(tc.tool_name for tc in chunk.tools):
+    async for response in agent.arun(
+        "What is the current price of TSLA?",
+        stream=True,
+        stream_intermediate_steps=True,
+    ):
+        if response.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(response, "tool") and response.tool:  # type: ignore
+            if response.tool.tool_name:  # type: ignore
                 tool_call_seen = True
+            if response.content is not None and "TSLA" in response.content:
+                keyword_seen_in_response = True
 
-    assert len(responses) > 0
+    # Asserting we found tool responses in the response stream
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("France" in r.content for r in responses if r.content)
+
+    # Asserting we found the expected keyword in the response stream -> proving the correct tool was called
+    assert keyword_seen_in_response, "Keyword not found in response"
 
 
 def test_tool_use_with_content():
     agent = Agent(
         model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
-        tools=[GoogleSearchTools(cache_results=True)],
+        tools=[YFinanceTools(cache_results=True)],
         telemetry=False,
     )
 

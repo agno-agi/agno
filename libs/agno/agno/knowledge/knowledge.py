@@ -14,7 +14,6 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
-from agno.knowledge.reader.pdf_reader import PDFReader, PDFUrlReader
 from agno.knowledge.remote_content.remote_content import GCSContent, RemoteContent, S3Content
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb import VectorDb
@@ -342,7 +341,7 @@ class Knowledge:
 
                 # Handle LightRAG special case - read file and upload directly
                 if self.vector_db.__class__.__name__ == "LightRag":
-                    self._process_lightrag_content(content, KnowledgeContentOrigin.PATH)
+                    await self._process_lightrag_content(content, KnowledgeContentOrigin.PATH)
                     return
 
                 content.content_hash = self._build_content_hash(content)
@@ -354,23 +353,30 @@ class Knowledge:
 
                 if content.reader:
                     # TODO: We will refactor this to eventually pass authorization to all readers
-                    if isinstance(content.reader, (PDFReader, PDFUrlReader)):
-                        if content.auth and content.auth.password:
-                            content.reader.password = content.auth.password
+                    import inspect
 
-                    name = content.name or path.name
-                    read_documents = content.reader.read(path, name=name)
+                    read_signature = inspect.signature(content.reader.read)
+                    if "password" in read_signature.parameters and content.auth and content.auth.password:
+                        read_documents = content.reader.read(
+                            path, name=content.name or path.name, password=content.auth.password
+                        )
+                    else:
+                        read_documents = content.reader.read(path, name=content.name or path.name)
+
                 else:
                     reader = ReaderFactory.get_reader_for_extension(path.suffix)
                     log_info(f"Using Reader: {reader.__class__.__name__}")
                     if reader:
                         # TODO: We will refactor this to eventually pass authorization to all readers
-                        if isinstance(reader, (PDFReader, PDFUrlReader)):
-                            if content.auth and content.auth.password:
-                                reader.password = content.auth.password
+                        import inspect
 
-                        name = content.name or path.name
-                        read_documents = reader.read(path, name=name)
+                        read_signature = inspect.signature(reader.read)
+                        if "password" in read_signature.parameters and content.auth and content.auth.password:
+                            read_documents = reader.read(
+                                path, name=content.name or path.name, password=content.auth.password
+                            )
+                        else:
+                            read_documents = reader.read(path, name=content.name or path.name)
 
                 if not content.file_type:
                     content.file_type = path.suffix
@@ -419,7 +425,7 @@ class Knowledge:
         content.file_type = "url"
 
         if self.vector_db.__class__.__name__ == "LightRag":
-            self._process_lightrag_content(content, KnowledgeContentOrigin.URL)
+            await self._process_lightrag_content(content, KnowledgeContentOrigin.URL)
             return
 
         content.content_hash = self._build_content_hash(content)
@@ -453,11 +459,13 @@ class Knowledge:
                 reader = content.reader or self.url_reader
                 if reader is not None:
                     # TODO: We will refactor this to eventually pass authorization to all readers
-                    if isinstance(reader, (PDFReader, PDFUrlReader)):
-                        if content.auth and content.auth.password:
-                            reader.password = content.auth.password
+                    import inspect
 
-                    read_documents = reader.read(content.url, name=content.name)
+                    read_signature = inspect.signature(reader.read)
+                    if "password" in read_signature.parameters and content.auth and content.auth.password:
+                        read_documents = reader.read(content.url, name=content.name, password=content.auth.password)
+                    else:
+                        read_documents = reader.read(content.url, name=content.name)
 
             elif file_extension and file_extension is not None:
                 log_info(f"Detected file type: {file_extension} from URL: {content.url}")
@@ -468,11 +476,13 @@ class Knowledge:
                     if reader is not None:
                         log_info(f"Selected reader: {reader.__class__.__name__}")
                         # TODO: We will refactor this to eventually pass authorization to all readers
-                        if isinstance(reader, (PDFReader, PDFUrlReader)):
-                            if content.auth and content.auth.password:
-                                reader.password = content.auth.password
+                        import inspect
 
-                        read_documents = reader.read(content.url, name=content.name)
+                        read_signature = inspect.signature(reader.read)
+                        if "password" in read_signature.parameters and content.auth and content.auth.password:
+                            read_documents = reader.read(content.url, name=content.name, password=content.auth.password)
+                        else:
+                            read_documents = reader.read(content.url, name=content.name)
                     else:
                         log_info(f"No reader found for file extension: {file_extension}")
             else:
@@ -484,11 +494,13 @@ class Knowledge:
                 if reader is not None:
                     log_info(f"Selected reader: {reader.__class__.__name__}")
                     # TODO: We will refactor this to eventually pass authorization to all readers
-                    if isinstance(reader, (PDFReader, PDFUrlReader)):
-                        if content.auth and content.auth.password:
-                            reader.password = content.auth.password
+                    import inspect
 
-                    read_documents = reader.read(content.url, name=content.name)
+                    read_signature = inspect.signature(reader.read)
+                    if "password" in read_signature.parameters and content.auth and content.auth.password:
+                        read_documents = reader.read(content.url, name=content.name, password=content.auth.password)
+                    else:
+                        read_documents = reader.read(content.url, name=content.name)
                 else:
                     log_info(f"No reader found for URL: {content.url}")
 
@@ -535,8 +547,8 @@ class Knowledge:
 
         log_info(f"Adding content from {content.name}")
 
-        if content.upload_file and self.vector_db.__class__.__name__ == "LightRag":
-            self._process_lightrag_content(content, KnowledgeContentOrigin.CONTENT)
+        if content.file_data and self.vector_db.__class__.__name__ == "LightRag":
+            await self._process_lightrag_content(content, KnowledgeContentOrigin.CONTENT)
             return
 
         content.content_hash = self._build_content_hash(content)
@@ -634,7 +646,7 @@ class Knowledge:
             )
 
             if self.vector_db.__class__.__name__ == "LightRag":
-                self._process_lightrag_content(content, KnowledgeContentOrigin.TOPIC)
+                await self._process_lightrag_content(content, KnowledgeContentOrigin.TOPIC)
                 return
 
             content.content_hash = self._build_content_hash(content)
@@ -830,7 +842,7 @@ class Knowledge:
         if content.url:
             await self._load_from_url(content, upsert, skip_if_exists)
 
-        if content.file_data or content.upload_file:
+        if content.file_data:
             await self._load_from_content(content, upsert, skip_if_exists)
 
         if content.topics:
@@ -939,7 +951,7 @@ class Knowledge:
             log_warning(f"Contents DB not found for knowledge base: {self.name}")
             return None
 
-    def _process_lightrag_content(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
+    async def _process_lightrag_content(self, content: Content, content_type: KnowledgeContentOrigin) -> None:
         self._add_to_contents_db(content)
         if content_type == KnowledgeContentOrigin.PATH:
             if content.file_data is None:
@@ -961,14 +973,13 @@ class Knowledge:
                 file_type = content.file_type or path.suffix
 
                 if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
-                    result = asyncio.run(
-                        self.vector_db.insert_file_bytes(
-                            file_content=file_content,
-                            filename=path.name,  # Use the original filename with extension
-                            content_type=file_type,
-                            send_metadata=True,  # Enable metadata so server knows the file type
-                        )
+                    result = await self.vector_db.insert_file_bytes(
+                        file_content=file_content,
+                        filename=path.name,  # Use the original filename with extension
+                        content_type=file_type,
+                        send_metadata=True,  # Enable metadata so server knows the file type
                     )
+
                 else:
                     log_error("Vector database does not support file insertion")
                     content.status = ContentStatus.FAILED
@@ -1009,11 +1020,9 @@ class Knowledge:
                     return
 
                 if self.vector_db and hasattr(self.vector_db, "insert_text"):
-                    result = asyncio.run(
-                        self.vector_db.insert_text(
-                            file_source=content.url,
-                            text=read_documents[0].content,
-                        )
+                    result = await self.vector_db.insert_text(
+                        file_source=content.url,
+                        text=read_documents[0].content,
                     )
                 else:
                     log_error("Vector database does not support text insertion")
@@ -1034,19 +1043,19 @@ class Knowledge:
                 return
 
         elif content_type == KnowledgeContentOrigin.CONTENT:
-            filename = content.upload_file.filename if content.upload_file else "uploaded_file"
+            filename = (
+                content.file_data.filename if content.file_data and content.file_data.filename else "uploaded_file"
+            )
             log_info(f"Uploading file to LightRAG: {filename}")
 
-            # Use the already-read content from file_data instead of the closed upload_file
+            # Use the content from file_data
             if content.file_data and content.file_data.content:
                 if self.vector_db and hasattr(self.vector_db, "insert_file_bytes"):
-                    result = asyncio.run(
-                        self.vector_db.insert_file_bytes(
-                            file_content=content.file_data.content,
-                            filename=filename,
-                            content_type=content.file_data.type,
-                            send_metadata=True,  # Enable metadata so server knows the file type
-                        )
+                    result = await self.vector_db.insert_file_bytes(
+                        file_content=content.file_data.content,
+                        filename=filename,
+                        content_type=content.file_data.type,
+                        send_metadata=True,  # Enable metadata so server knows the file type
                     )
                 else:
                     log_error("Vector database does not support file insertion")
@@ -1081,11 +1090,9 @@ class Knowledge:
                 print("READ DOCUMENTS: ", read_documents[0])
 
                 if self.vector_db and hasattr(self.vector_db, "insert_text"):
-                    result = asyncio.run(
-                        self.vector_db.insert_text(
-                            file_source=content.topics[0],
-                            text=read_documents[0].content,
-                        )
+                    result = await self.vector_db.insert_text(
+                        file_source=content.topics[0],
+                        text=read_documents[0].content,
                     )
                 else:
                     log_error("Vector database does not support text insertion")

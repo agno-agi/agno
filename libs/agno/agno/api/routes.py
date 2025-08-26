@@ -3,24 +3,13 @@ from dataclasses import dataclass
 
 @dataclass
 class ApiRoutes:
-    # Agent paths
-    AGENT_SESSION_CREATE: str = "/v1/agent-sessions"
-    AGENT_RUN_CREATE: str = "/v1/agent-runs"
-    AGENT_CREATE: str = "/v2/agents"
+    """API routes for telemetry recordings"""
 
-    # Team paths
-    TEAM_RUN_CREATE: str = "/v1/team-runs"
-    TEAM_SESSION_CREATE: str = "/v1/team-sessions"
-    TEAM_CREATE: str = "/v2/teams"
+    # Runs
+    AGENT_RUN_CREATE: str = "/v1/telemetry/agent/run/create"
+    EVAL_RUN_CREATE: str = "/v1/telemetry/eval/run/create"
+    TEAM_RUN_CREATE: str = "/v1/telemetry/team/run/create"
+    WORKFLOW_RUN_CREATE: str = "/v1/telemetry/workflow/run/create"
 
-    # Workflow paths
-    WORKFLOW_CREATE: str = "/v2/workflows"
-    # Telemetry paths
-    # TODO: Update to use the new telemetry paths
-    AGENT_TELEMETRY_SESSION_CREATE: str = "/v1/telemetry/agent/session/create"
-    AGENT_TELEMETRY_RUN_CREATE: str = "/v1/telemetry/agent/run/create"
-
-    TEAM_TELEMETRY_RUN_CREATE: str = "/v1/telemetry/team-runs"
-
-    # Eval paths
-    EVAL_RUN_CREATE: str = "/v2/eval-runs"
+    # OS launch
+    AGENT_OS_LAUNCH: str = "/v1/telemetry/os/launch"

@@ -1,4 +1,4 @@
-"""Run `pip install openai duckduckgo-search yfinance` to install dependencies."""
+"""Run `pip install openai ddgs yfinance` to install dependencies."""
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat

@@ -142,15 +142,19 @@ def test_history():
         add_history_to_context=True,
         telemetry=False,
     )
+
     run_output = agent.run("Hello")
     assert run_output.messages is not None
     assert len(run_output.messages) == 2
+
     run_output = agent.run("Hello 2")
     assert run_output.messages is not None
     assert len(run_output.messages) == 4
-    agent.run("Hello 3")
+
+    run_output = agent.run("Hello 3")
     assert run_output.messages is not None
     assert len(run_output.messages) == 6
+
     run_output = agent.run("Hello 4")
     assert run_output.messages is not None
     assert len(run_output.messages) == 8
