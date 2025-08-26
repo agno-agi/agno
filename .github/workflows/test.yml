@@ -68,7 +68,7 @@ jobs:
           python -m pip install --upgrade \
             pip setuptools wheel \
             ruff mypy pytest
-          pip install --no-deps -r libs/agno/requirements.txt
+          pip install --no-deps -r ../libs/agno/requirements.txt
       - name: Ruff format
         run: |
           ruff format .
