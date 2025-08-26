@@ -15,51 +15,7 @@ from streamlit_utils import (
     reset_session_state,
     session_selector_widget,
 )
-from utils import about_section
-
-# Model configuration - centralized for consistency and maintainability
-MODEL_CONFIG = {
-    # OpenAI Models
-    "gpt-5": {
-        "id": "openai:gpt-5",
-        "provider": "OpenAI",
-        "description": "Latest GPT-5 model",
-    },
-    "o3-mini": {
-        "id": "openai:o3-mini",
-        "provider": "OpenAI",
-        "description": "Lightweight O3 model",
-    },
-    "gpt-4o": {
-        "id": "openai:gpt-4o",
-        "provider": "OpenAI",
-        "description": "GPT-4 Omni model",
-    },
-    # Anthropic Models
-    "claude-4-sonnet": {
-        "id": "anthropic:claude-sonnet-4-0",
-        "provider": "Anthropic",
-        "description": "Claude 4 Sonnet model",
-    },
-    # Google Models
-    "gemini-2.5-pro": {
-        "id": "google:gemini-2.5-pro",
-        "provider": "Google",
-        "description": "Gemini 2.5 Pro model",
-    },
-    # Groq Models
-    "kimi-k2-instruct": {
-        "id": "groq:moonshotai/kimi-k2-instruct",
-        "provider": "Groq",
-        "description": "Kimi K2 Instruct model",
-    },
-}
-
-# Extract simple mapping for backwards compatibility
-MODEL_OPTIONS = {name: config["id"] for name, config in MODEL_CONFIG.items()}
-
-# Default model configuration
-DEFAULT_MODEL = "gpt-4o"
+from utils import about_section, MODELS
 
 nest_asyncio.apply()
 st.set_page_config(
@@ -72,21 +28,9 @@ st.set_page_config(
 # Add custom CSS
 st.markdown(COMMON_CSS, unsafe_allow_html=True)
 
-
-def get_model_display_name(model_name: str) -> str:
-    """Get display name with provider info for model selector"""
-    if model_name in MODEL_CONFIG:
-        config = MODEL_CONFIG[model_name]
-        return f"{model_name} ({config['provider']})"
-    return model_name
-
-
 def restart_agent(model_id: str = None):
     """Start a new chat session with optional model override"""
-    # Use provided model_id or fall back to current/default model
-    target_model = model_id or st.session_state.get(
-        "current_model", MODEL_OPTIONS[DEFAULT_MODEL]
-    )
+    target_model = model_id or st.session_state.get("current_model", MODELS[0])
 
     new_agent = get_agentic_rag_agent(model_id=target_model, session_id=None)
 
@@ -104,8 +48,8 @@ def on_model_change():
         # Extract model name from display name (remove provider info)
         selected_model = selected_display_name.split(" (")[0]
 
-        if selected_model in MODEL_OPTIONS:
-            new_model_id = MODEL_OPTIONS[selected_model]
+        if selected_model in MODELS:
+            new_model_id = selected_model
             current_model = st.session_state.get("current_model")
 
             # User manually changed model - always start new chat (ignore loading session state)
@@ -136,38 +80,16 @@ def main():
     ####################################################################
     # Model selector
     ####################################################################
-    # Create display options with provider information
-    model_display_options = [
-        get_model_display_name(name) for name in MODEL_OPTIONS.keys()
-    ]
-
-    # Find default index
-    default_display_name = get_model_display_name(DEFAULT_MODEL)
-    default_index = (
-        model_display_options.index(default_display_name)
-        if default_display_name in model_display_options
-        else 0
-    )
-
-    selected_model_display = st.sidebar.selectbox(
-        "🤖 Select Model",
-        options=model_display_options,
-        index=default_index,
+    selected_model = st.sidebar.selectbox(
+        "Select Model",
+        options=MODELS,
+        index=0,
         key="model_selector",
         on_change=on_model_change,
-        help="Choose an AI model for your chat session. Changing models will start a new chat.",
     )
 
     # Extract model name and ID
-    selected_model_name = selected_model_display.split(" (")[0]
-    model_id = MODEL_OPTIONS.get(selected_model_name, MODEL_OPTIONS[DEFAULT_MODEL])
-
-    # Display current model info in sidebar
-    if selected_model_name in MODEL_CONFIG:
-        model_info = MODEL_CONFIG[selected_model_name]
-        st.sidebar.info(f"**Current Model:** {model_info['description']}")
-    else:
-        st.sidebar.warning(f"Model configuration not found for: {selected_model_name}")
+    model_id = selected_model
 
     ####################################################################
     # Initialize Agent and Session

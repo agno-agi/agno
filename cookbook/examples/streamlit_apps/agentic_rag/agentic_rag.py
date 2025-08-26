@@ -37,7 +37,7 @@ from agno.knowledge.knowledge import Knowledge
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.vectordb.pgvector import PgVector
 from utils import get_model_from_id
-
+from textwrap import dedent
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 
@@ -84,33 +84,33 @@ def get_agentic_rag_agent(
         num_history_runs=5,
         session_id=session_id,
         tools=[DuckDuckGoTools()],
-        instructions=[
-            "1. Knowledge Base Search:",
-            "   - ALWAYS start by searching the knowledge base using search_knowledge_base tool",
-            "   - Analyze ALL returned documents thoroughly before responding",
-            "   - If multiple documents are returned, synthesize the information coherently",
-            "2. External Search:",
-            "   - If knowledge base search yields insufficient results, use duckduckgo_search",
-            "   - Focus on reputable sources and recent information",
-            "   - Cross-reference information from multiple sources when possible",
-            "3. Context Management:",
-            "   - Use get_chat_history tool to maintain conversation continuity",
-            "   - Reference previous interactions when relevant",
-            "   - Keep track of user preferences and prior clarifications",
-            "4. Response Quality:",
-            "   - Provide specific citations and sources for claims",
-            "   - Structure responses with clear sections and bullet points when appropriate",
-            "   - Include relevant quotes from source materials",
-            "   - Avoid hedging phrases like 'based on my knowledge' or 'depending on the information'",
-            "5. User Interaction:",
-            "   - Ask for clarification if the query is ambiguous",
-            "   - Break down complex questions into manageable parts",
-            "   - Proactively suggest related topics or follow-up questions",
-            "6. Error Handling:",
-            "   - If no relevant information is found, clearly state this",
-            "   - Suggest alternative approaches or questions",
-            "   - Be transparent about limitations in available information",
-        ],
+        instructions=dedent("""
+            1. Knowledge Base Search:
+               - ALWAYS start by searching the knowledge base using search_knowledge_base tool
+               - Analyze ALL returned documents thoroughly before responding
+               - If multiple documents are returned, synthesize the information coherently
+            2. External Search:
+               - If knowledge base search yields insufficient results, use duckduckgo_search
+               - Focus on reputable sources and recent information
+               - Cross-reference information from multiple sources when possible
+            3. Context Management:
+               - Use get_chat_history tool to maintain conversation continuity
+               - Reference previous interactions when relevant
+               - Keep track of user preferences and prior clarifications
+            4. Response Quality:
+               - Provide specific citations and sources for claims
+               - Structure responses with clear sections and bullet points when appropriate
+               - Include relevant quotes from source materials
+               - Avoid hedging phrases like 'based on my knowledge' or 'depending on the information'
+            5. User Interaction:
+               - Ask for clarification if the query is ambiguous
+               - Break down complex questions into manageable parts
+               - Proactively suggest related topics or follow-up questions
+            6. Error Handling:
+               - If no relevant information is found, clearly state this
+               - Suggest alternative approaches or questions
+               - Be transparent about limitations in available information
+        """),   
         markdown=True,
         debug_mode=True,
     )

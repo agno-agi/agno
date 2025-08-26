@@ -3096,11 +3096,7 @@ class Agent:
             elif model_response_event.event == ModelResponseEvent.tool_call_completed.value:
                 if model_response_event.updated_session_state is not None and session.session_data is not None:
                     from agno.utils.merge_dict import merge_dictionaries
-
-                    # Ensure session_state exists before merging
-                    if "session_state" not in session.session_data:
-                        session.session_data["session_state"] = {}
-
+                    
                     merge_dictionaries(
                         session.session_data["session_state"], model_response_event.updated_session_state
                     )

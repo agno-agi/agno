@@ -30,3 +30,12 @@ def about_section():
     - 🚀 Agno
     - 💫 Streamlit
     """)
+
+MODELS = [
+    "gpt-4o",
+    "o3-mini",
+    "gpt-5",
+    "claude-4-sonnet",
+    "gemini-2.5-pro",
+    "kimi-k2-instruct",
+]
