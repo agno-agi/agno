@@ -1178,7 +1178,7 @@ class Agent:
         run_dependencies = dependencies if dependencies is not None else self.dependencies
         # Resolving here for async requirement
         if self.dependencies is not None:
-            await self._aresolve_run_dependencies(dependencies=arun_dependencies)
+            await self._aresolve_run_dependencies(dependencies=run_dependencies)
 
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
