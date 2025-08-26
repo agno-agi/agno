@@ -1711,14 +1711,7 @@ class Model(ABC):
         for result_message in function_call_results:
             if result_message.images:
                 all_images.extend(result_message.images)
-                # Remove images from tool message to avoid the below OpenAI error
-                """
-                ERROR: API status error from OpenAI API: Error code: 400 - 
-                {'error': {'message': "Invalid 'messages[2]'. Image URLs are only allowed 
-                for messages with role 'user', but this message with role 'tool' contains 
-                an image URL.", 'type': 'invalid_request_error',    
-                'param': 'messages[2]', 'code': 'invalid_value'}}
-                """
+                # Remove images from tool message to avoid errors on the LLMs
                 result_message.images = None
 
             if result_message.videos:
