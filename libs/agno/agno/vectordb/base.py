@@ -94,3 +94,11 @@ class VectorDb(ABC):
     @abstractmethod
     def delete(self) -> bool:
         raise NotImplementedError
+
+    def close(self) -> None:
+        """Close any open connections or resources."""
+        raise NotImplementedError
+
+    async def async_close(self) -> None:
+        """Close any open connections or resources asynchronously."""
+        raise NotImplementedError
