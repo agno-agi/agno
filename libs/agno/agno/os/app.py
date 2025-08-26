@@ -10,7 +10,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 
 from agno.agent.agent import Agent
-from agno.os.config import AgentOSConfig
+from agno.os.config import AgentOSConfig, EvalsConfig, KnowledgeConfig, MemoryConfig
 from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router
 from agno.os.routers.evals import get_eval_router
@@ -125,6 +125,15 @@ class AgentOS:
                 dbs[interface.team.db.id] = interface.team.db
 
         self.dbs = dbs
+
+    def _get_default_memory_config(self) -> MemoryConfig:
+        return MemoryConfig(display_name="Memory")
+
+    def _get_default_knowledge_config(self) -> KnowledgeConfig:
+        return KnowledgeConfig(display_name="Knowledge")
+
+    def _get_default_evals_config(self) -> EvalsConfig:
+        return EvalsConfig(display_name="Evals")
 
     def _setup_routers(self) -> None:
         """Add all routers to the FastAPI app."""
