@@ -29,7 +29,7 @@ agent = Agent(
     model=AzureAIFoundry(id="gpt-4o"),
     description="You help people write movie scripts.",
     output_schema=MovieScript,
-    # )
+)
 
 # Get the response in a variable
 # run: RunOutput = agent.run("New York")

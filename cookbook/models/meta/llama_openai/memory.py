@@ -7,7 +7,7 @@ Steps:
 """
 
 from agno.agent import Agent
-from agno.db.postgres.postgres import PostgresDb
+from agno.db.postgres import PostgresDb
 from agno.models.meta import LlamaOpenAI
 from rich.pretty import pprint
 
@@ -18,8 +18,6 @@ agent = Agent(
     db=PostgresDb(db_url=db_url, memory_table="agent_memory"),
     enable_user_memories=True,
     enable_session_summaries=True,
-    # Show debug logs so, you can see the memory being created
-    debug_mode=True,
 )
 
 # -*- Share personal information
