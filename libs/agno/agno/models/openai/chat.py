@@ -77,7 +77,7 @@ class OpenAIChat(Model):
     max_retries: Optional[int] = None
     default_headers: Optional[Any] = None
     default_query: Optional[Any] = None
-    http_client: Optional[httpx.Client] = None
+    http_client: Optional[Union[httpx.Client, httpx.AsyncClient]] = None
     client_params: Optional[Dict[str, Any]] = None
 
     # The role to map the message role to.
@@ -135,7 +135,7 @@ class OpenAIChat(Model):
             AsyncOpenAIClient: An instance of the asynchronous OpenAI client.
         """
         client_params: Dict[str, Any] = self._get_client_params()
-        if self.http_client:
+        if self.http_client and isinstance(self.http_client, httpx.AsyncClient):
             client_params["http_client"] = self.http_client
         else:
             # Create a new async HTTP client with custom limits
