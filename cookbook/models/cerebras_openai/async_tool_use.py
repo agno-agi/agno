@@ -8,6 +8,6 @@ agent = Agent(
     model=CerebrasOpenAI(id="llama-3.3-70b"),
     tools=[DuckDuckGoTools()],
     markdown=True,
-    )
+)
 
 asyncio.run(agent.aprint_response("Whats happening in France?"))

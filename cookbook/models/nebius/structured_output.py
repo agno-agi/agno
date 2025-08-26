@@ -30,6 +30,6 @@ structured_output_agent = Agent(
     model=Nebius(id="Qwen/Qwen3-30B-A3B"),
     description="You are a helpful assistant. Summarize the movie script based on the location in a JSON object.",
     output_schema=MovieScript,
-    )
+)
 
 structured_output_agent.print_response("New York")

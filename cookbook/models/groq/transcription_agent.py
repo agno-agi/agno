@@ -10,6 +10,6 @@ agent = Agent(
     name="Groq Transcription Agent",
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[GroqTools(exclude_tools=["generate_speech"])],
-    )
+)
 
 agent.print_response(f"Please transcribe the audio file located at '{url}' to English")

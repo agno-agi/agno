@@ -30,6 +30,6 @@ json_schema_output_agent = Agent(
     model=Cerebras(id="llama-4-scout-17b-16e-instruct"),
     description="You are a helpful assistant. Summarize the movie script based on the location in a JSON object.",
     output_schema=MovieScript,
-    )
+)
 
 json_schema_output_agent.print_response("New York")

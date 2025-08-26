@@ -10,7 +10,7 @@ from agno.models.google import Gemini
 agent = Agent(
     model=Gemini(id="gemini-2.5-flash", search=True, url_context=True),
     markdown=True,
-    )
+)
 
 # The agent will first search for relevant URLs, then analyze their content in detail
 agent.print_response(

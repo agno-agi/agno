@@ -34,6 +34,6 @@ agent = Agent(
     tools=[DuckDuckGoTools()],
     description="You help people write movie scripts.",
     output_schema=MovieScript,
-    )
+)
 
 asyncio.run(agent.aprint_response("Find a cool movie idea about London and write it."))

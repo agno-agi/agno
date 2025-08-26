@@ -30,7 +30,7 @@ json_mode_agent = Agent(
     description="You write movie scripts.",
     output_schema=MovieScript,
     markdown=True,
-    )
+)
 
 # Get the response in a variable
 # json_mode_response: RunOutput = json_mode_agent.run("New York")

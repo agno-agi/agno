@@ -26,7 +26,7 @@ agent = Agent(
     # Enable session summaries
     enable_session_summaries=True,
     # Show debug logs so, you can see the memory being created
-    )
+)
 
 # -*- Share personal information
 agent.print_response("My name is john billings?", stream=True)
