@@ -85,7 +85,7 @@ def test_pdf_url_knowledge_base():
 
     assert vector_db.exists()
 
-    assert vector_db.get_count() == 13  # 3 from the first pdf and 10 from the second pdf
+    assert vector_db.get_count() == 13
 
     # Create and use the agent
     agent = Agent(knowledge=knowledge)
@@ -144,18 +144,19 @@ async def test_pdf_url_knowledge_base_async():
 
 
 # for the one with new knowledge filter DX- filters at initialize
-def test_pdf_url_knowledge_base_with_metadata_path(setup_vector_db):
+@pytest.mark.asyncio
+async def test_pdf_url_knowledge_base_with_metadata_path(setup_vector_db):
     """Test loading PDF URLs with metadata using the new path structure."""
     kb = Knowledge(
         vector_db=setup_vector_db,
     )
 
-    kb.add_content_sync(
+    await kb.add_content(
         url="https://agno-public.s3.amazonaws.com/recipes/thai_recipes_short.pdf",
         metadata={"cuisine": "Thai", "source": "Thai Cookbook", "region": "Southeast Asia"},
     )
 
-    kb.add_content_sync(
+    await kb.add_content(
         url="https://agno-public.s3.amazonaws.com/recipes/cape_recipes_short_2.pdf",
         metadata={"cuisine": "Cape", "source": "Cape Cookbook", "region": "South Africa"},
     )
