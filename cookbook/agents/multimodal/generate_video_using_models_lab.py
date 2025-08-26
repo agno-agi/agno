@@ -16,4 +16,3 @@ video_agent = Agent(
 
 video_agent.print_response("Generate a video of a cat playing with a ball")
 # print(video_agent.run_response.videos)
-# print(video_agent.get_videos())

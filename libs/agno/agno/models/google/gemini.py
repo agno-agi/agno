@@ -812,8 +812,12 @@ class Gemini(Model):
                                 model_response.content += content_str
 
                 if hasattr(part, "inline_data") and part.inline_data is not None:
-                    model_response.image = ImageArtifact(
-                        id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type
+                    if model_response.images is None:
+                        model_response.images = []
+                    model_response.images.append(
+                        ImageArtifact(
+                            id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type
+                        )
                     )
 
                 # Extract function call if present
@@ -916,8 +920,12 @@ class Gemini(Model):
                                 model_response.content += text_content
 
                     if hasattr(part, "inline_data") and part.inline_data is not None:
-                        model_response.image = ImageArtifact(
-                            id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type
+                        if model_response.images is None:
+                            model_response.images = []
+                        model_response.images.append(
+                            ImageArtifact(
+                                id=str(uuid4()), content=part.inline_data.data, mime_type=part.inline_data.mime_type
+                            )
                         )
 
                     # Extract function call if present
