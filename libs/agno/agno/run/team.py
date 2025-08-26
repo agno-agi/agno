@@ -282,7 +282,6 @@ class TeamRunOutput:
     parent_run_id: Optional[str] = None
 
     tools: Optional[List[ToolExecution]] = None
-    formatted_tool_calls: Optional[List[str]] = None
 
     images: Optional[List[ImageArtifact]] = None  # Images from member runs
     videos: Optional[List[VideoArtifact]] = None  # Videos from member runs

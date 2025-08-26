@@ -13,8 +13,8 @@ import time
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.run.agent import RunEvent
-from agno.run.team import TeamRunEvent
 from agno.run.base import RunStatus
+from agno.run.team import TeamRunEvent
 from agno.team import Team
 
 
@@ -43,7 +43,7 @@ def long_running_task(team: Team, run_id_container: dict):
             if "run_id" not in run_id_container and chunk.run_id:
                 print(f"🚀 Team run started: {chunk.run_id}")
                 run_id_container["run_id"] = chunk.run_id
-                
+
             if chunk.event in [TeamRunEvent.run_content, RunEvent.run_content]:
                 print(chunk.content, end="", flush=True)
                 content_pieces.append(chunk.content)
@@ -116,7 +116,7 @@ def cancel_after_delay(team: Team, run_id_container: dict, delay_seconds: int = 
     """
     print(f"⏰ Will cancel team run in {delay_seconds} seconds...")
     time.sleep(delay_seconds)
-    
+
     run_id = run_id_container.get("run_id")
     if run_id:
         print(f"🚫 Cancelling team run: {run_id}")
@@ -140,9 +140,9 @@ def main():
         model=OpenAIChat(id="o3-mini"),
         description="An agent that writes creative stories",
     )
-    
+
     editor_agent = Agent(
-        name="EditorAgent", 
+        name="EditorAgent",
         model=OpenAIChat(id="o3-mini"),
         description="An agent that reviews and improves stories",
     )

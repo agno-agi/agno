@@ -516,9 +516,7 @@ def get_base_router(
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        agent.cancel_run(run_id=run_id)
-        return JSONResponse(content={"status": "ok"})
-    
+        return JSONResponse(content={}, status_code=200)
 
     @router.post(
         "/agents/{agent_id}/runs/{run_id}/continue",
@@ -842,8 +840,8 @@ def get_base_router(
             raise HTTPException(status_code=404, detail="Team not found")
 
         team.cancel_run(run_id=run_id)
-        return JSONResponse(content={"status": "ok"})
-    
+        return JSONResponse(content={}, status_code=200)
+
     @router.delete(
         "/teams/{team_id}/sessions/{session_id}",
         status_code=204,
@@ -1102,20 +1100,6 @@ def get_base_router(
             # Handle unexpected runtime errors
             raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
 
-    @router.post(
-        "/workflows/{workflow_id}/runs/{run_id}/cancel",
-    )
-    async def cancel_workflow_run(
-        workflow_id: str,
-        run_id: str,
-    ):
-        workflow = get_workflow_by_id(workflow_id, os.workflows)
-        if workflow is None:
-            raise HTTPException(status_code=404, detail="Workflow not found")
-
-        workflow.cancel_run(run_id=run_id)
-        return JSONResponse(content={"status": "ok"})
-    
     @router.get(
         "/workflows/{workflow_id}/sessions",
         response_model=PaginatedResponse[SessionSchema],

@@ -285,14 +285,6 @@ def run_output_event_from_dict(data: dict) -> BaseRunOutputEvent:
 class RunOutput:
     """Response returned by Agent.run() or Workflow.run() functions"""
 
-    content: Optional[Any] = None
-    content_type: str = "str"
-    thinking: Optional[str] = None
-    reasoning_content: Optional[str] = None
-    messages: Optional[List[Message]] = None
-    metrics: Optional[Metrics] = None
-    model: Optional[str] = None
-    model_provider: Optional[str] = None
     run_id: Optional[str] = None
     agent_id: Optional[str] = None
     agent_name: Optional[str] = None
@@ -300,19 +292,34 @@ class RunOutput:
     parent_run_id: Optional[str] = None
     workflow_id: Optional[str] = None
     user_id: Optional[str] = None
+
+    content: Optional[Any] = None
+    content_type: str = "str"
+
+    thinking: Optional[str] = None
+    reasoning_content: Optional[str] = None
+
+    reasoning_steps: Optional[List[ReasoningStep]] = None
+    reasoning_messages: Optional[List[Message]] = None
+
+    model: Optional[str] = None
+    model_provider: Optional[str] = None
+    messages: Optional[List[Message]] = None
+    metrics: Optional[Metrics] = None
+    additional_input: Optional[List[Message]] = None
+
     tools: Optional[List[ToolExecution]] = None
-    formatted_tool_calls: Optional[List[str]] = None
+
     images: Optional[List[ImageArtifact]] = None  # Images attached to the response
     videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
     audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
     response_audio: Optional[AudioResponse] = None  # Model audio response
-    citations: Optional[Citations] = None
 
+    citations: Optional[Citations] = None
     references: Optional[List[MessageReferences]] = None
-    additional_input: Optional[List[Message]] = None
-    reasoning_steps: Optional[List[ReasoningStep]] = None
-    reasoning_messages: Optional[List[Message]] = None
+
     metadata: Optional[Dict[str, Any]] = None
+
     created_at: int = field(default_factory=lambda: int(time()))
 
     events: Optional[List[RunOutputEvent]] = None

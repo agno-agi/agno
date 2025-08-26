@@ -47,7 +47,7 @@ class RunCancellationManager:
                 del self._cancelled_runs[run_id]
                 logger.debug(f"Cleaned up cancellation tracking for run {run_id}")
 
-    def check_cancellation(self, run_id: str) -> None:
+    def raise_if_cancelled(self, run_id: str) -> None:
         """Check if a run should be cancelled and raise exception if so."""
         if self.is_cancelled(run_id):
             logger.info(f"Cancelling run {run_id}")
@@ -78,6 +78,6 @@ def cleanup_run(run_id: str) -> None:
     _cancellation_manager.cleanup_run(run_id)
 
 
-def check_cancellation(run_id: str) -> None:
+def raise_if_cancelled(run_id: str) -> None:
     """Check if a run should be cancelled and raise exception if so."""
-    _cancellation_manager.check_cancellation(run_id)
+    _cancellation_manager.raise_if_cancelled(run_id)
