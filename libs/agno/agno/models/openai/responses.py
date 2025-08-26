@@ -85,11 +85,17 @@ class OpenAIResponses(Model):
         """Return True if the contextual used model is a known reasoning model."""
         return self.id.startswith("o3") or self.id.startswith("o4-mini") or self.id.startswith("gpt-5")
 
-    def _reasoning_summary_requested(self) -> bool:
-        """Return True if a reasoning summary is requested."""
-        if isinstance(self.reasoning, dict) and self.reasoning.get("summary") is not None:
-            return True
-        return self.reasoning_summary is not None
+    def _set_reasoning_request_param(self, base_params: Dict[str, Any]) -> Dict[str, Any]:
+        """Set the reasoning request parameter."""
+        base_params["reasoning"] = self.reasoning or {}
+
+        if self.reasoning_effort is not None:
+            base_params["reasoning"]["effort"] = self.reasoning_effort
+
+        if self.reasoning_summary is not None:
+            base_params["reasoning"]["summary"] = self.reasoning_summary
+
+        return base_params
 
     def _get_client_params(self) -> Dict[str, Any]:
         """
@@ -192,22 +198,8 @@ class OpenAIResponses(Model):
             "user": self.user,
             "service_tier": self.service_tier,
         }
-
-        # Handle reasoning parameter - convert reasoning_effort to reasoning format
-        if self.reasoning is not None:
-            # Respect user-provided dict; only add summary if not present
-            base_params["reasoning"] = self.reasoning
-            if isinstance(base_params["reasoning"], dict) and self.reasoning_summary is not None:
-                base_params["reasoning"].setdefault("summary", self.reasoning_summary)
-        else:
-            # Build a minimal dict when effort/summary are provided
-            reasoning_dict: Dict[str, Any] = {}
-            if self.reasoning_effort is not None:
-                reasoning_dict["effort"] = self.reasoning_effort
-            if self.reasoning_summary is not None:
-                reasoning_dict["summary"] = self.reasoning_summary
-            if reasoning_dict:
-                base_params["reasoning"] = reasoning_dict
+        # Populate the reasoning parameter
+        base_params = self._set_reasoning_request_param(base_params)
 
         # Build text parameter
         text_params: Dict[str, Any] = {}
@@ -495,7 +487,6 @@ class OpenAIResponses(Model):
             request_params = self.get_request_params(
                 messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
             )
-
             return self.get_client().responses.create(
                 model=self.id,
                 input=self._format_messages(messages),  # type: ignore
@@ -747,8 +738,10 @@ class OpenAIResponses(Model):
 
         # Add role
         model_response.role = "assistant"
-        summary_text: str = ""
+        reasoning_summary: str = ""
+
         for output in response.output:
+            # Add content
             if output.type == "message":
                 model_response.content = response.output_text
 
@@ -764,6 +757,8 @@ class OpenAIResponses(Model):
                                 citations.urls.append(UrlCitation(url=annotation.url, title=annotation.title))
                         if citations.urls or citations.documents:
                             model_response.citations = citations
+
+            # Add tool calls
             elif output.type == "function_call":
                 if model_response.tool_calls is None:
                     model_response.tool_calls = []
@@ -782,25 +777,25 @@ class OpenAIResponses(Model):
 
                 model_response.extra = model_response.extra or {}
                 model_response.extra.setdefault("tool_call_ids", []).append(output.call_id)
-            elif output.type == "reasoning":
-                # Collect reasoning summary text when available
-                summaries = getattr(output, "summary", None)
-                if summaries:
-                    for s in summaries:
-                        text_val = s.get("text") if isinstance(s, dict) else getattr(s, "text", None)
-                        if text_val:
-                            if summary_text:
-                                summary_text += "\n\n"
-                            summary_text += text_val
 
-        # Populate reasoning_content
-        # If a reasoning summary was requested and found, prefer it.
-        if self._reasoning_summary_requested() and summary_text:
-            model_response.reasoning_content = summary_text
-        # Otherwise, if any form of reasoning was requested, fall back to output_text
-        elif self.reasoning is not None or self.reasoning_effort is not None or self.reasoning_summary is not None:
+            # Add reasoning summary
+            elif output.type == "reasoning":
+                if reasoning_summaries := getattr(output, "summary", None):
+                    for summary in reasoning_summaries:
+                        if isinstance(summary, dict):
+                            summary_text = summary.get("text")
+                        else:
+                            summary_text = getattr(summary, "text", None)
+                        if summary_text:
+                            reasoning_summary = (reasoning_summary or "") + summary_text
+
+        # Add reasoning content
+        if reasoning_summary is not None:
+            model_response.reasoning_content = reasoning_summary
+        elif self.reasoning is not None:
             model_response.reasoning_content = response.output_text
 
+        # Add metrics
         if response.usage is not None:
             model_response.response_usage = response.usage
 
@@ -867,9 +862,8 @@ class OpenAIResponses(Model):
             model_response.content = stream_event.delta
             stream_data.response_content += stream_event.delta
 
-            # Only treat output_text deltas as reasoning content when a summary
-            # was not explicitly requested.
-            if self.reasoning is not None and not self._reasoning_summary_requested():
+            # Treat the output_text deltas as reasoning content if the reasoning summary is not requested.
+            if self.reasoning is not None and self.reasoning_summary is None:
                 model_response.reasoning_content = stream_event.delta
                 stream_data.response_thinking += stream_event.delta
 
@@ -902,17 +896,9 @@ class OpenAIResponses(Model):
 
         elif stream_event.type == "response.completed":
             model_response = ModelResponse()
-            # Add usage metrics if present
-            if stream_event.response.usage is not None:
-                model_response.response_usage = stream_event.response.usage
 
-            _add_usage_metrics_to_assistant_message(
-                assistant_message=assistant_message,
-                response_usage=model_response.response_usage,
-            )
-
-            # On completion, capture reasoning summary text if present
-            if self._reasoning_summary_requested():
+            # Add reasoning summary
+            if self.reasoning_summary is not None:
                 summary_text: str = ""
                 for out in getattr(stream_event.response, "output", []) or []:
                     if getattr(out, "type", None) == "reasoning":
@@ -926,6 +912,15 @@ class OpenAIResponses(Model):
                                     summary_text += text_val
                 if summary_text:
                     model_response.reasoning_content = summary_text
+
+            # Add metrics
+            if stream_event.response.usage is not None:
+                model_response.response_usage = stream_event.response.usage
+
+            _add_usage_metrics_to_assistant_message(
+                assistant_message=assistant_message,
+                response_usage=model_response.response_usage,
+            )
 
         return model_response, tool_use
 
