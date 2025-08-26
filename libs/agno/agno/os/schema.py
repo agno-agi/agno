@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.models.message import Message
-from agno.os.config import EvalsConfig, KnowledgeConfig, MemoryConfig
+from agno.os.config import EvalsConfig, KnowledgeConfig, MemoryConfig, MetricsConfig, SessionConfig
 from agno.os.utils import (
     format_team_tools,
     format_tools,
@@ -83,6 +83,8 @@ class ConfigResponse(BaseModel):
     available_models: Optional[List[str]] = None
     databases: List[str]
 
+    session: Optional[SessionConfig] = None
+    metrics: Optional[MetricsConfig] = None
     memory: Optional[MemoryConfig] = None
     knowledge: Optional[KnowledgeConfig] = None
     evals: Optional[EvalsConfig] = None

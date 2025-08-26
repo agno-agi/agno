@@ -12,8 +12,20 @@ class EvalsDomainConfig(BaseModel):
     available_models: Optional[List[str]] = None
 
 
+class SessionDomainConfig(BaseModel):
+    """Configuration for the Session domain of the AgentOS"""
+
+    display_name: Optional[str] = None
+
+
 class KnowledgeDomainConfig(BaseModel):
     """Configuration for the Knowledge domain of the AgentOS"""
+
+    display_name: Optional[str] = None
+
+
+class MetricsDomainConfig(BaseModel):
+    """Configuration for the Metrics domain of the AgentOS"""
 
     display_name: Optional[str] = None
 
@@ -40,6 +52,12 @@ class EvalsConfig(EvalsDomainConfig):
     dbs: Optional[List[DatabaseConfig[EvalsDomainConfig]]] = None
 
 
+class SessionConfig(SessionDomainConfig):
+    """Configuration for the Session domain of the AgentOS"""
+
+    dbs: Optional[List[DatabaseConfig[SessionDomainConfig]]] = None
+
+
 class MemoryConfig(MemoryDomainConfig):
     """Configuration for the Memory domain of the AgentOS"""
 
@@ -50,6 +68,12 @@ class KnowledgeConfig(KnowledgeDomainConfig):
     """Configuration for the Knowledge domain of the AgentOS"""
 
     dbs: Optional[List[DatabaseConfig[KnowledgeDomainConfig]]] = None
+
+
+class MetricsConfig(MetricsDomainConfig):
+    """Configuration for the Metrics domain of the AgentOS"""
+
+    dbs: Optional[List[DatabaseConfig[MetricsDomainConfig]]] = None
 
 
 class ChatConfig(BaseModel):
@@ -75,3 +99,5 @@ class AgentOSConfig(BaseModel):
     evals: Optional[EvalsConfig] = None
     knowledge: Optional[KnowledgeConfig] = None
     memory: Optional[MemoryConfig] = None
+    session: Optional[SessionConfig] = None
+    metrics: Optional[MetricsConfig] = None

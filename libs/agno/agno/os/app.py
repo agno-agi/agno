@@ -19,6 +19,10 @@ from agno.os.config import (
     KnowledgeDomainConfig,
     MemoryConfig,
     MemoryDomainConfig,
+    MetricsConfig,
+    MetricsDomainConfig,
+    SessionConfig,
+    SessionDomainConfig,
 )
 from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router
@@ -135,6 +139,28 @@ class AgentOS:
 
         self.dbs = dbs
 
+    def _get_session_config(self) -> SessionConfig:
+        session_config = self.config.session if self.config and self.config.session else SessionConfig()
+
+        if session_config.dbs is None:
+            session_config.dbs = []
+
+        multiple_dbs: bool = len(self.dbs.keys()) > 1
+        dbs_with_specific_config = [db.db_id for db in session_config.dbs]
+
+        for db_id in self.dbs.keys():
+            if db_id not in dbs_with_specific_config:
+                session_config.dbs.append(
+                    DatabaseConfig(
+                        db_id=db_id,
+                        domain_config=SessionDomainConfig(
+                            display_name="Sessions" if not multiple_dbs else "Sessions " + db_id
+                        ),
+                    )
+                )
+
+        return session_config
+
     def _get_memory_config(self) -> MemoryConfig:
         memory_config = self.config.memory if self.config and self.config.memory else MemoryConfig()
 
@@ -178,6 +204,28 @@ class AgentOS:
                 )
 
         return knowledge_config
+
+    def _get_metrics_config(self) -> MetricsConfig:
+        metrics_config = self.config.metrics if self.config and self.config.metrics else MetricsConfig()
+
+        if metrics_config.dbs is None:
+            metrics_config.dbs = []
+
+        multiple_dbs: bool = len(self.dbs.keys()) > 1
+        dbs_with_specific_config = [db.db_id for db in metrics_config.dbs]
+
+        for db_id in self.dbs.keys():
+            if db_id not in dbs_with_specific_config:
+                metrics_config.dbs.append(
+                    DatabaseConfig(
+                        db_id=db_id,
+                        domain_config=MetricsDomainConfig(
+                            display_name="Metrics" if not multiple_dbs else "Metrics " + db_id
+                        ),
+                    )
+                )
+
+        return metrics_config
 
     def _get_evals_config(self) -> EvalsConfig:
         evals_config = self.config.evals if self.config and self.config.evals else EvalsConfig()
