@@ -10,7 +10,16 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 
 from agno.agent.agent import Agent
-from agno.os.config import AgentOSConfig, EvalsConfig, KnowledgeConfig, MemoryConfig
+from agno.os.config import (
+    AgentOSConfig,
+    DatabaseConfig,
+    EvalsConfig,
+    EvalsDomainConfig,
+    KnowledgeConfig,
+    KnowledgeDomainConfig,
+    MemoryConfig,
+    MemoryDomainConfig,
+)
 from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router
 from agno.os.routers.evals import get_eval_router
@@ -126,14 +135,69 @@ class AgentOS:
 
         self.dbs = dbs
 
-    def _get_default_memory_config(self) -> MemoryConfig:
-        return MemoryConfig(display_name="Memory")
+    def _get_memory_config(self) -> MemoryConfig:
+        memory_config = self.config.memory if self.config and self.config.memory else MemoryConfig()
 
-    def _get_default_knowledge_config(self) -> KnowledgeConfig:
-        return KnowledgeConfig(display_name="Knowledge")
+        if memory_config.dbs is None:
+            memory_config.dbs = []
 
-    def _get_default_evals_config(self) -> EvalsConfig:
-        return EvalsConfig(display_name="Evals")
+        multiple_dbs: bool = len(self.dbs.keys()) > 1
+        dbs_with_specific_config = [db.db_id for db in memory_config.dbs]
+
+        for db_id in self.dbs.keys():
+            if db_id not in dbs_with_specific_config:
+                memory_config.dbs.append(
+                    DatabaseConfig(
+                        db_id=db_id,
+                        domain_config=MemoryDomainConfig(
+                            display_name="Memory" if not multiple_dbs else "Memory " + db_id
+                        ),
+                    )
+                )
+
+        return memory_config
+
+    def _get_knowledge_config(self) -> KnowledgeConfig:
+        knowledge_config = self.config.knowledge if self.config and self.config.knowledge else KnowledgeConfig()
+
+        if knowledge_config.dbs is None:
+            knowledge_config.dbs = []
+
+        multiple_dbs: bool = len(self.dbs.keys()) > 1
+        dbs_with_specific_config = [db.db_id for db in knowledge_config.dbs]
+
+        for db_id in self.dbs.keys():
+            if db_id not in dbs_with_specific_config:
+                knowledge_config.dbs.append(
+                    DatabaseConfig(
+                        db_id=db_id,
+                        domain_config=KnowledgeDomainConfig(
+                            display_name="Knowledge" if not multiple_dbs else "Knowledge " + db_id
+                        ),
+                    )
+                )
+
+        return knowledge_config
+
+    def _get_evals_config(self) -> EvalsConfig:
+        evals_config = self.config.evals if self.config and self.config.evals else EvalsConfig()
+
+        if evals_config.dbs is None:
+            evals_config.dbs = []
+
+        multiple_dbs: bool = len(self.dbs.keys()) > 1
+        dbs_with_specific_config = [db.db_id for db in evals_config.dbs]
+
+        for db_id in self.dbs.keys():
+            if db_id not in dbs_with_specific_config:
+                evals_config.dbs.append(
+                    DatabaseConfig(
+                        db_id=db_id,
+                        domain_config=EvalsDomainConfig(display_name="Evals" if not multiple_dbs else "Evals " + db_id),
+                    )
+                )
+
+        return evals_config
 
     def _setup_routers(self) -> None:
         """Add all routers to the FastAPI app."""
