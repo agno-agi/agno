@@ -201,6 +201,7 @@ def test_history():
     assert run_output.messages is not None
     assert len(run_output.messages) == 8
 
+
 @pytest.mark.skip(reason="Missing VertexAI credentials in Github Actions")
 def test_custom_client_params():
     generation_config = types.GenerateContentConfig(
