@@ -29,7 +29,7 @@ class MovieScript(BaseModel):
 agent = Agent(
     model=Fireworks(id="accounts/fireworks/models/llama-v3p1-405b-instruct"),
     description="You write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 # Get the response in a variable

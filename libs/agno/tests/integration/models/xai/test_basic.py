@@ -33,8 +33,9 @@ def test_basic():
 def test_basic_stream():
     agent = Agent(model=xAI(id="grok-3-mini-fast"), markdown=True, telemetry=False)
 
-    for response in agent.run("Share a 2 sentence horror story", stream=True):
-        assert response.content is not None
+    run_stream = agent.run("Say 'hi'", stream=True)
+    for chunk in run_stream:
+        assert chunk.content is not None or chunk.reasoning_content is not None  # type: ignore
 
 
 @pytest.mark.asyncio
@@ -55,7 +56,7 @@ async def test_async_basic_stream():
     agent = Agent(model=xAI(id="grok-3-mini-fast"), markdown=True, telemetry=False)
 
     async for response in agent.arun("Share a 2 sentence horror story", stream=True):
-        assert response.content is not None
+        assert response.content is not None or response.reasoning_content is not None  # type: ignore
 
 
 def test_with_memory():
@@ -86,7 +87,7 @@ def test_with_memory():
     _assert_metrics(response2)
 
 
-def test_response_model():
+def test_output_schema():
     class MovieScript(BaseModel):
         title: str = Field(..., description="Movie title")
         genre: str = Field(..., description="Movie genre")
@@ -96,7 +97,7 @@ def test_response_model():
         model=xAI(id="grok-2-latest"),
         markdown=True,
         telemetry=False,
-        response_model=MovieScript,
+        output_schema=MovieScript,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -118,7 +119,7 @@ def test_json_response_mode():
         model=xAI(id="grok-2-latest"),
         use_json_mode=True,
         telemetry=False,
-        response_model=MovieScript,
+        output_schema=MovieScript,
     )
 
     response = agent.run("Create a movie about time travel")

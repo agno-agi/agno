@@ -33,8 +33,7 @@ classifiers = [
 dependencies = [
   "docstring-parser",
   "gitpython",
-  # Required to avoid `SyncHttpxClientWrapper` error
-  "httpx==0.27.2",  
+  "httpx",
   "packaging",
   "pydantic-settings",
   "pydantic",
@@ -49,10 +48,12 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", "timeout-decorator", "types-pyyaml", "types-aiofiles", "fastapi", "uvicorn"]
 
+os = ["fastapi", "uvicorn"]
+
 # Models integration test dependencies
 integration-tests = [
     "exa_py",
-    "duckduckgo-search",
+    "ddgs",
     "yfinance",
     "sqlalchemy",
     "Pillow"
@@ -91,7 +92,7 @@ brave = ["brave-search"]
 browserbase = ["browserbase", "playwright"]
 cartesia = ["cartesia"]
 confluence = ["atlassian-python-api"]
-ddg = ["duckduckgo-search"]
+ddg = ["ddgs"]
 duckdb = ["duckdb"]
 elevenlabs = ["elevenlabs"]
 evm = ["web3"]
@@ -106,6 +107,7 @@ googlemaps = ["googlemaps", "google-maps-places"]
 matplotlib = ["matplotlib"]
 mcp = ["mcp"]
 mem0 = ["mem0ai"]
+memori = ["memorisdk"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 opencv = ["opencv-python"]
 psycopg = ["psycopg-binary", "psycopg"]
@@ -141,6 +143,7 @@ milvusdb = ["pymilvus>=2.5.10"]
 clickhouse = ["clickhouse-connect"]
 pinecone = ["pinecone==5.4.2"]
 surrealdb = ["surrealdb>=1.0.4"]
+upstash = ["upstash-vector"]
 
 # Dependencies for Knowledge
 pdf = ["pypdf", "rapidocr_onnxruntime"]
@@ -164,12 +167,12 @@ performance = ["memory_profiler"]
 cookbooks = ["inquirer", "email_validator"]
 
 # Dependencies for Docker
-docker = ["agno-os[docker]"]
+docker = ["agno-infra[docker]"]
 
 # Dependencies for AWS
-aws = ["agno-os[aws]", "agno-os[docker]"]
+aws = ["agno-infra[aws]", "agno-infra[docker]"]
 
-os = ["agno-os"]
+infra = ["agno-infra"]
 
 # All models
 models = [
@@ -223,6 +226,7 @@ tools = [
   "agno[oxylabs]",
   "agno[zep]",
   "agno[mem0]",
+  "agno[memori]",
   "agno[google_bigquery]",
   "agno[psycopg]",
   "agno[trafilatura]",
@@ -252,7 +256,8 @@ vectordbs = [
   "agno[milvusdb]",
   "agno[clickhouse]",
   "agno[pinecone]",
-  "agno[surrealdb]"
+  "agno[surrealdb]",
+  "agno[upstash]",
 ]
 
 # All knowledge
@@ -325,6 +330,7 @@ module = [
   "ag_ui.*",
   "agentql.*",
   "aioboto3.*",
+  "aiohttp.*",
   "aiofiles.*",
   "altair.*",
   "anthropic.*",
@@ -354,7 +360,7 @@ module = [
   "docker.*",
   "docx.*",
   "duckdb.*",
-  "duckduckgo_search.*",
+  "ddgs.*",
   "email_validator.*",
   "e2b_code_interpreter.*",
   "eth_account.*",
@@ -387,6 +393,7 @@ module = [
   "litellm.*",
   "matplotlib.*",
   "mem0.*",
+  "memori.*",
   "mcp.*",
   "memory_profiler.*",
   "mistralai.*",

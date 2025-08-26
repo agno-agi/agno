@@ -4,7 +4,7 @@ from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
-from agno.run.response import (
+from agno.run.agent import (
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
     OutputModelResponseCompletedEvent,
@@ -81,7 +81,10 @@ def create_team_run_completed_event(from_run_response: TeamRunOutput) -> TeamRun
         videos=from_run_response.videos,  # type: ignore
         audio=from_run_response.audio,  # type: ignore
         response_audio=from_run_response.response_audio,  # type: ignore
-        metadata=from_run_response.metadata,  # type: ignore
+        references=from_run_response.references,  # type: ignore
+        additional_input=from_run_response.additional_input,  # type: ignore
+        reasoning_steps=from_run_response.reasoning_steps,  # type: ignore
+        reasoning_messages=from_run_response.reasoning_messages,  # type: ignore
         member_responses=from_run_response.member_responses,  # type: ignore
     )
 
@@ -101,7 +104,10 @@ def create_run_completed_event(from_run_response: RunOutput) -> RunCompletedEven
         videos=from_run_response.videos,  # type: ignore
         audio=from_run_response.audio,  # type: ignore
         response_audio=from_run_response.response_audio,  # type: ignore
-        metadata=from_run_response.metadata,  # type: ignore
+        references=from_run_response.references,  # type: ignore
+        additional_input=from_run_response.additional_input,  # type: ignore
+        reasoning_steps=from_run_response.reasoning_steps,  # type: ignore
+        reasoning_messages=from_run_response.reasoning_messages,  # type: ignore
     )
 
 
@@ -354,7 +360,10 @@ def create_run_output_content_event(
         citations=citations,
         response_audio=response_audio,
         image=image,
-        metadata=from_run_response.metadata,
+        references=from_run_response.references,
+        additional_input=from_run_response.additional_input,
+        reasoning_steps=from_run_response.reasoning_steps,
+        reasoning_messages=from_run_response.reasoning_messages,
     )
 
 
@@ -380,7 +389,10 @@ def create_team_run_output_content_event(
         citations=citations,
         response_audio=response_audio,
         image=image,
-        metadata=from_run_response.metadata,
+        references=from_run_response.references,  # type: ignore
+        additional_input=from_run_response.additional_input,  # type: ignore
+        reasoning_steps=from_run_response.reasoning_steps,  # type: ignore
+        reasoning_messages=from_run_response.reasoning_messages,  # type: ignore
     )
 
 
@@ -433,7 +445,6 @@ def create_output_model_response_started_event(from_run_response: RunOutput) -> 
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -443,7 +454,6 @@ def create_output_model_response_completed_event(from_run_response: RunOutput) -
         session_id=from_run_response.session_id,
         agent_id=from_run_response.agent_id,  # type: ignore
         agent_name=from_run_response.agent_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -455,7 +465,6 @@ def create_team_output_model_response_started_event(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
     )
 
@@ -467,6 +476,5 @@ def create_team_output_model_response_completed_event(
         session_id=from_run_response.session_id,
         team_id=from_run_response.team_id,  # type: ignore
         team_name=from_run_response.team_name,  # type: ignore
-        team_session_id=from_run_response.team_session_id,  # type: ignore
         run_id=from_run_response.run_id,
     )

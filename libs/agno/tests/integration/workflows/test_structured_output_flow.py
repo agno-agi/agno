@@ -201,21 +201,21 @@ def test_structured_output_agent_flow_sync(shared_db):
     research_agent = Agent(
         name="Research Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=ResearchData,
+        output_schema=ResearchData,
         instructions=["Provide research data in structured format"],
     )
 
     analysis_agent = Agent(
         name="Analysis Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=AnalysisResult,
+        output_schema=AnalysisResult,
         instructions=["Analyze the research data and provide structured results"],
     )
 
     final_agent = Agent(
         name="Final Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=FinalReport,
+        output_schema=FinalReport,
         instructions=["Create a final report based on the analysis"],
     )
 
@@ -251,14 +251,14 @@ def test_structured_output_agent_flow_streaming(shared_db):
     research_agent = Agent(
         name="Research Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=ResearchData,
+        output_schema=ResearchData,
         instructions=["Provide research data in structured format"],
     )
 
     analysis_agent = Agent(
         name="Analysis Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=AnalysisResult,
+        output_schema=AnalysisResult,
         instructions=["Analyze the research data and provide structured results"],
     )
 
@@ -291,14 +291,14 @@ async def test_structured_output_agent_flow_async(shared_db):
     research_agent = Agent(
         name="Research Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=ResearchData,
+        output_schema=ResearchData,
         instructions=["Provide research data in structured format"],
     )
 
     analysis_agent = Agent(
         name="Analysis Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=AnalysisResult,
+        output_schema=AnalysisResult,
         instructions=["Analyze the research data and provide structured results"],
     )
 
@@ -331,14 +331,14 @@ async def test_structured_output_agent_flow_async_streaming(shared_db):
     research_agent = Agent(
         name="Research Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=ResearchData,
+        output_schema=ResearchData,
         instructions=["Provide research data in structured format"],
     )
 
     analysis_agent = Agent(
         name="Analysis Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=AnalysisResult,
+        output_schema=AnalysisResult,
         instructions=["Analyze the research data and provide structured results"],
     )
 
@@ -379,7 +379,7 @@ def test_structured_output_team_flow_sync(shared_db):
         name="Research Team",
         members=[researcher],
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=ResearchData,
+        output_schema=ResearchData,
         instructions=["Provide structured research data"],
     )
 
@@ -412,7 +412,7 @@ def test_structured_output_team_flow_streaming(shared_db):
         name="Research Team",
         members=[researcher],
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=ResearchData,
+        output_schema=ResearchData,
         instructions=["Provide structured research data"],
     )
 
@@ -451,7 +451,7 @@ async def test_structured_output_team_flow_async(shared_db):
         name="Research Team",
         members=[researcher],
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=ResearchData,
+        output_schema=ResearchData,
         instructions=["Provide structured research data"],
     )
 
@@ -485,7 +485,7 @@ async def test_structured_output_team_flow_async_streaming(shared_db):
         name="Research Team",
         members=[researcher],
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=ResearchData,
+        output_schema=ResearchData,
         instructions=["Provide structured research data"],
     )
 
@@ -518,7 +518,7 @@ def test_mixed_structured_output_flow(shared_db):
     analysis_agent = Agent(
         name="Analysis Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=AnalysisResult,
+        output_schema=AnalysisResult,
         instructions=["Analyze briefly"],
     )
 
@@ -533,7 +533,7 @@ def test_mixed_structured_output_flow(shared_db):
         name="Final Team",
         members=[final_member],
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=FinalReport,
+        output_schema=FinalReport,
         instructions=["Create brief structured report"],
     )
 
@@ -612,24 +612,17 @@ def test_structured_output_with_workflow_components(shared_db):
     condition_output = response.step_results[1]
     loop_output = response.step_results[2]
 
-    # If steps_output is a list, get the first item
-    if isinstance(steps_output, list):
-        steps_output = steps_output[0]
+    assert hasattr(steps_output, "steps") and steps_output.steps
+    actual_research_step = steps_output.steps[0]  # Get the actual research step
+    assert isinstance(actual_research_step.content, ResearchData)
 
-    # If condition_output is a list, get the first item
-    if isinstance(condition_output, list):
-        condition_output = condition_output[0]
+    # Condition should have processed the structured data - access the nested step content
+    assert hasattr(condition_output, "steps") and condition_output.steps
+    actual_analysis_step = condition_output.steps[0]  # Get the actual analysis step
+    assert isinstance(actual_analysis_step.content, AnalysisResult)
 
-    # If loop_output is a list, get the first item
-    if isinstance(loop_output, list):
-        loop_output = loop_output[0]
-
-    # Steps should contain structured data
-    assert isinstance(steps_output.content, ResearchData)
-
-    # Condition should have processed the structured data
-    assert isinstance(condition_output.content, AnalysisResult)
-
-    # Loop should have structured output
-    assert isinstance(loop_output.content, FinalReport)
-    assert loop_output.content.title == "AI Testing Report"
+    # Loop should have structured output - access the nested step content
+    assert hasattr(loop_output, "steps") and loop_output.steps
+    actual_final_step = loop_output.steps[0]  # Get the actual final step
+    assert isinstance(actual_final_step.content, FinalReport)
+    assert actual_final_step.content.title == "AI Testing Report"

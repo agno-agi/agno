@@ -17,7 +17,7 @@ agent = Agent(
 
 async def modify_image():
     # Print the response in the terminal - using arun instead of run
-    response = await agent.arun(
+    _ = await agent.arun(
         "Can you add a Llama in the background of this image?",
         images=[Image(filepath="generated_image.png")],
     )

@@ -11,6 +11,7 @@ SET "CURR_DIR=%~dp0"
 SET "REPO_ROOT=%CURR_DIR%\.."
 SET "AGNO_DIR=%REPO_ROOT%\libs\agno"
 SET "AGNO_INFRA_DIR=%REPO_ROOT%\libs\agno_infra"
+SET "COOKBOOK_DIR=%REPO_ROOT%\cookbook"
 
 REM Function to print headings
 CALL :print_heading "Validating all libraries"
@@ -61,6 +62,14 @@ IF EXIST %AGNO_AWS_VALIDATE% (
     )
 ) ELSE (
     ECHO [WARNING] %AGNO_AWS_VALIDATE% does not exist, skipping
+)
+
+SET COOKBOOK_VALIDATE="%COOKBOOK_DIR%\scripts\validate.bat"
+IF EXIST %COOKBOOK_VALIDATE% (
+    ECHO [INFO] Running %COOKBOOK_VALIDATE%
+    CALL %COOKBOOK_VALIDATE%
+) ELSE (
+    ECHO [WARNING] %COOKBOOK_VALIDATE% does not exist, skipping
 )
 
 ECHO [INFO] All validations complete.

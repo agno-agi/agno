@@ -1,6 +1,7 @@
 import nest_asyncio
 import streamlit as st
 from agents import tutor_agent
+from agno.agent.agent import Agent
 from agno.utils.log import logger
 from utils import (
     CUSTOM_CSS,

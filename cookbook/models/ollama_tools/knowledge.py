@@ -1,5 +1,5 @@
 """
-Run `pip install duckduckgo-search sqlalchemy pgvector pypdf openai ollama` to install dependencies.
+Run `pip install ddgs sqlalchemy pgvector pypdf openai ollama` to install dependencies.
 
 Run Ollama Server: `ollama serve`
 Pull required models:

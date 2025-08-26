@@ -53,7 +53,7 @@ from agno.os.utils import (
     process_image,
     process_video,
 )
-from agno.run.response import RunErrorEvent, RunOutput
+from agno.run.agent import RunErrorEvent, RunOutput
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.workflow import WorkflowErrorEvent
 from agno.team.team import Team

@@ -1,25 +1,16 @@
-from enum import Enum
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-
-class EvalType(str, Enum):
-    ACCURACY = "accuracy"
-    PERFORMANCE = "performance"
-    RELIABILITY = "reliability"
+from agno.api.schemas.utils import get_sdk_version
+from agno.db.schemas.evals import EvalType
 
 
 class EvalRunCreate(BaseModel):
-    """Data sent to the API to create an evaluation run"""
-
-    agent_id: Optional[str] = None
-    model_id: Optional[str] = None
-    model_provider: Optional[str] = None
-    team_id: Optional[str] = None
-    name: Optional[str] = None
-    evaluated_entity_name: Optional[str] = None
+    """Data sent to the telemetry API to create an Eval run event"""
 
     run_id: str
     eval_type: EvalType
-    eval_data: Dict[str, Any]
+    data: Optional[Dict[Any, Any]] = None
+
+    sdk_version: str = Field(default_factory=get_sdk_version)

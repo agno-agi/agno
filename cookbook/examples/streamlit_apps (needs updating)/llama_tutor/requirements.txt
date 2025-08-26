@@ -28,7 +28,7 @@ charset-normalizer==3.4.1
     # via requests
 click==8.1.8
     # via
-    #   duckduckgo-search
+    #   ddgs
     #   streamlit
     #   typer
 distro==1.9.0
@@ -38,7 +38,7 @@ distro==1.9.0
     #   openai
 docstring-parser==0.16
     # via agno
-duckduckgo-search==7.5.2
+ddgs==9.5.4
 exa-py==1.9.0
 gitdb==4.0.12
     # via gitpython
@@ -86,7 +86,7 @@ jsonschema==4.23.0
 jsonschema-specifications==2024.10.1
     # via jsonschema
 lxml==5.3.1
-    # via duckduckgo-search
+    # via ddgs
 markdown-it-py==3.0.0
     # via rich
 markupsafe==3.0.2
@@ -115,7 +115,7 @@ pandas==2.2.3
 pillow==11.1.0
     # via streamlit
 primp==0.14.0
-    # via duckduckgo-search
+    # via ddgs
 protobuf==5.29.3
     # via
     #   google-ai-generativelanguage

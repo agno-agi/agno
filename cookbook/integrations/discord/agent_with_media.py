@@ -8,7 +8,7 @@ media_agent = Agent(
     description="A Media processing agent",
     instructions="Analyze images, audios and videos sent by the user",
     add_history_to_context=True,
-    num_history_responses=3,
+    num_history_runs=3,
     add_datetime_to_context=True,
     markdown=True,
 )

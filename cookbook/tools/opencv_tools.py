@@ -37,7 +37,7 @@ agent = Agent(
 
 agent.print_response("Take a quick test photo to verify the camera is working")
 
-response = agent.get_last_run_response()
+response = agent.get_last_run_output()
 if response and response.images:
     save_base64_data(
         base64_data=str(response.images[0].content),
@@ -47,7 +47,7 @@ if response and response.images:
 # Example 2: Capture a video
 agent.print_response("Capture a 5 second webcam video")
 
-response = agent.get_last_run_response()
+response = agent.get_last_run_output()
 if response and response.videos:
     save_base64_data(
         base64_data=str(response.videos[0].content),

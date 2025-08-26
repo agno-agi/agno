@@ -3,7 +3,6 @@ from typing import List
 
 from agno.agent import Agent, RunOutput  # noqa
 from agno.models.cohere import Cohere
-from agno.tools.duckduckgo import DuckDuckGoTools
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -31,9 +30,8 @@ agent = Agent(
     model=Cohere(
         id="command-a-03-2025",
     ),
-    tools=[DuckDuckGoTools()],
     description="You help people write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
     debug_mode=True,
 )
 

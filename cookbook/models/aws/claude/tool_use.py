@@ -1,4 +1,4 @@
-"""Run `pip install duckduckgo-search` to install dependencies."""
+"""Run `pip install ddgs` to install dependencies."""
 
 from agno.agent import Agent
 from agno.models.aws import Claude
@@ -9,4 +9,4 @@ agent = Agent(
     tools=[DuckDuckGoTools()],
     markdown=True,
 )
-agent.print_response("Whats happening in France?", stream=True)
+agent.print_response("Whats happening in France?")

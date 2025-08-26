@@ -5,8 +5,8 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Union
 
 from agno.models.base import Model
 from agno.reasoning.step import ReasoningSteps
+from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.tools.toolkit import Toolkit
 
 
 def get_default_reasoning_agent(
@@ -82,7 +82,7 @@ def get_default_reasoning_agent(
         - Only create a single instance of ReasoningSteps for your response.\
         """),
         tools=tools,
-        response_model=ReasoningSteps,
+        output_schema=ReasoningSteps,
         use_json_mode=use_json_mode,
         telemetry=telemetry,
         debug_mode=debug_mode,

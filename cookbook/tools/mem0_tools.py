@@ -22,7 +22,6 @@ agent = Agent(
     tools=[Mem0Tools()],
     user_id=USER_ID,
     session_id=SESSION_ID,
-    add_state_in_messages=True,
     markdown=True,
     instructions=dedent(
         """

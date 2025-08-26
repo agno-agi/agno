@@ -17,9 +17,9 @@ import asyncio
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.models.deepseek import DeepSeek
-from agno.models.mistral.mistral import MistralChat
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
+from agno.utils.print_response.team import aprint_response
 
 english_agent = Agent(
     name="English Agent",
@@ -44,7 +44,7 @@ spanish_agent = Agent(
 french_agent = Agent(
     name="French Agent",
     role="You can only answer in French",
-    model=MistralChat(id="mistral-large-latest"),
+    model=OpenAIChat(id="gpt-4o"),
 )
 german_agent = Agent(
     name="German Agent",
@@ -91,9 +91,9 @@ async def main():
     #     "お元気ですか?", stream=True  # Japanese
     # )
 
-    await multi_language_team.aprint_response(
-        "Comment allez-vous?",
-        stream=True,  # French
+    await aprint_response(
+        input="Comment allez-vous?",
+        team=multi_language_team,
     )
 
     # await multi_language_team.aprint_response(

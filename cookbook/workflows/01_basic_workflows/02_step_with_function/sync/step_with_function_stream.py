@@ -77,7 +77,7 @@ def custom_content_planning_function(
         for event in response_iterator:
             yield event
 
-        response = content_planner.get_last_run_response()
+        response = content_planner.get_last_run_output()
 
         enhanced_content = f"""
             ## Strategic Content Plan

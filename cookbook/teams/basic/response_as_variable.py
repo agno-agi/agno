@@ -33,7 +33,7 @@ class CompanyAnalysis(BaseModel):
 stock_searcher = Agent(
     name="Stock Searcher",
     model=OpenAIChat("gpt-4o"),
-    response_model=StockAnalysis,
+    output_schema=StockAnalysis,
     role="Searches for stock price and analyst information",
     tools=[
         YFinanceTools(
@@ -52,7 +52,7 @@ company_info_agent = Agent(
     name="Company Info Searcher",
     model=OpenAIChat("gpt-4o"),
     role="Searches for company news and information",
-    response_model=CompanyAnalysis,
+    output_schema=CompanyAnalysis,
     tools=[
         YFinanceTools(
             stock_price=False,

@@ -29,7 +29,7 @@ class MovieScript(BaseModel):
 movie_agent = Agent(
     model=OllamaTools(id="llama3.1:8b"),
     description="You write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 # Get the response in a variable

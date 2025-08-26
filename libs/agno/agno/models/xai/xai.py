@@ -75,14 +75,14 @@ class xAI(OpenAILike):
         """
         model_response = super()._parse_provider_response(response, response_format)
 
-        if hasattr(response, "citations") and response.citations:
+        if hasattr(response, "citations") and response.citations:  # type: ignore
             citations = Citations()
             url_citations = []
-            for citation_url in response.citations:
+            for citation_url in response.citations:  # type: ignore
                 url_citations.append(UrlCitation(url=str(citation_url)))
 
             citations.urls = url_citations
-            citations.raw = response.citations
+            citations.raw = response.citations  # type: ignore
             model_response.citations = citations
 
         return model_response
@@ -99,14 +99,14 @@ class xAI(OpenAILike):
         """
         model_response = super()._parse_provider_response_delta(response_delta)
 
-        if hasattr(response_delta, "citations") and response_delta.citations:
+        if hasattr(response_delta, "citations") and response_delta.citations:  # type: ignore
             citations = Citations()
             url_citations = []
-            for citation_url in response_delta.citations:
+            for citation_url in response_delta.citations:  # type: ignore
                 url_citations.append(UrlCitation(url=str(citation_url)))
 
             citations.urls = url_citations
-            citations.raw = response_delta.citations
+            citations.raw = response_delta.citations  # type: ignore
             model_response.citations = citations
 
         return model_response

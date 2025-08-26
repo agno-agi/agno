@@ -112,7 +112,7 @@ def test_structured_output_json_mode():
 
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=MovieScript,
+        output_schema=MovieScript,
         use_json_mode=True,
         telemetry=False,
     )
@@ -137,7 +137,7 @@ def test_structured_output():
 
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        response_model=MovieScript,
+        output_schema=MovieScript,
         telemetry=False,
     )
 
@@ -179,7 +179,7 @@ def test_cache_read_tokens():
     agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
     # Multiple + one large prompt to ensure token caching is triggered
-    agent.run("Share a 2 sentence horror story")
+    agent.run("Share a 2 sentence horror story" * 250)
     response = agent.run("Share a 2 sentence horror story" * 250)
 
     assert response.metrics is not None

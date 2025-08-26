@@ -1,12 +1,12 @@
 from agno.agent import Agent
 from agno.media import Image
-from agno.models.vercel import v0
+from agno.models.vercel import V0
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 
 def test_image_input():
     agent = Agent(
-        model=v0(id="v0-1.0-md"),
+        model=V0(id="v0-1.0-md"),
         tools=[DuckDuckGoTools(cache_results=True)],
         markdown=True,
         telemetry=False,

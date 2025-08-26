@@ -111,7 +111,7 @@ idea_clarifier_agent = Agent(
     ],
     add_history_to_context=True,
     add_datetime_to_context=True,
-    response_model=IdeaClarification,
+    output_schema=IdeaClarification,
     debug_mode=False,
 )
 
@@ -128,7 +128,7 @@ market_research_agent = Agent(
     ],
     add_history_to_context=True,
     add_datetime_to_context=True,
-    response_model=MarketResearch,
+    output_schema=MarketResearch,
 )
 
 competitor_analysis_agent = Agent(
@@ -144,7 +144,7 @@ competitor_analysis_agent = Agent(
     ],
     add_history_to_context=True,
     add_datetime_to_context=True,
-    response_model=CompetitorAnalysis,
+    output_schema=CompetitorAnalysis,
     debug_mode=False,
 )
 
@@ -160,7 +160,7 @@ report_agent = Agent(
     ],
     add_history_to_context=True,
     add_datetime_to_context=True,
-    response_model=ValidationReport,
+    output_schema=ValidationReport,
     debug_mode=False,
 )
 

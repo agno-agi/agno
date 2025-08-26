@@ -87,7 +87,7 @@ async def test_async_tool_use_stream():
         responses.append(chunk)
 
         # Check for ToolCallStartedEvent or ToolCallCompletedEvent
-        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:  # type: ignore
             if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
 
@@ -108,7 +108,7 @@ def test_tool_use_with_native_structured_outputs():
         model=OpenAIChat(id="gpt-4o-mini"),
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
-        response_model=StockPrice,
+        output_schema=StockPrice,
         telemetry=False,
     )
     response = agent.run("What is the current price of TSLA?")

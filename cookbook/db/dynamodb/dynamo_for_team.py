@@ -7,7 +7,7 @@ Set the following environment variables to connect to your DynamoDb instance:
 
 Or pass those parameters when initializing the DynamoDb instance.
 
-Run `pip install openai duckduckgo-search newspaper4k lxml_html_clean agno` to install the dependencies
+Run `pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
 """
 
 from typing import List
@@ -56,7 +56,7 @@ hn_team = Team(
         "Then, ask the web searcher to search for each story to get more information.",
         "Finally, provide a thoughtful and engaging summary.",
     ],
-    response_model=Article,
+    output_schema=Article,
     markdown=True,
     show_members_responses=True,
 )

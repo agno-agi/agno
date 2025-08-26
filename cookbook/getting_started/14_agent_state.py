@@ -30,8 +30,8 @@ agent = Agent(
     tools=[increment_counter, get_counter],
     # Use variables from the session state in the instructions
     instructions="You can increment and check a counter. Current count is: {count}",
-    # Important: Add the state to the messages so the agent can see state changes
-    add_state_in_messages=True,
+    # Important: Resolve the state in the messages so the agent can see state changes
+    resolve_in_context=True,
     markdown=True,
 )
 

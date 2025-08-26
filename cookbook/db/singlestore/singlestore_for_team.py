@@ -1,5 +1,5 @@
 """
-1. Run: `pip install openai duckduckgo-search newspaper4k lxml_html_clean agno` to install the dependencies
+1. Run: `pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
 2. Run: `python cookbook/storage/singlestore_storage/singlestore_storage_for_team.py` to run the team
 """
 
@@ -61,7 +61,7 @@ hn_team = Team(
         "Then, ask the web searcher to search for each story to get more information.",
         "Finally, provide a thoughtful and engaging summary.",
     ],
-    response_model=Article,
+    output_schema=Article,
     markdown=True,
     show_members_responses=True,
 )

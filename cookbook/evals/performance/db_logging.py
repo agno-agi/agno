@@ -19,7 +19,7 @@ def run_agent():
 
 # Setup the database
 db_url = "postgresql+psycopg://ai:ai@localhost:5432/ai"
-db = PostgresDb(db_url=db_url, eval_table="eval_runs")
+db = PostgresDb(db_url=db_url, eval_table="eval_runs_cookbook")
 
 simple_response_perf = PerformanceEval(
     db=db,  # Pass the database to the evaluation. Results will be stored in the database.

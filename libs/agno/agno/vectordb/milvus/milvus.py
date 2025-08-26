@@ -11,7 +11,7 @@ except ImportError:
 
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
-from agno.reranker.base import Reranker
+from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
@@ -775,7 +775,7 @@ class Milvus(VectorDb):
         sparse_vector = self._get_sparse_vector(query)
 
         if dense_vector is None:
-            logger.error(f"Error getting dense embedding for Query: {query}")
+            log_error(f"Error getting dense embedding for Query: {query}")
             return []
 
         try:

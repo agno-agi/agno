@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
-from agno.run.response import IntermediateRunResponseContentEvent, RunResponseContentEvent
+from agno.run.agent import IntermediateRunContentEvent, RunContentEvent
 
 
 def test_claude_with_openai_output_model():
@@ -10,7 +10,6 @@ def test_claude_with_openai_output_model():
         description="You are an expert on national parks and provide concise guides.",
         output_model=OpenAIChat(id="gpt-4o"),  # Model to parse the output
         telemetry=False,
-        monitoring=False,
     )
 
     response = park_agent.run("Tell me about Yosemite National Park.")
@@ -53,7 +52,6 @@ async def test_openai_with_claude_output_model_async():
         description="You are an expert on national parks and provide concise guides.",
         output_model=Claude(id="claude-sonnet-4-20250514"),  # Model to parse the output
         telemetry=False,
-        monitoring=False,
     )
 
     response = await park_agent.arun("Tell me about Yosemite National Park.")
@@ -83,10 +81,10 @@ def test_claude_with_openai_output_model_stream():
     run_response: bool = False
 
     for event in response:
-        if isinstance(event, IntermediateRunResponseContentEvent):
+        if isinstance(event, IntermediateRunContentEvent):
             assert isinstance(event.content, str)
             intermediate_run_response = True
-        elif isinstance(event, RunResponseContentEvent):
+        elif isinstance(event, RunContentEvent):
             assert isinstance(event.content, str)
             run_response = True
 
@@ -111,7 +109,6 @@ async def test_openai_with_claude_output_model_stream_async():
         output_model=Claude(id="claude-sonnet-4-20250514"),  # Model to parse the output
         stream_intermediate_steps=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = await agent.arun("Tell me about Yosemite National Park.", stream=True)
@@ -119,10 +116,10 @@ async def test_openai_with_claude_output_model_stream_async():
     run_response: bool = False
 
     async for event in response:
-        if isinstance(event, IntermediateRunResponseContentEvent):
+        if isinstance(event, IntermediateRunContentEvent):
             assert isinstance(event.content, str)
             intermediate_run_response = True
-        elif isinstance(event, RunResponseContentEvent):
+        elif isinstance(event, RunContentEvent):
             assert isinstance(event.content, str)
             run_response = True
 

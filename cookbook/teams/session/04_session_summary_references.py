@@ -36,6 +36,7 @@ team = Team(
     db=db,
     session_id="session_summary",
     add_session_summary_to_context=True,
+    members=[agent],
 )
 
 team.print_response("I also like to play basketball.")

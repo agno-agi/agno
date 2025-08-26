@@ -15,7 +15,7 @@ from agno.models.base import Model
 from agno.models.message import Citations, Message, UrlCitation
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
-from agno.run.response import RunOutput
+from agno.run.agent import RunOutput
 from agno.utils.gemini import convert_schema, format_function_definitions, format_image_for_message
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.models.schema_utils import get_response_schema_for_provider
@@ -33,9 +33,11 @@ try:
         GoogleSearch,
         GoogleSearchRetrieval,
         Part,
+        Retrieval,
         ThinkingConfig,
         Tool,
         UrlContext,
+        VertexAISearch,
     )
     from google.genai.types import (
         File as GeminiFile,
@@ -73,6 +75,8 @@ class Gemini(Model):
     grounding: bool = False
     grounding_dynamic_threshold: Optional[float] = None
     url_context: bool = False
+    vertexai_search: bool = False
+    vertexai_search_datastore: Optional[str] = None
 
     temperature: Optional[float] = None
     top_p: Optional[float] = None
@@ -227,6 +231,15 @@ class Gemini(Model):
         if self.url_context:
             log_info("URL context enabled.")
             builtin_tools.append(Tool(url_context=UrlContext()))
+
+        if self.vertexai_search:
+            log_info("Vertex AI Search enabled.")
+            if not self.vertexai_search_datastore:
+                log_error("vertexai_search_datastore must be provided when vertexai_search is enabled.")
+                raise ValueError("vertexai_search_datastore must be provided when vertexai_search is enabled.")
+            builtin_tools.append(
+                Tool(retrieval=Retrieval(vertex_ai_search=VertexAISearch(datastore=self.vertexai_search_datastore)))
+            )
 
         # Set tools in config
         if builtin_tools:

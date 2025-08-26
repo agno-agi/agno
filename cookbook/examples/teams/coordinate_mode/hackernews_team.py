@@ -1,6 +1,6 @@
 """Example of a Team using the `coordinate` mode to play the role of a HackerNews Researcher.
 
-1. Run: `pip install openai duckduckgo-search newspaper4k lxml_html_clean agno` to install the dependencies
+1. Run: `pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
 2. Run: `python cookbook/examples/teams/coordinate_mode/hackernews_team.py` to run the agent
 """
 
@@ -55,7 +55,7 @@ hn_team = Team(
         "Then, ask the web searcher to search for each story to get more information.",
         "Finally, provide a thoughtful and engaging summary.",
     ],
-    response_model=Article,
+    output_schema=Article,
     enable_agentic_context=True,
     share_member_interactions=True,
     markdown=True,

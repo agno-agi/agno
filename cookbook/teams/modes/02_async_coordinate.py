@@ -1,5 +1,5 @@
 """
-1. Run: `pip install openai duckduckgo-search newspaper4k lxml_html_clean agno` to install the dependencies
+1. Run: `pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
 2. Run: `python cookbook/teams/async/modes/02_async_coordinate.py` to run the agent
 
 This example demonstrates a coordinated team of AI agents working together to research topics across different platforms.
@@ -25,6 +25,7 @@ from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.newspaper4k import Newspaper4kTools
+from agno.utils.print_response.team import aprint_response
 from pydantic import BaseModel, Field
 
 
@@ -70,7 +71,7 @@ hn_team = Team(
         "Then, ask the web searcher to search for each story to get more information.",
         "Finally, provide a thoughtful and engaging summary.",
     ],
-    response_model=Article,
+    output_schema=Article,
     add_member_tools_to_system_message=False,
     markdown=True,
     show_members_responses=True,
@@ -80,8 +81,8 @@ hn_team = Team(
 
 async def main():
     """Main async function demonstrating coordinated team mode."""
-    await hn_team.aprint_response(
-        "Write an article about the top 2 stories on hackernews", stream=True
+    await aprint_response(
+        input="Write an article about the top 2 stories on hackernews", team=hn_team
     )
 
 

@@ -13,19 +13,19 @@ agent = Agent(
     add_history_to_context=True,
     markdown=True,
 )
-agent.print_response("Tell me a 5 second scary story")
+run_output: RunOutput = agent.run("Tell me a 5 second scary story")
 
 # Save the response audio to a file
-if agent.run_response and agent.run_response.response_audio:
+if run_output.response_audio:
     write_audio_to_file(
-        audio=agent.run_response.response_audio.content, filename="tmp/scary_story.wav"
+        audio=run_output.response_audio.content, filename="tmp/scary_story.wav"
     )
 
-agent.print_response("What would be in a sequal of this story?")
+run_output: RunOutput = agent.run("What would be in a sequal of this story?")
 
 # Save the response audio to a file
-if agent.run_response and agent.run_response.response_audio:
+if run_output.response_audio:
     write_audio_to_file(
-        audio=agent.run_response.response_audio.content,
+        audio=run_output.response_audio.content,
         filename="tmp/scary_story_sequal.wav",
     )

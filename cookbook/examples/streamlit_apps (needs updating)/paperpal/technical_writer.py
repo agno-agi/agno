@@ -71,7 +71,7 @@ Focus on terms that are:
 
 Provide the search terms as a list of strings like ["xyz", "abc", ...]
 """,
-    response_model=SearchTerms,
+    output_schema=SearchTerms,
 )
 
 arxiv_search_agent = Agent(
@@ -98,7 +98,7 @@ For each selected paper, the output should be in json structure have these detai
 Ensure the selected research papers directly address the topic and offer valuable insights.
 """,
     tools=[arxiv_toolkit],
-    response_model=ArxivSearchResults,
+    output_schema=ArxivSearchResults,
 )
 
 exa_search_agent = Agent(
@@ -121,7 +121,7 @@ For each selected article, the output should have:
 Ensure the selected articles are credible, relevant, and provide significant insights into the topic.
 """,
     tools=[ExaTools()],
-    response_model=WebSearchResults,
+    output_schema=WebSearchResults,
 )
 
 research_editor = Agent(

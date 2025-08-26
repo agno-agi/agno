@@ -4,7 +4,6 @@ This example demonstrates how to use the Exa research tool for complex,
 structured research tasks with automatic citation tracking.
 """
 
-import json
 from textwrap import dedent
 
 from agno.agent import Agent

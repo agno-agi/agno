@@ -63,7 +63,7 @@ agent = Agent(
     tools=[YFinanceTools()],
     instructions="You are a stock price agent. You check and return the current price of a stock.",
     debug_mode=True,
-    response_model=StockPrice,
+    output_schema=StockPrice,
 )
 
 agent.print_response("What is the current price of Tesla?")

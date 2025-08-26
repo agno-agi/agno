@@ -16,8 +16,6 @@ agent = Agent(
     tools=[add_item],
     # You can use variables from the session state in the instructions
     instructions="Current state (shopping list) is: {shopping_list}",
-    # Important: Add the state to the messages
-    add_state_in_messages=True,
     markdown=True,
 )
 

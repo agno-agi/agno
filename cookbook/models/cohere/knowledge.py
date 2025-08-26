@@ -1,4 +1,4 @@
-"""Run `pip install duckduckgo-search sqlalchemy pgvector pypdf openai cohere` to install dependencies."""
+"""Run `pip install ddgs sqlalchemy pgvector pypdf openai cohere` to install dependencies."""
 
 from agno.agent import Agent
 from agno.knowledge.knowledge import Knowledge
@@ -11,7 +11,7 @@ knowledge = Knowledge(
     vector_db=PgVector(table_name="recipes", db_url=db_url),
 )
 # Add content to the knowledge
-knowledge.add_content(
+knowledge.add_content_sync(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
 )
 

@@ -1,6 +1,6 @@
 """Use SingleStore as the database for an agent.
 
-Run `pip install duckduckgo-search sqlalchemy openai` to install dependencies."""
+Run `pip install ddgs sqlalchemy openai` to install dependencies."""
 
 from os import getenv
 
