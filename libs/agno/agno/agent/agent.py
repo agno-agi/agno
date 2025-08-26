@@ -44,10 +44,12 @@ from agno.run.agent import (
 )
 from agno.run.base import RunStatus
 from agno.run.cancel import (
+    cancel_run as cancel_run_global,
+)
+from agno.run.cancel import (
     check_cancellation,
     cleanup_run,
     register_run,
-    cancel_run as cancel_run_global,
 )
 from agno.run.messages import RunMessages
 from agno.run.team import TeamRunOutputEvent
@@ -726,13 +728,13 @@ class Agent:
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
         # Register run for cancellation tracking
-        register_run(run_response.run_id)
+        register_run(run_response.run_id)  # type: ignore
 
         # 1. Reason about the task
         self._handle_reasoning(run_response=run_response, run_messages=run_messages)
 
         # Check for cancellation before model call
-        check_cancellation(run_response.run_id)
+        check_cancellation(run_response.run_id)  # type: ignore
 
         # 2. Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
@@ -747,7 +749,7 @@ class Agent:
         )
 
         # Check for cancellation after model call
-        check_cancellation(run_response.run_id)
+        check_cancellation(run_response.run_id)  # type: ignore
 
         # If an output model is provided, generate output using the output model
         self._generate_response_with_output_model(model_response, run_messages)
@@ -800,7 +802,7 @@ class Agent:
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
         # Always clean up the run tracking
-        cleanup_run(run_response.run_id)
+        cleanup_run(run_response.run_id)  # type: ignore
 
         return run_response
 
@@ -829,7 +831,7 @@ class Agent:
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
         # Register run for cancellation tracking
-        register_run(run_response.run_id)
+        register_run(run_response.run_id)  # type: ignore
 
         try:
             # Start the Run by yielding a RunStarted event
@@ -840,7 +842,7 @@ class Agent:
             yield from self._handle_reasoning_stream(run_response=run_response, run_messages=run_messages)
 
             # Check for cancellation before model processing
-            check_cancellation(run_response.run_id)
+            check_cancellation(run_response.run_id)  # type: ignore
 
             # 2. Process model response
             if self.output_model is None:
@@ -852,7 +854,7 @@ class Agent:
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_context=workflow_context,
                 ):
-                    check_cancellation(run_response.run_id)
+                    check_cancellation(run_response.run_id)  # type: ignore
                     yield event
             else:
                 from agno.run.agent import (
@@ -868,7 +870,7 @@ class Agent:
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_context=workflow_context,
                 ):
-                    check_cancellation(run_response.run_id)
+                    check_cancellation(run_response.run_id)  # type: ignore
                     if isinstance(event, RunContentEvent):
                         if stream_intermediate_steps:
                             yield IntermediateRunContentEvent(
@@ -886,11 +888,11 @@ class Agent:
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_context=workflow_context,
                 ):
-                    check_cancellation(run_response.run_id)
+                    check_cancellation(run_response.run_id)  # type: ignore
                     yield event
 
             # Check for cancellation after model processing
-            check_cancellation(run_response.run_id)
+            check_cancellation(run_response.run_id)  # type: ignore
 
             # If a parser model is provided, structure the response separately
             yield from self._parse_response_with_parser_model_stream(
@@ -924,7 +926,10 @@ class Agent:
 
             # 5. Optional: Save output to file if save_response_to_file is set
             self.save_run_response_to_file(
-                run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
+                run_response=run_response,
+                input=run_messages.user_message,
+                session_id=session.session_id,
+                user_id=user_id,
             )
 
             # 6. Add RunOutput to Agent Session
@@ -949,22 +954,16 @@ class Agent:
             log_info(f"Run {run_response.run_id} was cancelled during streaming")
             run_response.status = RunStatus.cancelled
             run_response.content = str(e)
-            cancelled_event = create_run_cancelled_event(run_id=run_response.run_id)
-            run_response.add_event(cancelled_event)
-            
+
             # Yield the cancellation event
-            if stream_intermediate_steps:
-                yield self._handle_event(cancelled_event, run_response, workflow_context)
-            else:
-                # For non-intermediate streaming, yield a final cancelled response
-                yield run_response
-            
+            yield self._handle_event(create_run_cancelled_event(from_run_response=run_response, reason=str(e)), run_response, workflow_context)
+
             # Add the RunOutput to Agent Session even when cancelled
             session.upsert_run(run=run_response)
             self.save_session(session=session)
         finally:
             # Always clean up the run tracking
-            cleanup_run(run_response.run_id)
+            cleanup_run(run_response.run_id)  # type: ignore
 
     @overload
     def run(
@@ -1170,18 +1169,12 @@ class Agent:
                 log_info(f"Run {run_response.run_id} was cancelled")
                 run_response.content = str(e)
                 run_response.status = RunStatus.cancelled
-                run_response.add_event(create_run_cancelled_event(run_response=run_response, reason=str(e)))
-                
+
                 # Add the RunOutput to Agent Session even when cancelled
                 agent_session.upsert_run(run=run_response)
                 self.save_session(session=agent_session)
-                
-                if stream:
-                    return generator_wrapper(  # type: ignore
-                        create_run_cancelled_event(run_response=run_response, reason=str(e))
-                    )
-                else:
-                    return run_response
+
+                return run_response
             except KeyboardInterrupt:
                 run_response.content = "Operation cancelled by user"
                 run_response.status = RunStatus.cancelled
@@ -1348,11 +1341,11 @@ class Agent:
 
             # 1. Reason about the task if reasoning is enabled
             async for item in self._ahandle_reasoning_stream(run_response=run_response, run_messages=run_messages):
-                check_cancellation(run_response.run_id)
+                check_cancellation(run_response.run_id)  # type: ignore
                 yield item
 
             # Check for cancellation before model processing
-            check_cancellation(run_response.run_id)
+            check_cancellation(run_response.run_id)  # type: ignore
 
             # 2. Generate a response from the Model
             if self.output_model is None:
@@ -1364,7 +1357,7 @@ class Agent:
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_context=workflow_context,
                 ):
-                    check_cancellation(run_response.run_id)
+                    check_cancellation(run_response.run_id)  # type: ignore
                     yield event
             else:
                 from agno.run.agent import (
@@ -1380,7 +1373,7 @@ class Agent:
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_context=workflow_context,
                 ):
-                    check_cancellation(run_response.run_id)
+                    check_cancellation(run_response.run_id)  # type: ignore
                     if isinstance(event, RunContentEvent):
                         if stream_intermediate_steps:
                             yield IntermediateRunContentEvent(
@@ -1398,11 +1391,11 @@ class Agent:
                     workflow_context=workflow_context,
                     stream_intermediate_steps=stream_intermediate_steps,
                 ):
-                    check_cancellation(run_response.run_id)
+                    check_cancellation(run_response.run_id)  # type: ignore
                     yield event
 
             # Check for cancellation after model processing
-            check_cancellation(run_response.run_id)
+            check_cancellation(run_response.run_id)  # type: ignore
 
             # If a parser model is provided, structure the response separately
             async for event in self._aparse_response_with_parser_model_stream(
@@ -1439,7 +1432,10 @@ class Agent:
 
             # 8. Optional: Save output to file if save_response_to_file is set
             self.save_run_response_to_file(
-                run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
+                run_response=run_response,
+                input=run_messages.user_message,
+                session_id=session.session_id,
+                user_id=user_id,
             )
 
             # 6. Add RunOutput to Agent Session
@@ -1464,22 +1460,16 @@ class Agent:
             log_info(f"Run {run_response.run_id} was cancelled during async streaming")
             run_response.status = RunStatus.cancelled
             run_response.content = str(e)
-            cancelled_event = create_run_cancelled_event(run_response=run_response, reason=str(e))
-            run_response.add_event(cancelled_event)
-            
+
             # Yield the cancellation event
-            if stream_intermediate_steps:
-                yield self._handle_event(cancelled_event, run_response, workflow_context)
-            else:
-                # For non-intermediate streaming, yield a final cancelled response
-                yield run_response
-            
+            yield self._handle_event(create_run_cancelled_event(from_run_response=run_response, reason=str(e)), run_response, workflow_context)
+
             # Add the RunOutput to Agent Session even when cancelled
             session.upsert_run(run=run_response)
             self.save_session(session=session)
         finally:
             # Always clean up the run tracking
-            cleanup_run(run_response.run_id)
+            cleanup_run(run_response.run_id)  # type: ignore
 
     @overload
     async def arun(
@@ -1679,18 +1669,12 @@ class Agent:
                 log_info(f"Run {run_response.run_id} was cancelled")
                 run_response.content = str(e)
                 run_response.status = RunStatus.cancelled
-                run_response.add_event(create_run_cancelled_event(run_response=run_response, reason=str(e)))
-                
+
                 # Add the RunOutput to Agent Session even when cancelled
                 agent_session.upsert_run(run=run_response)
                 self.save_session(session=agent_session)
-                
-                if stream:
-                    return async_generator_wrapper(  # type: ignore
-                        create_run_cancelled_event(run_response=run_response, reason=str(e))
-                    )
-                else:
-                    return run_response
+
+                return run_response
             except KeyboardInterrupt:
                 run_response.content = "Operation cancelled by user"
                 run_response.status = RunStatus.cancelled
@@ -3943,10 +3927,10 @@ class Agent:
 
     def cancel_run(self, run_id: str) -> bool:
         """Cancel a running agent execution.
-        
+
         Args:
             run_id (str): The run_id to cancel.
-            
+
         Returns:
             bool: True if the run was found and marked for cancellation, False otherwise.
         """

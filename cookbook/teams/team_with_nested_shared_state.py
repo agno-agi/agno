@@ -17,11 +17,12 @@ Team Hierarchy & Roles:
 """
 
 from agno.agent.agent import Agent
-from agno.models.openai.chat import OpenAIChat
 from agno.db.sqlite import SqliteDb
+from agno.models.openai.chat import OpenAIChat
 from agno.team import Team
 
 db = SqliteDb(db_file="tmp/example.db")
+
 
 # Define tools to manage our shopping list
 def add_item(session_state, item: str) -> str:
@@ -31,9 +32,7 @@ def add_item(session_state, item: str) -> str:
         item (str): The item to add to the shopping list.
     """
     # Add the item if it's not already in the list
-    if item.lower() not in [
-        i.lower() for i in session_state["shopping_list"]
-    ]:
+    if item.lower() not in [i.lower() for i in session_state["shopping_list"]]:
         session_state["shopping_list"].append(item)
         return f"Added '{item}' to the shopping list"
     else:

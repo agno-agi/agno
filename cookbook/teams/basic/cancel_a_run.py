@@ -1,8 +1,8 @@
 """
-Example demonstrating how to cancel a running agent execution.
+Example demonstrating how to cancel a running team execution.
 
 This example shows how to:
-1. Start an agent run in a separate thread
+1. Start a team run in a separate thread
 2. Cancel the run from another thread
 3. Handle the cancelled response
 """
@@ -13,39 +13,53 @@ import time
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.run.agent import RunEvent
+from agno.run.team import TeamRunEvent
 from agno.run.base import RunStatus
+from agno.team import Team
 
 
-def long_running_task(agent: Agent, run_id_container: dict):
+def long_running_task(team: Team, run_id_container: dict):
     """
-    Simulate a long-running agent task that can be cancelled.
+    Simulate a long-running team task that can be cancelled.
 
     Args:
-        agent: The agent to run
+        team: The team to run
         run_id_container: Dictionary to store the run_id for cancellation
 
     Returns:
         Dictionary with run results and status
     """
     try:
-        # Start the agent run - this simulates a long task
+        # Start the team run - this simulates a long task
         final_response = None
         content_pieces = []
 
-        for chunk in agent.run(
+        for chunk in team.run(
             "Write a very long story about a dragon who learns to code. "
             "Make it at least 2000 words with detailed descriptions and dialogue. "
             "Take your time and be very thorough.",
             stream=True,
         ):
             if "run_id" not in run_id_container and chunk.run_id:
+                print(f"🚀 Team run started: {chunk.run_id}")
                 run_id_container["run_id"] = chunk.run_id
-
-            if chunk.event == RunEvent.run_content:
+                
+            if chunk.event in [TeamRunEvent.run_content, RunEvent.run_content]:
                 print(chunk.content, end="", flush=True)
                 content_pieces.append(chunk.content)
             elif chunk.event == RunEvent.run_cancelled:
-                print(f"\n🚫 Run was cancelled: {chunk.run_id}")
+                print(f"\n🚫 Member run was cancelled: {chunk.run_id}")
+                run_id_container["result"] = {
+                    "status": "cancelled",
+                    "run_id": chunk.run_id,
+                    "cancelled": True,
+                    "content": "".join(content_pieces)[:200] + "..."
+                    if content_pieces
+                    else "No content before cancellation",
+                }
+                return
+            elif chunk.event == TeamRunEvent.run_cancelled:
+                print(f"\n🚫 Team run was cancelled: {chunk.run_id}")
                 run_id_container["result"] = {
                     "status": "cancelled",
                     "run_id": chunk.run_id,
@@ -91,70 +105,85 @@ def long_running_task(agent: Agent, run_id_container: dict):
         }
 
 
-def cancel_after_delay(agent: Agent, run_id_container: dict, delay_seconds: int = 3):
+def cancel_after_delay(team: Team, run_id_container: dict, delay_seconds: int = 3):
     """
-    Cancel the agent run after a specified delay.
+    Cancel the team run after a specified delay.
 
     Args:
-        agent: The agent whose run should be cancelled
+        team: The team whose run should be cancelled
         run_id_container: Dictionary containing the run_id to cancel
         delay_seconds: How long to wait before cancelling
     """
-    print(f"⏰ Will cancel run in {delay_seconds} seconds...")
+    print(f"⏰ Will cancel team run in {delay_seconds} seconds...")
     time.sleep(delay_seconds)
-
+    
     run_id = run_id_container.get("run_id")
     if run_id:
-        print(f"🚫 Cancelling run: {run_id}")
-        success = agent.cancel_run(run_id)
+        print(f"🚫 Cancelling team run: {run_id}")
+        success = team.cancel_run(run_id)
         if success:
-            print(f"✅ Run {run_id} marked for cancellation")
+            print(f"✅ Team run {run_id} marked for cancellation")
         else:
             print(
-                f"❌ Failed to cancel run {run_id} (may not exist or already completed)"
+                f"❌ Failed to cancel team run {run_id} (may not exist or already completed)"
             )
     else:
         print("⚠️  No run_id found to cancel")
 
 
 def main():
-    """Main function demonstrating run cancellation."""
+    """Main function demonstrating team run cancellation."""
 
-    # Initialize the agent with a model
-    agent = Agent(
+    # Create team members
+    storyteller_agent = Agent(
         name="StorytellerAgent",
-        model=OpenAIChat(id="o3-mini"),  # Use a model that can generate long responses
-        description="An agent that writes detailed stories",
+        model=OpenAIChat(id="o3-mini"),
+        description="An agent that writes creative stories",
+    )
+    
+    editor_agent = Agent(
+        name="EditorAgent", 
+        model=OpenAIChat(id="o3-mini"),
+        description="An agent that reviews and improves stories",
     )
 
-    print("🚀 Starting agent run cancellation example...")
+    # Initialize the team with agents
+    team = Team(
+        name="Storytelling Team",
+        members=[storyteller_agent, editor_agent],
+        model=OpenAIChat(id="o3-mini"),  # Team leader model
+        description="A team that collaborates to write detailed stories",
+        mode="coordinate",  # Team members collaborate on the task
+    )
+
+    print("🚀 Starting team run cancellation example...")
     print("=" * 50)
 
     # Container to share run_id between threads
     run_id_container = {}
 
-    # Start the agent run in a separate thread
-    agent_thread = threading.Thread(
-        target=lambda: long_running_task(agent, run_id_container), name="AgentRunThread"
+    # Start the team run in a separate thread
+    team_thread = threading.Thread(
+        target=lambda: long_running_task(team, run_id_container), name="TeamRunThread"
     )
 
     # Start the cancellation thread
     cancel_thread = threading.Thread(
         target=cancel_after_delay,
-        args=(agent, run_id_container, 8),  # Cancel after 5 seconds
+        args=(team, run_id_container, 8),  # Cancel after 8 seconds
         name="CancelThread",
     )
 
     # Start both threads
-    print("🏃 Starting agent run thread...")
-    agent_thread.start()
+    print("🏃 Starting team run thread...")
+    team_thread.start()
 
     print("🏃 Starting cancellation thread...")
     cancel_thread.start()
 
     # Wait for both threads to complete
     print("⌛ Waiting for threads to complete...")
-    agent_thread.join()
+    team_thread.join()
     cancel_thread.join()
 
     # Print the results
@@ -174,13 +203,13 @@ def main():
             print(f"Content Preview: {result['content']}")
 
         if result["cancelled"]:
-            print("\n✅ SUCCESS: Run was successfully cancelled!")
+            print("\n✅ SUCCESS: Team run was successfully cancelled!")
         else:
-            print("\n⚠️  WARNING: Run completed before cancellation")
+            print("\n⚠️  WARNING: Team run completed before cancellation")
     else:
         print("❌ No result obtained - check if cancellation happened during streaming")
 
-    print("\n🏁 Example completed!")
+    print("\n🏁 Team cancellation example completed!")
 
 
 if __name__ == "__main__":
