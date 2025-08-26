@@ -31,6 +31,7 @@ def about_section():
     - 💫 Streamlit
     """)
 
+
 MODELS = [
     "gpt-4o",
     "o3-mini",

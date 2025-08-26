@@ -15,7 +15,7 @@ from streamlit_utils import (
     reset_session_state,
     session_selector_widget,
 )
-from utils import about_section, MODELS
+from utils import MODELS, about_section
 
 nest_asyncio.apply()
 st.set_page_config(
@@ -27,6 +27,7 @@ st.set_page_config(
 
 # Add custom CSS
 st.markdown(COMMON_CSS, unsafe_allow_html=True)
+
 
 def restart_agent(model_id: str = None):
     target_model = model_id or st.session_state.get("current_model", MODELS[0])

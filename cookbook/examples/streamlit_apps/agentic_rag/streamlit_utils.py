@@ -7,6 +7,7 @@ from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.utils.log import logger
 
+
 def add_message(
     role: str, content: str, tool_calls: Optional[List[Dict[str, Any]]] = None
 ) -> None:
@@ -19,6 +20,7 @@ def add_message(
         message["tool_calls"] = tool_calls
 
     st.session_state["messages"].append(message)
+
 
 def display_tool_calls(container, tools: List[Any]):
     """Display tool calls in expandable sections."""
@@ -43,8 +45,6 @@ def display_tool_calls(container, tools: List[Any]):
                 if result:
                     st.markdown("**Result:**")
                     st.json(result)
-
-
 
 
 def session_selector_widget(
@@ -389,6 +389,7 @@ def knowledge_base_info_widget(agent: Agent) -> None:
         logger.error(f"Error getting knowledge base info: {e}")
         st.sidebar.warning("Could not retrieve knowledge base information")
 
+
 def export_chat_history(app_name: str = "Chat") -> str:
     """Export chat history to markdown."""
     if "messages" not in st.session_state or not st.session_state["messages"]:
@@ -416,6 +417,7 @@ def export_chat_history(app_name: str = "Chat") -> str:
         role_display = "## 🙋 User" if role == "user" else "## 🤖 Assistant"
         chat_text += f"{role_display}\n\n{content}\n\n---\n\n"
     return chat_text
+
 
 COMMON_CSS = """
     <style>

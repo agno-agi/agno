@@ -28,6 +28,7 @@ The agent uses:
 View the README for instructions on how to run the application.
 """
 
+from textwrap import dedent
 from typing import Optional
 
 from agno.agent import Agent
@@ -37,7 +38,7 @@ from agno.knowledge.knowledge import Knowledge
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.vectordb.pgvector import PgVector
 from utils import get_model_from_id
-from textwrap import dedent
+
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 
@@ -110,7 +111,7 @@ def get_agentic_rag_agent(
                - If no relevant information is found, clearly state this
                - Suggest alternative approaches or questions
                - Be transparent about limitations in available information
-        """),   
+        """),
         markdown=True,
         debug_mode=True,
     )
