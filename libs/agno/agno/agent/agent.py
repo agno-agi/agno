@@ -354,6 +354,7 @@ class Agent:
         agent_id: Optional[str] = None,
         introduction: Optional[str] = None,
         user_id: Optional[str] = None,
+        app_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -446,6 +447,7 @@ class Agent:
         self.agent_id = agent_id
         self.introduction = introduction
         self.user_id = user_id
+        self.app_id = app_id
 
         self.session_id = session_id
         self.session_name = session_name
@@ -5919,6 +5921,9 @@ class Agent:
                 telemetry=self.telemetry,
                 debug_mode=self.debug_mode,
                 debug_level=self.debug_level,
+                session_state=self.session_state,
+                context=self.context,
+                extra_data=self.extra_data,
             )
             is_deepseek = is_deepseek_reasoning_model(reasoning_model)
             is_groq = is_groq_reasoning_model(reasoning_model)
@@ -6008,6 +6013,9 @@ class Agent:
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
                     debug_level=self.debug_level,
+                    session_state=self.session_state,
+                    context=self.context,
+                    extra_data=self.extra_data,
                 )
 
             # Validate reasoning agent
@@ -6142,6 +6150,9 @@ class Agent:
                 telemetry=self.telemetry,
                 debug_mode=self.debug_mode,
                 debug_level=self.debug_level,
+                session_state=self.session_state,
+                context=self.context,
+                extra_data=self.extra_data,
             )
             is_deepseek = is_deepseek_reasoning_model(reasoning_model)
             is_groq = is_groq_reasoning_model(reasoning_model)
@@ -6231,6 +6242,9 @@ class Agent:
                     telemetry=self.telemetry,
                     debug_mode=self.debug_mode,
                     debug_level=self.debug_level,
+                    session_state=self.session_state,
+                    context=self.context,
+                    extra_data=self.extra_data,
                 )
 
             # Validate reasoning agent
@@ -7534,6 +7548,7 @@ class Agent:
                         if citation.url  # Only include citations with valid URLs
                     )
                     if md_content:  # Only create panel if there are citations
+                        md_content = md_content.strip()
                         citations_panel = create_panel(
                             content=Markdown(md_content),
                             title="Citations",

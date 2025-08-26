@@ -1,6 +1,6 @@
 agno
 anthropic
-duckduckgo-search
+ddgs
 fastapi[standard]
 openai
 pgvector

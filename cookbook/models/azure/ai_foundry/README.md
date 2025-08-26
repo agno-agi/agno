@@ -26,7 +26,7 @@ You can get the endpoint from the Azure AI Foundry portal. Click on the deployed
 ### 3. Install libraries
 
 ```shell
-pip install -U openai duckduckgo-search duckdb yfinance agno
+pip install -U openai ddgs duckdb yfinance agno
 ```
 
 ### 4. Run basic Agent
