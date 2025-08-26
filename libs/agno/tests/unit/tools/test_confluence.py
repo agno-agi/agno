@@ -40,18 +40,21 @@ def confluence_tools(mock_confluence):
 # Initialization Tests
 def test_init_with_environment_variables():
     """Test initialization with environment variables."""
-    with patch.dict(
-        "os.environ",
-        {
-            "CONFLUENCE_URL": "https://example.atlassian.net",
-            "CONFLUENCE_USERNAME": "test_user",
-            "CONFLUENCE_API_KEY": "test_api_key",
-        },
-    ), patch("agno.tools.confluence.Confluence") as mock_confluence_class:
+    with (
+        patch.dict(
+            "os.environ",
+            {
+                "CONFLUENCE_URL": "https://example.atlassian.net",
+                "CONFLUENCE_USERNAME": "test_user",
+                "CONFLUENCE_API_KEY": "test_api_key",
+            },
+        ),
+        patch("agno.tools.confluence.Confluence") as mock_confluence_class,
+    ):
         mock_client = MagicMock(spec=Confluence)
         mock_client.get_all_spaces.return_value = {"results": []}
         mock_confluence_class.return_value = mock_client
-        
+
         tools = ConfluenceTools()
         assert tools.url == "https://example.atlassian.net"
         assert tools.username == "test_user"

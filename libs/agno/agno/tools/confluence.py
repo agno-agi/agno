@@ -1,7 +1,8 @@
 import json
 from os import getenv
-import requests
 from typing import Any, List, Optional
+
+import requests
 
 from agno.tools import Toolkit
 from agno.utils.log import log_info, logger
@@ -55,10 +56,10 @@ class ConfluenceTools(Toolkit):
 
         if not self.password:
             raise ValueError("Confluence API KEY or password not provided")
-        
+
         session = requests.Session()
         session.verify = verify_ssl
-                
+
         if not verify_ssl:
             import urllib3
 
@@ -98,7 +99,7 @@ class ConfluenceTools(Toolkit):
             key = self.get_space_key(space_name=space_name)
             if key == "No space found":
                 return json.dumps({"error": f"Space '{space_name}' not found"})
-            
+
             page = self.confluence.get_page_by_title(key, page_title, expand=expand)
             if page:
                 log_info(f"Successfully retrieved page '{page_title}' from space '{space_name}'")
@@ -121,13 +122,13 @@ class ConfluenceTools(Toolkit):
         results = []
         start = 0
         limit = 50
-        
+
         while True:
             spaces_data = self.confluence.get_all_spaces(start=start, limit=limit)
             if not spaces_data.get("results"):
                 break
             results.extend(spaces_data["results"])
-            
+
             if len(spaces_data["results"]) < limit:
                 break
             start += limit
@@ -150,19 +151,19 @@ class ConfluenceTools(Toolkit):
             result = self.confluence.get_all_spaces(start=start, limit=limit)
             if not result.get("results"):
                 break
-                
+
             spaces = result["results"]
-            
+
             for space in spaces:
                 if space["name"].lower() == space_name.lower():
                     log_info(f"Found space key for '{space_name}': {space['key']}")
                     return space["key"]
-        
+
             for space in spaces:
                 if space["key"] == space_name:
                     log_info(f"'{space_name}' is already a space key")
                     return space_name
-            
+
             if len(spaces) < limit:
                 break
             start += limit
@@ -184,14 +185,14 @@ class ConfluenceTools(Toolkit):
 
         if space_key == "No space found":
             return json.dumps({"error": f"Space '{space_name}' not found"})
-        
+
         page_details = self.confluence.get_all_pages_from_space(
             space_key, status=None, expand=None, content_type="page"
         )
 
         if not page_details:
             return json.dumps({"error": f"No pages found in space '{space_name}'"})
-            
+
         page_details = str([{"id": page["id"], "title": page["title"]} for page in page_details])
         return page_details
 
@@ -211,7 +212,7 @@ class ConfluenceTools(Toolkit):
             space_key = self.get_space_key(space_name=space_name)
             if space_key == "No space found":
                 return json.dumps({"error": f"Space '{space_name}' not found"})
-            
+
             page = self.confluence.create_page(space_key, title, body, parent_id=parent_id)
             log_info(f"Page created: {title} with ID {page['id']}")
             return json.dumps({"id": page["id"], "title": title})
