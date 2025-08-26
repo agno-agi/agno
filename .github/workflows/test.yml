@@ -11,6 +11,7 @@ on:
       - reopened
     branches:
       - "main"
+      - "v2.0"
 
 jobs:
   style-check:
