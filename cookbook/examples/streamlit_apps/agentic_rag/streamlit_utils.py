@@ -7,24 +7,10 @@ from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.utils.log import logger
 
-
-def get_session_name_from_db(agent, session_id: str) -> str:
-    """Get session name from database session_data."""
-    try:
-        db_session = agent.db.get_session(
-            session_id=session_id, session_type=SessionType.AGENT
-        )
-        if db_session and db_session.session_data:
-            return db_session.session_data.get("session_name")
-        return None
-    except Exception as e:
-        logger.debug(f"Error getting session name from DB: {e}")
-        return None
-
-
 def add_message(
     role: str, content: str, tool_calls: Optional[List[Dict[str, Any]]] = None
 ) -> None:
+    """Add a message to the session state."""
     if "messages" not in st.session_state:
         st.session_state["messages"] = []
 
@@ -33,7 +19,6 @@ def add_message(
         message["tool_calls"] = tool_calls
 
     st.session_state["messages"].append(message)
-
 
 def display_tool_calls(container, tools: List[Any]):
     """Display tool calls in expandable sections."""
@@ -60,48 +45,12 @@ def display_tool_calls(container, tools: List[Any]):
                     st.json(result)
 
 
-def export_chat_history(app_name: str = "Chat") -> str:
-    if "messages" not in st.session_state or not st.session_state["messages"]:
-        return "# Chat History\n\n*No messages to export*"
-
-    title = "Chat History"
-    for msg in st.session_state["messages"]:
-        if msg.get("role") == "user" and msg.get("content"):
-            title = msg["content"][:100]
-            if len(msg["content"]) > 100:
-                title += "..."
-            break
-
-    chat_text = f"# {title}\n\n"
-    chat_text += f"**Exported:** {datetime.now().strftime('%B %d, %Y at %I:%M %p')}\n\n"
-    chat_text += "---\n\n"
-
-    for msg in st.session_state["messages"]:
-        role = msg.get("role", "")
-        content = msg.get("content", "")
-
-        if not content or str(content).strip().lower() == "none":
-            continue
-
-        role_display = "## 🙋 User" if role == "user" else "## 🤖 Assistant"
-        chat_text += f"{role_display}\n\n{content}\n\n---\n\n"
-    return chat_text
-
-
-def restart_agent_state(**session_keys) -> None:
-    for key in session_keys.values():
-        if key in st.session_state:
-            st.session_state[key] = None
-    if "messages" in st.session_state:
-        st.session_state["messages"] = []
-    st.rerun()
 
 
 def session_selector_widget(
     agent: Agent, model_id: str, agent_creation_callback: callable
 ) -> None:
     """Session selector widget"""
-    # Fetch existing sessions from database
     if not agent.db:
         st.sidebar.info("💡 Database not configured. Sessions will not be saved.")
         return
@@ -144,7 +93,6 @@ def session_selector_widget(
     current_session_id = st.session_state.get("session_id")
     current_selection = None
 
-    # New session - only add to list, don't load from database
     if current_session_id and current_session_id not in [
         s_id for s_id in session_dict.values()
     ]:
@@ -156,7 +104,6 @@ def session_selector_widget(
         session_options.insert(0, current_display_name)
         session_dict[current_display_name] = current_session_id
         current_selection = current_display_name
-        # Mark this as a new session to avoid loading from database
         st.session_state["is_new_session"] = True
 
     for display_name, session_id in session_dict.items():
@@ -164,7 +111,6 @@ def session_selector_widget(
             current_selection = display_name
             break
 
-    # Options
     display_options = session_options
     selected_index = (
         session_options.index(current_selection)
@@ -185,13 +131,10 @@ def session_selector_widget(
         help="Select a session to continue",
     )
 
-    # Load session - only if not a new session
     if selected and selected in session_dict:
         selected_session_id = session_dict[selected]
         if selected_session_id != current_session_id:
-            # Don't load from database if this is a new session
             if not st.session_state.get("is_new_session", False):
-                # Set flag to prevent model change detection during session loading
                 st.session_state["is_loading_session"] = True
                 try:
                     _load_session(
@@ -417,11 +360,10 @@ def initialize_agent(model_id: str, agent_creation_callback: callable) -> Agent:
 
 def reset_session_state(agent: Agent) -> None:
     """Update session state."""
-    # Only update session_id if it's not already set (avoid overwriting new chat sessions)
-    if agent.session_id and "session_id" not in st.session_state:
+    print(f"Resetting session state for agent: {agent.session_id}")
+    if agent.session_id is not None:
         st.session_state["session_id"] = agent.session_id
 
-    # Only initialize messages if they don't exist (preserve cleared state for new chats)
     if "messages" not in st.session_state:
         st.session_state["messages"] = []
 
@@ -447,6 +389,33 @@ def knowledge_base_info_widget(agent: Agent) -> None:
         logger.error(f"Error getting knowledge base info: {e}")
         st.sidebar.warning("Could not retrieve knowledge base information")
 
+def export_chat_history(app_name: str = "Chat") -> str:
+    """Export chat history to markdown."""
+    if "messages" not in st.session_state or not st.session_state["messages"]:
+        return "# Chat History\n\n*No messages to export*"
+
+    title = f"{app_name} Chat History"
+    for msg in st.session_state["messages"]:
+        if msg.get("role") == "user" and msg.get("content"):
+            title = msg["content"][:100]
+            if len(msg["content"]) > 100:
+                title += "..."
+            break
+
+    chat_text = f"# {title}\n\n"
+    chat_text += f"**Exported:** {datetime.now().strftime('%B %d, %Y at %I:%M %p')}\n\n"
+    chat_text += "---\n\n"
+
+    for msg in st.session_state["messages"]:
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+
+        if not content or str(content).strip().lower() == "none":
+            continue
+
+        role_display = "## 🙋 User" if role == "user" else "## 🤖 Assistant"
+        chat_text += f"{role_display}\n\n{content}\n\n---\n\n"
+    return chat_text
 
 COMMON_CSS = """
     <style>

@@ -29,7 +29,6 @@ st.set_page_config(
 st.markdown(COMMON_CSS, unsafe_allow_html=True)
 
 def restart_agent(model_id: str = None):
-    """Start a new chat session with optional model override"""
     target_model = model_id or st.session_state.get("current_model", MODELS[0])
 
     new_agent = get_agentic_rag_agent(model_id=target_model, session_id=None)
@@ -42,23 +41,16 @@ def restart_agent(model_id: str = None):
 
 
 def on_model_change():
-    """Handle model selection change - start new chat automatically"""
-    selected_display_name = st.session_state.get("model_selector")
-    if selected_display_name:
-        # Extract model name from display name (remove provider info)
-        selected_model = selected_display_name.split(" (")[0]
-
+    selected_model = st.session_state.get("model_selector")
+    if selected_model:
         if selected_model in MODELS:
             new_model_id = selected_model
             current_model = st.session_state.get("current_model")
 
-            # User manually changed model - always start new chat (ignore loading session state)
             if current_model and current_model != new_model_id:
                 try:
-                    # Clear any session loading flags first
                     st.session_state["is_loading_session"] = False
-
-                    # Start new chat with selected model
+                    # Start new chat
                     restart_agent(model_id=new_model_id)
 
                 except Exception as e:
@@ -88,13 +80,10 @@ def main():
         on_change=on_model_change,
     )
 
-    # Extract model name and ID
-    model_id = selected_model
-
     ####################################################################
     # Initialize Agent and Session
     ####################################################################
-    agentic_rag_agent = initialize_agent(model_id, get_agentic_rag_agent)
+    agentic_rag_agent = initialize_agent(selected_model, get_agentic_rag_agent)
     reset_session_state(agentic_rag_agent)
 
     if prompt := st.chat_input("👋 Ask me anything!"):
@@ -104,9 +93,7 @@ def main():
     # Document Management
     ####################################################################
     st.sidebar.markdown("#### 📚 Document Management")
-    st.sidebar.metric(
-        "Documents Loaded", agentic_rag_agent.knowledge.vector_db.get_count()
-    )
+    knowledge_base_info_widget(agentic_rag_agent)
 
     # URL input
     input_url = st.sidebar.text_input("Add URL to Knowledge Base")
@@ -224,10 +211,7 @@ def main():
     ####################################################################
     # Session management widgets
     ####################################################################
-    session_selector_widget(agentic_rag_agent, model_id, get_agentic_rag_agent)
-
-    # Knowledge base info
-    knowledge_base_info_widget(agentic_rag_agent)
+    session_selector_widget(agentic_rag_agent, selected_model, get_agentic_rag_agent)
 
     ####################################################################
     # About section
