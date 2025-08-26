@@ -1,34 +1,53 @@
-# Google Cloud Storage for Agno
+# Google Cloud Storage Integration
 
-This repository provides an example of how to use the `GCSJsonStorage` class as a storage backend for an Agno agent. The storage backend stores session data as JSON blobs in a Google Cloud Storage (GCS) bucket.
+Examples demonstrating Google Cloud Storage (GCS) integration with Agno agents using JSON blob storage.
 
-> **Note:** The bucket name must be provided explicitly when initializing the storage class. Location and credentials are optional; if not provided, the default credentials (from `GOOGLE_APPLICATION_CREDENTIALS` or the current gcloud CLI project) will be used.
+## Setup
 
-## Prerequisites
-
-- **Google Cloud SDK:**
-  Install the [Google Cloud SDK](https://cloud.google.com/sdk/docs/install) and run `gcloud init` to configure your account and project.
-
-- **GCS Permissions:**
-  Ensure your account has sufficient permissions (e.g., Storage Admin) to create and manage GCS buckets. You can grant these permissions using:
-
-```bash
-  gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
-      --member="user:YOUR_EMAIL@example.com" \
-      --role="roles/storage.admin"
+```shell
+pip install google-cloud-storage
 ```
 
+## Configuration
 
-- **Authentication:**
-To use default credentials from your gcloud CLI session, run:
+```python
+from agno.agent import Agent
+from agno.storage.gcs_json import GCSJsonStorage
 
-```bash
+db = GCSJsonStorage(
+    bucket_name="your-bucket-name",
+    project="your_project",
+    credentials="your_cred's",
+)
+
+agent = Agent(
+    db=db,
+    add_history_to_context=True,
+)
+```
+
+## Authentication
+
+Set up authentication using one of these methods:
+
+```shell
+# Using gcloud CLI
 gcloud auth application-default login
+
+# Using environment variable
+export GOOGLE_APPLICATION_CREDENTIALS="path/to/service-account.json"
 ```
 
-  - Alternatively, if using a service account, set the `GOOGLE_APPLICATION_CREDENTIALS` environment variable to the path of your service account JSON file.
+## Permissions
 
-- **Python Dependencies:**
+Ensure your account has Storage Admin permissions:
+
+```shell
+gcloud projects add-iam-policy-binding PROJECT_ID \
+    --member="user:your-email@example.com" \
+    --role="roles/storage.admin"
+```
+
 
 Install the required Python packages:
 
