@@ -60,7 +60,7 @@ class ReplicateTools(Toolkit):
             images = []
             videos = []
             results = []
-            
+
             for output in outputs:
                 if not isinstance(output, FileOutput):
                     logger.error(f"Unexpected output type: {type(output)}")
@@ -68,7 +68,7 @@ class ReplicateTools(Toolkit):
 
                 result_msg, media_artifact = self._parse_output(output)
                 results.append(result_msg)
-                
+
                 if isinstance(media_artifact, ImageArtifact):
                     images.append(media_artifact)
                 elif isinstance(media_artifact, VideoArtifact):

@@ -136,7 +136,9 @@ def test_generate_image_with_custom_parameters(mock_post, azure_openai_tools, mo
     mock_post.return_value = mock_response
 
     # Call the generate_image function with custom parameters
-    result = azure_openai_tools.generate_image(agent=mock_agent, prompt="A test prompt", size="1792x1024", style="vivid")
+    result = azure_openai_tools.generate_image(
+        agent=mock_agent, prompt="A test prompt", size="1792x1024", style="vivid"
+    )
 
     # Verify the API call uses the correct deployment
     mock_post.assert_called_once()
@@ -194,7 +196,9 @@ def test_invalid_parameters(azure_openai_tools, mock_agent):
         mock_post.return_value = mock_response
 
         # Test with invalid size - should be corrected to 1024x1024
-        result = azure_openai_tools.generate_image(agent=mock_agent, prompt="A test prompt for size", size="invalid-size")
+        result = azure_openai_tools.generate_image(
+            agent=mock_agent, prompt="A test prompt for size", size="invalid-size"
+        )
 
         # Verify the API call used the corrected size
         args, kwargs = mock_post.call_args

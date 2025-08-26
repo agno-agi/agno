@@ -4,8 +4,8 @@ from textwrap import dedent
 from typing import Optional
 
 from agno.agent import Agent
+from agno.db.base import BaseDb
 from agno.knowledge.knowledge import Knowledge
-from agno.memory import Memory
 from agno.models.base import Model
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckdb import DuckDbTools
@@ -21,7 +21,7 @@ tmp_dir.mkdir(exist_ok=True, parents=True)
 
 
 def get_agent(
-    agent_name: str, model: Model, memory: Memory, knowledge: Knowledge
+    agent_name: str, model: Model, db: BaseDb, knowledge: Knowledge
 ) -> Optional[Agent]:
     # Create a copy of the model to avoid side effects of the model being modified
     model_copy = deepcopy(model)
@@ -30,7 +30,7 @@ def get_agent(
             name="Calculator",
             role="Answer mathematical questions and perform precise calculations",
             model=model_copy,
-            memory=memory,
+            db=db,
             tools=[CalculatorTools(enable_all=True)],
             description="You are a precise and comprehensive calculator agent. Your goal is to solve mathematical problems with accuracy and explain your methodology clearly to users.",
             instructions=[
@@ -46,7 +46,7 @@ def get_agent(
             name="Data Analyst",
             role="Analyze data sets and extract meaningful insights",
             model=model_copy,
-            memory=memory,
+            db=db,
             knowledge=knowledge,
             tools=[DuckDbTools()],
             description="You are an expert Data Scientist specialized in exploratory data analysis, statistical modeling, and data visualization. Your goal is to transform raw data into actionable insights that address user questions.",
@@ -66,7 +66,7 @@ def get_agent(
             name="Python Agent",
             role="Develop and execute Python code solutions",
             model=model_copy,
-            memory=memory,
+            db=db,
             knowledge=knowledge,
             tools=[
                 PythonTools(base_dir=tmp_dir),
@@ -90,7 +90,7 @@ def get_agent(
             name="Research Agent",
             role="Conduct comprehensive research and produce in-depth reports",
             model=model_copy,
-            memory=memory,
+            db=db,
             knowledge=knowledge,
             tools=[ExaTools(num_results=3)],
             description="You are a meticulous research analyst with expertise in synthesizing information from diverse sources. Your goal is to produce balanced, fact-based, and thoroughly documented reports on any topic requested.",
@@ -135,7 +135,7 @@ def get_agent(
             name="Investment Agent",
             role="Provide comprehensive financial analysis and investment insights",
             model=model_copy,
-            memory=memory,
+            db=db,
             knowledge=knowledge,
             tools=[
                 YFinanceTools,

@@ -257,12 +257,9 @@ def test_generate_speech_success(mock_toolkit_init, mock_groq_client):
     assert len(result.audios) == 1
     assert isinstance(result.audios[0], AudioArtifact)
     assert result.audios[0].mime_type == "audio/wav"
-    
+
     mock_groq_client.audio.speech.create.assert_called_once_with(
-        model=tools.tts_model, 
-        voice=tools.tts_voice, 
-        input=text_input, 
-        response_format=tools.tts_format
+        model=tools.tts_model, voice=tools.tts_voice, input=text_input, response_format=tools.tts_format
     )
 
 
@@ -283,10 +280,7 @@ def test_generate_speech_error(mock_toolkit_init, mock_groq_client):
     assert "Failed to generate speech with Groq" in result.content
     assert "API Error" in result.content
     assert result.audios is None
-    
+
     mock_groq_client.audio.speech.create.assert_called_once_with(
-        model=tools.tts_model, 
-        voice=tools.tts_voice, 
-        input=text_input, 
-        response_format=tools.tts_format
+        model=tools.tts_model, voice=tools.tts_voice, input=text_input, response_format=tools.tts_format
     )

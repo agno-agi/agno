@@ -1,10 +1,12 @@
 # In-Memory Storage
 
-This directory contains examples demonstrating how to use `InMemoryStorage` with Agno agents, workflows, and teams.
+This directory contains examples demonstrating how to use `InMemoryDb` with Agno agents, workflows, and teams.
 
 ## Overview
 
-`InMemoryStorage` provides a flexible, lightweight storage solution that keeps all session data in memory, with the option to hook it up to any custom persistent storage solution.
+`InMemoryDb` provides a flexible, lightweight storage solution that keeps all session data in memory, with the option to hook it up to any custom persistent storage solution.
+
+Notice this is not recommended for production use cases.
 
 ### Highlights
 
@@ -21,24 +23,17 @@ This directory contains examples demonstrating how to use `InMemoryStorage` with
 ### Basic Setup
 
 ```python
-from agno.storage.in_memory import InMemoryStorage
+from agno.db.in_memory import InMemoryDb
 
-# For agents (default)
-agent_storage = InMemoryStorage()
-
-# For workflows
-workflow_storage = InMemoryStorage(mode="workflow")
-
-# For teams
-team_storage = InMemoryStorage(mode="team")
+db = InMemoryDb()
 ```
 
 ### Bring Your Own Dictionary (Flexible Storage Integration)
 
-The real power of InMemoryStorage comes from providing your own dictionary for custom storage mechanisms, in case the current first-class supported storage offerings are too opinionated:
+The real power of InMemoryDb comes from providing your own dictionary for custom storage mechanisms, in case the current first-class supported storage offerings are too opinionated:
 
 ```python
-from agno.storage.in_memory import InMemoryStorage
+from agno.db.in_memory import InMemoryDb
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 import json
@@ -65,11 +60,11 @@ def load_sessions_from_s3(bucket_name, key_name):
 
 # Step 1: Create agent with external dictionary
 my_sessions = {}
-storage = InMemoryStorage(storage_dict=my_sessions)
+db = InMemoryDb(storage_dict=my_sessions)
 
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    storage=storage,
+    db=db,
     add_history_to_context=True,
 )
 
@@ -85,11 +80,11 @@ print("Sessions saved to S3!")
 
 # Step 3: Later, load sessions from S3 and use with new agent
 loaded_sessions = load_sessions_from_s3("my-bucket", "agent-sessions.json")
-new_storage = InMemoryStorage(storage_dict=loaded_sessions)
+new_db = InMemoryDb(storage_dict=loaded_sessions)
 
 new_agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
-    storage=new_storage,
+    db=new_db,
     session_id=agent.session_id,  # Use same session ID
     add_history_to_messages=True,
 )
@@ -102,20 +97,20 @@ new_agent.print_response("What was my first question?")
 
 ```python
 # Create storage
-storage = InMemoryStorage()
+db = InMemoryDb()
 
 # Get all sessions
-all_sessions = storage.get_all_sessions()
+all_sessions = db.get_all_sessions()
 
 # Filter sessions by user
-user_sessions = storage.get_all_sessions(user_id="user123")
+user_sessions = db.get_all_sessions(user_id="user123")
 
 # Get recent sessions
-recent = storage.get_recent_sessions(limit=5)
+recent = db.get_recent_sessions(limit=5)
 
 # Delete a session
-storage.delete_session("session_id")
+db.delete_session("session_id")
 
 # Clear all sessions
-storage.drop()
+db.drop()
 ```

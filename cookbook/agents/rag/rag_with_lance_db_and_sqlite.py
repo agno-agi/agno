@@ -1,7 +1,7 @@
 """Run `pip install lancedb` to install dependencies."""
 
 from agno.agent import Agent
-from agno.db.agent.sqlite import SqliteAgentStorage
+from agno.db.sqlite.sqlite import SqliteDb
 from agno.knowledge.embedder.ollama import OllamaEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.ollama import Ollama
@@ -33,8 +33,7 @@ knowledge.add_content_sync(
 
 
 # Set up SQL storage for the agent's data
-storage = SqliteAgentStorage(table_name="recipes", db_file="data.db")
-storage.create()  # Create the storage if it doesn't exist
+db = SqliteDb(db_file="data.db")
 
 # Initialize the Agent with various configurations including the knowledge base and storage
 agent = Agent(
@@ -42,7 +41,7 @@ agent = Agent(
     user_id="user",  # user identifier to identify the user
     model=model,
     knowledge=knowledge,
-    storage=storage,
+    db=db,
 )
 
 # Use the agent to generate and print a response to a query, formatted in Markdown

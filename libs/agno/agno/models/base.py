@@ -21,7 +21,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.exceptions import AgentRunException
-from agno.media import Audio, AudioResponse, Image, Video, VideoArtifact, ImageArtifact, AudioArtifact
+from agno.media import Audio, AudioArtifact, AudioResponse, Image, ImageArtifact, Video, VideoArtifact
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
@@ -1006,8 +1006,9 @@ class Model(ABC):
                 stream_data.response_audio = AudioResponse(id=str(uuid4()), content="", transcript="")
 
             from typing import cast
+
             audio_response = cast(AudioResponse, model_response_delta.audio)
-            
+
             # Update the stream data with audio information
             if audio_response.id is not None:
                 stream_data.response_audio.id = audio_response.id  # type: ignore

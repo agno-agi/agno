@@ -14,11 +14,10 @@ from rich.pretty import pprint
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 agent = Agent(
     model=LlamaOpenAI(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
-    # Store the memories and summary in a database
+    # Store sessions, memories and summaries in the
+    db=PostgresDb(db_url=db_url, memory_table="agent_memory"),
     enable_user_memories=True,
     enable_session_summaries=True,
-    # Store agent sessions in a database
-    storage=PostgresDb(session_table="personalized_agent_sessions", db_url=db_url),
 )
 
 # -*- Share personal information

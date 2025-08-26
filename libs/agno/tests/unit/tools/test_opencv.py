@@ -109,13 +109,13 @@ class TestImageCapture:
         assert result.content == "Image captured successfully"
         assert result.images is not None
         assert len(result.images) == 1
-        
+
         # Verify image artifact was created correctly
         image_artifact = result.images[0]
         assert isinstance(image_artifact, ImageArtifact)
         assert image_artifact.original_prompt == "Test capture"
         assert image_artifact.mime_type == "image/png"
-        
+
         # Verify OpenCV calls
         mock_cv2.VideoCapture.assert_called_with(0)
         mock_cv2.imencode.assert_called_once()
@@ -132,10 +132,9 @@ class TestImageCapture:
         assert result.content == "Image captured successfully"
         assert result.images is not None
         assert len(result.images) == 1
-        
+
         # Verify preview was shown
         mock_cv2.imshow.assert_called()
-        
 
     def test_capture_image_user_cancels(self, opencv_tools_with_preview, mock_agent, mock_cv2):
         """Test image capture cancelled by user (user presses 'q')."""
@@ -148,7 +147,6 @@ class TestImageCapture:
         assert isinstance(result, ToolResult)
         assert result.content == "Image capture cancelled by user"
         assert result.images is None
-        
 
     def test_capture_image_camera_not_available(self, opencv_tools_no_preview, mock_agent, mock_cv2):
         """Test image capture when camera is not available."""
@@ -233,11 +231,9 @@ class TestVideoCapture:
         mock_open.return_value.__enter__.return_value = mock_file
 
         # Mock getattr for VideoWriter_fourcc
-        with patch("agno.tools.opencv.getattr") as mock_getattr, \
-             patch("agno.tools.opencv.Path") as mock_path_class:
-            
+        with patch("agno.tools.opencv.getattr") as mock_getattr, patch("agno.tools.opencv.Path") as mock_path_class:
             mock_getattr.return_value.return_value = 123456
-            
+
             # Mock Path behavior
             mock_path = Mock()
             mock_path.exists.return_value = True
@@ -260,7 +256,6 @@ class TestVideoCapture:
         assert isinstance(video_artifact, VideoArtifact)
         assert video_artifact.original_prompt == "Test video"
         assert video_artifact.mime_type == "video/mp4"
-        
 
     @patch("tempfile.NamedTemporaryFile")
     @patch("os.path.exists")
@@ -297,11 +292,9 @@ class TestVideoCapture:
         mock_open.return_value.__enter__.return_value = mock_file
 
         # Mock getattr for VideoWriter_fourcc
-        with patch("agno.tools.opencv.getattr") as mock_getattr, \
-             patch("agno.tools.opencv.Path") as mock_path_class:
-            
+        with patch("agno.tools.opencv.getattr") as mock_getattr, patch("agno.tools.opencv.Path") as mock_path_class:
             mock_getattr.return_value.return_value = 123456
-            
+
             # Mock Path behavior
             mock_path = Mock()
             mock_path.exists.return_value = True
@@ -317,12 +310,11 @@ class TestVideoCapture:
         assert "Video captured successfully" in result.content
         assert result.videos is not None
         assert len(result.videos) == 1
-        
+
         # Verify preview was shown
         mock_cv2.imshow.assert_called()  # Preview should be shown
         mock_cv2.putText.assert_called()  # Recording indicator should be drawn
 
-        
     def test_capture_video_camera_not_available(self, opencv_tools_no_preview, mock_agent, mock_cv2):
         """Test video capture when camera is not available."""
         mock_cv2.VideoCapture.return_value.isOpened.return_value = False
@@ -369,9 +361,11 @@ class TestVideoCapture:
         # Check that result is a ToolResult
         assert isinstance(result, ToolResult)
         # Should succeed with default FPS or fail gracefully
-        assert ("Video captured successfully" in result.content or 
-                "Failed to initialize video writer" in result.content or
-                "Video file was not created" in result.content)
+        assert (
+            "Video captured successfully" in result.content
+            or "Failed to initialize video writer" in result.content
+            or "Video file was not created" in result.content
+        )
 
     def test_capture_video_codec_fallback(self, opencv_tools_no_preview, mock_agent, mock_cv2):
         """Test video capture codec fallback mechanism."""
@@ -408,9 +402,11 @@ class TestVideoCapture:
         # Check that result is a ToolResult
         assert isinstance(result, ToolResult)
         # Should succeed with fallback codec or fail gracefully
-        assert ("Video captured successfully" in result.content or 
-                "MPEG-4 codec" in result.content or
-                "Video file was not created" in result.content)
+        assert (
+            "Video captured successfully" in result.content
+            or "MPEG-4 codec" in result.content
+            or "Video file was not created" in result.content
+        )
 
     def test_capture_video_all_codecs_fail(self, opencv_tools_no_preview, mock_agent, mock_cv2):
         """Test video capture when all codecs fail."""
@@ -424,7 +420,6 @@ class TestVideoCapture:
         assert isinstance(result, ToolResult)
         assert "Failed to initialize video writer with any codec" in result.content
         assert result.videos is None
-        
 
     def test_capture_video_frame_read_fails(self, opencv_tools_no_preview, mock_agent, mock_cv2):
         """Test video capture when frame reading fails."""
@@ -438,7 +433,7 @@ class TestVideoCapture:
         assert isinstance(result, ToolResult)
         assert "Failed to capture video frame" in result.content
         assert result.videos is None
-        
+
     @patch("tempfile.NamedTemporaryFile")
     @patch("os.path.exists")
     def test_capture_video_file_not_created(
@@ -547,7 +542,7 @@ class TestEdgeCases:
         assert isinstance(result, ToolResult)
         assert result.images is not None
         assert len(result.images) == 1
-        
+
         image_artifact = result.images[0]
         assert image_artifact.original_prompt == "Webcam capture"
 

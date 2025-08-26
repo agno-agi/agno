@@ -40,7 +40,7 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
             # Process the result content
             response_str = ""
             images = []
-            
+
             for content_item in result.content:
                 if isinstance(content_item, TextContent):
                     response_str += content_item.text + "\n"
