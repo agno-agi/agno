@@ -19,7 +19,6 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.models_labs import ModelsLabTools
-from agno.utils.media import wait_for_media_ready
 
 # Create a Creative AI Video Director Agent
 video_agent = Agent(

@@ -21,7 +21,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.exceptions import AgentRunException
-from agno.media import AudioResponse, ImageArtifact, VideoArtifact
+from agno.media import Audio, AudioResponse, Image, Video, VideoArtifact, ImageArtifact, AudioArtifact
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
@@ -502,11 +502,14 @@ class Model(ABC):
         if assistant_message.citations is not None:
             model_response.citations = assistant_message.citations
         if assistant_message.audio_output is not None:
-            model_response.audios = assistant_message.audio_output
+            if isinstance(assistant_message.audio_output, AudioArtifact):
+                model_response.audios = [assistant_message.audio_output]
+            elif isinstance(assistant_message.audio_output, AudioResponse):
+                model_response.audio = assistant_message.audio_output
         if assistant_message.image_output is not None:
-            model_response.images = assistant_message.image_output
+            model_response.images = [assistant_message.image_output]
         if assistant_message.video_output is not None:
-            model_response.videos = assistant_message.video_output
+            model_response.videos = [assistant_message.video_output]
         if provider_response.extra is not None:
             if model_response.extra is None:
                 model_response.extra = {}
@@ -554,11 +557,14 @@ class Model(ABC):
         if assistant_message.citations is not None:
             model_response.citations = assistant_message.citations
         if assistant_message.audio_output is not None:
-            model_response.audios = assistant_message.audio_output
+            if isinstance(assistant_message.audio_output, AudioArtifact):
+                model_response.audios = [assistant_message.audio_output]
+            elif isinstance(assistant_message.audio_output, AudioResponse):
+                model_response.audio = assistant_message.audio_output
         if assistant_message.image_output is not None:
-            model_response.images = assistant_message.image_output
+            model_response.images = [assistant_message.image_output]
         if assistant_message.video_output is not None:
-            model_response.videos = assistant_message.video_output
+            model_response.videos = [assistant_message.video_output]
         if provider_response.extra is not None:
             if model_response.extra is None:
                 model_response.extra = {}
@@ -995,23 +1001,26 @@ class Model(ABC):
             stream_data.response_tool_calls.extend(model_response_delta.tool_calls)
             should_yield = True
 
-        if model_response_delta.audio is not None:
+        if model_response_delta.audio is not None and isinstance(model_response_delta.audio, AudioResponse):
             if stream_data.response_audio is None:
                 stream_data.response_audio = AudioResponse(id=str(uuid4()), content="", transcript="")
 
+            from typing import cast
+            audio_response = cast(AudioResponse, model_response_delta.audio)
+            
             # Update the stream data with audio information
-            if model_response_delta.audio.id is not None:
-                stream_data.response_audio.id = model_response_delta.audio.id  # type: ignore
-            if model_response_delta.audio.content is not None:
-                stream_data.response_audio.content += model_response_delta.audio.content  # type: ignore
-            if model_response_delta.audio.transcript is not None:
-                stream_data.response_audio.transcript += model_response_delta.audio.transcript  # type: ignore
-            if model_response_delta.audio.expires_at is not None:
-                stream_data.response_audio.expires_at = model_response_delta.audio.expires_at
-            if model_response_delta.audio.mime_type is not None:
-                stream_data.response_audio.mime_type = model_response_delta.audio.mime_type
-            stream_data.response_audio.sample_rate = model_response_delta.audio.sample_rate
-            stream_data.response_audio.channels = model_response_delta.audio.channels
+            if audio_response.id is not None:
+                stream_data.response_audio.id = audio_response.id  # type: ignore
+            if audio_response.content is not None:
+                stream_data.response_audio.content += audio_response.content  # type: ignore
+            if audio_response.transcript is not None:
+                stream_data.response_audio.transcript += audio_response.transcript  # type: ignore
+            if audio_response.expires_at is not None:
+                stream_data.response_audio.expires_at = audio_response.expires_at
+            if audio_response.mime_type is not None:
+                stream_data.response_audio.mime_type = audio_response.mime_type
+            stream_data.response_audio.sample_rate = audio_response.sample_rate
+            stream_data.response_audio.channels = audio_response.channels
 
             should_yield = True
 
@@ -1022,10 +1031,6 @@ class Model(ABC):
         if model_response_delta.videos:
             if stream_data.response_video is None:
                 stream_data.response_video = model_response_delta.videos[-1]
-
-        if model_response_delta.audios is not None:
-            if stream_data.response_audio is None:
-                stream_data.response_audio = model_response_delta.audios[-1]
 
         if model_response_delta.extra is not None:
             if stream_data.extra is None:
@@ -1699,9 +1704,9 @@ class Model(ABC):
             return
 
         # Collect all media artifacts from function calls
-        all_images = []
-        all_videos = []
-        all_audio = []
+        all_images: List[Image] = []
+        all_videos: List[Video] = []
+        all_audio: List[Audio] = []
 
         for result_message in function_call_results:
             if result_message.images:
@@ -1728,7 +1733,7 @@ class Model(ABC):
         # message with the media artifacts which throws error for some models
         if all_images or all_videos or all_audio:
             # Get all tool contents directly from function_call_results
-            tool_contents = [msg.content for msg in function_call_results if msg.content and msg.role == "tool"]
+            tool_contents = [str(msg.content) for msg in function_call_results if msg.content and msg.role == "tool"]
 
             content = "Here is the content generated by the tools:\n\n"
             if tool_contents:

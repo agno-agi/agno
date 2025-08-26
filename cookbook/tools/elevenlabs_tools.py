@@ -2,8 +2,6 @@
 pip install elevenlabs
 """
 
-import base64
-
 from agno.agent import Agent
 from agno.models.google import Gemini
 from agno.tools.eleven_labs import ElevenLabsTools
@@ -37,7 +35,7 @@ response = audio_agent.run(
 if response.audio and response.audio[0].base64_audio:
     print("Agent response:", response.content)
     save_base64_data(response.audio[0].base64_audio, "tmp/french_revolution.mp3")
-    print(f"Successfully saved generated speech to tmp/french_revolution.mp3")
+    print("Successfully saved generated speech to tmp/french_revolution.mp3")
 
 
 audio_agent.print_response("Generate a kick sound effect")

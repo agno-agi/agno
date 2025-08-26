@@ -9,7 +9,6 @@ from pathlib import Path
 
 from agno.agent import Agent
 from agno.models.google import Gemini
-from agno.models.openai import OpenAIChat
 from agno.tools.openai import OpenAITools
 from agno.utils.media import save_base64_data
 
