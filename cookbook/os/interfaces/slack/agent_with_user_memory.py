@@ -39,7 +39,6 @@ personal_agent = Agent(
         You may sometimes recieve messages prepenned with group message when that is the message then reply to whole group instead of treating them as from a single user
                         """),
     debug_mode=True,
-    add_state_in_messages=True,
 )
 
 

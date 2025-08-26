@@ -2,7 +2,7 @@
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.models.vllm import vLLM
+from agno.models.vllm import VLLM
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 # Setup the database
@@ -10,7 +10,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
 
 agent = Agent(
-    model=vLLM(id="Qwen/Qwen2.5-7B-Instruct"),
+    model=VLLM(id="Qwen/Qwen2.5-7B-Instruct"),
     db=db,
     tools=[DuckDuckGoTools()],
     add_history_to_context=True,

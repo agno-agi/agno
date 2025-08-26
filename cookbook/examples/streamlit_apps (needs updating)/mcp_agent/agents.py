@@ -3,7 +3,7 @@ from textwrap import dedent
 from typing import List, Optional
 
 from agno.agent import Agent
-from agno.db.agent.sqlite import SqliteAgentStorage
+from agno.db.sqlite import SqliteDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.anthropic import Claude
@@ -23,8 +23,7 @@ tmp_dir.mkdir(parents=True, exist_ok=True)
 
 # ************* Agent Storage *************
 # Store agent sessions in a SQLite database
-agent_storage = SqliteAgentStorage(
-    table_name="mcp_agent_sessions",  # Table to store agent sessions
+db = SqliteDb(
     db_file=str(tmp_dir.joinpath("agents.db")),  # SQLite database file
 )
 # *************************************
@@ -122,7 +121,7 @@ def get_mcp_agent(
         session_id=session_id,
         tools=mcp_tools,
         # Store Agent sessions in the database
-        storage=agent_storage,
+        db=db,
         # Store MCP Documentation in a knowledge base
         knowledge=agent_knowledge,
         # Agent description, instructions and expected output format

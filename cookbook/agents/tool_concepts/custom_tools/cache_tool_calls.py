@@ -28,6 +28,5 @@ def get_top_hackernews_stories(num_stories: int = 5) -> str:
 agent = Agent(
     tools=[get_top_hackernews_stories],
     markdown=True,
-    debug_mode=True,
 )
 agent.print_response("What are the top hackernews stories?", stream=True)

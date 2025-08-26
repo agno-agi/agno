@@ -276,7 +276,7 @@ recruitment_workflow = Workflow(
         db_file="tmp/workflows.db",
     ),
     steps=recruitment_execution,
-    workflow_session_state={},
+    session_state={},
 )
 
 

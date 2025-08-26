@@ -103,12 +103,8 @@ def print_response(
 
         # Handle reasoning
         reasoning_steps = []
-        if (
-            isinstance(run_response, TeamRunOutput)
-            and run_response.metadata is not None
-            and run_response.metadata.reasoning_steps is not None
-        ):
-            reasoning_steps = run_response.metadata.reasoning_steps
+        if isinstance(run_response, TeamRunOutput) and run_response.reasoning_steps is not None:
+            reasoning_steps = run_response.reasoning_steps
 
         if len(reasoning_steps) > 0 and show_reasoning:
             # Create panels for reasoning steps
@@ -133,12 +129,8 @@ def print_response(
                 for member_response in run_response.member_responses:
                     # Handle member reasoning
                     reasoning_steps = []
-                    if (
-                        isinstance(member_response, RunOutput)
-                        and member_response.metadata is not None
-                        and member_response.metadata.reasoning_steps is not None
-                    ):
-                        reasoning_steps.extend(member_response.metadata.reasoning_steps)
+                    if isinstance(member_response, RunOutput) and member_response.reasoning_steps is not None:
+                        reasoning_steps.extend(member_response.reasoning_steps)
 
                     if len(reasoning_steps) > 0 and show_reasoning:
                         # Create panels for reasoning steps
@@ -412,12 +404,8 @@ def print_response_stream(
                             log_warning(f"Failed to convert response to JSON: {e}")
                     if hasattr(resp, "thinking") and resp.thinking is not None:
                         _response_thinking += resp.thinking
-                if (
-                    hasattr(resp, "metadata")
-                    and resp.metadata is not None
-                    and resp.metadata.reasoning_steps is not None
-                ):
-                    reasoning_steps = resp.metadata.reasoning_steps
+                if hasattr(resp, "reasoning_steps") and resp.reasoning_steps is not None:
+                    reasoning_steps = resp.reasoning_steps
 
                 # Collect team tool calls, avoiding duplicates
                 if isinstance(resp, ToolCallCompletedEvent) and resp.tool:
@@ -705,8 +693,8 @@ def print_response_stream(
 
                 # Add reasoning steps if any
                 reasoning_steps = []
-                if member_response.metadata is not None and member_response.metadata.reasoning_steps is not None:
-                    reasoning_steps = member_response.metadata.reasoning_steps
+                if member_response.reasoning_steps is not None:
+                    reasoning_steps = member_response.reasoning_steps
                 if reasoning_steps and show_reasoning:
                     for j, step in enumerate(reasoning_steps, 1):
                         member_reasoning_panel = build_reasoning_step_panel(
@@ -900,12 +888,8 @@ async def aprint_response(
 
         # Handle reasoning
         reasoning_steps = []
-        if (
-            isinstance(run_response, TeamRunOutput)
-            and run_response.metadata is not None
-            and run_response.metadata.reasoning_steps is not None
-        ):
-            reasoning_steps = run_response.metadata.reasoning_steps
+        if isinstance(run_response, TeamRunOutput) and run_response.reasoning_steps is not None:
+            reasoning_steps = run_response.reasoning_steps
 
         if len(reasoning_steps) > 0 and show_reasoning:
             # Create panels for reasoning steps
@@ -930,12 +914,8 @@ async def aprint_response(
                 for member_response in run_response.member_responses:
                     # Handle member reasoning
                     reasoning_steps = []
-                    if (
-                        isinstance(member_response, RunOutput)
-                        and member_response.metadata is not None
-                        and member_response.metadata.reasoning_steps is not None
-                    ):
-                        reasoning_steps.extend(member_response.metadata.reasoning_steps)
+                    if isinstance(member_response, RunOutput) and member_response.reasoning_steps is not None:
+                        reasoning_steps.extend(member_response.reasoning_steps)
 
                     if len(reasoning_steps) > 0 and show_reasoning:
                         # Create panels for reasoning steps
@@ -1203,12 +1183,8 @@ async def aprint_response_stream(
                             log_warning(f"Failed to convert response to JSON: {e}")
                     if resp.thinking is not None:  # type: ignore
                         _response_thinking += resp.thinking  # type: ignore
-                if (
-                    hasattr(resp, "metadata")
-                    and resp.metadata is not None
-                    and resp.metadata.reasoning_steps is not None
-                ):
-                    reasoning_steps = resp.metadata.reasoning_steps
+                if hasattr(resp, "reasoning_steps") and resp.reasoning_steps is not None:
+                    reasoning_steps = resp.reasoning_steps
 
                 # Collect team tool calls, avoiding duplicates
                 if isinstance(resp, ToolCallCompletedEvent) and resp.tool:
@@ -1436,8 +1412,8 @@ async def aprint_response_stream(
 
                 # Add reasoning steps if any
                 reasoning_steps = []
-                if member_response.metadata is not None and member_response.metadata.reasoning_steps is not None:
-                    reasoning_steps = member_response.metadata.reasoning_steps
+                if member_response.reasoning_steps is not None:
+                    reasoning_steps = member_response.reasoning_steps
                 if reasoning_steps and show_reasoning:
                     for j, step in enumerate(reasoning_steps, 1):
                         member_reasoning_panel = build_reasoning_step_panel(

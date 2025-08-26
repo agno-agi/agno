@@ -11,6 +11,7 @@ import pytest
 from agno.agent import Agent  # Added for TTS test
 from agno.media import AudioArtifact  # Added for TTS test
 from agno.tools.cartesia import CartesiaTools
+from agno.tools.function import ToolResult  # Added for updated tests
 
 # Import the specific logger instance used by the tool
 # from agno.utils.log import logger as agno_logger_instance # Removed unused import
@@ -67,7 +68,6 @@ def cartesia_tools(mock_cartesia_client):
 @pytest.fixture
 def mock_agent():
     agent = MagicMock(spec=Agent)
-    agent.add_audio = MagicMock()
     return agent
 
 
@@ -212,17 +212,18 @@ def test_text_to_speech(cartesia_tools, mock_cartesia_client, mock_agent):
     assert output_format["bit_rate"] == 128000  # Capped value used if default was > 192k
     assert output_format["encoding"] == "mp3"
 
-    # Verify agent interaction
-    mock_agent.add_audio.assert_called_once()
-    # Check artifact content
-    artifact_call_args = mock_agent.add_audio.call_args[0][0]
-    assert isinstance(artifact_call_args, AudioArtifact)
-    assert artifact_call_args.mime_type == "audio/mpeg"
-    expected_base64 = b64encode(b"audio data").decode("utf-8")
-    assert artifact_call_args.base64_audio == expected_base64
+    # Verify ToolResult is returned
+    assert isinstance(result, ToolResult)
+    assert result.content == "Audio generated and attached successfully."
+    assert result.audios is not None
+    assert len(result.audios) == 1
 
-    # Verify return message
-    assert result == "Audio generated and attached successfully."
+    # Check artifact content
+    audio_artifact = result.audios[0]
+    assert isinstance(audio_artifact, AudioArtifact)
+    assert audio_artifact.mime_type == "audio/mpeg"
+    expected_base64 = b64encode(b"audio data").decode("utf-8")
+    assert audio_artifact.base64_audio == expected_base64
 
 
 def test_text_to_speech_error(cartesia_tools, mock_cartesia_client, mock_agent):
@@ -231,8 +232,10 @@ def test_text_to_speech_error(cartesia_tools, mock_cartesia_client, mock_agent):
 
     result = cartesia_tools.text_to_speech(agent=mock_agent, transcript="Error test")
 
-    mock_agent.add_audio.assert_not_called()
-    assert result == "Error generating speech: TTS API Error"
+    # Verify ToolResult is returned with error message
+    assert isinstance(result, ToolResult)
+    assert result.content == "Error generating speech: TTS API Error"
+    assert result.audios is None
 
 
 # Keep localize_voice test if the method is potentially enabled/used

@@ -7,6 +7,7 @@ from uuid import uuid4
 from agno.agent import Agent
 from agno.media import ImageArtifact
 from agno.tools import Toolkit
+from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, log_error, log_info
 
 try:
@@ -104,21 +105,22 @@ class BrightDataTools(Toolkit):
         except Exception as e:
             return f"Error scraping URL {url}: {e}"
 
-    def get_screenshot(self, agent: Agent, url: str, output_path: str = "screenshot.png") -> str:
+    def get_screenshot(self, agent: Agent, url: str, output_path: str = "screenshot.png") -> ToolResult:
         """
         Capture a screenshot of a webpage
 
         Args:
             url (str): URL to screenshot
+            output_path (str): Output path for the screenshot (not used, kept for compatibility)
 
         Returns:
-            str: A message indicating success (including media ID) or failure.
+            ToolResult: Contains the screenshot image or error message.
         """
         try:
             if not self.api_key:
-                return "Please provide a Bright Data API key"
+                return ToolResult(content="Please provide a Bright Data API key")
             if not url:
-                return "Please provide a URL to screenshot"
+                return ToolResult(content="Please provide a URL to screenshot")
 
             log_info(f"Taking screenshot of: {url}")
 
@@ -140,18 +142,20 @@ class BrightDataTools(Toolkit):
 
             media_id = str(uuid4())
 
-            agent.add_image(
-                ImageArtifact(
-                    id=media_id,
-                    content=base64_encoded_image.encode("utf-8"),
-                    mime_type="image/png",
-                    original_prompt=f"Screenshot of {url}",
-                )
+            # Create ImageArtifact for the screenshot
+            image_artifact = ImageArtifact(
+                id=media_id,
+                content=base64_encoded_image.encode("utf-8"),
+                mime_type="image/png",
+                original_prompt=f"Screenshot of {url}",
             )
+
             log_debug(f"Screenshot captured and added as artifact with ID: {media_id}")
-            return f"Screenshot captured and added as artifact with ID: {media_id}"
+            return ToolResult(
+                content=f"Screenshot captured and added as artifact with ID: {media_id}", images=[image_artifact]
+            )
         except Exception as e:
-            return f"Error taking screenshot of {url}: {e}"
+            return ToolResult(content=f"Error taking screenshot of {url}: {e}")
 
     def search_engine(
         self,

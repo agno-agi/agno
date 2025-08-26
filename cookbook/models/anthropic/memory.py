@@ -21,8 +21,6 @@ agent = Agent(
     # Store the memories and summary in the database
     enable_user_memories=True,
     enable_session_summaries=True,
-    # Show debug logs so, you can see the memory being created
-    # debug_mode=True,
 )
 
 # -*- Share personal information

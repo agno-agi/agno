@@ -1,4 +1,4 @@
-"""Run `pip install duckduckgo-search sqlalchemy pgvector pypdf anthropic openai` to install dependencies."""
+"""Run `pip install ddgs sqlalchemy pgvector pypdf anthropic openai` to install dependencies."""
 
 from agno.agent import Agent
 from agno.knowledge.embedder.azure_openai import AzureOpenAIEmbedder
@@ -23,6 +23,5 @@ knowledge.add_content_sync(
 agent = Agent(
     model=Claude(id="claude-sonnet-4-20250514"),
     knowledge=knowledge,
-    debug_mode=True,
 )
 agent.print_response("How to make Thai curry?", markdown=True)

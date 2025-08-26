@@ -3,7 +3,7 @@
 1. Create virtual environment and install dependencies:
    - Run `uv venv --python 3.12` to create a virtual environment
    - Run `source .venv/bin/activate` to activate the virtual environment
-   - Run `uv pip install agno openai sqlalchemy fastapi uvicorn yfinance duckduckgo-search` to install the dependencies
+   - Run `uv pip install agno openai sqlalchemy fastapi uvicorn yfinance ddgs` to install the dependencies
    - Run `ag setup` to connect your local env to Agno
    - Export your OpenAI key: `export OPENAI_API_KEY=<your_openai_key>`
 2. Run the app:

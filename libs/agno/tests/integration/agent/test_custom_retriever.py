@@ -12,8 +12,8 @@ def test_agent_with_custom_knowledge_retriever():
         add_knowledge_to_context=True,
     )
     response = agent.run("What is the capital of France?")
-    assert response is not None and response.metadata is not None and response.metadata.references is not None
-    assert response.metadata.references[0].references == ["Paris is the capital of France"]
+    assert response is not None and response.references is not None
+    assert response.references[0].references == ["Paris is the capital of France"]
 
 
 def test_agent_with_custom_knowledge_retriever_error():

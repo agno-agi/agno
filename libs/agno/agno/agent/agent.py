@@ -28,7 +28,7 @@ from uuid import NAMESPACE_DNS, uuid4, uuid5
 from pydantic import BaseModel
 
 from agno.db.base import BaseDb, SessionType, UserMemory
-from agno.exceptions import ModelProviderError, StopAgentRun
+from agno.exceptions import ModelProviderError, RunCancelledException, StopAgentRun
 from agno.knowledge.knowledge import Knowledge
 from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.memory import MemoryManager
@@ -42,7 +42,15 @@ from agno.run.agent import (
     RunOutput,
     RunOutputEvent,
 )
-from agno.run.base import RunOutputMetaData, RunStatus
+from agno.run.base import RunStatus
+from agno.run.cancel import (
+    cancel_run as cancel_run_global,
+)
+from agno.run.cancel import (
+    cleanup_run,
+    raise_if_cancelled,
+    register_run,
+)
 from agno.run.messages import RunMessages
 from agno.run.team import TeamRunOutputEvent
 from agno.session import AgentSession, SessionSummaryManager
@@ -92,7 +100,6 @@ from agno.utils.reasoning import (
 )
 from agno.utils.response import (
     async_generator_wrapper,
-    format_tool_calls,
     generator_wrapper,
     get_paused_content,
 )
@@ -242,8 +249,8 @@ class Agent:
     add_location_to_context: bool = False
     # Allows for custom timezone for datetime instructions following the TZ Database format (e.g. "Etc/UTC")
     timezone_identifier: Optional[str] = None
-    # If True, add the session state variables in the user and system messages
-    add_state_in_messages: bool = False
+    # If True, resolve session_state, dependencies, and metadata in the user and system messages
+    resolve_in_context: bool = True
 
     # --- Extra Messages ---
     # A list of extra messages added after the system message and before the user message.
@@ -251,9 +258,6 @@ class Agent:
     # Note: these are not retained in memory, they are added directly to the messages sent to the model.
     additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None
     # --- User message settings ---
-    # Provide the user message as a string, list, dict, or function
-    # Note: this will ignore the message sent to the run function
-    user_message: Optional[Union[List, Dict, str, Callable, Message]] = None
     # Role for the user message
     user_message_role: str = "user"
     # Set to False to skip building the user context
@@ -333,6 +337,7 @@ class Agent:
         id: Optional[str] = None,
         introduction: Optional[str] = None,
         user_id: Optional[str] = None,
+        app_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         cache_session: bool = False,
@@ -382,9 +387,8 @@ class Agent:
         add_datetime_to_context: bool = False,
         add_location_to_context: bool = False,
         timezone_identifier: Optional[str] = None,
-        add_state_in_messages: bool = False,
+        resolve_in_context: bool = True,
         additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
-        user_message: Optional[Union[List, Dict, str, Callable, Message]] = None,
         user_message_role: str = "user",
         build_user_context: bool = True,
         retries: int = 0,
@@ -414,6 +418,7 @@ class Agent:
         self.id = id
         self.introduction = introduction
         self.user_id = user_id
+        self.app_id = app_id
 
         self.session_id = session_id
         self.session_state = session_state
@@ -477,11 +482,9 @@ class Agent:
         self.add_datetime_to_context = add_datetime_to_context
         self.add_location_to_context = add_location_to_context
         self.timezone_identifier = timezone_identifier
-        self.add_state_in_messages = add_state_in_messages
+        self.resolve_in_context = resolve_in_context
         self.additional_input = additional_input
 
-        self.user_message = user_message
-        self.user_message_role = user_message_role
         self.build_user_context = build_user_context
 
         self.retries = retries
@@ -516,13 +519,6 @@ class Agent:
             debug_level = 1
         self.debug_level = debug_level
         self.telemetry = telemetry
-
-        # Images generated during this session
-        self.images: Optional[List[ImageArtifact]] = None
-        # Audio generated during this session
-        self.audio: Optional[List[AudioArtifact]] = None
-        # Videos generated during this session
-        self.videos: Optional[List[VideoArtifact]] = None
 
         # If we are caching the agent session
         self._agent_session: Optional[AgentSession] = None
@@ -725,8 +721,14 @@ class Agent:
         """
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
+        # Register run for cancellation tracking
+        register_run(run_response.run_id)  # type: ignore
+
         # 1. Reason about the task
         self._handle_reasoning(run_response=run_response, run_messages=run_messages)
+
+        # Check for cancellation before model call
+        raise_if_cancelled(run_response.run_id)  # type: ignore
 
         # 2. Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
@@ -739,6 +741,10 @@ class Agent:
             response_format=response_format,
             run_response=run_response,
         )
+
+        # Check for cancellation after model call
+        raise_if_cancelled(run_response.run_id)  # type: ignore
+
         # If an output model is provided, generate output using the output model
         self._generate_response_with_output_model(model_response, run_messages)
 
@@ -784,10 +790,13 @@ class Agent:
         # 8. Save session to memory
         self.save_session(session=session)
 
-        # Log Agent Run
-        self._log_agent_run(user_id=user_id, session_id=session.session_id)
+        # Log Agent Telemetry
+        self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
+
+        # Always clean up the run tracking
+        cleanup_run(run_response.run_id)  # type: ignore
 
         return run_response
 
@@ -815,107 +824,144 @@ class Agent:
         """
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
-        # Start the Run by yielding a RunStarted event
-        if stream_intermediate_steps:
-            yield self._handle_event(create_run_started_event(run_response), run_response, workflow_context)
+        # Register run for cancellation tracking
+        register_run(run_response.run_id)  # type: ignore
 
-        # 1. Reason about the task if reasoning is enabled
-        yield from self._handle_reasoning_stream(run_response=run_response, run_messages=run_messages)
+        try:
+            # Start the Run by yielding a RunStarted event
+            if stream_intermediate_steps:
+                yield self._handle_event(create_run_started_event(run_response), run_response, workflow_context)
 
-        # 2. Process model response
-        if self.output_model is None:
-            for event in self._handle_model_response_stream(
-                session=session,
-                run_response=run_response,
-                run_messages=run_messages,
-                response_format=response_format,
-                stream_intermediate_steps=stream_intermediate_steps,
-                workflow_context=workflow_context,
-            ):
-                yield event
-        else:
-            from agno.run.agent import (
-                IntermediateRunContentEvent,
-                RunContentEvent,
-            )  # type: ignore
+            # 1. Reason about the task if reasoning is enabled
+            yield from self._handle_reasoning_stream(run_response=run_response, run_messages=run_messages)
 
-            for event in self._handle_model_response_stream(
-                session=session,
-                run_response=run_response,
-                run_messages=run_messages,
-                response_format=response_format,
-                stream_intermediate_steps=stream_intermediate_steps,
-                workflow_context=workflow_context,
-            ):
-                if isinstance(event, RunContentEvent):
-                    if stream_intermediate_steps:
-                        yield IntermediateRunContentEvent(
-                            content=event.content,
-                            content_type=event.content_type,
-                        )
-                else:
+            # Check for cancellation before model processing
+            raise_if_cancelled(run_response.run_id)  # type: ignore
+
+            # 2. Process model response
+            if self.output_model is None:
+                for event in self._handle_model_response_stream(
+                    session=session,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    response_format=response_format,
+                    stream_intermediate_steps=stream_intermediate_steps,
+                    workflow_context=workflow_context,
+                ):
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    yield event
+            else:
+                from agno.run.agent import (
+                    IntermediateRunContentEvent,
+                    RunContentEvent,
+                )  # type: ignore
+
+                for event in self._handle_model_response_stream(
+                    session=session,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    response_format=response_format,
+                    stream_intermediate_steps=stream_intermediate_steps,
+                    workflow_context=workflow_context,
+                ):
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    if isinstance(event, RunContentEvent):
+                        if stream_intermediate_steps:
+                            yield IntermediateRunContentEvent(
+                                content=event.content,
+                                content_type=event.content_type,
+                            )
+                    else:
+                        yield event
+
+                # If an output model is provided, generate output using the output model
+                for event in self._generate_response_with_output_model_stream(
+                    session=session,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    stream_intermediate_steps=stream_intermediate_steps,
+                    workflow_context=workflow_context,
+                ):
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
 
-            # If an output model is provided, generate output using the output model
-            yield from self._generate_response_with_output_model_stream(
-                session=session,
-                run_response=run_response,
-                run_messages=run_messages,
-                stream_intermediate_steps=stream_intermediate_steps,
-                workflow_context=workflow_context,
+            # Check for cancellation after model processing
+            raise_if_cancelled(run_response.run_id)  # type: ignore
+
+            # If a parser model is provided, structure the response separately
+            yield from self._parse_response_with_parser_model_stream(
+                session=session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
             )
 
-        # If a parser model is provided, structure the response separately
-        yield from self._parse_response_with_parser_model_stream(
-            session=session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
-        )
+            # We should break out of the run function
+            if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                yield from self._handle_agent_run_paused_stream(
+                    run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+                )
+                return
 
-        # We should break out of the run function
-        if any(tool_call.is_paused for tool_call in run_response.tools or []):
-            yield from self._handle_agent_run_paused_stream(
+            # 3. Update Agent Memory
+            yield from self._make_memories_and_summaries(
                 run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
             )
-            return
 
-        # 3. Update Agent Memory
-        yield from self._make_memories_and_summaries(
-            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
-        )
+            # 4. Calculate session metrics
+            self._update_session_metrics(session=session, run_response=run_response)
 
-        # 4. Calculate session metrics
-        self._update_session_metrics(session=session, run_response=run_response)
+            run_response.status = RunStatus.completed
 
-        run_response.status = RunStatus.completed
+            completed_event = self._handle_event(
+                create_run_completed_event(from_run_response=run_response), run_response, workflow_context
+            )
 
-        completed_event = self._handle_event(
-            create_run_completed_event(from_run_response=run_response), run_response, workflow_context
-        )
+            # Set the run duration
+            if run_response.metrics:
+                run_response.metrics.stop_timer()
 
-        # Set the run duration
-        if run_response.metrics:
-            run_response.metrics.stop_timer()
+            # 5. Optional: Save output to file if save_response_to_file is set
+            self.save_run_response_to_file(
+                run_response=run_response,
+                input=run_messages.user_message,
+                session_id=session.session_id,
+                user_id=user_id,
+            )
 
-        # 5. Optional: Save output to file if save_response_to_file is set
-        self.save_run_response_to_file(
-            run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
-        )
+            # 6. Add RunOutput to Agent Session
+            session.upsert_run(run=run_response)
 
-        # 6. Add RunOutput to Agent Session
-        session.upsert_run(run=run_response)
+            # 7. Save session to storage
+            self.save_session(session=session)
 
-        # 7. Save session to storage
-        self.save_session(session=session)
+            if stream_intermediate_steps:
+                yield completed_event
 
-        if stream_intermediate_steps:
-            yield completed_event
+            if yield_run_response:
+                yield run_response
 
-        if yield_run_response:
-            yield run_response
+            # Log Agent Telemetry
+            self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
-        # Log Agent Run
-        self._log_agent_run(user_id=user_id, session_id=session.session_id)
+            log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
-        log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
+        except RunCancelledException as e:
+            # Handle run cancellation during streaming
+            log_info(f"Run {run_response.run_id} was cancelled during streaming")
+            run_response.status = RunStatus.cancelled
+            run_response.content = str(e)
+
+            # Yield the cancellation event
+            yield self._handle_event(
+                create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+                run_response,
+                workflow_context,
+            )
+
+            # Add the RunOutput to Agent Session even when cancelled
+            session.upsert_run(run=run_response)
+            self.save_session(session=session)
+        finally:
+            # Always clean up the run tracking
+            cleanup_run(run_response.run_id)  # type: ignore
 
     @overload
     def run(
@@ -1116,13 +1162,24 @@ class Agent:
                     import time
 
                     time.sleep(delay)
+            except RunCancelledException as e:
+                # Handle run cancellation
+                log_info(f"Run {run_response.run_id} was cancelled")
+                run_response.content = str(e)
+                run_response.status = RunStatus.cancelled
+
+                # Add the RunOutput to Agent Session even when cancelled
+                agent_session.upsert_run(run=run_response)
+                self.save_session(session=agent_session)
+
+                return run_response
             except KeyboardInterrupt:
                 run_response.content = "Operation cancelled by user"
                 run_response.status = RunStatus.cancelled
 
                 if stream:
                     return generator_wrapper(  # type: ignore
-                        create_run_cancelled_event(run_response, "Operation cancelled by user")
+                        create_run_cancelled_event(from_run_response=run_response, reason="Operation cancelled by user")
                     )
                 else:
                     return run_response
@@ -1167,9 +1224,15 @@ class Agent:
 
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
+        # Register run for cancellation tracking
+        register_run(run_response.run_id)  # type: ignore
+
         self.model = cast(Model, self.model)
         # 1. Reason about the task if reasoning is enabled
         await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
+
+        # Check for cancellation before model call
+        raise_if_cancelled(run_response.run_id)  # type: ignore
 
         # 2. Generate a response from the Model (includes running function calls)
         model_response: ModelResponse = await self.model.aresponse(
@@ -1180,6 +1243,9 @@ class Agent:
             tool_call_limit=self.tool_call_limit,
             response_format=response_format,
         )
+
+        # Check for cancellation after model call
+        raise_if_cancelled(run_response.run_id)  # type: ignore
 
         # If an output model is provided, generate output using the output model
         await self._agenerate_response_with_output_model(model_response=model_response, run_messages=run_messages)
@@ -1225,10 +1291,13 @@ class Agent:
         # 8. Save session to storage
         self.save_session(session=session)
 
-        # Log Agent Run
-        await self._alog_agent_run(user_id=user_id, session_id=session.session_id)
+        # Log Agent Telemetry
+        await self._alog_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
+
+        # Always clean up the run tracking
+        cleanup_run(run_response.run_id)  # type: ignore
 
         return run_response
 
@@ -1259,112 +1328,150 @@ class Agent:
             await self._aresolve_run_dependencies()
 
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
-        # Start the Run by yielding a RunStarted event
-        if stream_intermediate_steps:
-            yield self._handle_event(create_run_started_event(run_response), run_response, workflow_context)
 
-        # 1. Reason about the task if reasoning is enabled
-        async for item in self._ahandle_reasoning_stream(run_response=run_response, run_messages=run_messages):
-            yield item
+        # Register run for cancellation tracking
+        register_run(run_response.run_id)  # type: ignore
 
-        # 2. Generate a response from the Model
-        if self.output_model is None:
-            async for event in self._ahandle_model_response_stream(
-                session=session,
-                run_response=run_response,
-                run_messages=run_messages,
-                response_format=response_format,
-                stream_intermediate_steps=stream_intermediate_steps,
-                workflow_context=workflow_context,
-            ):
-                yield event
-        else:
-            from agno.run.agent import (
-                IntermediateRunContentEvent,
-                RunContentEvent,
-            )  # type: ignore
+        try:
+            # Start the Run by yielding a RunStarted event
+            if stream_intermediate_steps:
+                yield self._handle_event(create_run_started_event(run_response), run_response, workflow_context)
 
-            async for event in self._ahandle_model_response_stream(
-                session=session,
-                run_response=run_response,
-                run_messages=run_messages,
-                response_format=response_format,
-                stream_intermediate_steps=stream_intermediate_steps,
-                workflow_context=workflow_context,
-            ):
-                if isinstance(event, RunContentEvent):
-                    if stream_intermediate_steps:
-                        yield IntermediateRunContentEvent(
-                            content=event.content,
-                            content_type=event.content_type,
-                        )
-                else:
+            # 1. Reason about the task if reasoning is enabled
+            async for item in self._ahandle_reasoning_stream(run_response=run_response, run_messages=run_messages):
+                raise_if_cancelled(run_response.run_id)  # type: ignore
+                yield item
+
+            # Check for cancellation before model processing
+            raise_if_cancelled(run_response.run_id)  # type: ignore
+
+            # 2. Generate a response from the Model
+            if self.output_model is None:
+                async for event in self._ahandle_model_response_stream(
+                    session=session,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    response_format=response_format,
+                    stream_intermediate_steps=stream_intermediate_steps,
+                    workflow_context=workflow_context,
+                ):
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    yield event
+            else:
+                from agno.run.agent import (
+                    IntermediateRunContentEvent,
+                    RunContentEvent,
+                )  # type: ignore
+
+                async for event in self._ahandle_model_response_stream(
+                    session=session,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    response_format=response_format,
+                    stream_intermediate_steps=stream_intermediate_steps,
+                    workflow_context=workflow_context,
+                ):
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    if isinstance(event, RunContentEvent):
+                        if stream_intermediate_steps:
+                            yield IntermediateRunContentEvent(
+                                content=event.content,
+                                content_type=event.content_type,
+                            )
+                    else:
+                        yield event
+
+                # If an output model is provided, generate output using the output model
+                async for event in self._agenerate_response_with_output_model_stream(
+                    session=session,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    workflow_context=workflow_context,
+                    stream_intermediate_steps=stream_intermediate_steps,
+                ):
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
 
-            # If an output model is provided, generate output using the output model
-            async for event in self._agenerate_response_with_output_model_stream(
-                session=session,
-                run_response=run_response,
-                run_messages=run_messages,
-                workflow_context=workflow_context,
-                stream_intermediate_steps=stream_intermediate_steps,
+            # Check for cancellation after model processing
+            raise_if_cancelled(run_response.run_id)  # type: ignore
+
+            # If a parser model is provided, structure the response separately
+            async for event in self._aparse_response_with_parser_model_stream(
+                session=session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
             ):
                 yield event
 
-        # If a parser model is provided, structure the response separately
-        async for event in self._aparse_response_with_parser_model_stream(
-            session=session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
-        ):
-            yield event
+            # We should break out of the run function
+            if any(tool_call.is_paused for tool_call in run_response.tools or []):
+                for item in self._handle_agent_run_paused_stream(
+                    run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
+                ):
+                    yield item
+                return
 
-        # We should break out of the run function
-        if any(tool_call.is_paused for tool_call in run_response.tools or []):
-            for item in self._handle_agent_run_paused_stream(
+            # 5. Update Agent Memory
+            async for event in self._amake_memories_and_summaries(
                 run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
             ):
-                yield item
-            return
+                yield event
 
-        # 5. Update Agent Memory
-        async for event in self._amake_memories_and_summaries(
-            run_response=run_response, run_messages=run_messages, session=session, user_id=user_id
-        ):
-            yield event
+            # 6. Calculate session metrics
+            self._update_session_metrics(session=session, run_response=run_response)
 
-        # 6. Calculate session metrics
-        self._update_session_metrics(session=session, run_response=run_response)
+            run_response.status = RunStatus.completed
 
-        run_response.status = RunStatus.completed
+            completed_event = self._handle_event(
+                create_run_completed_event(from_run_response=run_response), run_response, workflow_context
+            )
 
-        completed_event = self._handle_event(
-            create_run_completed_event(from_run_response=run_response), run_response, workflow_context
-        )
+            # Set the run duration
+            if run_response.metrics:
+                run_response.metrics.stop_timer()
 
-        # Set the run duration
-        if run_response.metrics:
-            run_response.metrics.stop_timer()
+            # 8. Optional: Save output to file if save_response_to_file is set
+            self.save_run_response_to_file(
+                run_response=run_response,
+                input=run_messages.user_message,
+                session_id=session.session_id,
+                user_id=user_id,
+            )
 
-        # 8. Optional: Save output to file if save_response_to_file is set
-        self.save_run_response_to_file(
-            run_response=run_response, input=run_messages.user_message, session_id=session.session_id, user_id=user_id
-        )
+            # 6. Add RunOutput to Agent Session
+            session.upsert_run(run=run_response)
 
-        # 6. Add RunOutput to Agent Session
-        session.upsert_run(run=run_response)
+            # 7. Save session to storage
+            self.save_session(session=session)
 
-        # 7. Save session to storage
-        self.save_session(session=session)
+            if stream_intermediate_steps:
+                yield completed_event
 
-        if stream_intermediate_steps:
-            yield completed_event
+            if yield_run_response:
+                yield run_response
 
-        if yield_run_response:
-            yield run_response
+            # Log Agent Telemetry
+            await self._alog_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
-        # Log Agent Run
-        await self._alog_agent_run(user_id=user_id, session_id=session.session_id)
+            log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
-        log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
+        except RunCancelledException as e:
+            # Handle run cancellation during async streaming
+            log_info(f"Run {run_response.run_id} was cancelled during async streaming")
+            run_response.status = RunStatus.cancelled
+            run_response.content = str(e)
+
+            # Yield the cancellation event
+            yield self._handle_event(
+                create_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+                run_response,
+                workflow_context,
+            )
+
+            # Add the RunOutput to Agent Session even when cancelled
+            session.upsert_run(run=run_response)
+            self.save_session(session=session)
+        finally:
+            # Always clean up the run tracking
+            cleanup_run(run_response.run_id)  # type: ignore
 
     @overload
     async def arun(
@@ -1559,13 +1666,24 @@ class Agent:
                     import time
 
                     time.sleep(delay)
+            except RunCancelledException as e:
+                # Handle run cancellation
+                log_info(f"Run {run_response.run_id} was cancelled")
+                run_response.content = str(e)
+                run_response.status = RunStatus.cancelled
+
+                # Add the RunOutput to Agent Session even when cancelled
+                agent_session.upsert_run(run=run_response)
+                self.save_session(session=agent_session)
+
+                return run_response
             except KeyboardInterrupt:
                 run_response.content = "Operation cancelled by user"
                 run_response.status = RunStatus.cancelled
 
                 if stream:
                     return async_generator_wrapper(  # type: ignore
-                        create_run_cancelled_event(run_response, "Operation cancelled by user")
+                        create_run_cancelled_event(from_run_response=run_response, reason="Operation cancelled by user")
                     )
                 else:
                     return run_response
@@ -1874,8 +1992,8 @@ class Agent:
         # 7. Save session to storage
         self.save_session(session=session)
 
-        # Log Agent Run
-        self._log_agent_run(user_id=user_id, session_id=session.session_id)
+        # Log Agent Telemetry
+        self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         return run_response
 
@@ -1953,8 +2071,8 @@ class Agent:
         if stream_intermediate_steps:
             yield completed_event
 
-        # Log Agent Run
-        self._log_agent_run(user_id=user_id, session_id=session.session_id)
+        # Log Agent Telemetry
+        self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -2241,8 +2359,8 @@ class Agent:
         # 6. Save session to storage
         self.save_session(session=session)
 
-        # Log Agent Run
-        await self._alog_agent_run(user_id=user_id, session_id=session.session_id)
+        # Log Agent Telemetry
+        await self._alog_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -2331,8 +2449,8 @@ class Agent:
         if stream_intermediate_steps:
             yield completed_event
 
-        # Log Agent Run
-        await self._alog_agent_run(user_id=user_id, session_id=session.session_id)
+        # Log Agent Telemetry
+        await self._alog_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -2699,10 +2817,6 @@ class Agent:
                 _t.answered = True
 
     def _update_run_response(self, model_response: ModelResponse, run_response: RunOutput, run_messages: RunMessages):
-        # Format tool calls if they exist
-        if model_response.tool_executions:
-            run_response.formatted_tool_calls = format_tool_calls(model_response.tool_executions)
-
         # Handle structured outputs
         if self.output_schema is not None and model_response.parsed is not None:
             # We get native structured outputs from the model
@@ -2744,12 +2858,22 @@ class Agent:
                         run_response=run_response, tool_name=tool_name, tool_args=tool_args
                     )
 
+        # Handle unified media fields from ModelResponse
+        if model_response.images is not None:
+            for image in model_response.images:
+                self._add_image(image, run_response)
+
+        if model_response.videos is not None:
+            for video in model_response.videos:
+                self._add_video(video, run_response)
+
+        if model_response.audios is not None:
+            for audio in model_response.audios:
+                self._add_audio(audio, run_response)
+
         # Update the run_response audio with the model response audio
         if model_response.audio is not None:
             run_response.response_audio = model_response.audio
-
-        if model_response.image is not None:
-            self.add_image(model_response.image)
 
         # Update the run_response created_at with the model response created_at
         run_response.created_at = model_response.created_at
@@ -2818,8 +2942,8 @@ class Agent:
         # Determine reasoning completed
         if stream_intermediate_steps and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
-            if run_response and run_response.metadata and hasattr(run_response.metadata, "reasoning_steps"):
-                all_reasoning_steps = cast(List[ReasoningStep], run_response.metadata.reasoning_steps)
+            if run_response and run_response.reasoning_steps:
+                all_reasoning_steps = cast(List[ReasoningStep], run_response.reasoning_steps)
 
             if all_reasoning_steps:
                 add_reasoning_metrics_to_metadata(
@@ -2896,8 +3020,8 @@ class Agent:
 
         if stream_intermediate_steps and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []
-            if run_response and run_response.metadata and hasattr(run_response.metadata, "reasoning_steps"):
-                all_reasoning_steps = cast(List[ReasoningStep], run_response.metadata.reasoning_steps)
+            if run_response and run_response.reasoning_steps:
+                all_reasoning_steps = cast(List[ReasoningStep], run_response.reasoning_steps)
 
             if all_reasoning_steps:
                 add_reasoning_metrics_to_metadata(
@@ -3052,13 +3176,11 @@ class Agent:
                         workflow_context=workflow_context,
                     )
 
-                if model_response_event.image is not None:
-                    self.add_image(model_response_event.image)
-
+                if model_response_event.images is not None:
                     yield self._handle_event(
                         create_run_output_content_event(
                             from_run_response=run_response,
-                            image=model_response_event.image,
+                            image=model_response_event.images[-1],
                         ),
                         run_response,
                         workflow_context=workflow_context,
@@ -3075,8 +3197,6 @@ class Agent:
                     else:
                         run_response.tools.extend(tool_executions_list)
 
-                    # Format tool calls whenever new ones are added during streaming
-                    run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
             # If the model response is a tool_call_started, add the tool call to the run_response
             elif (
                 model_response_event.event == ModelResponseEvent.tool_call_started.value
@@ -3088,9 +3208,6 @@ class Agent:
                         run_response.tools = tool_executions_list
                     else:
                         run_response.tools.extend(tool_executions_list)
-
-                    # Format tool calls whenever new ones are added during streaming
-                    run_response.formatted_tool_calls = format_tool_calls(run_response.tools)
 
                     # Yield each tool call started event
                     for tool in tool_executions_list:
@@ -3106,6 +3223,18 @@ class Agent:
                     merge_dictionaries(
                         session.session_data["session_state"], model_response_event.updated_session_state
                     )
+
+                if model_response_event.images is not None:
+                    for image in model_response_event.images:
+                        self._add_image(image, run_response)
+
+                if model_response_event.videos is not None:
+                    for video in model_response_event.videos:
+                        self._add_video(video, run_response)
+
+                if model_response_event.audios is not None:
+                    for audio in model_response_event.audios:
+                        self._add_audio(audio, run_response)
 
                 reasoning_step: Optional[ReasoningStep] = None
 
@@ -3809,6 +3938,17 @@ class Agent:
                 log_warning(f"No run responses found in AgentSession {session_id}")
         return None
 
+    def cancel_run(self, run_id: str) -> bool:
+        """Cancel a running agent execution.
+
+        Args:
+            run_id (str): The run_id to cancel.
+
+        Returns:
+            bool: True if the run was found and marked for cancellation, False otherwise.
+        """
+        return cancel_run_global(run_id)
+
     def get_session(
         self,
         session_id: Optional[str] = None,
@@ -3861,14 +4001,6 @@ class Agent:
                 session.session_data["session_state"].pop("current_session_id", None)
                 session.session_data["session_state"].pop("current_user_id", None)
                 session.session_data["session_state"].pop("current_run_id", None)
-
-            # TODO: Add image/audio/video artifacts to the session correctly, from runs
-            if self.images is not None:
-                session.session_data["images"] = [img.to_dict() for img in self.images]  # type: ignore
-            if self.videos is not None:
-                session.session_data["videos"] = [vid.to_dict() for vid in self.videos]  # type: ignore
-            if self.audio is not None:
-                session.session_data["audio"] = [aud.to_dict() for aud in self.audio]  # type: ignore
 
             self._upsert_session(session=session)
             log_debug(f"Created or updated AgentSession record: {session.session_id}")
@@ -4116,7 +4248,7 @@ class Agent:
                     raise Exception("system_message must return a string")
 
             # Format the system message with the session state variables
-            if self.add_state_in_messages:
+            if self.resolve_in_context:
                 sys_message_content = self._format_message_with_state_variables(
                     sys_message_content,
                     user_id=user_id,
@@ -4262,7 +4394,7 @@ class Agent:
                 system_message_content += f"{_ti}\n"
 
         # Format the system message with the session state variables
-        if self.add_state_in_messages:
+        if self.resolve_in_context:
             system_message_content = self._format_message_with_state_variables(
                 system_message_content,
                 user_id=user_id,
@@ -4378,39 +4510,8 @@ class Agent:
         # Get references from the knowledge base to use in the user message
         references = None
 
-        # 1. If the user_message is provided, use that.
-        if self.user_message is not None:
-            if isinstance(self.user_message, Message):
-                return self.user_message
-
-            user_message_content = self.user_message
-            if callable(self.user_message):
-                user_message_kwargs = {"agent": self, "message": input, "references": references}
-                user_message_content = self.user_message(**user_message_kwargs)
-                if not isinstance(user_message_content, str):
-                    raise Exception("user_message must return a string")
-
-            if self.add_state_in_messages:
-                user_message_content = self._format_message_with_state_variables(
-                    user_message_content,
-                    user_id=user_id,
-                    session_state=session.session_data.get("session_state")
-                    if session.session_data is not None
-                    else None,
-                )
-
-            return Message(
-                role=self.user_message_role,
-                content=user_message_content,
-                audio=audio,
-                images=images,
-                videos=videos,
-                files=files,
-                **kwargs,
-            )
-
-        # 2. If build_user_context is False or message is a list, return the message as is.
-        elif not self.build_user_context:
+        # 1. If build_user_context is False or message is a list, return the message as is.
+        if not self.build_user_context:
             return Message(
                 role=self.user_message_role,
                 content=input,
@@ -4420,7 +4521,7 @@ class Agent:
                 files=files,
                 **kwargs,
             )
-        # 3. Build the default user message for the Agent
+        # 2. Build the user message for the Agent
         elif input is None:
             # If we have any media, return a message with empty content
             if images is not None or audio is not None or videos is not None or files is not None:
@@ -4499,17 +4600,15 @@ class Agent:
                                 time=round(retrieval_timer.elapsed, 4),
                             )
                             # Add the references to the run_response
-                            if run_response.metadata is None:
-                                run_response.metadata = RunOutputMetaData()
-                            if run_response.metadata.references is None:
-                                run_response.metadata.references = []
-                            run_response.metadata.references.append(references)
+                            if run_response.references is None:
+                                run_response.references = []
+                            run_response.references.append(references)
                         retrieval_timer.stop()
                         log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
                     except Exception as e:
                         log_warning(f"Failed to get references: {e}")
 
-                if self.add_state_in_messages:
+                if self.resolve_in_context:
                     user_msg_content = self._format_message_with_state_variables(
                         user_msg_content,
                         user_id=user_id,
@@ -4621,13 +4720,10 @@ class Agent:
             # Add the extra messages to the run_response
             if len(messages_to_add_to_run_response) > 0:
                 log_debug(f"Adding {len(messages_to_add_to_run_response)} extra messages")
-                if run_response.metadata is None:
-                    run_response.metadata = RunOutputMetaData(additional_input=messages_to_add_to_run_response)
+                if run_response.additional_input is None:
+                    run_response.additional_input = messages_to_add_to_run_response
                 else:
-                    if run_response.metadata.additional_input is None:
-                        run_response.metadata.additional_input = messages_to_add_to_run_response
-                    else:
-                        run_response.metadata.additional_input.extend(messages_to_add_to_run_response)
+                    run_response.additional_input.extend(messages_to_add_to_run_response)
 
         # 3. Add history to run_messages
         if self.add_history_to_context:
@@ -5142,38 +5238,26 @@ class Agent:
     # Handle images, videos and audio
     ###########################################################################
 
-    def add_image(self, image: ImageArtifact) -> None:
-        # TODO: Remove and replace with proper handling of images as tool results
-        if self.images is None:
-            self.images = []
-        self.images.append(image)
+    def _add_image(self, image: ImageArtifact, run_response: RunOutput) -> None:
+        """Add an image to both the agent's stateful storage and the current run response"""
+        # Add to run response
+        if run_response.images is None:
+            run_response.images = []
+        run_response.images.append(image)
 
-        # TODO: Figure out how to get images on the run_response
+    def _add_video(self, video: VideoArtifact, run_response: RunOutput) -> None:
+        """Add a video to both the agent's stateful storage and the current run response"""
+        # Add to run response
+        if run_response.videos is None:
+            run_response.videos = []
+        run_response.videos.append(video)
 
-    def add_video(self, video: VideoArtifact) -> None:
-        # TODO: Remove and replace with proper handling of videos as tool results
-        if self.videos is None:
-            self.videos = []
-        self.videos.append(video)
-
-        # TODO: Figure out how to get videos on the run_response
-
-    def add_audio(self, audio: AudioArtifact) -> None:
-        # TODO: Remove and replace with proper handling of audio as tool results
-        if self.audio is None:
-            self.audio = []
-        self.audio.append(audio)
-
-        # TODO: Figure out how to get audio on the run_response
-
-    def get_images(self) -> Optional[List[ImageArtifact]]:
-        return self.images
-
-    def get_videos(self) -> Optional[List[VideoArtifact]]:
-        return self.videos
-
-    def get_audio(self) -> Optional[List[AudioArtifact]]:
-        return self.audio
+    def _add_audio(self, audio: AudioArtifact, run_response: RunOutput) -> None:
+        """Add audio to both the agent's stateful storage and the current run response"""
+        # Add to run response
+        if run_response.audio is None:
+            run_response.audio = []
+        run_response.audio.append(audio)
 
     ###########################################################################
     # Reasoning
@@ -6092,11 +6176,9 @@ class Agent:
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
                 # Add the references to the run_response
-                if run_response.metadata is None:
-                    run_response.metadata = RunOutputMetaData()
-                if run_response.metadata.references is None:
-                    run_response.metadata.references = []
-                run_response.metadata.references.append(references)
+                if run_response.references is None:
+                    run_response.references = []
+                run_response.references.append(references)
             retrieval_timer.stop()
             from agno.utils.log import log_debug
 
@@ -6122,11 +6204,9 @@ class Agent:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
-                if run_response.metadata is None:
-                    run_response.metadata = RunOutputMetaData()
-                if run_response.metadata.references is None:
-                    run_response.metadata.references = []
-                run_response.metadata.references.append(references)
+                if run_response.references is None:
+                    run_response.references = []
+                run_response.references.append(references)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 
@@ -6167,11 +6247,9 @@ class Agent:
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
                 # Add the references to the run_response
-                if run_response.metadata is None:
-                    run_response.metadata = RunOutputMetaData()
-                if run_response.metadata.references is None:
-                    run_response.metadata.references = []
-                run_response.metadata.references.append(references)
+                if run_response.references is None:
+                    run_response.references = []
+                run_response.references.append(references)
             retrieval_timer.stop()
             from agno.utils.log import log_debug
 
@@ -6200,11 +6278,9 @@ class Agent:
                 references = MessageReferences(
                     query=query, references=docs_from_knowledge, time=round(retrieval_timer.elapsed, 4)
                 )
-                if run_response.metadata is None:
-                    run_response.metadata = RunOutputMetaData()
-                if run_response.metadata.references is None:
-                    run_response.metadata.references = []
-                run_response.metadata.references.append(references)
+                if run_response.references is None:
+                    run_response.references = []
+                run_response.references.append(references)
             retrieval_timer.stop()
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 
@@ -6669,46 +6745,54 @@ class Agent:
     # Api functions
     ###########################################################################
 
-    def _log_agent_run(self, session_id: str, user_id: Optional[str] = None) -> None:
-        self._set_telemetry()
+    def _get_telemetry_data(self) -> Dict[str, Any]:
+        """Get the telemetry data for the agent"""
+        return {
+            "agent_id": self.id,
+            "db_type": self.db.__class__.__name__ if self.db else None,
+            "model_provider": self.model.provider if self.model else None,
+            "model_name": self.model.name if self.model else None,
+            "model_id": self.model.id if self.model else None,
+            "parser_model": self.parser_model.to_dict() if self.parser_model else None,
+            "output_model": self.output_model.to_dict() if self.output_model else None,
+            "has_tools": self.tools is not None,
+            "has_memory": self.enable_user_memories is not None,
+            "has_reasoning": self.reasoning is not None,
+            "has_knowledge": self.knowledge is not None,
+            "has_input_schema": self.input_schema is not None,
+            "has_output_schema": self.output_schema is not None,
+            "has_team": self.team_id is not None,
+        }
 
+    def _log_agent_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
+        """Send a telemetry event to the API for a created Agent run"""
+
+        self._set_telemetry()
         if not self.telemetry:
             return
 
-        # # from agno.api.agent import AgentRunCreate, create_agent_run
+        from agno.api.agent import AgentRunCreate, create_agent_run
 
-        # try:
-        #     # agent_session: Optional[AgentSession] = self.agent_session or self._read_or_create_session(
-        #     #     session_id=session_id, user_id=user_id
-        #     # )
+        try:
+            create_agent_run(
+                run=AgentRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data()),
+            )
+        except Exception as e:
+            log_debug(f"Could not create Agent run telemetry event: {e}")
 
-        #     # TODO: Telemetry data
-        #     # create_agent_run(
-        #     #     run=AgentRunCreate(
-        #     #         agent_data=agent_session.telemetry_data(),
-        #     #     ),
-        #     # )
-        # except Exception as e:
-        #     log_debug(f"Could not create agent event: {e}")
+    async def _alog_agent_telemetry(self, session_id: str, run_id: Optional[str] = None) -> None:
+        """Send a telemetry event to the API for a created Agent async run"""
 
-    async def _alog_agent_run(self, session_id: str, user_id: Optional[str] = None) -> None:
         self._set_telemetry()
-
         if not self.telemetry:
             return
 
-        # from agno.api.agent import AgentRunCreate, acreate_agent_run
+        from agno.api.agent import AgentRunCreate, acreate_agent_run
 
-        # try:
-        #     agent_session: Optional[AgentSession] = self.agent_session or self._read_or_create_session(
-        #         session_id=session_id, user_id=user_id
-        #     )
+        try:
+            await acreate_agent_run(
+                run=AgentRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data())
+            )
 
-        #     # TODO: Telemetry data
-        #     # await acreate_agent_run(
-        #     #     run=AgentRunCreate(
-        #     #         agent_data=agent_session.telemetry_data(),
-        #     #     ),
-        #     # )
-        # except Exception as e:
-        #     log_debug(f"Could not create agent event: {e}")
+        except Exception as e:
+            log_debug(f"Could not create Agent run telemetry event: {e}")

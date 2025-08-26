@@ -60,8 +60,7 @@ def run_test():
         tool_hooks=[customer_management_hook],
         session_state={"customer_profiles": {"123": {"name": "Jane Doe"}}},
         instructions="Your profiles: {customer_profiles}. Use `process_customer_request`. Use either create or retrieve as action for the tool.",
-        add_state_in_messages=True,
-        debug_mode=True,
+        resolve_in_context=True,
         db=InMemoryDb(),
     )
 

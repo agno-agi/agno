@@ -1,6 +1,6 @@
 """Use SQLite as the database for an Agent, selecting custom names for the tables.
 
-Run `pip install duckduckgo-search sqlalchemy openai` to install dependencies.
+Run `pip install ddgs sqlalchemy openai` to install dependencies.
 """
 
 from agno.agent import Agent

@@ -1,4 +1,4 @@
-"""Run `pip install duckduckgo-search sqlalchemy cerebras_cloud_sdk` to install dependencies."""
+"""Run `pip install ddgs sqlalchemy cerebras_cloud_sdk` to install dependencies."""
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
@@ -13,7 +13,6 @@ agent = Agent(
     model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
     db=db,
     tools=[DuckDuckGoTools()],
-    debug_mode=True,
     add_history_to_context=True,
 )
 agent.print_response("How many people live in Canada?")

@@ -16,11 +16,9 @@ agent = Agent(
     tools=[add_item],
     # You can use variables from the session state in the instructions
     instructions="Current state (shopping list) is: {shopping_list}",
-    # Important: Add the state to the messages
-    add_state_in_messages=True,
     markdown=True,
 )
 
 # Example usage
 agent.print_response("Add milk, eggs, and bread to the shopping list", stream=True)
-print(f"Final session state: {agent.session_state}")
+print(f"Final session state: {agent.get_session_state()}")

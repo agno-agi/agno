@@ -1,5 +1,5 @@
 from os import getenv
-from typing import List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
@@ -50,12 +50,12 @@ class AgentOS:
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
         fastapi_app: Optional[FastAPI] = None,
+        telemetry: bool = True,
     ):
         if not agents and not workflows and not teams:
             raise ValueError("Either agents, teams or workflows must be provided.")
 
         self.config = self._load_yaml_config(config) if isinstance(config, str) else config
-        self.os_id: Optional[str] = os_id
         self.description = description
 
         self.agents: Optional[List[Agent]] = agents
@@ -66,9 +66,14 @@ class AgentOS:
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
         self.fastapi_app: Optional[FastAPI] = fastapi_app
 
-        self.interfaces_loaded: List[Tuple[str, str]] = []
+        self.interfaces = interfaces or []
 
-        self.set_os_id()
+        self.os_id: Optional[str] = os_id
+        self.description = description
+
+        self.telemetry = telemetry
+
+        self.interfaces_loaded: List[Tuple[str, str]] = []
 
         if self.agents:
             for agent in self.agents:
@@ -95,6 +100,20 @@ class AgentOS:
             for workflow in self.workflows:
                 if not workflow.id:
                     workflow.id = generate_id(workflow.name)
+
+        if self.telemetry:
+            from agno.api.os import OSLaunch, log_os_telemetry
+
+            log_os_telemetry(launch=OSLaunch(os_id=self.os_id, data=self._get_telemetry_data()))
+
+    def _get_telemetry_data(self) -> Dict[str, Any]:
+        """Get the telemetry data for the OS"""
+        return {
+            "agents": [agent.id for agent in self.agents] if self.agents else None,
+            "teams": [team.id for team in self.teams] if self.teams else None,
+            "workflows": [workflow.id for workflow in self.workflows] if self.workflows else None,
+            "interfaces": [interface.type for interface in self.interfaces] if self.interfaces else None,
+        }
 
     def _load_yaml_config(self, config_file_path: str) -> AgentOSConfig:
         """Load a YAML config file and return the configuration as an AgentOSConfig instance."""

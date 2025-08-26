@@ -18,11 +18,9 @@ except ImportError:
     raise ImportError("The `bs4` package is not installed. Please install it via `pip install beautifulsoup4`.")
 
 try:
-    from duckduckgo_search import DDGS
+    from ddgs import DDGS
 except ImportError:
-    raise ImportError(
-        "The `duckduckgo-search` package is not installed. Please install it via `pip install duckduckgo-search`."
-    )
+    raise ImportError("The `ddgs` package is not installed. Please install it via `pip install ddgs`.")
 
 
 @dataclass
@@ -74,7 +72,7 @@ class WebSearchReader(Reader):
                 self._respect_rate_limits()
 
                 ddgs = DDGS(timeout=self.search_timeout)
-                search_results = ddgs.text(keywords=query, max_results=self.max_results)
+                search_results = ddgs.text(query=query, max_results=self.max_results)
 
                 # Convert to list and extract relevant fields
                 results = []

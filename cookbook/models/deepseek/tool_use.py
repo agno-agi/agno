@@ -1,4 +1,4 @@
-"""Run `pip install duckduckgo-search` to install dependencies."""
+"""Run `pip install ddgs` to install dependencies."""
 
 from agno.agent import Agent
 from agno.models.deepseek import DeepSeek
@@ -13,7 +13,6 @@ agent = Agent(
     model=DeepSeek(id="deepseek-chat"),
     tools=[DuckDuckGoTools()],
     markdown=True,
-    debug_mode=True,
 )
 
 agent.print_response("Whats happening in France?")

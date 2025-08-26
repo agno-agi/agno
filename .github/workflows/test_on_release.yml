@@ -773,15 +773,14 @@ jobs:
         working-directory: .
         run: |
           source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/knowledge/test_csv_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_csv_url_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_docx_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_json_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_md_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_pdf_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_pdf_url_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_pdf_bytes_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_text_knowledge_base.py
+          python -m pytest ./libs/agno/tests/integration/knowledge/test_csv_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_csv_url_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_docx_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_json_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_md_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_pdf_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_pdf_url_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_text_knowledge.py
 
   test-knowledge-2:
     runs-on: ubuntu-latest
@@ -810,11 +809,10 @@ jobs:
         working-directory: .
         run: |
           source .venv/bin/activate
-          python -m pytest ./libs/agno/tests/integration/knowledge/test_arxiv_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_firecrawl_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_url_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_website_knowledge_base.py \
-          ./libs/agno/tests/integration/knowledge/test_youtube_knowledge_base.py
+          python -m pytest ./libs/agno/tests/integration/knowledge/test_arxiv_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_firecrawl_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_website_knowledge.py \
+          ./libs/agno/tests/integration/knowledge/test_youtube_knowledge.py
 
   # Run remaining integration tests
   test-remaining:
@@ -844,4 +842,4 @@ jobs:
         working-directory: .
         run: |
           source .venv/bin/activate
-          python -m pytest --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/workflows_2 ./libs/agno/tests/integration
+          python -m pytest --ignore=./libs/agno/tests/integration/db --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/workflows_2 ./libs/agno/tests/integration

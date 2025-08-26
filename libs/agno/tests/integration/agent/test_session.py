@@ -118,8 +118,6 @@ def test_agent_with_state_on_agent(shared_db):
         session_state={"shopping_list": []},
         tools=[add_item],
         instructions="Current state (shopping list) is: {shopping_list}",
-        # Add the state to the messages
-        add_state_in_messages=True,
         markdown=True,
     )
     agent.run("Add oranges to my shopping list")
@@ -146,8 +144,6 @@ def test_agent_with_state_on_agent_stream(shared_db):
         session_id=str(uuid.uuid4()),
         tools=[add_item],
         instructions="Current state (shopping list) is: {shopping_list}",
-        # Add the state to the messages
-        add_state_in_messages=True,
         markdown=True,
     )
     for _ in agent.run("Add oranges to my shopping list", stream=True):
@@ -181,8 +177,6 @@ def test_agent_with_state_on_run(shared_db):
         db=shared_db,
         tools=[add_item],
         instructions="Current state (shopping list) is: {shopping_list}",
-        # Add the state to the messages
-        add_state_in_messages=True,
         markdown=True,
     )
     agent.run("Add oranges to my shopping list", session_id="session_1", session_state={"shopping_list": []})
@@ -213,8 +207,6 @@ def test_agent_with_state_on_run_stream(shared_db):
         db=shared_db,
         tools=[add_item],
         instructions="Current state (shopping list) is: {shopping_list}",
-        # Add the state to the messages
-        add_state_in_messages=True,
         markdown=True,
     )
     for response in agent.run(
@@ -251,8 +243,6 @@ async def test_agent_with_state_on_run_async(shared_db):
         db=shared_db,
         tools=[add_item],
         instructions="Current state (shopping list) is: {shopping_list}",
-        # Add the state to the messages
-        add_state_in_messages=True,
         markdown=True,
     )
     await agent.arun("Add oranges to my shopping list", session_id="session_1", session_state={"shopping_list": []})
@@ -283,8 +273,6 @@ async def test_agent_with_state_on_run_stream_async(shared_db):
         db=shared_db,
         tools=[add_item],
         instructions="Current state (shopping list) is: {shopping_list}",
-        # Add the state to the messages
-        add_state_in_messages=True,
         markdown=True,
     )
     async for response in agent.arun(
