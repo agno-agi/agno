@@ -13,6 +13,7 @@ from agno.utils.log import log_error
 
 if TYPE_CHECKING:
     from agno.workflow.types import StepOutput, WorkflowMetrics
+    from agno.workflow.utils import WorkflowResponse
 
 
 class WorkflowRunEvent(str, Enum):
@@ -424,6 +425,8 @@ class WorkflowRunOutput:
     audio: Optional[List[AudioArtifact]] = None
     response_audio: Optional[AudioResponse] = None
 
+    agent_response: Optional["WorkflowResponse"] = None
+
     # Store actual step execution results as StepOutput objects
     step_results: List[Union["StepOutput", List["StepOutput"]]] = field(default_factory=list)  # noqa: F821
 
@@ -481,6 +484,9 @@ class WorkflowRunOutput:
 
         if self.response_audio is not None:
             _dict["response_audio"] = self.response_audio.to_dict()
+
+        if self.agent_response is not None:
+            _dict["agent_response"] = self.agent_response.model_dump(exclude_none=True)
 
         if self.step_results:
             flattened_responses = []
@@ -553,6 +559,12 @@ class WorkflowRunOutput:
 
         events = data.pop("events", [])
 
+        agent_response = data.pop("agent_response", None)
+        if agent_response:
+            from agno.workflow.utils import WorkflowResponse
+
+            agent_response = WorkflowResponse.model_validate(agent_response)
+
         return cls(
             step_results=parsed_step_results,
             metadata=metadata,
@@ -563,6 +575,7 @@ class WorkflowRunOutput:
             events=events,
             metrics=workflow_metrics,
             step_executor_runs=step_executor_runs,
+            agent_response=agent_response,
             **data,
         )
 
