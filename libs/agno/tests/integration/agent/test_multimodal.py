@@ -8,7 +8,7 @@ def test_agent_image_input(shared_db):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         markdown=True,
-        storage=shared_db,
+        db=shared_db,
     )
 
     response = agent.run(
@@ -36,7 +36,7 @@ def test_agent_image_input_no_prompt(shared_db):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
         markdown=True,
-        storage=shared_db,
+        db=shared_db,
     )
 
     response = agent.run(
