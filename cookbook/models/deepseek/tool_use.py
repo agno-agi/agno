@@ -13,6 +13,6 @@ agent = Agent(
     model=DeepSeek(id="deepseek-chat"),
     tools=[DuckDuckGoTools()],
     markdown=True,
-    )
+)
 
 agent.print_response("Whats happening in France?")

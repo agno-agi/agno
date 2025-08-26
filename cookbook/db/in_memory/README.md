@@ -65,7 +65,7 @@ db = InMemoryDb(storage_dict=my_sessions)
 agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     db=db,
-    add_history_to_messages=True,
+    add_history_to_context=True,
 )
 
 # Run some conversations

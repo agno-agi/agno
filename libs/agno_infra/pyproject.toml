@@ -29,6 +29,7 @@ classifiers = [
 ]
 
 dependencies = [
+  "click==8.1.8",
   "rich",
   "tomli",
   "typer",
