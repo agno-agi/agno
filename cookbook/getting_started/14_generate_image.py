@@ -16,7 +16,9 @@ Run `pip install openai agno` to install dependencies.
 from textwrap import dedent
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
+from agno.run.agent import RunOutput
 from agno.tools.dalle import DalleTools
 
 # Create an Creative AI Artist Agent
@@ -39,19 +41,22 @@ image_agent = Agent(
         Always aim to create visually striking and meaningful images that capture the user's vision!\
     """),
     markdown=True,
+    db=SqliteDb(session_table="test_agent", db_file="tmp/test.db"),
 )
 
 # Example usage
 image_agent.print_response(
-    "Create a magical library with floating books and glowing crystals", stream=True
+    "Create a magical library with floating books and glowing crystals",
 )
 
 # Retrieve and display generated images
-images = image_agent.get_images()
-if images and isinstance(images, list):
-    for image_response in images:
+run_response = image_agent.get_last_run_output()
+if run_response and isinstance(run_response, RunOutput):
+    for image_response in run_response.images:
         image_url = image_response.url
-        print(f"Generated image URL: {image_url}")
+        print("image_url: ", image_url)
+else:
+    print("No images found or images is not a list")
 
 # More example prompts to try:
 """

@@ -12,6 +12,7 @@ except (ImportError, ModuleNotFoundError):
 
 
 from agno.media import ImageArtifact
+from agno.tools.function import ToolResult
 
 
 def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
@@ -27,17 +28,19 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
     """
     from agno.agent import Agent
 
-    async def call_tool(agent: Agent, tool_name: str, **kwargs) -> str:
+    async def call_tool(agent: Agent, tool_name: str, **kwargs) -> ToolResult:
         try:
             log_debug(f"Calling MCP Tool '{tool_name}' with args: {kwargs}")
             result: CallToolResult = await session.call_tool(tool_name, kwargs)  # type: ignore
 
             # Return an error if the tool call failed
             if result.isError:
-                raise Exception(f"Error from MCP tool '{tool_name}': {result.content}")
+                return ToolResult(content=f"Error from MCP tool '{tool_name}': {result.content}")
 
             # Process the result content
             response_str = ""
+            images = []
+            
             for content_item in result.content:
                 if isinstance(content_item, TextContent):
                     response_str += content_item.text + "\n"
@@ -49,7 +52,7 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
                         content=getattr(content_item, "data", None),
                         mime_type=getattr(content_item, "mimeType", "image/png"),
                     )
-                    agent.add_image(img_artifact)
+                    images.append(img_artifact)
                     response_str += "Image has been generated and added to the response.\n"
                 elif isinstance(content_item, EmbeddedResource):
                     # Handle embedded resources
@@ -58,9 +61,12 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
                     # Handle other content types
                     response_str += f"[Unsupported content type: {content_item.type}]\n"
 
-            return response_str.strip()
+            return ToolResult(
+                content=response_str.strip(),
+                images=images if images else None,
+            )
         except Exception as e:
             log_exception(f"Failed to call MCP tool '{tool_name}': {e}")
-            return f"Error: {e}"
+            return ToolResult(content=f"Error: {e}")
 
     return partial(call_tool, tool_name=tool.name)

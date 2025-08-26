@@ -9,6 +9,7 @@ from agno.agent import Agent
 from agno.media import AudioArtifact
 from agno.team.team import Team
 from agno.tools import Toolkit
+from agno.tools.function import ToolResult
 from agno.utils.log import logger
 
 try:
@@ -124,7 +125,7 @@ class ElevenLabsTools(Toolkit):
 
     def generate_sound_effect(
         self, agent: Union[Agent, Team], prompt: str, duration_seconds: Optional[float] = None
-    ) -> str:
+    ) -> ToolResult:
         """
         Use this function to generate sound effect audio from a text prompt.
 
@@ -132,7 +133,7 @@ class ElevenLabsTools(Toolkit):
             prompt (str): Text to generate audio from.
             duration_seconds (Optional[float]): Duration in seconds to generate audio from. Has to be between 0.5 and 22.
         Returns:
-            str: Return the path to the generated audio file.
+            ToolResult: A ToolResult containing the generated audio or error message.
         """
         try:
             audio_generator = self.eleven_labs_client.text_to_sound_effects.convert(
@@ -141,29 +142,30 @@ class ElevenLabsTools(Toolkit):
 
             base64_audio = self._process_audio(audio_generator)
 
-            # Attach to the agent
-            agent.add_audio(
-                AudioArtifact(
-                    id=str(uuid4()),
-                    base64_audio=base64_audio,
-                    mime_type="audio/mpeg",
-                )
+            # Create AudioArtifact
+            audio_artifact = AudioArtifact(
+                id=str(uuid4()),
+                base64_audio=base64_audio,
+                mime_type="audio/mpeg",
             )
 
-            return "Audio generated successfully"
+            return ToolResult(
+                content="Audio generated successfully",
+                audios=[audio_artifact],
+            )
 
         except Exception as e:
             logger.error(f"Failed to generate audio: {e}")
-            return f"Error: {e}"
+            return ToolResult(content=f"Error: {e}")
 
-    def text_to_speech(self, agent: Union[Agent, Team], prompt: str) -> str:
+    def text_to_speech(self, agent: Union[Agent, Team], prompt: str) -> ToolResult:
         """
         Use this function to convert text to speech audio.
 
         Args:
             prompt (str): Text to generate audio from.
         Returns:
-            str: Return the path to the generated audio file.
+            ToolResult: A ToolResult containing the generated audio or error message.
         """
         try:
             audio_generator = self.eleven_labs_client.text_to_speech.convert(
@@ -175,17 +177,18 @@ class ElevenLabsTools(Toolkit):
 
             base64_audio = self._process_audio(audio_generator)
 
-            # Attach to the agent
-            agent.add_audio(
-                AudioArtifact(
-                    id=str(uuid4()),
-                    base64_audio=base64_audio,
-                    mime_type="audio/mpeg",
-                )
+            # Create AudioArtifact
+            audio_artifact = AudioArtifact(
+                id=str(uuid4()),
+                base64_audio=base64_audio,
+                mime_type="audio/mpeg",
             )
 
-            return "Audio generated successfully"
+            return ToolResult(
+                content="Audio generated successfully",
+                audios=[audio_artifact],
+            )
 
         except Exception as e:
             logger.error(f"Failed to generate audio: {e}")
-            return f"Error: {e}"
+            return ToolResult(content=f"Error: {e}")

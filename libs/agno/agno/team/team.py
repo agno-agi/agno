@@ -1934,8 +1934,8 @@ class Team:
                     # Yield the audio and transcript bit by bit
                     should_yield = True
 
-                if model_response_event.image is not None:
-                    self.add_image(model_response_event.image)
+                if model_response_event.image is not None:  # type: ignore
+                    self.add_image(model_response_event.image) # type: ignore
 
                     should_yield = True
 
@@ -1950,7 +1950,7 @@ class Team:
                                 redacted_thinking=model_response_event.redacted_thinking,
                                 response_audio=full_model_response.audio,
                                 citations=model_response_event.citations,
-                                image=model_response_event.image,
+                                image=model_response_event.image, # type: ignore
                             ),
                             run_response,
                             workflow_context=workflow_context,

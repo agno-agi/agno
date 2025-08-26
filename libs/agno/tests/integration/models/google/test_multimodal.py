@@ -4,6 +4,7 @@ import requests
 from PIL import Image as PILImage
 
 from agno.agent.agent import Agent
+from agno.db.in_memory import InMemoryDb
 from agno.media import Audio, Image, Video
 from agno.models.google import Gemini
 
@@ -99,16 +100,16 @@ def test_image_generation():
         telemetry=False,
         build_context=False,
         system_message=None,
+        db=InMemoryDb(),
     )
 
-    agent.run("Make me an image of a cat in a tree.")
+    response = agent.run("Make me an image of a cat in a tree.")
 
-    images = agent.get_images()
-    assert images is not None
-    assert len(images) > 0
-    assert images[0].content is not None
+    # Check images directly from the response
+    assert response.images is not None
+    assert len(response.images) > 0
 
-    image = PILImage.open(BytesIO(images[0].content))
+    image = PILImage.open(BytesIO(response.images[0].content))
     assert image.format in ["JPEG", "PNG"]
 
 
@@ -125,17 +126,20 @@ def test_image_generation_streaming():
         telemetry=False,
         build_context=False,
         system_message=None,
+        db=InMemoryDb(),
     )
 
     response = agent.run("Make me an image of a cat in a tree.", stream=True)
 
     image_received = False
     for chunk in response:
-        if hasattr(chunk, "image") and chunk.image:  # type: ignore
+        # Check for images instead of image (due to our ModelResponse changes)
+        if hasattr(chunk, "images") and chunk.images:  # type: ignore
             image_received = True
-            assert chunk.image is not None  # type: ignore
+            assert chunk.images is not None  # type: ignore
+            assert len(chunk.images) > 0  # type: ignore
 
-            image = PILImage.open(BytesIO(chunk.image.content))  # type: ignore
+            image = PILImage.open(BytesIO(chunk.images[0].content))  # type: ignore
             assert image.format in ["JPEG", "PNG"]
 
     assert image_received, "No image was received in the stream"
@@ -154,18 +158,19 @@ def test_image_editing():
         telemetry=False,
         build_context=False,
         system_message=None,
+        db=InMemoryDb(),
     )
 
     sample_image_url = "https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg"
 
-    agent.run("Can you add a rainbow over this bridge?", images=[Image(url=sample_image_url)])
+    response = agent.run("Can you add a rainbow over this bridge?", images=[Image(url=sample_image_url)])
 
-    images = agent.get_images()
-    assert images is not None
-    assert len(images) > 0
-    assert images[0].content is not None
+    # Check images directly from the response
+    assert response.images is not None
+    assert len(response.images) > 0
+    assert response.images[0].content is not None
 
-    image = PILImage.open(BytesIO(images[0].content))
+    image = PILImage.open(BytesIO(response.images[0].content))
     assert image.format in ["JPEG", "PNG"]
 
 
@@ -182,6 +187,7 @@ def test_image_generation_with_detailed_prompt():
         telemetry=False,
         build_context=False,
         system_message=None,
+        db=InMemoryDb(),
     )
 
     detailed_prompt = """
@@ -194,12 +200,14 @@ def test_image_generation_with_detailed_prompt():
 
     agent.run(detailed_prompt)
 
-    images = agent.get_images()
-    assert images is not None
-    assert len(images) > 0
-    assert images[0].content is not None
+    # Use get_last_run_output instead of get_images
+    run_response = agent.get_last_run_output()
+    assert run_response is not None
+    assert run_response.images is not None
+    assert len(run_response.images) > 0
+    assert run_response.images[0].content is not None
 
-    image = PILImage.open(BytesIO(images[0].content))
+    image = PILImage.open(BytesIO(run_response.images[0].content))
     assert image.format in ["JPEG", "PNG"]
 
 
@@ -215,6 +223,7 @@ def test_combined_text_and_image_generation():
         markdown=True,
         build_context=False,
         system_message=None,
+        db=InMemoryDb(),
     )
 
     response = agent.run("Create an image of a sunset over mountains and describe what you generated.")
@@ -224,8 +233,9 @@ def test_combined_text_and_image_generation():
     assert isinstance(response.content, str)
     assert len(response.content) > 0
 
-    # Check image response
-    images = agent.get_images()
-    assert images is not None
-    assert len(images) > 0
-    assert images[0].content is not None
+    # Check image response using get_last_run_output
+    run_response = agent.get_last_run_output()
+    assert run_response is not None
+    assert run_response.images is not None
+    assert len(run_response.images) > 0
+    assert run_response.images[0].content is not None

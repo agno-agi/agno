@@ -513,13 +513,6 @@ class Agent:
         self.debug_level = debug_level
         self.telemetry = telemetry
 
-        # Images generated during this session
-        self.images: Optional[List[ImageArtifact]] = None
-        # Audio generated during this session
-        self.audio: Optional[List[AudioArtifact]] = None
-        # Videos generated during this session
-        self.videos: Optional[List[VideoArtifact]] = None
-
         # If we are caching the agent session
         self._agent_session: Optional[AgentSession] = None
 
@@ -2740,12 +2733,22 @@ class Agent:
                         run_response=run_response, tool_name=tool_name, tool_args=tool_args
                     )
 
+        # Handle unified media fields from ModelResponse
+        if model_response.images is not None:
+            for image in model_response.images:
+                self._add_image(image, run_response)
+
+        if model_response.videos is not None:
+            for video in model_response.videos:
+                self._add_video(video, run_response)
+
+        if model_response.audios is not None:
+            for audio in model_response.audios:
+                self._add_audio(audio, run_response)
+
         # Update the run_response audio with the model response audio
         if model_response.audio is not None:
             run_response.response_audio = model_response.audio
-
-        if model_response.image is not None:
-            self.add_image(model_response.image)
 
         # Update the run_response created_at with the model response created_at
         run_response.created_at = model_response.created_at
@@ -3048,13 +3051,11 @@ class Agent:
                         workflow_context=workflow_context,
                     )
 
-                if model_response_event.image is not None:
-                    self.add_image(model_response_event.image)
-
+                if model_response_event.images is not None:
                     yield self._handle_event(
                         create_run_output_content_event(
                             from_run_response=run_response,
-                            image=model_response_event.image,
+                            image=model_response_event.images[-1],
                         ),
                         run_response,
                         workflow_context=workflow_context,
@@ -3102,6 +3103,18 @@ class Agent:
                     merge_dictionaries(
                         session.session_data["session_state"], model_response_event.updated_session_state
                     )
+
+                if model_response_event.images is not None:
+                    for image in model_response_event.images:
+                        self._add_image(image, run_response)
+
+                if model_response_event.videos is not None:
+                    for video in model_response_event.videos:
+                        self._add_video(video, run_response)
+
+                if model_response_event.audios is not None:
+                    for audio in model_response_event.audios:
+                        self._add_audio(audio, run_response)
 
                 reasoning_step: Optional[ReasoningStep] = None
 
@@ -3857,14 +3870,6 @@ class Agent:
                 session.session_data["session_state"].pop("current_session_id", None)
                 session.session_data["session_state"].pop("current_user_id", None)
                 session.session_data["session_state"].pop("current_run_id", None)
-
-            # TODO: Add image/audio/video artifacts to the session correctly, from runs
-            if self.images is not None:
-                session.session_data["images"] = [img.to_dict() for img in self.images]  # type: ignore
-            if self.videos is not None:
-                session.session_data["videos"] = [vid.to_dict() for vid in self.videos]  # type: ignore
-            if self.audio is not None:
-                session.session_data["audio"] = [aud.to_dict() for aud in self.audio]  # type: ignore
 
             self._upsert_session(session=session)
             log_debug(f"Created or updated AgentSession record: {session.session_id}")
@@ -5102,38 +5107,26 @@ class Agent:
     # Handle images, videos and audio
     ###########################################################################
 
-    def add_image(self, image: ImageArtifact) -> None:
-        # TODO: Remove and replace with proper handling of images as tool results
-        if self.images is None:
-            self.images = []
-        self.images.append(image)
+    def _add_image(self, image: ImageArtifact, run_response: RunOutput) -> None:
+        """Add an image to both the agent's stateful storage and the current run response"""
+        # Add to run response
+        if run_response.images is None:
+            run_response.images = []
+        run_response.images.append(image)
 
-        # TODO: Figure out how to get images on the run_response
+    def _add_video(self, video: VideoArtifact, run_response: RunOutput) -> None:
+        """Add a video to both the agent's stateful storage and the current run response"""
+        # Add to run response
+        if run_response.videos is None:
+            run_response.videos = []
+        run_response.videos.append(video)
 
-    def add_video(self, video: VideoArtifact) -> None:
-        # TODO: Remove and replace with proper handling of videos as tool results
-        if self.videos is None:
-            self.videos = []
-        self.videos.append(video)
-
-        # TODO: Figure out how to get videos on the run_response
-
-    def add_audio(self, audio: AudioArtifact) -> None:
-        # TODO: Remove and replace with proper handling of audio as tool results
-        if self.audio is None:
-            self.audio = []
-        self.audio.append(audio)
-
-        # TODO: Figure out how to get audio on the run_response
-
-    def get_images(self) -> Optional[List[ImageArtifact]]:
-        return self.images
-
-    def get_videos(self) -> Optional[List[VideoArtifact]]:
-        return self.videos
-
-    def get_audio(self) -> Optional[List[AudioArtifact]]:
-        return self.audio
+    def _add_audio(self, audio: AudioArtifact, run_response: RunOutput) -> None:
+        """Add audio to both the agent's stateful storage and the current run response"""
+        # Add to run response
+        if run_response.audio is None:
+            run_response.audio = []
+        run_response.audio.append(audio)
 
     ###########################################################################
     # Reasoning
