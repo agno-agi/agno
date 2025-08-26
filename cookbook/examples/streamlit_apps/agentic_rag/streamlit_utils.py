@@ -3,7 +3,6 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
-
 from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.utils.log import logger
@@ -12,7 +11,9 @@ from agno.utils.log import logger
 def get_session_name_from_db(agent, session_id: str) -> str:
     """Get session name from database session_data."""
     try:
-        db_session = agent.db.get_session(session_id=session_id, session_type=SessionType.AGENT)
+        db_session = agent.db.get_session(
+            session_id=session_id, session_type=SessionType.AGENT
+        )
         if db_session and db_session.session_data:
             return db_session.session_data.get("session_name")
         return None
@@ -21,7 +22,9 @@ def get_session_name_from_db(agent, session_id: str) -> str:
         return None
 
 
-def add_message(role: str, content: str, tool_calls: Optional[List[Dict[str, Any]]] = None) -> None:
+def add_message(
+    role: str, content: str, tool_calls: Optional[List[Dict[str, Any]]] = None
+) -> None:
     if "messages" not in st.session_state:
         st.session_state["messages"] = []
 
@@ -94,7 +97,9 @@ def restart_agent_state(**session_keys) -> None:
     st.rerun()
 
 
-def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback: callable) -> None:
+def session_selector_widget(
+    agent: Agent, model_id: str, agent_creation_callback: callable
+) -> None:
     """Session selector widget"""
     # Fetch existing sessions from database
     if not agent.db:
@@ -140,7 +145,9 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
     current_selection = None
 
     # New session - only add to list, don't load from database
-    if current_session_id and current_session_id not in [s_id for s_id in session_dict.values()]:
+    if current_session_id and current_session_id not in [
+        s_id for s_id in session_dict.values()
+    ]:
         logger.info(f"New session: {current_session_id}")
         if agent.get_session_name():
             current_display_name = agent.get_session_name()
@@ -186,8 +193,13 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
             if not st.session_state.get("is_new_session", False):
                 # Set flag to prevent model change detection during session loading
                 st.session_state["is_loading_session"] = True
-                _load_session(selected_session_id, model_id, agent_creation_callback)
-                st.session_state["is_loading_session"] = False
+                try:
+                    _load_session(
+                        selected_session_id, model_id, agent_creation_callback
+                    )
+                finally:
+                    # Always clear the loading flag, even if there's an error
+                    st.session_state["is_loading_session"] = False
             else:
                 # Clear the new session flag since we're done with initialization
                 st.session_state["is_new_session"] = False
@@ -208,7 +220,9 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
                     st.session_state.session_edit_mode = True
                     st.rerun()
         else:
-            new_name = st.sidebar.text_input("Enter new name:", value=current_name, key="session_name_input")
+            new_name = st.sidebar.text_input(
+                "Enter new name:", value=current_name, key="session_name_input"
+            )
 
             col1, col2 = st.sidebar.columns([1, 1])
             with col1:
@@ -220,12 +234,17 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
                 ):
                     if new_name and new_name.strip():
                         try:
-                            result = agent.set_session_name(session_name=new_name.strip())
+                            result = agent.set_session_name(
+                                session_name=new_name.strip()
+                            )
 
                             if result:
                                 logger.info(f"Session renamed to: {new_name.strip()}")
                                 # Clear any cached session data to ensure fresh reload
-                                if hasattr(agent, '_agent_session') and agent._agent_session:
+                                if (
+                                    hasattr(agent, "_agent_session")
+                                    and agent._agent_session
+                                ):
                                     agent._agent_session = None
                             st.session_state.session_edit_mode = False
                             st.sidebar.success("Session renamed!")
@@ -237,7 +256,9 @@ def session_selector_widget(agent: Agent, model_id: str, agent_creation_callback
                         st.sidebar.error("Please enter a valid name")
 
             with col2:
-                if st.button("❌ Cancel", use_container_width=True, key="cancel_session_rename"):
+                if st.button(
+                    "❌ Cancel", use_container_width=True, key="cancel_session_rename"
+                ):
                     st.session_state.session_edit_mode = False
                     st.rerun()
 
@@ -253,7 +274,9 @@ def _load_session(session_id: str, model_id: str, agent_creation_callback: calla
         st.session_state["current_model"] = model_id  # Keep current_model in sync
 
         try:
-            selected_session = new_agent.db.get_session(session_id=session_id, session_type="agent", deserialize=True)
+            selected_session = new_agent.db.get_session(
+                session_id=session_id, session_type="agent", deserialize=True
+            )
 
             # Recreate the chat history
             if selected_session:
@@ -268,17 +291,25 @@ def _load_session(session_id: str, model_id: str, agent_creation_callback: calla
                             tool_calls = []
 
                             for msg_idx, message in enumerate(messages):
-                                if not hasattr(message, "role") or not hasattr(message, "content"):
+                                if not hasattr(message, "role") or not hasattr(
+                                    message, "content"
+                                ):
                                     continue
 
                                 role = message.role
-                                content = str(message.content) if message.content else ""
+                                content = (
+                                    str(message.content) if message.content else ""
+                                )
 
                                 if role == "user":
                                     if content and content.strip():
                                         user_msg = content.strip()
                                 elif role == "assistant":
-                                    if content and content.strip() and content.strip().lower() != "none":
+                                    if (
+                                        content
+                                        and content.strip()
+                                        and content.strip().lower() != "none"
+                                    ):
                                         assistant_msg = content
 
                             # Display tool calls for this run
@@ -292,7 +323,9 @@ def _load_session(session_id: str, model_id: str, agent_creation_callback: calla
                                 add_message("assistant", assistant_msg, tool_calls)
 
             else:
-                logger.warning(f"No session found in database for session_id: {session_id}")
+                logger.warning(
+                    f"No session found in database for session_id: {session_id}"
+                )
 
         except Exception as e:
             logger.warning(f"Could not load chat history: {e}")
@@ -326,13 +359,19 @@ def display_response(agent: Agent, question: str) -> None:
                         content = str(resp_chunk.content)
 
                         if not (
-                            content.strip().endswith("completed in") or "completed in" in content and "s." in content
+                            content.strip().endswith("completed in")
+                            or "completed in" in content
+                            and "s." in content
                         ):
                             response += content
                             resp_container.markdown(response)
 
                 try:
-                    if hasattr(agent, "run_response") and agent.run_response and hasattr(agent.run_response, "tools"):
+                    if (
+                        hasattr(agent, "run_response")
+                        and agent.run_response
+                        and hasattr(agent.run_response, "tools")
+                    ):
                         add_message("assistant", response, agent.run_response.tools)
                     else:
                         add_message("assistant", response)
@@ -354,43 +393,23 @@ def display_chat_messages() -> None:
                 if "tool_calls" in message and message["tool_calls"]:
                     display_tool_calls(st.container(), message["tool_calls"])
 
-                if content is not None and str(content).strip() and str(content).strip().lower() != "none":
+                if (
+                    content is not None
+                    and str(content).strip()
+                    and str(content).strip().lower() != "none"
+                ):
                     st.markdown(content)
 
 
 def initialize_agent(model_id: str, agent_creation_callback: callable) -> Agent:
     """Initialize or get agent with proper session management."""
-    if (
-        "agent" not in st.session_state
-        or st.session_state["agent"] is None
-        or st.session_state.get("current_model") != model_id
-    ):
-        # Check if user switched models - if so, start a new chat
-        if (st.session_state.get("current_model") is not None and 
-            st.session_state.get("current_model") != model_id and
-            not st.session_state.get("is_loading_session", False)):  # Don't trigger during session loading
-            
-            # Create fresh agent with new session (like New Chat)
-            agent = agent_creation_callback(model_id=model_id, session_id=None)
+    if "agent" not in st.session_state or st.session_state["agent"] is None:
+        # First time initialization - get existing session_id if any
+        session_id = st.session_state.get("session_id")
+        agent = agent_creation_callback(model_id=model_id, session_id=session_id)
+        st.session_state["agent"] = agent
+        st.session_state["current_model"] = model_id
 
-            # Clear all session-related state for fresh start
-            st.session_state["agent"] = agent
-            st.session_state["session_id"] = agent.session_id
-            st.session_state["messages"] = []
-            st.session_state["current_model"] = model_id
-            st.session_state["is_new_session"] = True
-            
-            # Clear any cached session data
-            if hasattr(agent, '_agent_session') and agent._agent_session:
-                agent._agent_session = None
-                
-        else:
-            # First time initialization or no model change
-            session_id = st.session_state.get("session_id")
-            agent = agent_creation_callback(model_id=model_id, session_id=session_id)
-            st.session_state["agent"] = agent
-            st.session_state["current_model"] = model_id
-            
         return agent
     else:
         return st.session_state["agent"]

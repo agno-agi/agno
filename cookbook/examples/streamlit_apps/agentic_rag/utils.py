@@ -1,8 +1,9 @@
+import streamlit as st
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.groq import Groq
 from agno.models.openai import OpenAIChat
-import streamlit as st
+
 
 def get_model_from_id(model_id: str):
     """Get a model instance from a model ID string."""
@@ -16,6 +17,7 @@ def get_model_from_id(model_id: str):
         return Groq(id=model_id.split("groq:")[1])
     else:
         return OpenAIChat(id="gpt-4o")
+
 
 def about_section():
     """About section"""

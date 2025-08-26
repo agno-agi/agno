@@ -27,6 +27,7 @@ The agent uses:
 
 View the README for instructions on how to run the application.
 """
+
 from typing import Optional
 
 from agno.agent import Agent
@@ -34,8 +35,8 @@ from agno.db.postgres import PostgresDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.tools.duckduckgo import DuckDuckGoTools
-from utils import get_model_from_id
 from agno.vectordb.pgvector import PgVector
+from utils import get_model_from_id
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
@@ -51,7 +52,7 @@ def get_agentic_rag_agent(
         knowledge_table="agentic_rag_knowledge_contents",
         db_schema="ai",
     )
-    
+
     knowledge_base = Knowledge(
         name="Agentic RAG Knowledge Base",
         description="Knowledge base for agentic RAG application",

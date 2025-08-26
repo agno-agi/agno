@@ -3100,7 +3100,7 @@ class Agent:
                     # Ensure session_state exists before merging
                     if "session_state" not in session.session_data:
                         session.session_data["session_state"] = {}
-                    
+
                     merge_dictionaries(
                         session.session_data["session_state"], model_response_event.updated_session_state
                     )
