@@ -23,6 +23,5 @@ knowledge.add_content(
 agent = Agent(
     model=AzureAIFoundry(id="Cohere-command-r-08-2024"),
     knowledge=knowledge,
-    debug_mode=True,
 )
 agent.print_response("How to make Thai curry?", markdown=True)

@@ -22,8 +22,7 @@ agent = Agent(
     enable_user_memories=True,
     enable_session_summaries=True,
     # Show debug logs so, you can see the memory being created
-    # debug_mode=True,
-)
+    # )
 
 # -*- Share personal information
 agent.print_response("My name is john billings?", stream=True)

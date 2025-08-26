@@ -9,6 +9,5 @@ agent_with_reasoning = Agent(
     reasoning_model=Groq(
         id="Deepseek-r1-distill-qwen-32b", temperature=0.6, max_tokens=1024, top_p=0.95
     ),
-    debug_mode=True,
 )
 agent_with_reasoning.print_response("9.11 and 9.9 -- which is bigger?", markdown=True)

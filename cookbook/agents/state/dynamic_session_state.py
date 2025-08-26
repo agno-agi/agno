@@ -61,7 +61,6 @@ def run_test():
         session_state={"customer_profiles": {"123": {"name": "Jane Doe"}}},
         instructions="Your profiles: {customer_profiles}. Use `process_customer_request`. Use either create or retrieve as action for the tool.",
         resolve_in_context=True,
-        debug_mode=True,
         db=InMemoryDb(),
     )
 

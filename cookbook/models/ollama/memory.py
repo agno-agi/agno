@@ -23,7 +23,6 @@ agent = Agent(
     # Enable session summaries
     enable_session_summaries=True,
     # Show debug logs so, you can see the memory being created
-    debug_mode=True,
 )
 
 # -*- Share personal information

@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from agno.media import Audio, AudioResponse, File, Image, ImageArtifact, Video
+from agno.media import Audio, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact, AudioArtifact
 from agno.models.metrics import Metrics
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -71,8 +71,9 @@ class Message(BaseModel):
     files: Optional[Sequence[File]] = None
 
     # Output from the models
-    audio_output: Optional[AudioResponse] = None
+    audio_output: Optional[Union[AudioResponse, AudioArtifact]] = None
     image_output: Optional[ImageArtifact] = None
+    video_output: Optional[VideoArtifact] = None
 
     # The thinking content from the model
     thinking: Optional[str] = None

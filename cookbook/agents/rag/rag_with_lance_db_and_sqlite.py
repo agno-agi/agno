@@ -43,7 +43,6 @@ agent = Agent(
     model=model,
     knowledge=knowledge,
     storage=storage,
-    debug_mode=True,  # Enable debug mode for additional information
 )
 
 # Use the agent to generate and print a response to a query, formatted in Markdown

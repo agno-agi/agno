@@ -4,7 +4,6 @@ from agno.models.cerebras import Cerebras
 agent = Agent(
     model=Cerebras(id="llama-4-scout-17b-16e-instruct"),
     markdown=True,
-    debug_mode=True,
 )
 
 # Print the response in the terminal
