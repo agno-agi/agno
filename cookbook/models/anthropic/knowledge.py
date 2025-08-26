@@ -23,6 +23,5 @@ knowledge.add_content_sync(
 agent = Agent(
     model=Claude(id="claude-sonnet-4-20250514"),
     knowledge=knowledge,
-    debug_mode=True,
-)
+    )
 agent.print_response("How to make Thai curry?", markdown=True)

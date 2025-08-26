@@ -23,6 +23,5 @@ knowledge.add_content(
 agent = Agent(
     model=AzureOpenAI(id="gpt-4o-mini"),
     knowledge=knowledge,
-    debug_mode=True,
-)
+    )
 agent.print_response("How to make Thai curry?", markdown=True)

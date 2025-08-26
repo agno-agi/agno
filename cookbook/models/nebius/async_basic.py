@@ -6,8 +6,7 @@ from agno.models.nebius import Nebius
 agent = Agent(
     model=Nebius(),
     markdown=True,
-    debug_mode=True,
-)
+    )
 
 # Print the response in the terminal
 asyncio.run(agent.aprint_response("write a two sentence horror story"))

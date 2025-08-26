@@ -12,7 +12,6 @@ agent = Agent(
     model=AzureAIFoundry(id="Cohere-command-r-08-2024"),
     tools=[DuckDuckGoTools()],
     markdown=True,
-    debug_mode=True,
-)
+    )
 
 asyncio.run(agent.aprint_response("Whats happening in France?"))

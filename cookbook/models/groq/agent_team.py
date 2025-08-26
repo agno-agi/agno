@@ -33,8 +33,7 @@ agent_team = Team(
     instructions=["Always include sources", "Use tables to display data"],
     markdown=True,
     enable_agentic_context=True,
-    debug_mode=True,
-    show_members_responses=False,  # Comment to hide responses from team members
+        show_members_responses=False,  # Comment to hide responses from team members
 )
 
 # Give the team a task

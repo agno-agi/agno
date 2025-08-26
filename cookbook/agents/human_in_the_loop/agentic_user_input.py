@@ -57,7 +57,6 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[EmailTools(), UserControlFlowTools()],
     markdown=True,
-    debug_mode=True,
 )
 
 run_response = agent.run("Send an email with the body 'What is the weather in Tokyo?'")

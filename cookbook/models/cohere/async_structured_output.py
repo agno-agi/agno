@@ -32,8 +32,7 @@ agent = Agent(
     ),
     description="You help people write movie scripts.",
     output_schema=MovieScript,
-    debug_mode=True,
-)
+    )
 
 # Get the response in a variable
 # response: RunOutput = await agent.arun("New York")

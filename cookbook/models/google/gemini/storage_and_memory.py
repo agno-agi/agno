@@ -38,6 +38,5 @@ agent = Agent(
     # This setting adds 6 previous messages from chat history to the messages sent to the LLM
     num_history_responses=6,
     markdown=True,
-    debug_mode=True,
-)
+    )
 agent.print_response("Whats is the latest AI news?")

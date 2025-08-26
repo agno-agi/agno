@@ -6,8 +6,7 @@ agent = Agent(
     model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
     tools=[DuckDuckGoTools()],
     markdown=True,
-    debug_mode=True,
-)
+    )
 
 # Print the response in the terminal
 agent.print_response("Whats happening in France?")
