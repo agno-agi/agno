@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent, RunOutput  # noqa
 from agno.db.sqlite import SqliteDb
 from agno.exceptions import ModelProviderError
+from agno.models.message import Message
 from agno.models.openai import OpenAIResponses
 
 
@@ -184,3 +185,15 @@ def test_history():
     run_output = agent.run("Hello 4")
     assert run_output.messages is not None
     assert len(run_output.messages) == 8
+
+
+def test_reasoning_summary():
+    """Test we obtain reasoning summaries from the model when requesting them."""
+    model = OpenAIResponses(id="o4-mini", reasoning_summary="auto")
+
+    raw_model_reponse = model.invoke(messages=[Message(role="user", content="What is going on in France?")])
+    model_response = model.parse_provider_response(raw_model_reponse)
+
+    assert model_response is not None
+    assert model_response.reasoning_content is not None
+    assert "France" in model_response.reasoning_content

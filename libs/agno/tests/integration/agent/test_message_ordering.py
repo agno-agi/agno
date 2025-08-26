@@ -43,7 +43,7 @@ def test_message_ordering(agent_storage):
     """Test message ordering with storage"""
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        storage=agent_storage,
+        db=agent_storage,
         telemetry=False,
     )
 

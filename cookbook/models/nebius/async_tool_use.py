@@ -8,7 +8,6 @@ agent = Agent(
     model=Nebius(id="Qwen/Qwen3-30B-A3B"),
     tools=[DuckDuckGoTools()],
     markdown=True,
-    debug_mode=True,
 )
 
 asyncio.run(agent.aprint_response("Whats happening in France?"))

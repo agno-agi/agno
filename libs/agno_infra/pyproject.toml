@@ -29,9 +29,12 @@ classifiers = [
 ]
 
 dependencies = [
+  "python-dotenv",
+  "python-multipart",
   "rich",
   "tomli",
   "typer",
+  "typing-extensions",
 ]
 
 [project.optional-dependencies]

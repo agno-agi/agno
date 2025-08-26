@@ -8,6 +8,7 @@ from agno.agent import Agent
 from agno.media import AudioArtifact
 from agno.team.team import Team
 from agno.tools import Toolkit
+from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, log_error, log_info
 
 try:
@@ -131,7 +132,7 @@ class CartesiaTools(Toolkit):
         agent: Union[Agent, Team],
         transcript: str,
         voice_id: Optional[str] = None,
-    ) -> str:
+    ) -> ToolResult:
         """
         Convert text to speech.
         Args:
@@ -139,7 +140,7 @@ class CartesiaTools(Toolkit):
             voice_id (optional): The ID of the voice to use for the text-to-speech. If None, uses the default voice ID configured in the tool. Defaults to None.
 
         Returns:
-            str: Success or error message.
+            ToolResult: A ToolResult containing the generated audio or error message.
         """
 
         try:
@@ -170,15 +171,18 @@ class CartesiaTools(Toolkit):
             audio_data = b"".join(chunk for chunk in audio_iterator)
             base64_audio = b64encode(audio_data).decode("utf-8")
 
-            artifact = AudioArtifact(
+            # Create AudioArtifact
+            audio_artifact = AudioArtifact(
                 id=str(uuid4()),
                 base64_audio=base64_audio,
                 mime_type=mime_type,  # Hardcoded to audio/mpeg
             )
-            agent.add_audio(artifact)
 
-            return "Audio generated and attached successfully."
+            return ToolResult(
+                content="Audio generated and attached successfully.",
+                audios=[audio_artifact],
+            )
 
         except Exception as e:
             log_error(f"Error generating speech with Cartesia: {e}", exc_info=True)
-            return f"Error generating speech: {e}"
+            return ToolResult(content=f"Error generating speech: {e}")
