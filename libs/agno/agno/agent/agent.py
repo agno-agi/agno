@@ -1184,10 +1184,9 @@ class Agent:
         7. Save session to storage
         8. Optional: Save output to file if save_response_to_file is set
         """
-        run_dependencies = dependencies if dependencies is not None else self.dependencies
         # Resolving here for async requirement
-        if self.dependencies is not None:
-            await self._aresolve_run_dependencies(dependencies=run_dependencies)
+        if dependencies is not None:
+            await self._aresolve_run_dependencies(dependencies)
 
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
@@ -1281,7 +1280,7 @@ class Agent:
         """
         run_dependencies = dependencies if dependencies is not None else self.dependencies
         # Resolving here for async requirement
-        if self.dependencies is not None:
+        if run_dependencies is not None:
             await self._aresolve_run_dependencies(dependencies=run_dependencies)
 
         log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
@@ -1824,7 +1823,6 @@ class Agent:
                         session=agent_session,
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
-                        dependencies=run_dependencies,
                     )
                     return response_iterator
                 else:
@@ -1834,7 +1832,6 @@ class Agent:
                         user_id=user_id,
                         session=agent_session,
                         response_format=response_format,
-                        dependencies=run_dependencies,
                     )
                     return response
             except ModelProviderError as e:
