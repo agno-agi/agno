@@ -1805,6 +1805,19 @@ class Team:
             else:
                 run_response.tools.extend(model_response.tool_executions)
 
+        # Handle unified media fields from ModelResponse
+        if model_response.images is not None:
+            for image in model_response.images:
+                self._add_image(image, run_response)
+
+        if model_response.videos is not None:
+            for video in model_response.videos:
+                self._add_video(video, run_response)
+
+        if model_response.audios is not None:
+            for audio in model_response.audios:
+                self._add_audio(audio, run_response)
+
         # Update the run_response audio with the model response audio
         if model_response.audio is not None:
             run_response.response_audio = model_response.audio
@@ -2069,8 +2082,9 @@ class Team:
                     # Yield the audio and transcript bit by bit
                     should_yield = True
 
-                if model_response_event.image is not None:  # type: ignore
-                    self.add_image(model_response_event.image)  # type: ignore
+                if model_response_event.images is not None:
+                    for image in model_response_event.images:
+                        self._add_image(image, run_response)
 
                     should_yield = True
 
@@ -2085,7 +2099,7 @@ class Team:
                                 redacted_thinking=model_response_event.redacted_thinking,
                                 response_audio=full_model_response.audio,
                                 citations=model_response_event.citations,
-                                image=model_response_event.image,  # type: ignore
+                                image=model_response_event.images[-1] if model_response_event.images else None,
                             ),
                             run_response,
                             workflow_context=workflow_context,
@@ -2127,6 +2141,18 @@ class Team:
                     merge_dictionaries(
                         session.session_data["session_state"], model_response_event.updated_session_state
                     )
+
+                if model_response_event.images is not None:
+                    for image in model_response_event.images:
+                        self._add_image(image, run_response)
+
+                if model_response_event.videos is not None:
+                    for video in model_response_event.videos:
+                        self._add_video(video, run_response)
+
+                if model_response_event.audios is not None:
+                    for audio in model_response_event.audios:
+                        self._add_audio(audio, run_response)
 
                 reasoning_step: Optional[ReasoningStep] = None
                 tool_executions_list = model_response_event.tool_executions
@@ -5884,15 +5910,6 @@ class Team:
                 session.session_data["session_state"].pop("current_session_id", None)  # type: ignore
                 session.session_data["session_state"].pop("current_user_id", None)  # type: ignore
                 session.session_data["session_state"].pop("current_run_id", None)  # type: ignore
-
-            # TODO: Add image/audio/video artifacts to the session correctly, from runs
-            if self.images is not None:
-                session.session_data["images"] = [img.to_dict() for img in self.images]  # type: ignore
-            if self.videos is not None:
-                session.session_data["videos"] = [vid.to_dict() for vid in self.videos]  # type: ignore
-            if self.audio is not None:
-                session.session_data["audio"] = [aud.to_dict() for aud in self.audio]  # type: ignore
-
             self._upsert_session(session=session)
             log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
@@ -6165,32 +6182,26 @@ class Team:
     # Handle images, videos and audio
     ###########################################################################
 
-    def add_image(self, image: ImageArtifact) -> None:
-        # TODO: Remove and replace with proper handling of images as tool results
-        if self.images is None:
-            self.images = []
-        self.images.append(image)
+    def _add_image(self, image: ImageArtifact, run_response: TeamRunOutput) -> None:
+        """Add an image to both the agent's stateful storage and the current run response"""
+        # Add to run response
+        if run_response.images is None:
+            run_response.images = []
+        run_response.images.append(image)
 
-    def add_video(self, video: VideoArtifact) -> None:
-        # TODO: Remove and replace with proper handling of videos as tool results
-        if self.videos is None:
-            self.videos = []
-        self.videos.append(video)
+    def _add_video(self, video: VideoArtifact, run_response: TeamRunOutput) -> None:
+        """Add a video to both the agent's stateful storage and the current run response"""
+        # Add to run response
+        if run_response.videos is None:
+            run_response.videos = []
+        run_response.videos.append(video)
 
-    def add_audio(self, audio: AudioArtifact) -> None:
-        # TODO: Remove and replace with proper handling of audio as tool results
-        if self.audio is None:
-            self.audio = []
-        self.audio.append(audio)
-
-    def get_images(self) -> Optional[List[ImageArtifact]]:
-        return self.images
-
-    def get_videos(self) -> Optional[List[VideoArtifact]]:
-        return self.videos
-
-    def get_audio(self) -> Optional[List[AudioArtifact]]:
-        return self.audio
+    def _add_audio(self, audio: AudioArtifact, run_response: TeamRunOutput) -> None:
+        """Add audio to both the agent's stateful storage and the current run response"""
+        # Add to run response
+        if run_response.audio is None:
+            run_response.audio = []
+        run_response.audio.append(audio)
 
     def _update_reasoning_content_from_tool_call(
         self, run_response: TeamRunOutput, tool_name: str, tool_args: Dict[str, Any]
