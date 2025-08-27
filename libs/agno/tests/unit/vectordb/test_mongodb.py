@@ -612,14 +612,10 @@ async def test_async_upsert(
     async_vector_db: MongoDb, mock_async_mongodb_client: AsyncMock, mock_embedder: MagicMock
 ) -> None:
     """Test upserting documents asynchronously."""
-    import random
-    import string
-
     doc = create_test_documents(1)[0]
 
     # Ensure the document has an embedding
     doc.embedding = mock_embedder.get_embedding(doc.content)
-    name_suffix = "".join(random.choices(string.ascii_letters + string.digits, k=4))
 
     # Mock the prepare_doc method to avoid embedding issues during test
     original_prepare_doc = async_vector_db.prepare_doc
