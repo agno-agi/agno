@@ -27,14 +27,14 @@ logger = logging.getLogger(__name__)
 
 
 def get_knowledge_router(
-    knowledge_instances: List[Knowledge], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs
+    knowledge_instances: List[Knowledge], settings: AgnoAPISettings = AgnoAPISettings()
 ) -> APIRouter:
     router = APIRouter(dependencies=[Depends(get_authentication_dependency(settings))])
     return attach_routes(router=router, knowledge_instances=knowledge_instances)
 
 
 def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> APIRouter:
-    @router.post("/content", response_model=ContentResponseSchema, status_code=202)
+    @router.post("/knowledge/content", response_model=ContentResponseSchema, status_code=202)
     async def upload_content(
         background_tasks: BackgroundTasks,
         name: Optional[str] = Form(None),
@@ -169,7 +169,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
 
         return ContentResponseSchema.from_dict(updated_content_dict)
 
-    @router.get("/content", response_model=PaginatedResponse[ContentResponseSchema], status_code=200)
+    @router.get("/knowledge/content", response_model=PaginatedResponse[ContentResponseSchema], status_code=200)
     def get_content(
         limit: Optional[int] = Query(default=20, description="Number of content entries to return"),
         page: Optional[int] = Query(default=1, description="Page number"),
@@ -206,7 +206,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             ),
         )
 
-    @router.get("/content/{content_id}", response_model=ContentResponseSchema, status_code=200)
+    @router.get("/knowledge/content/{content_id}", response_model=ContentResponseSchema, status_code=200)
     def get_content_by_id(
         content_id: str,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
@@ -234,7 +234,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         return response
 
     @router.delete(
-        "/content/{content_id}",
+        "/knowledge/content/{content_id}",
         response_model=ContentResponseSchema,
         status_code=200,
         response_model_exclude_none=True,
@@ -251,7 +251,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             id=content_id,
         )
 
-    @router.delete("/content", status_code=200)
+    @router.delete("/knowledge/content", status_code=200)
     def delete_all_content(
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ):
@@ -260,7 +260,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         knowledge.remove_all_content()
         return "success"
 
-    @router.get("/content/{content_id}/status", status_code=200, response_model=ContentStatusResponse)
+    @router.get("/knowledge/content/{content_id}/status", status_code=200, response_model=ContentStatusResponse)
     def get_content_status(
         content_id: str,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
@@ -298,7 +298,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
 
         return ContentStatusResponse(status=status, status_message=status_message or "")
 
-    @router.get("/config", status_code=200)
+    @router.get("/knowledge/config", status_code=200)
     def get_config(
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> ConfigResponseSchema:

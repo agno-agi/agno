@@ -27,6 +27,7 @@ from agno.os.config import (
 from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router
 from agno.os.routers.evals import get_eval_router
+from agno.os.routers.knowledge import get_knowledge_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
 from agno.os.routers.session import get_session_router
@@ -158,6 +159,19 @@ class AgentOS:
 
         self.dbs = dbs
 
+    def _auto_discover_knowledge_instances(self) -> None:
+        """Auto-discover the knowledge instances used by all contextual agents, teams and workflows."""
+        knowledge_instances = []
+        for agent in self.agents or []:
+            if agent.knowledge:
+                knowledge_instances.append(agent.knowledge)
+
+        for team in self.teams or []:
+            if team.knowledge:
+                knowledge_instances.append(team.knowledge)
+
+        self.knowledge_instances = knowledge_instances
+
     def _get_session_config(self) -> SessionConfig:
         session_config = self.config.session if self.config and self.config.session else SessionConfig()
 
@@ -276,8 +290,7 @@ class AgentOS:
             get_memory_router(dbs=self.dbs),
             get_eval_router(dbs=self.dbs, agents=self.agents, teams=self.teams),
             get_metrics_router(dbs=self.dbs),
-            # TODO
-            # get_knowledge_router(knowledge_instances=self.knowledge_instances),
+            get_knowledge_router(knowledge_instances=self.knowledge_instances),
         ]
 
         for router in routers:
@@ -328,6 +341,7 @@ class AgentOS:
             self.interfaces_loaded.append((interface.type, interface.router_prefix))
 
         self._auto_discover_databases()
+        self._auto_discover_knowledge_instances()
         self._setup_routers()
 
         self.fastapi_app.add_middleware(
