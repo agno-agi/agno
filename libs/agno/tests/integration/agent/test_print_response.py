@@ -23,7 +23,7 @@ def test_print_response_with_message_panel():
     mock_console = Mock(spec=Console)
 
     # Use MagicMock explicitly in the patch
-    with patch("rich.live.Live", new=MagicMock) as mock_live_class:
+    with patch("rich.live.Live", new=MagicMock) as _:
         with patch("agno.utils.response.create_panel") as mock_create_panel:
             # Mock a successful run response
             with patch.object(agent, "run") as mock_run:
