@@ -352,6 +352,7 @@ class Agent:
         agent_id: Optional[str] = None,
         introduction: Optional[str] = None,
         user_id: Optional[str] = None,
+        app_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_name: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
@@ -443,6 +444,7 @@ class Agent:
         self.agent_id = agent_id
         self.introduction = introduction
         self.user_id = user_id
+        self.app_id = app_id
 
         self.session_id = session_id
         self.session_name = session_name
@@ -7455,6 +7457,7 @@ class Agent:
                         if citation.url  # Only include citations with valid URLs
                     )
                     if md_content:  # Only create panel if there are citations
+                        md_content = md_content.strip()
                         citations_panel = create_panel(
                             content=Markdown(md_content),
                             title="Citations",

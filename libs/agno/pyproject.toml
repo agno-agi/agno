@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "1.7.11"
+version = "1.8.0"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -52,7 +52,7 @@ dev = ["mypy", "pytest", "pytest-asyncio", "pytest-cov", "pytest-mock", "ruff", 
 # Models integration test dependencies
 integration-tests = [
     "exa_py",
-    "duckduckgo-search",
+    "ddgs",
     "yfinance",
     "sqlalchemy",
     "Pillow"
@@ -91,7 +91,7 @@ brave = ["brave-search"]
 browserbase = ["browserbase", "playwright"]
 cartesia = ["cartesia"]
 confluence = ["atlassian-python-api"]
-ddg = ["duckduckgo-search"]
+ddg = ["ddgs"]
 duckdb = ["duckdb"]
 elevenlabs = ["elevenlabs"]
 evm = ["web3"]
@@ -106,6 +106,7 @@ googlemaps = ["googlemaps", "google-maps-places"]
 matplotlib = ["matplotlib"]
 mcp = ["mcp"]
 mem0 = ["mem0ai"]
+memori = ["memorisdk"]
 newspaper = ["newspaper4k", "lxml_html_clean"]
 opencv = ["opencv-python"]
 psycopg = ["psycopg-binary", "psycopg"]
@@ -221,6 +222,7 @@ tools = [
   "agno[oxylabs]",
   "agno[zep]",
   "agno[mem0]",
+  "agno[memori]",
   "agno[google_bigquery]",
   "agno[psycopg]",
   "agno[trafilatura]",
@@ -356,7 +358,7 @@ module = [
   "docker.*",
   "docx.*",
   "duckdb.*",
-  "duckduckgo_search.*",
+  "ddgs.*",
   "email_validator.*",
   "e2b_code_interpreter.*",
   "eth_account.*",
@@ -389,6 +391,7 @@ module = [
   "litellm.*",
   "matplotlib.*",
   "mem0.*",
+  "memori.*",
   "mcp.*",
   "memory_profiler.*",
   "mistralai.*",

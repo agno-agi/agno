@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Optional, Type, Union
+from typing import Any, Dict, Iterator, List, Literal, Optional, Type, Union
 
 import httpx
 from pydantic import BaseModel
@@ -45,6 +45,7 @@ class OpenAIChat(Model):
     # Request parameters
     store: Optional[bool] = None
     reasoning_effort: Optional[str] = None
+    verbosity: Optional[Literal["low", "medium", "high"]] = None
     metadata: Optional[Dict[str, Any]] = None
     frequency_penalty: Optional[float] = None
     logit_bias: Optional[Any] = None
@@ -76,7 +77,7 @@ class OpenAIChat(Model):
     max_retries: Optional[int] = None
     default_headers: Optional[Any] = None
     default_query: Optional[Any] = None
-    http_client: Optional[httpx.Client] = None
+    http_client: Optional[Union[httpx.Client, httpx.AsyncClient]] = None
     client_params: Optional[Dict[str, Any]] = None
 
     # The role to map the message role to.
@@ -122,8 +123,11 @@ class OpenAIChat(Model):
             OpenAIClient: An instance of the OpenAI client.
         """
         client_params: Dict[str, Any] = self._get_client_params()
-        if self.http_client is not None:
-            client_params["http_client"] = self.http_client
+        if self.http_client:
+            if isinstance(self.http_client, httpx.Client):
+                client_params["http_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.Client.")
         return OpenAIClient(**client_params)
 
     def get_async_client(self) -> AsyncOpenAIClient:
@@ -135,7 +139,14 @@ class OpenAIChat(Model):
         """
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client:
-            client_params["http_client"] = self.http_client
+            if isinstance(self.http_client, httpx.AsyncClient):
+                client_params["http_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.AsyncClient. Using default httpx.AsyncClient.")
+                # Create a new async HTTP client with custom limits
+                client_params["http_client"] = httpx.AsyncClient(
+                    limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
+                )
         else:
             # Create a new async HTTP client with custom limits
             client_params["http_client"] = httpx.AsyncClient(
@@ -159,6 +170,7 @@ class OpenAIChat(Model):
         base_params = {
             "store": self.store,
             "reasoning_effort": self.reasoning_effort,
+            "verbosity": self.verbosity,
             "frequency_penalty": self.frequency_penalty,
             "logit_bias": self.logit_bias,
             "logprobs": self.logprobs,
@@ -227,6 +239,8 @@ class OpenAIChat(Model):
         model_dict.update(
             {
                 "store": self.store,
+                "reasoning_effort": self.reasoning_effort,
+                "verbosity": self.verbosity,
                 "frequency_penalty": self.frequency_penalty,
                 "logit_bias": self.logit_bias,
                 "logprobs": self.logprobs,

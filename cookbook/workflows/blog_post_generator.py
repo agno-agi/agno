@@ -23,7 +23,7 @@ Example blog topics to try:
 - "Mindfulness and Mental Health in the Digital Age"
 - "The Evolution of Electric Vehicles: Current State and Future Trends"
 
-Run `pip install openai duckduckgo-search newspaper4k lxml_html_clean sqlalchemy agno` to install dependencies.
+Run `pip install openai ddgs newspaper4k lxml_html_clean sqlalchemy agno` to install dependencies.
 """
 
 import json

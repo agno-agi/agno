@@ -30,8 +30,11 @@ try:
         GoogleSearch,
         GoogleSearchRetrieval,
         Part,
+        Retrieval,
         ThinkingConfig,
         Tool,
+        UrlContext,
+        VertexAISearch,
     )
     from google.genai.types import (
         File as GeminiFile,
@@ -68,6 +71,9 @@ class Gemini(Model):
     search: bool = False
     grounding: bool = False
     grounding_dynamic_threshold: Optional[float] = None
+    url_context: bool = False
+    vertexai_search: bool = False
+    vertexai_search_datastore: Optional[str] = None
 
     temperature: Optional[float] = None
     top_p: Optional[float] = None
@@ -115,7 +121,6 @@ class Gemini(Model):
         """
         if self.client:
             return self.client
-
         client_params: Dict[str, Any] = {}
         vertexai = self.vertexai or getenv("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
 
@@ -199,26 +204,45 @@ class Gemini(Model):
         if thinking_config_params:
             config["thinking_config"] = ThinkingConfig(**thinking_config_params)
 
-        if self.grounding and self.search:
-            log_info("Both grounding and search are enabled. Grounding will take precedence.")
-            self.search = False
+        # Build tools array based on enabled built-in tools
+        builtin_tools = []
 
         if self.grounding:
-            log_info("Grounding enabled. External tools will be disabled.")
-            config["tools"] = [
+            log_info(
+                "Grounding enabled. This is a legacy tool. For Gemini 2.0+ Please use enable `search` flag instead."
+            )
+            builtin_tools.append(
                 Tool(
                     google_search=GoogleSearchRetrieval(
                         dynamic_retrieval_config=DynamicRetrievalConfig(
                             dynamic_threshold=self.grounding_dynamic_threshold
                         )
                     )
-                ),
-            ]
+                )
+            )
 
-        elif self.search:
-            log_info("Search enabled. External tools will be disabled.")
-            config["tools"] = [Tool(google_search=GoogleSearch())]
+        if self.search:
+            log_info("Google Search enabled.")
+            builtin_tools.append(Tool(google_search=GoogleSearch()))
 
+        if self.url_context:
+            log_info("URL context enabled.")
+            builtin_tools.append(Tool(url_context=UrlContext()))
+
+        if self.vertexai_search:
+            log_info("Vertex AI Search enabled.")
+            if not self.vertexai_search_datastore:
+                log_error("vertexai_search_datastore must be provided when vertexai_search is enabled.")
+                raise ValueError("vertexai_search_datastore must be provided when vertexai_search is enabled.")
+            builtin_tools.append(
+                Tool(retrieval=Retrieval(vertex_ai_search=VertexAISearch(datastore=self.vertexai_search_datastore)))
+            )
+
+        # Set tools in config
+        if builtin_tools:
+            if tools:
+                log_info("Built-in tools enabled. External tools will be disabled.")
+            config["tools"] = builtin_tools
         elif tools:
             config["tools"] = [format_function_definitions(tools)]
 
@@ -388,7 +412,10 @@ class Gemini(Model):
             message_parts: List[Any] = []
 
             # Function calls
-            if (not content or role == "model") and message.tool_calls is not None and len(message.tool_calls) > 0:
+            if role == "model" and message.tool_calls is not None and len(message.tool_calls) > 0:
+                if content is not None:
+                    content_str = content if isinstance(content, str) else str(content)
+                    message_parts.append(Part.from_text(text=content_str))
                 for tool_call in message.tool_calls:
                     message_parts.append(
                         Part.from_function_call(
@@ -396,7 +423,7 @@ class Gemini(Model):
                             args=json.loads(tool_call["function"]["arguments"]),
                         )
                     )
-            # Function results
+            # Function call results
             elif message.tool_calls is not None and len(message.tool_calls) > 0:
                 for tool_call in message.tool_calls:
                     message_parts.append(
@@ -758,22 +785,53 @@ class Gemini(Model):
 
                     model_response.tool_calls.append(tool_call)
 
-            if response.candidates and response.candidates[0].grounding_metadata is not None:
-                citations = Citations()
-                grounding_metadata = response.candidates[0].grounding_metadata.model_dump()
-                citations.raw = grounding_metadata
+            citations = Citations()
+            citations_raw = {}
+            citations_urls = []
 
-                # Extract url and title
-                chunks = grounding_metadata.pop("grounding_chunks", None) or []
-                citation_pairs = [
-                    (chunk.get("web", {}).get("uri"), chunk.get("web", {}).get("title"))
-                    for chunk in chunks
-                    if chunk.get("web", {}).get("uri")
-                ]
+            if response.candidates and response.candidates[0].grounding_metadata is not None:
+                grounding_metadata = response.candidates[0].grounding_metadata.model_dump()
+                citations_raw["grounding_metadata"] = grounding_metadata
+
+                chunks = grounding_metadata.get("grounding_chunks", []) or []
+                citation_pairs = []
+                for chunk in chunks:
+                    if not isinstance(chunk, dict):
+                        continue
+                    web = chunk.get("web")
+                    if not isinstance(web, dict):
+                        continue
+                    uri = web.get("uri")
+                    title = web.get("title")
+                    if uri:
+                        citation_pairs.append((uri, title))
 
                 # Create citation objects from filtered pairs
-                citations.urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
+                grounding_urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
+                citations_urls.extend(grounding_urls)
 
+            # Handle URLs from URL context tool
+            if (
+                response.candidates
+                and hasattr(response.candidates[0], "url_context_metadata")
+                and response.candidates[0].url_context_metadata is not None
+            ):
+                url_context_metadata = response.candidates[0].url_context_metadata.model_dump()
+                citations_raw["url_context_metadata"] = url_context_metadata
+
+                url_metadata_list = url_context_metadata.get("url_metadata", [])
+                for url_meta in url_metadata_list:
+                    retrieved_url = url_meta.get("retrieved_url")
+                    status = url_meta.get("url_retrieval_status", "UNKNOWN")
+                    if retrieved_url and status == "URL_RETRIEVAL_STATUS_SUCCESS":
+                        # Avoid duplicate URLs
+                        existing_urls = [citation.url for citation in citations_urls]
+                        if retrieved_url not in existing_urls:
+                            citations_urls.append(UrlCitation(url=retrieved_url, title=retrieved_url))
+
+            if citations_raw or citations_urls:
+                citations.raw = citations_raw if citations_raw else None
+                citations.urls = citations_urls if citations_urls else None
                 model_response.citations = citations
 
         # Extract usage metadata if present
@@ -855,11 +913,17 @@ class Gemini(Model):
 
                 # Extract url and title
                 chunks = grounding_metadata.pop("grounding_chunks", None) or []
-                citation_pairs = [
-                    (chunk.get("web", {}).get("uri"), chunk.get("web", {}).get("title"))
-                    for chunk in chunks
-                    if chunk.get("web", {}).get("uri")
-                ]
+                citation_pairs = []
+                for chunk in chunks:
+                    if not isinstance(chunk, dict):
+                        continue
+                    web = chunk.get("web")
+                    if not isinstance(web, dict):
+                        continue
+                    uri = web.get("uri")
+                    title = web.get("title")
+                    if uri:
+                        citation_pairs.append((uri, title))
 
                 # Create citation objects from filtered pairs
                 citations.urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]

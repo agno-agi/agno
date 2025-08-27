@@ -23,7 +23,7 @@ export OPENAI_API_KEY=***
 ### 3. Install libraries
 
 ```shell
-pip install -U litellm duckduckgo-search duckdb yfinance agno
+pip install -U litellm ddgs duckdb yfinance agno
 ```
 
 ### 4. Run an Agent
@@ -34,7 +34,7 @@ pip install -U litellm duckduckgo-search duckdb yfinance agno
 python cookbook/models/litellm/basic.py
 ```
 
-- Streaming on 
+- Streaming on
 
 ```shell
 python cookbook/models/litellm/basic_stream.py
