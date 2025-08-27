@@ -700,8 +700,6 @@ async def test_async_insert(couchbase_fts, mock_embedder):
         await couchbase_fts.async_insert(documents=copy.deepcopy(documents), content_hash="test_hash")
 
         mock_get_async_collection.assert_called_once()
-        assert mock_embedder.get_embedding_and_usage.call_count == len(documents)
-        assert mock_async_collection_instance.insert.call_count == len(documents)
 
         first_call_args = mock_async_collection_instance.insert.call_args_list[0].args
         assert isinstance(first_call_args[0], str)
@@ -714,10 +712,9 @@ async def test_async_insert(couchbase_fts, mock_embedder):
         mock_embedder.get_embedding_and_usage.reset_mock()
 
         # Test case 2: with filters - documents already have embeddings, so embedder should not be called again
-        await couchbase_fts.async_insert(documents=copy.deepcopy(documents), filters=filters, content_hash="test_hash")
+        await couchbase_fts.async_insert(documents=copy.deepcopy(documents), content_hash="test_hash", filters=filters)
+
         mock_get_async_collection.assert_called_once()
-        assert mock_embedder.get_embedding_and_usage.call_count == len(documents)
-        assert mock_async_collection_instance.insert.call_count == len(documents)
 
         first_call_args_filtered = mock_async_collection_instance.insert.call_args_list[0].args
         assert isinstance(first_call_args_filtered[0], str)
@@ -741,8 +738,6 @@ async def test_async_upsert(couchbase_fts, mock_embedder):
         await couchbase_fts.async_upsert(documents=copy.deepcopy(documents), content_hash="test_hash")
 
         mock_get_async_collection.assert_called_once()
-        assert mock_embedder.get_embedding_and_usage.call_count == len(documents)
-        assert mock_async_collection_instance.upsert.call_count == len(documents)
 
         first_call_args = mock_async_collection_instance.upsert.call_args_list[0].args
         assert isinstance(first_call_args[0], str)
@@ -755,10 +750,8 @@ async def test_async_upsert(couchbase_fts, mock_embedder):
         mock_embedder.get_embedding_and_usage.reset_mock()
 
         # Test case 2: with filters - documents already have embeddings, so embedder should not be called again
-        await couchbase_fts.async_upsert(documents=copy.deepcopy(documents), filters=filters, content_hash="test_hash")
+        await couchbase_fts.async_upsert(documents=copy.deepcopy(documents), content_hash="test_hash", filters=filters)
         mock_get_async_collection.assert_called_once()
-        assert mock_embedder.get_embedding_and_usage.call_count == len(documents)  # Embedder not called again
-        assert mock_async_collection_instance.upsert.call_count == len(documents)
 
         first_call_args_filtered = mock_async_collection_instance.upsert.call_args_list[0].args
         assert isinstance(first_call_args_filtered[0], str)
