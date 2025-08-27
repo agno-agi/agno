@@ -71,6 +71,7 @@ such as listing node labels or executing Cypher queries.
 """
 
 import os
+
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.neo4j import Neo4jTools
@@ -114,9 +115,8 @@ agent = Agent(
 )
 
 # Agent handles tool usage automatically via LLM reasoning
-agent.print_response("Add some nodes in my graph to represent a person with the name John Doe and a person with the name Jane Doe, and they belong to company 'X' and they are friends.")
+agent.print_response(
+    "Add some nodes in my graph to represent a person with the name John Doe and a person with the name Jane Doe, and they belong to company 'X' and they are friends."
+)
 
 agent.print_response("What is the schema of my graph?")
-
-
-

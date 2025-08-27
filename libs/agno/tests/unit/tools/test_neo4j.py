@@ -1,6 +1,8 @@
-from unittest.mock import patch, MagicMock
-import pytest
 import os
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 from agno.tools.neo4j import Neo4jTools
 
 
@@ -23,7 +25,7 @@ def test_list_labels_connection_error():
         mock_driver.side_effect = Exception("Connection error")
 
         with pytest.raises(Exception, match="Connection error"):
-            tools = Neo4jTools("uri", "user", "password")
+            Neo4jTools("uri", "user", "password")
 
 
 def test_list_labels_runtime_error():
@@ -67,8 +69,7 @@ def test_get_schema():
         mock_session.__enter__.return_value = mock_session
         mock_result = MagicMock()
         mock_result.data.return_value = [
-            {"nodes": [{"id": 1, "labels": ["Person"]}], 
-             "relationships": [{"id": 1, "type": "ACTED_IN"}]}
+            {"nodes": [{"id": 1, "labels": ["Person"]}], "relationships": [{"id": 1, "type": "ACTED_IN"}]}
         ]
         mock_session.run.return_value = mock_result
 
@@ -102,7 +103,7 @@ def test_run_cypher_query():
         tools = Neo4jTools("uri", "user", "password")
         query = "MATCH (p:Person) RETURN p.name as name, p.age as age"
         result = tools.run_cypher_query(query)
-        
+
         assert len(result) == 2
         assert result[0]["name"] == "John"
         assert result[1]["name"] == "Jane"
@@ -121,47 +122,41 @@ def test_run_cypher_query_error():
 
 
 def test_initialization_with_env_vars():
-    with patch("neo4j.GraphDatabase.driver") as mock_driver, \
-         patch.dict(os.environ, {
-             "NEO4J_URI": "bolt://test-host:7687",
-             "NEO4J_USERNAME": "test_user",
-             "NEO4J_PASSWORD": "test_pass"
-         }):
-        
-        tools = Neo4jTools()
+    with (
+        patch("neo4j.GraphDatabase.driver") as mock_driver,
+        patch.dict(
+            os.environ,
+            {"NEO4J_URI": "bolt://test-host:7687", "NEO4J_USERNAME": "test_user", "NEO4J_PASSWORD": "test_pass"},
+        ),
+    ):
+        Neo4jTools()
         mock_driver.assert_called_with("bolt://test-host:7687", auth=("test_user", "test_pass"))
 
 
 def test_initialization_missing_credentials():
-    with patch("neo4j.GraphDatabase.driver"), \
-         patch.dict(os.environ, {}, clear=True):
-        
+    with patch("neo4j.GraphDatabase.driver"), patch.dict(os.environ, {}, clear=True):
         with pytest.raises(ValueError, match="Username or password for Neo4j not provided"):
             Neo4jTools()
 
 
 def test_initialization_custom_database():
-    with patch("neo4j.GraphDatabase.driver") as mock_driver:
+    with patch("neo4j.GraphDatabase.driver") as _:
         tools = Neo4jTools("uri", "user", "password", database="custom_db")
         assert tools.database == "custom_db"
 
 
 def test_initialization_default_database():
-    with patch("neo4j.GraphDatabase.driver") as mock_driver:
+    with patch("neo4j.GraphDatabase.driver") as _:
         tools = Neo4jTools("uri", "user", "password")
         assert tools.database == "neo4j"
 
 
 def test_initialization_selective_tools():
-    with patch("neo4j.GraphDatabase.driver") as mock_driver:
+    with patch("neo4j.GraphDatabase.driver") as _:
         tools = Neo4jTools(
-            "uri", "user", "password",
-            list_labels=True,
-            list_relationships=False,
-            get_schema=False,
-            run_cypher=True
+            "uri", "user", "password", list_labels=True, list_relationships=False, get_schema=False, run_cypher=True
         )
-        
+
         # Check that only selected tools are registered
         tool_names = [tool.__name__ for tool in tools.tools]
         assert "list_labels" in tool_names
@@ -174,6 +169,6 @@ def test_driver_connectivity_verification():
     with patch("neo4j.GraphDatabase.driver") as mock_driver:
         mock_driver_instance = mock_driver.return_value
         mock_driver_instance.verify_connectivity.side_effect = Exception("Connection failed")
-        
+
         with pytest.raises(Exception, match="Connection failed"):
             Neo4jTools("uri", "user", "password")
