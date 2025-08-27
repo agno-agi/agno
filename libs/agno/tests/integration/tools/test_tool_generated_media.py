@@ -12,7 +12,6 @@ from agno.tools.dalle import DalleTools
 
 
 @pytest.mark.integration
-@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
 class TestAgentToolGeneratedMedia:
     """Real integration tests for tool-generated media in agent responses."""
 
@@ -149,7 +148,6 @@ class TestAgentToolGeneratedMedia:
 
 
 @pytest.mark.integration
-@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
 class TestAgentAudioGeneration:
     """Real integration tests for audio generation tools."""
 
@@ -183,7 +181,6 @@ class TestAgentAudioGeneration:
 
 
 @pytest.mark.integration
-@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
 class TestAgentMediaPersistence:
     """Test media persistence across agent sessions."""
 
