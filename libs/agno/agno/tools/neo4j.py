@@ -1,8 +1,10 @@
-import json
 import os
-from typing import List, Optional
+from typing import Optional
 
-from neo4j import GraphDatabase
+try:
+    from neo4j import GraphDatabase
+except ImportError:
+    raise ImportError("`neo4j` not installed. Please install using `pip install neo4j`")
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -14,8 +16,6 @@ class Neo4jTools(Toolkit):
         uri: Optional[str] = None,
         user: Optional[str] = None,
         password: Optional[str] = None,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
         database: Optional[str] = None,
         list_labels: bool = True,
         list_relationships: bool = True,
@@ -27,17 +27,25 @@ class Neo4jTools(Toolkit):
         Initialize the Neo4jTools toolkit.
         Connection parameters (uri/user/password or host/port) can be provided.
         If not provided, falls back to NEO4J_URI, NEO4J_USERNAME, NEO4J_PASSWORD env vars.
+
+        Args:
+            uri (Optional[str]): The Neo4j URI.
+            user (Optional[str]): The Neo4j username.
+            password (Optional[str]): The Neo4j password.
+            host (Optional[str]): The Neo4j host.
+            port (Optional[int]): The Neo4j port.
+            database (Optional[str]): The Neo4j database.
+            list_labels (bool): Whether to list node labels.
+            list_relationships (bool): Whether to list relationship types.
+            get_schema (bool): Whether to get the schema.
+            run_cypher (bool): Whether to run Cypher queries.
+            **kwargs: Additional keyword arguments.
         """
         # Determine the connection URI and credentials
-        uri = uri or os.getenv("NEO4J_URI")
+        uri = uri or os.getenv("NEO4J_URI", "bolt://localhost:7687")
         user = user or os.getenv("NEO4J_USERNAME")
         password = password or os.getenv("NEO4J_PASSWORD")
 
-        # If a host and port are provided instead of a full URI, construct the Bolt URI
-        if uri is None and host and port:
-            uri = f"bolt://{host}:{port}"
-        if uri is None:
-            raise ValueError("No Neo4j URI or host/port provided")
         if user is None or password is None:
             raise ValueError("Username or password for Neo4j not provided")
 
@@ -50,7 +58,7 @@ class Neo4jTools(Toolkit):
             logger.error(f"Failed to connect to Neo4j: {e}")
             raise
 
-        self.database = database
+        self.database = database or "neo4j"
 
         # Register toolkit methods as tools
         tools = []
@@ -67,10 +75,6 @@ class Neo4jTools(Toolkit):
     def list_labels(self) -> list:
         """
         Retrieve all node labels present in the connected Neo4j database.
-
-        Returns:
-            list: A list of label names (str) for all node types in the database.
-            Returns an empty list if an error occurs.
         """
         try:
             log_debug("Listing node labels in Neo4j database")
@@ -85,10 +89,6 @@ class Neo4jTools(Toolkit):
     def list_relationship_types(self) -> list:
         """
         Retrieve all relationship types present in the connected Neo4j database.
-
-        Returns:
-            list: A list of relationship type names (str) in the database.
-            Returns an empty list if an error occurs.
         """
         try:
             log_debug("Listing relationship types in Neo4j database")
@@ -103,10 +103,6 @@ class Neo4jTools(Toolkit):
     def get_schema(self) -> list:
         """
         Retrieve a visualization of the database schema, including nodes and relationships.
-
-        Returns:
-            list: A list of dictionaries representing the schema visualization as returned by Neo4j's 'CALL db.schema.visualization()'.
-            Returns an empty list if an error occurs.
         """
         try:
             log_debug("Retrieving Neo4j schema visualization")
@@ -124,10 +120,6 @@ class Neo4jTools(Toolkit):
 
         Args:
             query (str): The Cypher query string to execute.
-
-        Returns:
-            list: A list of dictionaries representing the query result rows.
-            Returns an empty list if an error occurs.
         """
         try:
             log_debug(f"Running Cypher query: {query}")
