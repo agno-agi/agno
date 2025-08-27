@@ -133,7 +133,7 @@ def test_exists(upstash_db):
 
 def test_upsert_with_upstash_embeddings(upstash_db, sample_documents):
     """Test upserting documents with Upstash embeddings"""
-    upstash_db.upsert(sample_documents)
+    upstash_db.upsert(documents=sample_documents, content_hash="test_hash")
 
     # Verify upsert was called
     upstash_db.index.upsert.assert_called_once()
@@ -153,7 +153,7 @@ def test_upsert_with_upstash_embeddings(upstash_db, sample_documents):
 def test_upsert_with_filters(upstash_db, sample_documents):
     """Test upserting documents with filters"""
     filters = {"source": "test", "version": "1.0"}
-    upstash_db.upsert(sample_documents, filters=filters)
+    upstash_db.upsert(documents=sample_documents, content_hash="test_hash", filters=filters)
 
     # Check that filters were added to metadata
     call_args = upstash_db.index.upsert.call_args
@@ -170,19 +170,13 @@ def test_upsert_with_content_id(upstash_db, sample_documents):
     for i, doc in enumerate(sample_documents):
         doc.content_id = f"content_{i + 1}"
 
-    upstash_db.upsert(sample_documents)
+    upstash_db.upsert(documents=sample_documents, content_hash="test_hash")
 
     call_args = upstash_db.index.upsert.call_args
     vectors = call_args[0][0]
 
     for i, vector in enumerate(vectors):
         assert vector.metadata["content_id"] == f"content_{i + 1}"
-
-
-def test_insert_not_supported(upstash_db, sample_documents):
-    """Test that insert raises NotImplementedError"""
-    with pytest.raises(NotImplementedError, match="Upstash does not support insert operations"):
-        upstash_db.insert(sample_documents)
 
 
 def test_search_with_upstash_embeddings(upstash_db):

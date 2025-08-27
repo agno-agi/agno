@@ -32,7 +32,7 @@ agent = Agent(
 agent.print_response("My name is john billings?", stream=True)
 # -*- Print memories and summary
 if agent.db:
-    pprint(agent.db.get_user_memories(user_id="test_user"))
+    pprint(agent.get_user_memories(user_id="test_user"))
     pprint(
         agent.get_session(session_id="test_session").summary  # type: ignore
     )
@@ -41,7 +41,7 @@ if agent.db:
 agent.print_response("I live in nyc?", stream=True)
 # -*- Print memories and summary
 if agent.db:
-    pprint(agent.db.get_user_memories(user_id="test_user"))
+    pprint(agent.get_user_memories(user_id="test_user"))
     pprint(
         agent.get_session(session_id="test_session").summary  # type: ignore
     )
@@ -50,7 +50,7 @@ if agent.db:
 agent.print_response("I'm going to a concert tomorrow?", stream=True)
 # -*- Print memories and summary
 if agent.db:
-    pprint(agent.db.get_user_memories(user_id="test_user"))
+    pprint(agent.get_user_memories(user_id="test_user"))
     pprint(
         agent.get_session(session_id="test_session").summary  # type: ignore
     )

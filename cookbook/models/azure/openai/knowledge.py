@@ -1,5 +1,7 @@
 """Run `pip install ddgs sqlalchemy pgvector pypdf openai` to install dependencies."""
 
+import asyncio
+
 from agno.agent import Agent
 from agno.knowledge.embedder.azure_openai import AzureOpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
@@ -16,8 +18,10 @@ knowledge = Knowledge(
     ),
 )
 # Add content to the knowledge
-knowledge.add_content(
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+asyncio.run(
+    knowledge.add_content(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+    )
 )
 
 agent = Agent(

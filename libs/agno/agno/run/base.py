@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
 from agno.models.message import Citations, Message, MessageReferences
+from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.utils.log import log_error
@@ -30,6 +31,11 @@ class BaseRunOutputEvent:
                 "response_audio",
                 "citations",
                 "member_responses",
+                "reasoning_messages",
+                "reasoning_steps",
+                "references",
+                "additional_input",
+                "metrics",
             ]
         }
 
@@ -110,6 +116,9 @@ class BaseRunOutputEvent:
             else:
                 _dict["tool"] = self.tool
 
+        if hasattr(self, "metrics") and self.metrics is not None:
+            _dict["metrics"] = self.metrics.to_dict()
+
         return _dict
 
     def to_json(self) -> str:
@@ -165,9 +174,9 @@ class BaseRunOutputEvent:
         if references is not None:
             data["references"] = [MessageReferences.model_validate(reference) for reference in references]
 
-        # To make it backwards compatible
-        if "event" in data:
-            data.pop("event")
+        metrics = data.pop("metrics", None)
+        if metrics:
+            data["metrics"] = Metrics(**metrics)
 
         return cls(**data)
 

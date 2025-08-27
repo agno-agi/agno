@@ -42,6 +42,9 @@ def print_response_stream(
     show_full_reasoning: bool = False,
     tags_to_include_in_markdown: Set[str] = {"think", "thinking"},
     console: Optional[Any] = None,
+    add_history_to_context: Optional[bool] = None,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ):
     _response_content: str = ""
@@ -86,6 +89,9 @@ def print_response_stream(
             stream_intermediate_steps=stream_intermediate_steps,
             knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
+            add_history_to_context=add_history_to_context,
+            dependencies=dependencies,
+            metadata=metadata,
             **kwargs,
         ):
             if isinstance(response_event, tuple(get_args(RunOutputEvent))):
@@ -213,6 +219,9 @@ async def aprint_response_stream(
     show_full_reasoning: bool = False,
     tags_to_include_in_markdown: Set[str] = {"think", "thinking"},
     console: Optional[Any] = None,
+    add_history_to_context: Optional[bool] = None,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ):
     _response_content: str = ""
@@ -257,6 +266,9 @@ async def aprint_response_stream(
             stream_intermediate_steps=stream_intermediate_steps,
             knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
+            add_history_to_context=add_history_to_context,
+            dependencies=dependencies,
+            metadata=metadata,
             **kwargs,
         )
 
@@ -472,6 +484,9 @@ def print_response(
     show_full_reasoning: bool = False,
     tags_to_include_in_markdown: Set[str] = {"think", "thinking"},
     console: Optional[Any] = None,
+    add_history_to_context: Optional[bool] = None,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ):
     with Live(console=console) as live_log:
@@ -490,7 +505,7 @@ def print_response(
                 title="Message",
                 border_style="cyan",
             )
-            panels.append(message_panel)
+            panels.append(message_panel)  # type: ignore
             live_log.update(Group(*panels))
 
         # Run the agent
@@ -507,6 +522,9 @@ def print_response(
             stream_intermediate_steps=stream_intermediate_steps,
             knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
+            add_history_to_context=add_history_to_context,
+            dependencies=dependencies,
+            metadata=metadata,
             **kwargs,
         )
         response_timer.stop()
@@ -566,6 +584,9 @@ async def aprint_response(
     show_full_reasoning: bool = False,
     tags_to_include_in_markdown: Set[str] = {"think", "thinking"},
     console: Optional[Any] = None,
+    add_history_to_context: Optional[bool] = None,
+    dependencies: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ):
     with Live(console=console) as live_log:
@@ -601,6 +622,9 @@ async def aprint_response(
             stream_intermediate_steps=stream_intermediate_steps,
             knowledge_filters=knowledge_filters,
             debug_mode=debug_mode,
+            add_history_to_context=add_history_to_context,
+            dependencies=dependencies,
+            metadata=metadata,
             **kwargs,
         )
         response_timer.stop()

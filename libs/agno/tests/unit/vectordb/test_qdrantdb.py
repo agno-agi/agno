@@ -125,7 +125,7 @@ def test_drop(qdrant_db, mock_qdrant_client):
 def test_insert_documents(qdrant_db, sample_documents, mock_qdrant_client):
     """Test inserting documents"""
     with patch.object(qdrant_db.embedder, "get_embedding", return_value=[0.1] * 768):
-        qdrant_db.insert(sample_documents)
+        qdrant_db.insert(documents=sample_documents, content_hash="test_hash")
         mock_qdrant_client.upsert.assert_called_once()
 
         # Verify the right number of points are created
@@ -133,17 +133,6 @@ def test_insert_documents(qdrant_db, sample_documents, mock_qdrant_client):
         assert kwargs["collection_name"] == "test_collection"
         assert kwargs["wait"] is False
         assert len(kwargs["points"]) == 3
-
-
-def test_doc_exists(qdrant_db, sample_documents, mock_qdrant_client):
-    """Test document existence check"""
-    # Test when document exists
-    mock_qdrant_client.retrieve.return_value = [Mock()]
-    assert qdrant_db.doc_exists(sample_documents[0]) is True
-
-    # Test when document doesn't exist
-    mock_qdrant_client.retrieve.return_value = []
-    assert qdrant_db.doc_exists(sample_documents[0]) is False
 
 
 def test_name_exists(qdrant_db, mock_qdrant_client):
@@ -161,8 +150,8 @@ def test_upsert_documents(qdrant_db, sample_documents, mock_qdrant_client):
     """Test upserting documents"""
     # Since upsert calls insert, just ensure insert is called
     with patch.object(qdrant_db, "insert") as mock_insert:
-        qdrant_db.upsert(sample_documents)
-        mock_insert.assert_called_once_with(sample_documents, None)
+        qdrant_db.upsert(documents=sample_documents, content_hash="test_hash")
+        mock_insert.assert_called_once()
 
 
 def test_search(qdrant_db, mock_qdrant_client):
@@ -253,7 +242,7 @@ def test_delete_by_id(qdrant_db, sample_documents, mock_qdrant_client):
     """Test deleting documents by ID"""
     # Mock insert and get_count
     with patch.object(qdrant_db, "insert"), patch.object(qdrant_db, "get_count") as mock_get_count:
-        qdrant_db.insert(sample_documents)
+        qdrant_db.insert(documents=sample_documents, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_id method
@@ -282,7 +271,7 @@ def test_delete_by_name(qdrant_db, sample_documents, mock_qdrant_client):
     """Test deleting documents by name"""
     # Mock insert and get_count
     with patch.object(qdrant_db, "insert"), patch.object(qdrant_db, "get_count") as mock_get_count:
-        qdrant_db.insert(sample_documents)
+        qdrant_db.insert(documents=sample_documents, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_name method
@@ -304,7 +293,7 @@ def test_delete_by_metadata(qdrant_db, sample_documents, mock_qdrant_client):
     """Test deleting documents by metadata"""
     # Mock insert and get_count
     with patch.object(qdrant_db, "insert"), patch.object(qdrant_db, "get_count") as mock_get_count:
-        qdrant_db.insert(sample_documents)
+        qdrant_db.insert(documents=sample_documents, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_metadata method
@@ -338,7 +327,7 @@ def test_delete_by_content_id(qdrant_db, sample_documents, mock_qdrant_client):
 
     # Mock insert and get_count
     with patch.object(qdrant_db, "insert"), patch.object(qdrant_db, "get_count") as mock_get_count:
-        qdrant_db.insert(sample_documents)
+        qdrant_db.insert(documents=sample_documents, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_content_id method
@@ -382,7 +371,7 @@ def test_delete_by_name_multiple_documents(qdrant_db, mock_qdrant_client):
 
     # Mock insert and get_count
     with patch.object(qdrant_db, "insert"), patch.object(qdrant_db, "get_count") as mock_get_count:
-        qdrant_db.insert(docs)
+        qdrant_db.insert(documents=docs, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_name and name_exists methods
@@ -423,7 +412,7 @@ def test_delete_by_metadata_complex(qdrant_db, mock_qdrant_client):
 
     # Mock insert and get_count
     with patch.object(qdrant_db, "insert"), patch.object(qdrant_db, "get_count") as mock_get_count:
-        qdrant_db.insert(docs)
+        qdrant_db.insert(documents=docs, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_metadata method

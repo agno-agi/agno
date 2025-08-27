@@ -110,8 +110,8 @@ workflow.print_response("Analyze the competitive landscape for fintech startups"
 ```
 
 **See Examples**:
-- [`sequence_of_functions_and_agents.py`](01_basic_workflows/01_sequence_of_steps/sync/sequence_of_functions_and_agents.py)
-- [`sequence_of_functions_and_agents_stream.py`](01_basic_workflows/01_sequence_of_steps/sync/sequence_of_functions_and_agents_stream.py)
+- [`sequence_of_functions_and_agents.py`](_01_basic_workflows/_01_sequence_of_steps/sync/sequence_of_functions_and_agents.py)
+- [`sequence_of_functions_and_agents_stream.py`](_01_basic_workflows/_01_sequence_of_steps/sync/sequence_of_functions_and_agents_stream.py)
 
 
 > **Note**: `StepInput` and `StepOutput` provides standardized interfaces for data flow between steps:
@@ -141,8 +141,8 @@ workflow.print_response("Evaluate the market potential for quantum computing app
 ```
 
 **See Examples**:
-- [`function_instead_of_steps.py`](01_basic_workflows/03_function_instead_of_steps/sync/function_instead_of_steps.py) - Complete function-based workflow
-- [`function_instead_of_steps_stream.py`](01_basic_workflows/03_function_instead_of_steps/sync/function_instead_of_steps_stream.py) - Streaming version
+- [`function_instead_of_steps.py`](_01_basic_workflows/_03_function_instead_of_steps/sync/function_instead_of_steps.py) - Complete function-based workflow
+- [`function_instead_of_steps_stream.py`](_01_basic_workflows/_03_function_instead_of_steps/sync/function_instead_of_steps_stream.py) - Streaming version
 
 For migration to 2.0 refer to this section- [Migration from Workflows 1.0](#migration-from-workflows-10)
 
@@ -170,10 +170,10 @@ workflow.print_response(
 ```
 
 **See Examples**:
-- [`sequence_of_steps.py`](01_basic_workflows/01_sequence_of_steps/sync/sequence_of_steps.py)
-- [`sequence_of_steps_stream.py`](01_basic_workflows/01_sequence_of_steps/sync/sequence_of_steps_stream.py)
-- [`step_with_function.py`](01_basic_workflows/02_step_with_function/sync/step_with_function.py)
-- [`step_with_function_stream.py`](01_basic_workflows/02_step_with_function/sync/step_with_function_stream.py)
+- [`sequence_of_steps.py`](_01_basic_workflows/_01_sequence_of_steps/sync/sequence_of_steps.py)
+- [`sequence_of_steps_stream.py`](_01_basic_workflows/_01_sequence_of_steps/sync/sequence_of_steps_stream.py)
+- [`step_with_function.py`](_01_basic_workflows/_02_step_with_function/sync/step_with_function.py)
+- [`step_with_function_stream.py`](_01_basic_workflows/_02_step_with_function/sync/step_with_function_stream.py)
 
 ### 4. Parallel Execution
 
@@ -203,8 +203,8 @@ workflow.print_response("Write about the latest AI developments", markdown=True)
 ```
 
 **See Examples**:
-- [`parallel_steps_workflow.py`](04_workflows_parallel_execution/sync/parallel_steps_workflow.py)
-- [`parallel_steps_workflow_stream.py`](04_workflows_parallel_execution/sync/parallel_steps_workflow_stream.py)
+- [`parallel_steps_workflow.py`](_04_workflows_parallel_execution/sync/parallel_steps_workflow.py)
+- [`parallel_steps_workflow_stream.py`](_04_workflows_parallel_execution/sync/parallel_steps_workflow_stream.py)
 
 ### 5. Conditional Steps
 
@@ -237,8 +237,8 @@ workflow.print_response("Comprehensive analysis of AI and machine learning trend
 ```
 
 **See Examples**:
-- [`condition_with_list_of_steps.py`](02_workflows_conditional_execution/sync/condition_with_list_of_steps.py)
-- [`condition_steps_workflow_stream.py`](02_workflows_conditional_execution/sync/condition_steps_workflow_stream.py)
+- [`condition_with_list_of_steps.py`](_02_workflows_conditional_execution/sync/condition_with_list_of_steps.py)
+- [`condition_steps_workflow_stream.py`](_02_workflows_conditional_execution/sync/condition_steps_workflow_stream.py)
 
 ### 6. Loop/Iteration Workflows
 
@@ -272,8 +272,8 @@ workflow.print_response("Research the impact of renewable energy on global marke
 ```
 
 **See Examples**:
-- [`loop_steps_workflow.py`](03_workflows_loop_execution/sync/loop_steps_workflow.py)
-- [`loop_steps_workflow_stream.py`](03_workflows_loop_execution/sync/loop_steps_workflow_stream.py)
+- [`loop_steps_workflow.py`](_03_workflows_loop_execution/sync/loop_steps_workflow.py)
+- [`loop_steps_workflow_stream.py`](_03_workflows_loop_execution/sync/loop_steps_workflow_stream.py)
 
 ### 7. Condition-Based Branching
 
@@ -312,8 +312,8 @@ workflow.print_response("Latest developments in artificial intelligence and mach
 ```
 
 **See Examples**:
-- [`router_steps_workflow.py`](05_workflows_conditional_branching/sync/router_steps_workflow.py)
-- [`router_steps_workflow_stream.py`](05_workflows_conditional_branching/sync/router_steps_workflow_stream.py)
+- [`router_steps_workflow.py`](_05_workflows_conditional_branching/sync/router_steps_workflow.py)
+- [`router_steps_workflow_stream.py`](_05_workflows_conditional_branching/sync/router_steps_workflow_stream.py)
 
 ### 8. Steps: Grouping a list of steps
 
@@ -402,9 +402,9 @@ media_workflow.print_response("Create a cinematic video of city timelapse", mark
 ```
 
 **See Examples**
-- [`workflow_using_steps.py`](01_basic_workflows/01_sequence_of_steps/sync/workflow_using_steps.py)
-- [`workflow_using_steps_nested.py`](01_basic_workflows/01_sequence_of_steps/sync/workflow_using_steps_nested.py)
-- [`selector_for_image_video_generation_pipelines.py`](05_workflows_conditional_branching/sync/selector_for_image_video_generation_pipelines.py)
+- [`workflow_using_steps.py`](_01_basic_workflows/_01_sequence_of_steps/sync/workflow_using_steps.py)
+- [`workflow_using_steps_nested.py`](_01_basic_workflows/_01_sequence_of_steps/sync/workflow_using_steps_nested.py)
+- [`selector_for_image_video_generation_pipelines.py`](_05_workflows_conditional_branching/sync/selector_for_image_video_generation_pipelines.py)
 
 ### 9. Complex Combinations
 
@@ -495,9 +495,9 @@ workflow.print_response("Create a comprehensive analysis of sustainable technolo
 ```
 
 **See Examples**:
-- [`condition_and_parallel_steps_stream.py`](02_workflows_conditional_execution/sync/condition_and_parallel_steps_stream.py)
-- [`loop_with_parallel_steps_stream.py`](03_workflows_loop_execution/sync/loop_with_parallel_steps_stream.py)
-- [`router_with_loop_steps.py`](05_workflows_conditional_branching/sync/router_with_loop_steps.py)
+- [`condition_and_parallel_steps_stream.py`](_02_workflows_conditional_execution/sync/condition_and_parallel_steps_stream.py)
+- [`loop_with_parallel_steps_stream.py`](_03_workflows_loop_execution/sync/loop_with_parallel_steps_stream.py)
+- [`router_with_loop_steps.py`](_05_workflows_conditional_branching/sync/router_with_loop_steps.py)
 
 ## Advanced Features
 
@@ -542,9 +542,9 @@ workflow.print_response("Scan this code: exec(input('Enter command: '))")
 ```
 
 **See Examples**:
-- [`early_stop_workflow_with_agents.py`](06_advanced_concepts/02_early_stopping/early_stop_workflow_with_agents.py)
-- [`early_stop_workflow_with_loop.py`](06_advanced_concepts/02_early_stopping/early_stop_workflow_with_loop.py)
-- [`early_stop_workflow_with_router.py`](06_advanced_concepts/02_early_stopping/early_stop_workflow_with_router.py)
+- [`early_stop_workflow_with_agents.py`](_06_advanced_concepts/_02_early_stopping/early_stop_workflow_with_agents.py)
+- [`early_stop_workflow_with_loop.py`](_06_advanced_concepts/_02_early_stopping/early_stop_workflow_with_loop.py)
+- [`early_stop_workflow_with_router.py`](_06_advanced_concepts/_02_early_stopping/early_stop_workflow_with_router.py)
 
 ### Access Multiple Previous Steps Output
 
@@ -674,7 +674,7 @@ fast_workflow = Workflow(
 ```
 
 **See Examples**:
-- [`store_events_and_events_to_skip_in_a_workflow.py`](06_advanced_concepts/06_other/store_events_and_events_to_skip_in_a_workflow.py)
+- [`store_events_and_events_to_skip_in_a_workflow.py`](_06_advanced_concepts/_06_other/store_events_and_events_to_skip_in_a_workflow.py)
 
 ### Additional Data
 
@@ -758,7 +758,7 @@ workflow.print_response(
 )
 ```
 
-**See**: [`step_with_function_additional_data.py`](01_basic_workflows/02_step_with_function/sync/step_with_function_additional_data.py)
+**See**: [`step_with_function_additional_data.py`](_01_basic_workflows/_02_step_with_function/sync/step_with_function_additional_data.py)
 
 ### Streaming Support
 

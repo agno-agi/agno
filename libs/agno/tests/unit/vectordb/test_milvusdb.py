@@ -118,7 +118,7 @@ def test_drop(milvus_db, mock_milvus_client):
 def test_insert_documents(milvus_db, sample_documents, mock_milvus_client):
     """Test inserting documents"""
     with patch.object(milvus_db.embedder, "get_embedding", return_value=[0.1] * 768):
-        milvus_db.insert(sample_documents)
+        milvus_db.insert(documents=sample_documents, content_hash="test_hash")
 
         # Should call insert once for each document
         assert mock_milvus_client.insert.call_count == 3
@@ -129,17 +129,6 @@ def test_insert_documents(milvus_db, sample_documents, mock_milvus_client):
         assert "vector" in kwargs["data"]
         assert "name" in kwargs["data"]
         assert "content" in kwargs["data"]
-
-
-def test_doc_exists(milvus_db, sample_documents, mock_milvus_client):
-    """Test document existence check"""
-    # Test when document exists
-    mock_milvus_client.get.return_value = [Mock()]
-    assert milvus_db.doc_exists(sample_documents[0]) is True
-
-    # Test when document doesn't exist
-    mock_milvus_client.get.return_value = []
-    assert milvus_db.doc_exists(sample_documents[0]) is False
 
 
 def test_name_exists(milvus_db, mock_milvus_client):
@@ -167,7 +156,7 @@ def test_id_exists(milvus_db, mock_milvus_client):
 def test_upsert_documents(milvus_db, sample_documents, mock_milvus_client):
     """Test upserting documents"""
     with patch.object(milvus_db.embedder, "get_embedding", return_value=[0.1] * 768):
-        milvus_db.upsert(sample_documents)
+        milvus_db.upsert(documents=sample_documents, content_hash="test_hash")
 
         # Should call upsert once for each document
         assert mock_milvus_client.upsert.call_count == 3
@@ -339,32 +328,13 @@ async def async_return(result):
 
 
 @pytest.mark.asyncio
-async def test_async_doc_exists(mock_embedder, mock_milvus_async_client):
-    """Test async document existence check"""
-    db = Milvus(embedder=mock_embedder, collection="test_collection")
-
-    # Create a test document
-    test_doc = Document(content="Test content")
-
-    db._async_client = mock_milvus_async_client
-
-    with patch.object(mock_milvus_async_client, "get", side_effect=lambda **kwargs: async_return([Mock()])):
-        result = await db.async_doc_exists(test_doc)
-        assert result is True
-
-    with patch.object(mock_milvus_async_client, "get", side_effect=lambda **kwargs: async_return([])):
-        result = await db.async_doc_exists(test_doc)
-        assert result is False
-
-
-@pytest.mark.asyncio
 async def test_async_insert(mock_embedder, sample_documents):
     """Test async insert"""
     db = Milvus(embedder=mock_embedder, collection="test_collection")
 
     # Mock async_insert directly
     with patch.object(db, "async_insert", return_value=None):
-        await db.async_insert(sample_documents)
+        await db.async_insert(documents=sample_documents, content_hash="test_hash")
 
 
 @pytest.mark.asyncio
@@ -374,7 +344,7 @@ async def test_async_upsert(mock_embedder, sample_documents):
 
     # Mock async_upsert directly
     with patch.object(db, "async_upsert", return_value=None):
-        await db.async_upsert(sample_documents)
+        await db.async_upsert(documents=sample_documents, content_hash="test_hash")
 
 
 @pytest.mark.asyncio

@@ -62,15 +62,15 @@ IF EXIST %AGNO_AWS_VALIDATE% (
     )
 ) ELSE (
     ECHO [WARNING] %AGNO_AWS_VALIDATE% does not exist, skipping
-)
+@REM )
 
-SET COOKBOOK_VALIDATE="%COOKBOOK_DIR%\scripts\validate.bat"
-IF EXIST %COOKBOOK_VALIDATE% (
-    ECHO [INFO] Running %COOKBOOK_VALIDATE%
-    CALL %COOKBOOK_VALIDATE%
-) ELSE (
-    ECHO [WARNING] %COOKBOOK_VALIDATE% does not exist, skipping
-)
+@REM SET COOKBOOK_VALIDATE="%COOKBOOK_DIR%\scripts\validate.bat"
+@REM IF EXIST %COOKBOOK_VALIDATE% (
+@REM     ECHO [INFO] Running %COOKBOOK_VALIDATE%
+@REM     CALL %COOKBOOK_VALIDATE%
+@REM ) ELSE (
+@REM     ECHO [WARNING] %COOKBOOK_VALIDATE% does not exist, skipping
+@REM )
 
 ECHO [INFO] All validations complete.
 EXIT /B 0

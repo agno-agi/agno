@@ -51,7 +51,7 @@ def test_team_system_message_content(team):
 
 
 def test_transfer_to_wrong_member(team):
-    function = team.get_transfer_task_function(
+    function = team._get_transfer_task_function(
         session=TeamSession(session_id="test-session"),
         run_response=TeamRunOutput(content="Hello, world!"),
         session_state={},
@@ -66,7 +66,7 @@ def test_transfer_to_wrong_member(team):
 
 
 def test_forward_to_wrong_member(team):
-    function = team.get_forward_task_function(
+    function = team._get_forward_task_function(
         input="Hello, world!",
         session=TeamSession(session_id="test-session"),
         run_response=TeamRunOutput(content="Hello, world!"),

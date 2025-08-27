@@ -127,6 +127,8 @@ class RunCompletedEvent(BaseAgentRunEvent):
     additional_input: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_messages: Optional[List[Message]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    metrics: Optional[Metrics] = None
 
 
 @dataclass

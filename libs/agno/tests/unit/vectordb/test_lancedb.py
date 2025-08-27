@@ -63,13 +63,13 @@ def test_create_table(lance_db):
 
 def test_insert_documents(lance_db, sample_documents):
     """Test inserting documents"""
-    lance_db.insert(sample_documents)
+    lance_db.insert(documents=sample_documents, content_hash="test_hash")
     assert lance_db.get_count() == 3
 
 
 def test_vector_search(lance_db, sample_documents):
     """Test vector search"""
-    lance_db.insert(sample_documents)
+    lance_db.insert(documents=sample_documents, content_hash="test_hash")
     results = lance_db.vector_search("coconut dishes", limit=2)
     assert len(results) == 2
     # results is a DataFrame, so check the 'payload' column for content
@@ -88,7 +88,7 @@ def test_vector_search(lance_db, sample_documents):
 def test_keyword_search(lance_db, sample_documents):
     """Test keyword search"""
     lance_db.search_type = SearchType.keyword
-    lance_db.insert(sample_documents)
+    lance_db.insert(documents=sample_documents, content_hash="test_hash")
     results = lance_db.search("spicy curry", limit=1)
     assert len(results) == 1
     assert "curry" in results[0].content.lower()
@@ -97,7 +97,7 @@ def test_keyword_search(lance_db, sample_documents):
 def test_hybrid_search(lance_db, sample_documents):
     """Test hybrid search"""
     lance_db.search_type = SearchType.hybrid
-    lance_db.insert(sample_documents)
+    lance_db.insert(documents=sample_documents, content_hash="test_hash")
     results = lance_db.search("Thai soup", limit=2)
     assert len(results) == 2
     assert any("thai" in doc.content.lower() for doc in results)
@@ -105,7 +105,7 @@ def test_hybrid_search(lance_db, sample_documents):
 
 def test_upsert_documents(lance_db, sample_documents):
     """Test upserting documents"""
-    lance_db.insert([sample_documents[0]])
+    lance_db.insert(documents=[sample_documents[0]], content_hash="test_hash")
     assert lance_db.get_count() == 1
 
     modified_doc = Document(
@@ -113,28 +113,22 @@ def test_upsert_documents(lance_db, sample_documents):
         meta_data={"cuisine": "Thai", "type": "soup"},
         name="tom_kha",
     )
-    lance_db.upsert([modified_doc])
+    lance_db.upsert(documents=[modified_doc], content_hash="test_hash")
     results = lance_db.search("spicy and sour", limit=1)
     assert len(results) == 1
     assert results[0].content is not None
 
 
-def test_doc_exists(lance_db, sample_documents):
-    """Test document existence check"""
-    lance_db.insert([sample_documents[0]])
-    assert lance_db.doc_exists(sample_documents[0]) is True
-
-
 def test_name_exists(lance_db, sample_documents):
     """Test name existence check"""
-    lance_db.insert([sample_documents[0]])
+    lance_db.insert(documents=[sample_documents[0]], content_hash="test_hash")
     assert lance_db.name_exists("tom_kha") is True
     assert lance_db.name_exists("nonexistent") is False
 
 
 def test_id_exists(lance_db, sample_documents):
     """Test ID existence check"""
-    lance_db.insert([sample_documents[0]])
+    lance_db.insert(documents=[sample_documents[0]], content_hash="test_hash")
 
     # Get the actual ID that was generated (MD5 hash of content)
     from hashlib import md5
@@ -148,7 +142,7 @@ def test_id_exists(lance_db, sample_documents):
 
 def test_delete_by_id(lance_db, sample_documents):
     """Test deleting documents by ID"""
-    lance_db.insert(sample_documents)
+    lance_db.insert(documents=sample_documents, content_hash="test_hash")
     assert lance_db.get_count() == 3
 
     # Get the actual ID that was generated for the first document
@@ -171,7 +165,7 @@ def test_delete_by_id(lance_db, sample_documents):
 
 def test_delete_by_name(lance_db, sample_documents):
     """Test deleting documents by name"""
-    lance_db.insert(sample_documents)
+    lance_db.insert(documents=sample_documents, content_hash="test_hash")
     assert lance_db.get_count() == 3
 
     # Delete by name
@@ -188,7 +182,7 @@ def test_delete_by_name(lance_db, sample_documents):
 
 def test_delete_by_metadata(lance_db, sample_documents):
     """Test deleting documents by metadata"""
-    lance_db.insert(sample_documents)
+    lance_db.insert(documents=sample_documents, content_hash="test_hash")
     assert lance_db.get_count() == 3
 
     # Delete by metadata - should delete all Thai cuisine documents
@@ -197,7 +191,7 @@ def test_delete_by_metadata(lance_db, sample_documents):
     assert lance_db.get_count() == 0
 
     # Insert again and test partial metadata match
-    lance_db.insert(sample_documents)
+    lance_db.insert(documents=sample_documents, content_hash="test_hash")
     assert lance_db.get_count() == 3
 
     # Delete by specific metadata combination
@@ -218,7 +212,7 @@ def test_delete_by_content_id(lance_db, sample_documents):
     sample_documents[1].content_id = "recipe_2"
     sample_documents[2].content_id = "recipe_3"
 
-    lance_db.insert(sample_documents)
+    lance_db.insert(documents=sample_documents, content_hash="test_hash")
     assert lance_db.get_count() == 3
 
     # Delete by content_id
@@ -256,7 +250,7 @@ def test_delete_by_name_multiple_documents(lance_db):
         ),
     ]
 
-    lance_db.insert(docs)
+    lance_db.insert(documents=docs, content_hash="test_hash")
     assert lance_db.get_count() == 3
 
     # Delete all documents with name "tom_kha"
@@ -287,7 +281,7 @@ def test_delete_by_metadata_complex(lance_db):
         ),
     ]
 
-    lance_db.insert(docs)
+    lance_db.insert(documents=docs, content_hash="test_hash")
     assert lance_db.get_count() == 3
 
     # Delete only spicy Thai dishes
@@ -304,7 +298,7 @@ def test_delete_by_metadata_complex(lance_db):
 def test_get_count(lance_db, sample_documents):
     """Test document count"""
     assert lance_db.get_count() == 0
-    lance_db.insert(sample_documents)
+    lance_db.insert(documents=sample_documents, content_hash="test_hash")
     assert lance_db.get_count() == 3
 
 
@@ -312,7 +306,7 @@ def test_error_handling(lance_db):
     """Test error handling scenarios"""
     results = lance_db.search("")
     assert len(results) == 0
-    lance_db.insert([])
+    lance_db.insert(documents=[], content_hash="test_hash")
     assert lance_db.get_count() == 0
 
 
@@ -324,7 +318,7 @@ def test_bad_vectors_handling(mock_embedder):
     db.create()
     try:
         doc = Document(content="Test document", meta_data={}, name="test")
-        db.insert([doc])
+        db.insert(documents=[doc], content_hash="test_hash")
         assert db.get_count() == 1
     finally:
         db.drop()

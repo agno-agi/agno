@@ -135,6 +135,7 @@ def create_uagi(
         knowledge=uagi_knowledge,
         description=description,
         instructions=instructions,
+        enable_session_summaries=True,
         enable_user_memories=True,
         num_history_runs=3,
         show_members_responses=True,

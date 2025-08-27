@@ -86,6 +86,8 @@ def create_team_run_completed_event(from_run_response: TeamRunOutput) -> TeamRun
         reasoning_steps=from_run_response.reasoning_steps,  # type: ignore
         reasoning_messages=from_run_response.reasoning_messages,  # type: ignore
         member_responses=from_run_response.member_responses,  # type: ignore
+        metadata=from_run_response.metadata,  # type: ignore
+        metrics=from_run_response.metrics,  # type: ignore
     )
 
 
@@ -108,6 +110,8 @@ def create_run_completed_event(from_run_response: RunOutput) -> RunCompletedEven
         additional_input=from_run_response.additional_input,  # type: ignore
         reasoning_steps=from_run_response.reasoning_steps,  # type: ignore
         reasoning_messages=from_run_response.reasoning_messages,  # type: ignore
+        metadata=from_run_response.metadata,  # type: ignore
+        metrics=from_run_response.metrics,  # type: ignore
     )
 
 

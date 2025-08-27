@@ -25,12 +25,24 @@ from pydantic import BaseModel
 
 from agno.agent.agent import Agent
 from agno.db.base import BaseDb, SessionType
+from agno.exceptions import RunCancelledException
 from agno.media import Audio, AudioArtifact, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.models.message import Message
 from agno.models.metrics import Metrics
+from agno.run.agent import RunEvent
 from agno.run.base import RunStatus
+from agno.run.cancel import (
+    cancel_run as cancel_run_global,
+)
+from agno.run.cancel import (
+    cleanup_run,
+    raise_if_cancelled,
+    register_run,
+)
+from agno.run.team import TeamRunEvent
 from agno.run.workflow import (
     StepOutputEvent,
+    WorkflowCancelledEvent,
     WorkflowCompletedEvent,
     WorkflowRunEvent,
     WorkflowRunOutput,
@@ -136,7 +148,7 @@ class Workflow:
     # Persist the events on the run response
     store_events: bool = False
     # Events to skip when persisting the events on the run response
-    events_to_skip: Optional[List[WorkflowRunEvent]] = None
+    events_to_skip: Optional[List[Union[WorkflowRunEvent, RunEvent, TeamRunEvent]]] = None
 
     # Control whether to store executor responses (agent/team responses) in flattened runs
     store_executor_outputs: bool = True
@@ -168,7 +180,7 @@ class Workflow:
         stream: Optional[bool] = None,
         stream_intermediate_steps: bool = False,
         store_events: bool = False,
-        events_to_skip: Optional[List[WorkflowRunEvent]] = None,
+        events_to_skip: Optional[List[Union[WorkflowRunEvent, RunEvent, TeamRunEvent]]] = None,
         store_executor_outputs: bool = True,
         input_schema: Optional[Type[BaseModel]] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -835,6 +847,7 @@ class Workflow:
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         workflow_run_response.status = RunStatus.running
+        register_run(workflow_run_response.run_id)  # type: ignore
 
         if callable(self.steps):
             if iscoroutinefunction(self.steps) or isasyncgenfunction(self.steps):
@@ -842,6 +855,8 @@ class Workflow:
             elif isgeneratorfunction(self.steps):
                 content = ""
                 for chunk in self.steps(self, execution_input, **kwargs):
+                    # Check for cancellation while consuming generator
+                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
                     else:
@@ -849,6 +864,7 @@ class Workflow:
                 workflow_run_response.content = content
             else:
                 # Execute the workflow with the custom executor
+                raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                 workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)  # type: ignore[arg-type]
 
             workflow_run_response.status = RunStatus.completed
@@ -868,6 +884,7 @@ class Workflow:
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
 
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
+                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     log_debug(f"Executing step {i + 1}/{self._get_step_count()}: {step_name}")
 
@@ -881,6 +898,9 @@ class Workflow:
                         shared_files=shared_files,
                     )
 
+                    # Check for can cellation before executing step
+                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
                     step_output = step.execute(  # type: ignore[union-attr]
                         step_input,
                         session_id=session.session_id,
@@ -889,6 +909,9 @@ class Workflow:
                         session_state=session_state,
                         store_executor_outputs=self.store_executor_outputs,
                     )
+
+                    # Check for cancellation after step execution
+                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
@@ -933,6 +956,11 @@ class Workflow:
                 workflow_run_response.audio = output_audio
                 workflow_run_response.status = RunStatus.completed
 
+            except RunCancelledException as e:
+                # Handle run cancellation
+                logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
+                workflow_run_response.status = RunStatus.cancelled
+                workflow_run_response.content = str(e)
             except Exception as e:
                 import traceback
 
@@ -946,6 +974,8 @@ class Workflow:
                 self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
                 session.upsert_run(run=workflow_run_response)
                 self.save_session(session=session)
+                # Always clean up the run tracking
+                cleanup_run(workflow_run_response.run_id)  # type: ignore
 
         # Log Workflow Telemetry
         if self.telemetry:
@@ -967,6 +997,10 @@ class Workflow:
 
         workflow_run_response.status = RunStatus.running
 
+        # Register run for cancellation tracking
+        if workflow_run_response.run_id:
+            register_run(workflow_run_response.run_id)
+
         workflow_started_event = WorkflowStartedEvent(
             run_id=workflow_run_response.run_id or "",
             workflow_name=workflow_run_response.workflow_name,
@@ -981,6 +1015,7 @@ class Workflow:
             elif isgeneratorfunction(self.steps):
                 content = ""
                 for chunk in self._call_custom_function(self.steps, execution_input, **kwargs):  # type: ignore[arg-type]
+                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     # Update the run_response with the content from the result
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
@@ -989,6 +1024,7 @@ class Workflow:
                         content += str(chunk)
                 workflow_run_response.content = content
             else:
+                raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                 workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)
             workflow_run_response.status = RunStatus.completed
 
@@ -1010,6 +1046,7 @@ class Workflow:
                 early_termination = False
 
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
+                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     log_debug(f"Streaming step {i + 1}/{self._get_step_count()}: {step_name}")
 
@@ -1034,6 +1071,7 @@ class Workflow:
                         step_index=i,
                         store_executor_outputs=self.store_executor_outputs,
                     ):
+                        raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                         # Handle events
                         if isinstance(event, StepOutput):
                             step_output = event
@@ -1117,6 +1155,19 @@ class Workflow:
                 workflow_run_response.audio = output_audio
                 workflow_run_response.status = RunStatus.completed
 
+            except RunCancelledException as e:
+                # Handle run cancellation during streaming
+                logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
+                workflow_run_response.status = RunStatus.cancelled
+                workflow_run_response.content = str(e)
+                cancelled_event = WorkflowCancelledEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_id=self.id,
+                    workflow_name=self.name,
+                    session_id=session.session_id,
+                    reason=str(e),
+                )
+                yield self._handle_event(cancelled_event, workflow_run_response)
             except Exception as e:
                 logger.error(f"Workflow execution failed: {e}")
 
@@ -1152,6 +1203,9 @@ class Workflow:
         self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
         session.upsert_run(run=workflow_run_response)
         self.save_session(session=session)
+
+        # Always clean up the run tracking
+        cleanup_run(workflow_run_response.run_id)  # type: ignore
 
         # Log Workflow Telemetry
         if self.telemetry:
@@ -1220,6 +1274,9 @@ class Workflow:
 
         workflow_run_response.status = RunStatus.running
 
+        # Register run for cancellation tracking
+        register_run(workflow_run_response.run_id)  # type: ignore
+
         if callable(self.steps):
             # Execute the workflow with the custom executor
             content = ""
@@ -1236,12 +1293,14 @@ class Workflow:
             elif isasyncgenfunction(self.steps):  # type: ignore
                 async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
                 async for chunk in async_gen:
+                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
                     else:
                         content += str(chunk)
                 workflow_run_response.content = content
             else:
+                raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                 workflow_run_response.content = self._call_custom_function(self.steps, execution_input, **kwargs)
             workflow_run_response.status = RunStatus.completed
 
@@ -1261,6 +1320,7 @@ class Workflow:
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
 
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
+                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     log_debug(f"Async Executing step {i + 1}/{self._get_step_count()}: {step_name}")
 
@@ -1274,6 +1334,9 @@ class Workflow:
                         shared_files=shared_files,
                     )
 
+                    # Check for cancellation before executing step
+                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
+
                     step_output = await step.aexecute(  # type: ignore[union-attr]
                         step_input,
                         session_id=session.session_id,
@@ -1282,6 +1345,9 @@ class Workflow:
                         session_state=session_state,
                         store_executor_outputs=self.store_executor_outputs,
                     )
+
+                    # Check for cancellation after step execution
+                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
@@ -1326,6 +1392,10 @@ class Workflow:
                 workflow_run_response.audio = output_audio
                 workflow_run_response.status = RunStatus.completed
 
+            except RunCancelledException as e:
+                logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
+                workflow_run_response.status = RunStatus.cancelled
+                workflow_run_response.content = str(e)
             except Exception as e:
                 logger.error(f"Workflow execution failed: {e}")
                 workflow_run_response.status = RunStatus.error
@@ -1334,6 +1404,8 @@ class Workflow:
         self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
         session.upsert_run(run=workflow_run_response)
         self.save_session(session=session)
+        # Always clean up the run tracking
+        cleanup_run(workflow_run_response.run_id)  # type: ignore
 
         # Log Workflow Telemetry
         if self.telemetry:
@@ -1379,6 +1451,7 @@ class Workflow:
                 content = ""
                 async_gen = await self._acall_custom_function(self.steps, execution_input, **kwargs)
                 async for chunk in async_gen:
+                    raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                     if hasattr(chunk, "content") and chunk.content is not None and isinstance(chunk.content, str):
                         content += chunk.content
                         yield chunk
@@ -1407,6 +1480,8 @@ class Workflow:
                 early_termination = False
 
                 for i, step in enumerate(self.steps):  # type: ignore[arg-type]
+                    if workflow_run_response.run_id:
+                        raise_if_cancelled(workflow_run_response.run_id)
                     step_name = getattr(step, "name", f"step_{i + 1}")
                     log_debug(f"Async streaming step {i + 1}/{self._get_step_count()}: {step_name}")
 
@@ -1431,6 +1506,8 @@ class Workflow:
                         step_index=i,
                         store_executor_outputs=self.store_executor_outputs,
                     ):
+                        if workflow_run_response.run_id:
+                            raise_if_cancelled(workflow_run_response.run_id)
                         if isinstance(event, StepOutput):
                             step_output = event
                             collected_step_outputs.append(step_output)
@@ -1512,6 +1589,23 @@ class Workflow:
                 workflow_run_response.audio = output_audio
                 workflow_run_response.status = RunStatus.completed
 
+            except RunCancelledException as e:
+                # Handle run cancellation during streaming
+                logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
+                workflow_run_response.status = RunStatus.cancelled
+                workflow_run_response.content = str(e)
+                cancelled_event = WorkflowCancelledEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_id=self.id,
+                    workflow_name=self.name,
+                    session_id=session.session_id,
+                    reason=str(e),
+                )
+                yield self._handle_event(
+                    cancelled_event,
+                    workflow_run_response,
+                    websocket_handler=websocket_handler,
+                )
             except Exception as e:
                 logger.error(f"Workflow execution failed: {e}")
 
@@ -1551,6 +1645,9 @@ class Workflow:
         # Log Workflow Telemetry
         if self.telemetry:
             await self._alog_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
+
+        # Always clean up the run tracking
+        cleanup_run(workflow_run_response.run_id)  # type: ignore
 
     async def _arun_background(
         self,
@@ -1747,6 +1844,17 @@ class Workflow:
                         return run
 
         return None
+
+    def cancel_run(self, run_id: str) -> bool:
+        """Cancel a running workflow execution.
+
+        Args:
+            run_id (str): The run_id to cancel.
+
+        Returns:
+            bool: True if the run was found and marked for cancellation, False otherwise.
+        """
+        return cancel_run_global(run_id)
 
     @overload
     def run(

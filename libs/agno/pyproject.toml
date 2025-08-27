@@ -120,6 +120,7 @@ zep = ["zep-cloud"]
 daytona=["daytona"]
 oxylabs = ["oxylabs"]
 trafilatura = ["trafilatura"]
+neo4j = ["neo4j"]
 
 # Dependencies for Storage
 sql = ["sqlalchemy"]
@@ -230,6 +231,7 @@ tools = [
   "agno[google_bigquery]",
   "agno[psycopg]",
   "agno[trafilatura]",
+  "agno[neo4j]",
 ]
 
 # All storage
@@ -398,6 +400,7 @@ module = [
   "memory_profiler.*",
   "mistralai.*",
   "mlx_whisper.*",
+  "neo4j.*",
   "nest_asyncio.*",
   "newspaper.*",
   "numpy.*",

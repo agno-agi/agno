@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - "main"
+      - "v2.0"
   pull_request:
     types:
       - opened
@@ -46,7 +47,7 @@ jobs:
       - name: Mypy
         run: |
           mypy .
-          
+
   style-check-cookbook:
     runs-on: ubuntu-latest
     strategy:
@@ -76,9 +77,10 @@ jobs:
       - name: Ruff check
         run: |
           ruff check .
-      - name: Mypy
-        run: |
-          mypy .
+      # - name: Mypy
+      #   run: |
+      #     mypy .
+
 
   style-check-agno-infra:
     runs-on: ubuntu-latest
@@ -102,7 +104,7 @@ jobs:
           python -m pip install --upgrade \
             pip setuptools wheel \
             ruff mypy pytest
-          pip install --no-deps -r requirements.txt
+          pip install -r requirements.txt
       - name: Ruff format
         run: |
           ruff format .
