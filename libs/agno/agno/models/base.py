@@ -1028,11 +1028,13 @@ class Model(ABC):
         if model_response_delta.images:
             if stream_data.response_image is None:
                 stream_data.response_image = model_response_delta.images[-1]
+            should_yield = True
 
         if model_response_delta.videos:
             if stream_data.response_video is None:
                 stream_data.response_video = model_response_delta.videos[-1]
-
+            should_yield = True
+            
         if model_response_delta.extra is not None:
             if stream_data.extra is None:
                 stream_data.extra = {}
