@@ -5661,6 +5661,7 @@ class Team:
                     if (member_agent.knowledge_filters and member_agent.knowledge)
                     else None,
                 )
+                check_if_run_cancelled(member_agent_run_response)  # type: ignore
 
                 try:
                     if member_agent_run_response.content is None and (  # type: ignore
