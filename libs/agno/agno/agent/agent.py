@@ -84,6 +84,7 @@ from agno.utils.log import (
     set_log_level_to_debug,
     set_log_level_to_info,
 )
+from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.message import get_text_from_message
 from agno.utils.print_response.agent import (
     aprint_response,
@@ -1100,7 +1101,6 @@ class Agent:
         self.model = cast(Model, self.model)
 
         # Merge agent metadata with run metadata
-        from agno.utils.merge_dict import merge_dictionaries
 
         if self.metadata is not None:
             if metadata is None:
@@ -1643,8 +1643,6 @@ class Agent:
         self.model = cast(Model, self.model)
 
         # Merge agent metadata with run metadata
-        from agno.utils.merge_dict import merge_dictionaries
-
         if self.metadata is not None:
             if metadata is None:
                 metadata = self.metadata
@@ -1699,6 +1697,7 @@ class Agent:
                     add_history_to_context=add_history,
                     dependencies=dependencies,
                     add_dependencies_to_context=add_dependencies,
+                    metadata=metadata,
                     **kwargs,
                 )
                 if len(run_messages.messages) == 0:
@@ -3320,8 +3319,6 @@ class Agent:
             # If the model response is a tool_call_completed, update the existing tool call in the run_response
             elif model_response_event.event == ModelResponseEvent.tool_call_completed.value:
                 if model_response_event.updated_session_state is not None and session.session_data is not None:
-                    from agno.utils.merge_dict import merge_dictionaries
-
                     merge_dictionaries(
                         session.session_data["session_state"], model_response_event.updated_session_state
                     )
@@ -3905,8 +3902,6 @@ class Agent:
     def _update_session_state(self, session: AgentSession, session_state: Dict[str, Any]):
         """Load the existing Agent from an AgentSession (from the database)"""
 
-        from agno.utils.merge_dict import merge_dictionaries
-
         # Get the session_state from the database and update the current session_state
         if session.session_data is not None and "session_state" in session.session_data:
             session_state_from_db = session.session_data.get("session_state")
@@ -3929,8 +3924,6 @@ class Agent:
 
     def _update_metadata(self, session: AgentSession):
         """Update the extra_data in the session"""
-        from agno.utils.merge_dict import merge_dictionaries
-
         # Read metadata from the database
         if session.metadata is not None:
             # If metadata is set in the agent, update the database metadata with the agent's metadata
@@ -4302,6 +4295,7 @@ class Agent:
         user_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Any:
         """Format a message with the session state variables."""
         import re
@@ -4311,11 +4305,11 @@ class Agent:
         if not isinstance(message, str):
             return message
 
-        # Dependencies should already be resolved and passed from run() method
+        # Should already be resolved and passed from run() method
         format_variables = ChainMap(
             session_state or {},
             dependencies or {},
-            self.metadata or {},
+            metadata or {},
             {"user_id": user_id} if user_id is not None else {},
         )
         converted_msg = deepcopy(message)
@@ -4612,6 +4606,7 @@ class Agent:
         knowledge_filters: Optional[Dict[str, Any]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Optional[Message]:
         """Return the user message for the Agent.
@@ -4729,6 +4724,7 @@ class Agent:
                         if session.session_data is not None
                         else None,
                         dependencies=dependencies,
+                        metadata=metadata,
                     )
 
                 # Convert to string for concatenation operations
@@ -4780,6 +4776,7 @@ class Agent:
         add_history_to_context: Optional[bool] = None,
         run_dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> RunMessages:
         """This function returns a RunMessages object with the following attributes:
@@ -4890,6 +4887,7 @@ class Agent:
                 knowledge_filters=knowledge_filters,
                 run_dependencies=run_dependencies,
                 add_dependencies_to_context=add_dependencies_to_context,
+                metadata=metadata,
                 **kwargs,
             )
 

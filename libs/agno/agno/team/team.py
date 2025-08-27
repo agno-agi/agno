@@ -1132,6 +1132,12 @@ class Team:
         )
         self.model = cast(Model, self.model)
 
+        if metadata is not None:
+            if self.metadata is not None:
+                merge_dictionaries(metadata, self.metadata)
+            else:
+                metadata = self.metadata
+
         # Create a new run_response for this attempt
         run_response = TeamRunOutput(
             run_id=run_id,
@@ -1166,6 +1172,7 @@ class Team:
             debug_mode=debug_mode,
             add_history_to_context=add_history,
             dependencies=run_dependencies,
+            metadata=metadata,
         )
 
         # If no retries are set, use the team's default retries
@@ -1303,7 +1310,6 @@ class Team:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         workflow_context: Optional[Dict] = None,
-        dependencies: Optional[Dict[str, Any]] = None,
     ) -> TeamRunOutput:
         """Run the Team and return the response.
 
@@ -1316,10 +1322,6 @@ class Team:
         7. Log the team run
         """
         self.model = cast(Model, self.model)
-
-        # Resolving here for async requirement
-        if dependencies is not None:
-            await self._aresolve_run_dependencies(dependencies)
 
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
@@ -1397,7 +1399,6 @@ class Team:
         stream_intermediate_steps: bool = False,
         workflow_context: Optional[Dict] = None,
         yield_run_response: bool = False,
-        dependencies: Optional[Dict[str, Any]] = None,
     ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
         """Run the Team and return the response.
 
@@ -1408,10 +1409,6 @@ class Team:
         4. Save session to storage
         5. Log Team Run
         """
-        # Resolving here for async requirement
-        if dependencies is not None:
-            await self._aresolve_run_dependencies(dependencies)
-
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
         # Register run for cancellation tracking
@@ -1686,6 +1683,12 @@ class Team:
 
         self.model = cast(Model, self.model)
 
+        if metadata is not None:
+            if self.metadata is not None:
+                merge_dictionaries(metadata, self.metadata)
+            else:
+                metadata = self.metadata
+
         # Create a new run_response for this attempt
         run_response = TeamRunOutput(
             run_id=run_id,
@@ -1720,6 +1723,7 @@ class Team:
             debug_mode=debug_mode,
             add_history_to_context=add_history_to_context,
             dependencies=dependencies,
+            metadata=metadata,
         )
 
         # If no retries are set, use the team's default retries
@@ -1789,7 +1793,6 @@ class Team:
                         session=team_session,  # type: ignore
                         user_id=user_id,
                         response_format=response_format,
-                        run_dependencies=run_dependencies,
                     )
 
             except ModelProviderError as e:
@@ -2750,8 +2753,6 @@ class Team:
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
-        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
-
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
 
@@ -2786,7 +2787,7 @@ class Team:
                 markdown=markdown,
                 stream_intermediate_steps=stream_intermediate_steps,
                 knowledge_filters=knowledge_filters,
-                add_history_to_context=add_history,
+                add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
                 metadata=metadata,
                 debug_mode=debug_mode,
@@ -2810,7 +2811,7 @@ class Team:
                 files=files,
                 markdown=markdown,
                 knowledge_filters=knowledge_filters,
-                add_history_to_context=add_history,
+                add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
                 metadata=metadata,
                 debug_mode=debug_mode,
@@ -2843,8 +2844,6 @@ class Team:
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
-        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
-
         if not tags_to_include_in_markdown:
             tags_to_include_in_markdown = {"think", "thinking"}
 
@@ -2879,7 +2878,7 @@ class Team:
                 markdown=markdown,
                 stream_intermediate_steps=stream_intermediate_steps,
                 knowledge_filters=knowledge_filters,
-                add_history_to_context=add_history,
+                add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
                 metadata=metadata,
                 debug_mode=debug_mode,
@@ -2903,7 +2902,7 @@ class Team:
                 files=files,
                 markdown=markdown,
                 knowledge_filters=knowledge_filters,
-                add_history_to_context=add_history,
+                add_history_to_context=add_history_to_context,
                 dependencies=dependencies,
                 metadata=metadata,
                 debug_mode=debug_mode,
@@ -3591,6 +3590,7 @@ class Team:
         add_history_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         # Prepare tools
         _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
@@ -3649,6 +3649,7 @@ class Team:
                 user_id=user_id,
                 dependencies=dependencies,
                 add_dependencies_to_context=add_dependencies_to_context,
+                metadata=metadata,
             )
             forward_task_func: Function = self._get_forward_task_function(
                 input=user_message,
@@ -4124,6 +4125,7 @@ class Team:
         add_history_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> RunMessages:
         """This function returns a RunMessages object with the following attributes:
@@ -4215,6 +4217,7 @@ class Team:
             knowledge_filters=knowledge_filters,
             dependencies=dependencies,
             add_dependencies_to_context=add_dependencies_to_context,
+            metadata=metadata,
             **kwargs,
         )
         # Add user message to run_messages
@@ -4238,6 +4241,7 @@ class Team:
         knowledge_filters: Optional[Dict[str, Any]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
         # Get references from the knowledge base to use in the user message
@@ -4335,6 +4339,7 @@ class Team:
                         if session.session_data is not None
                         else None,
                         dependencies=dependencies,
+                        metadata=metadata,
                     )
 
                 # Convert to string for concatenation operations
@@ -4435,6 +4440,7 @@ class Team:
         user_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Any:
         """Format a message with the session state variables."""
         import re
@@ -4442,12 +4448,11 @@ class Team:
 
         if not isinstance(message, str):
             return message
-
-        # Dependencies should already be resolved and passed from run() method
+        # Should already be resolved and passed from run() method
         format_variables = ChainMap(
             session_state or {},
             dependencies or {},
-            self.metadata or {},
+            metadata or {},
             {"user_id": user_id} if user_id is not None else {},
         )
         converted_msg = message
