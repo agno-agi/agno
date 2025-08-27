@@ -18,6 +18,7 @@ def mock_embedder() -> MagicMock:
     embedder = MagicMock()
     embedder.dimensions = 384
     embedder.get_embedding.return_value = [0.1] * 384
+    embedder.get_embedding_and_usage.return_value = ([0.1] * 384, None)  # (embedding, usage)
     embedder.embedding_dim = 384
     return embedder
 
@@ -140,6 +141,12 @@ def vector_db(mock_mongodb_client: MagicMock, mock_embedder: MagicMock) -> Mongo
     # Setup specific mocks for this instance
     db._db = mock_mongodb_client["test_vectordb"]
     db._collection = db._db[collection_name]
+    
+    # Mock the search index existence check to avoid tuple unpacking issues
+    db._search_index_exists = MagicMock(return_value=True)
+    
+    # Mock _get_collection to ensure it returns the mocked collection
+    db._get_collection = MagicMock(return_value=db._collection)
 
     return db
 
@@ -219,7 +226,11 @@ def test_insert_and_search(vector_db: MongoDb, mock_mongodb_client: MagicMock, m
     for doc in docs:
         doc.embedding = mock_embedder.get_embedding(doc.content)
 
+<<<<<<< HEAD
     vector_db.insert(documents=docs, content_hash="test_hash")
+=======
+    vector_db.insert(content_hash="test_hash", documents=docs)
+>>>>>>> 8c33bc7c7 (Fix mongo and pgvector)
 
     # Test search functionality
     results = vector_db.search("test document", limit=1)
@@ -385,17 +396,22 @@ def test_upsert(vector_db: MongoDb, mock_mongodb_client: MagicMock, mock_embedde
 
     # Mock the prepare_doc method to avoid embedding issues during test
     original_prepare_doc = vector_db.prepare_doc
-    vector_db.prepare_doc = lambda doc: {
+    vector_db.prepare_doc = lambda content_hash, doc, filters=None: {
         "_id": md5(doc.content.encode("utf-8")).hexdigest(),
         "name": doc.name,
         "content": doc.content,
         "meta_data": doc.meta_data,
         "embedding": doc.embedding or [0.1] * 384,
         "content_id": doc.content_id,
+        "content_hash": content_hash,
     }
 
     # Perform the upsert
+<<<<<<< HEAD
     vector_db.upsert(documents=[modified_doc], content_hash="test_hash")
+=======
+    vector_db.upsert(content_hash="test_hash", documents=[modified_doc])
+>>>>>>> 8c33bc7c7 (Fix mongo and pgvector)
 
     # Verify the update was called
     collection.update_one.assert_called_once()
@@ -484,13 +500,14 @@ async def test_async_insert(
 
     # Mock the prepare_doc method to avoid embedding issues during test
     original_prepare_doc = async_vector_db.prepare_doc
-    async_vector_db.prepare_doc = lambda doc, filters=None: {
+    async_vector_db.prepare_doc = lambda content_hash, doc, filters=None: {
         "_id": md5(doc.content.encode("utf-8")).hexdigest(),
         "name": doc.name,
         "content": doc.content,
         "meta_data": doc.meta_data,
         "embedding": doc.embedding or [0.1] * 384,
         "content_id": doc.content_id,
+        "content_hash": content_hash,
     }
 
     # Get reference to the mocked collection
@@ -501,7 +518,11 @@ async def test_async_insert(
     async_vector_db._async_collection = mock_collection
 
     # Perform the insert
+<<<<<<< HEAD
     await async_vector_db.async_insert(documents=docs, content_hash="test_hash")
+=======
+    await async_vector_db.async_insert(content_hash="test_hash", documents=docs)
+>>>>>>> 8c33bc7c7 (Fix mongo and pgvector)
 
     # Verify insert_many was called
     mock_collection.insert_many.assert_called_once()
@@ -603,20 +624,25 @@ async def test_async_upsert(
     async_vector_db: MongoDb, mock_async_mongodb_client: AsyncMock, mock_embedder: MagicMock
 ) -> None:
     """Test upserting documents asynchronously."""
+    import random
+    import string
+
     doc = create_test_documents(1)[0]
 
     # Ensure the document has an embedding
     doc.embedding = mock_embedder.get_embedding(doc.content)
+    name_suffix = ''.join(random.choices(string.ascii_letters + string.digits, k=4))
 
     # Mock the prepare_doc method to avoid embedding issues during test
     original_prepare_doc = async_vector_db.prepare_doc
-    async_vector_db.prepare_doc = lambda doc: {
+    async_vector_db.prepare_doc = lambda content_hash, doc, filters=None: {
         "_id": md5(doc.content.encode("utf-8")).hexdigest(),
         "name": doc.name,
         "content": doc.content,
         "meta_data": doc.meta_data,
         "embedding": doc.embedding or [0.1] * 384,
         "content_id": doc.content_id,
+        "content_hash": content_hash,
     }
 
     # Get reference to the mocked collection
@@ -627,7 +653,11 @@ async def test_async_upsert(
     async_vector_db._async_collection = mock_collection
 
     # Perform the upsert
+<<<<<<< HEAD
     await async_vector_db.async_upsert(documents=[doc], content_hash="test_hash")
+=======
+    await async_vector_db.async_upsert(content_hash="test_hash", documents=[doc])
+>>>>>>> 8c33bc7c7 (Fix mongo and pgvector)
 
     # Verify update_one was called
     mock_collection.update_one.assert_called_once()
