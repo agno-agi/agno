@@ -157,6 +157,8 @@ class Team:
     add_datetime_to_instructions: bool = False
     # If True, add the current location to the instructions to give the team a sense of location
     add_location_to_instructions: bool = False
+    # Allows for custom timezone for datetime instructions following the TZ Database format (e.g. "Etc/UTC")
+    timezone_identifier: Optional[str] = None
     # If True, add the tools available to team members to the system message
     add_member_tools_to_system_message: bool = True
 
@@ -328,6 +330,7 @@ class Team:
         markdown: bool = False,
         add_datetime_to_instructions: bool = False,
         add_location_to_instructions: bool = False,
+        timezone_identifier: Optional[str] = None,
         add_member_tools_to_system_message: bool = True,
         system_message: Optional[Union[str, Callable, Message]] = None,
         system_message_role: str = "system",
@@ -411,6 +414,7 @@ class Team:
         self.markdown = markdown
         self.add_datetime_to_instructions = add_datetime_to_instructions
         self.add_location_to_instructions = add_location_to_instructions
+        self.timezone_identifier = timezone_identifier
         self.add_member_tools_to_system_message = add_member_tools_to_system_message
         self.system_message = system_message
         self.system_message_role = system_message_role
@@ -5308,7 +5312,19 @@ class Team:
         if self.add_datetime_to_instructions:
             from datetime import datetime
 
-            additional_information.append(f"The current time is {datetime.now()}")
+            tz = None
+
+            if self.timezone_identifier:
+                try:
+                    from zoneinfo import ZoneInfo
+
+                    tz = ZoneInfo(self.timezone_identifier)
+                except Exception:
+                    log_warning("Invalid timezone identifier")
+
+            time = datetime.now(tz) if tz else datetime.now()
+
+            additional_information.append(f"The current time is {time}.")
 
         # 1.3.3 Add the current location
         if self.add_location_to_instructions:
