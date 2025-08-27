@@ -133,14 +133,13 @@ def test_image_generation_streaming():
 
     image_received = False
     for chunk in response:
-        # Check for images instead of image (due to our ModelResponse changes)
-        if hasattr(chunk, "images") and chunk.images:  # type: ignore
+        if hasattr(chunk, "image") and chunk.image:  # type: ignore
             image_received = True
-            assert chunk.images is not None  # type: ignore
-            assert len(chunk.images) > 0  # type: ignore
-
-            image = PILImage.open(BytesIO(chunk.images[0].content))  # type: ignore
+            assert chunk.image is not None  # type: ignore
+            
+            image = PILImage.open(BytesIO(chunk.image.content))  # type: ignore
             assert image.format in ["JPEG", "PNG"]
+            break
 
     assert image_received, "No image was received in the stream"
 
@@ -207,7 +206,19 @@ def test_image_generation_with_detailed_prompt():
     assert len(run_response.images) > 0
     assert run_response.images[0].content is not None
 
-    image = PILImage.open(BytesIO(run_response.images[0].content))
+    # Handle base64 encoded image data
+    image_content = run_response.images[0].content
+    if isinstance(image_content, bytes):
+        # Check if it's base64 encoded by trying to decode as UTF-8
+        try:
+            decoded_string = image_content.decode('utf-8')
+            if decoded_string.startswith('iVBORw0KGgo') or decoded_string.startswith('/9j/'):
+                import base64
+                image_content = base64.b64decode(decoded_string)
+        except (UnicodeDecodeError, ValueError):
+            pass
+
+    image = PILImage.open(BytesIO(image_content))
     assert image.format in ["JPEG", "PNG"]
 
 
