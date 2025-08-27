@@ -198,8 +198,8 @@ def test_insert(mock_pgvector):
     docs = create_test_documents()
 
     # Bypass the SQLAlchemy-specific parts by patching the insert method directly
-    with patch.object(mock_pgvector, "insert", wraps=lambda docs, **kwargs: None):
-        mock_pgvector.insert(docs=docs, content_hash="test_hash")
+    with patch.object(mock_pgvector, "insert", wraps=lambda content_hash, documents, **kwargs: None):
+        mock_pgvector.insert(content_hash="test_hash", documents=docs)
 
 
 def test_upsert(mock_pgvector):
@@ -207,8 +207,8 @@ def test_upsert(mock_pgvector):
     docs = create_test_documents()
 
     # Bypass the SQLAlchemy-specific parts by patching the upsert method directly
-    with patch.object(mock_pgvector, "upsert", wraps=lambda docs, **kwargs: None):
-        mock_pgvector.upsert(docs=docs, content_hash="test_hash")
+    with patch.object(mock_pgvector, "upsert", wraps=lambda content_hash, documents, **kwargs: None):
+        mock_pgvector.upsert(content_hash="test_hash", documents=docs)
 
 
 def test_insert_builds_records_and_uses_expected_ids(mock_pgvector, mock_embedder):
@@ -229,7 +229,7 @@ def test_insert_builds_records_and_uses_expected_ids(mock_pgvector, mock_embedde
         insert_stmt_sentinel = object()
         mock_insert.return_value = insert_stmt_sentinel
 
-        mock_pgvector.insert(documents=docs, content_hash="test_hash", filters={"tag": "t1"})
+        mock_pgvector.insert("test_content_hash", docs, filters={"tag": "t1"})
 
         # Ensure we executed with an insert statement and batch records
         assert sess.execute.call_count == 1
@@ -276,7 +276,7 @@ def test_upsert_builds_records_and_sets_conflict_on_id(mock_pgvector, mock_embed
         insert_stmt.values.return_value = after_values
         after_values.on_conflict_do_update.return_value = upsert_stmt
 
-        mock_pgvector.upsert(documents=docs, content_hash="test_hash")
+        mock_pgvector.upsert("test_content_hash", docs, filters={"role": "test"})
 
         # Ensure values() received our batch_records so we can validate IDs
         assert insert_stmt.values.called
@@ -397,13 +397,20 @@ async def test_async_insert(mock_pgvector):
     """Test async_insert method."""
     docs = create_test_documents()
 
-    with patch.object(mock_pgvector, "insert"), patch("asyncio.to_thread") as mock_to_thread:
-        mock_to_thread.return_value = None
-
-        await mock_pgvector.async_insert(documents=docs, content_hash="test_hash")
-
-        # Check that insert was called via to_thread
-        mock_to_thread.assert_called_once_with(mock_pgvector.insert, docs, None)
+    # Mock the postgresql.insert to avoid SQLAlchemy errors with MagicMock table
+    with patch("agno.vectordb.pgvector.pgvector.postgresql.insert") as mock_insert:
+        mock_stmt = MagicMock()
+        mock_insert.return_value = mock_stmt
+        
+        # Mock the session execute to avoid actual database operations
+        with patch.object(mock_pgvector, "Session") as mock_session_class:
+            mock_session = MagicMock()
+            mock_session_class.return_value.__enter__.return_value = mock_session
+            
+            await mock_pgvector.async_insert(content_hash="test_hash", documents=docs)
+            
+            # Verify the insert was attempted
+            mock_insert.assert_called_once_with(mock_pgvector.table)
 
 
 @pytest.mark.asyncio
@@ -411,13 +418,26 @@ async def test_async_upsert(mock_pgvector):
     """Test async_upsert method."""
     docs = create_test_documents()
 
-    with patch.object(mock_pgvector, "upsert"), patch("asyncio.to_thread") as mock_to_thread:
-        mock_to_thread.return_value = None
-
-        await mock_pgvector.async_upsert(documents=docs, content_hash="test_hash")
-
-        # Check that upsert was called via to_thread
-        mock_to_thread.assert_called_once_with(mock_pgvector.upsert, docs, None)
+    # Mock the postgresql.insert to avoid SQLAlchemy errors with MagicMock table
+    with patch("agno.vectordb.pgvector.pgvector.postgresql.insert") as mock_insert:
+        mock_stmt = MagicMock()
+        mock_values_stmt = MagicMock()
+        mock_stmt.values.return_value = mock_values_stmt
+        mock_insert.return_value = mock_stmt
+        
+        # Mock content_hash_exists to control flow
+        with patch.object(mock_pgvector, "content_hash_exists", return_value=True):
+            # Mock _delete_by_content_hash to avoid database operations
+            with patch.object(mock_pgvector, "_delete_by_content_hash"):
+                # Mock the session to avoid actual database operations
+                with patch.object(mock_pgvector, "Session") as mock_session_class:
+                    mock_session = MagicMock()
+                    mock_session_class.return_value.__enter__.return_value = mock_session
+                    
+                    await mock_pgvector.async_upsert(content_hash="test_hash", documents=docs)
+                    
+                    # Verify the insert was attempted
+                    mock_insert.assert_called_once_with(mock_pgvector.table)
 
 
 @pytest.mark.asyncio

@@ -374,10 +374,13 @@ class MongoDb(VectorDb):
                 for idx_name, idx_info in indexes.items():
                     if idx_name == index_name:
                         key_info = idx_info.get("key", [])
-                        for key, value in key_info:
-                            if key == "embedding" and value == "cosmosSearch":
-                                log_debug(f"Found existing vector search index: {index_name}")
-                                return True
+                        for key_value_pair in key_info:
+                            # Ensure we have a tuple/list with exactly 2 elements
+                            if isinstance(key_value_pair, (tuple, list)) and len(key_value_pair) == 2:
+                                key, value = key_value_pair
+                                if key == "embedding" and value == "cosmosSearch":
+                                    log_debug(f"Found existing vector search index: {index_name}")
+                                    return True
 
                 log_debug(f"Vector search index '{index_name}' not found")
                 return False
@@ -1043,7 +1046,7 @@ class MongoDb(VectorDb):
         """Upsert documents asynchronously."""
         log_info(f"Upserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
-
+        
         embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
         await asyncio.gather(*embed_tasks, return_exceptions=True)
 

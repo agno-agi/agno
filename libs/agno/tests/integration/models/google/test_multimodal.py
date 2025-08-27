@@ -136,7 +136,7 @@ def test_image_generation_streaming():
         if hasattr(chunk, "image") and chunk.image:  # type: ignore
             image_received = True
             assert chunk.image is not None  # type: ignore
-            
+
             image = PILImage.open(BytesIO(chunk.image.content))  # type: ignore
             assert image.format in ["JPEG", "PNG"]
             break
@@ -211,9 +211,10 @@ def test_image_generation_with_detailed_prompt():
     if isinstance(image_content, bytes):
         # Check if it's base64 encoded by trying to decode as UTF-8
         try:
-            decoded_string = image_content.decode('utf-8')
-            if decoded_string.startswith('iVBORw0KGgo') or decoded_string.startswith('/9j/'):
+            decoded_string = image_content.decode("utf-8")
+            if decoded_string.startswith("iVBORw0KGgo") or decoded_string.startswith("/9j/"):
                 import base64
+
                 image_content = base64.b64decode(decoded_string)
         except (UnicodeDecodeError, ValueError):
             pass
