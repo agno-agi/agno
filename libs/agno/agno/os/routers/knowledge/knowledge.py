@@ -123,7 +123,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         )
         return response
 
-    @router.patch("/content/{content_id}", response_model=ContentResponseSchema, status_code=200)
+    @router.patch("/knowledge/content/{content_id}", response_model=ContentResponseSchema, status_code=200)
     async def update_content(
         content_id: str = Path(..., description="Content ID"),
         name: Optional[str] = Form(None, description="Content name"),
