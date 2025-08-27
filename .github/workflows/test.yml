@@ -82,7 +82,7 @@ jobs:
           PYTHONPATH: ../libs/Agno
       - name: Mypy
         run: |
-          mypy --config-file ../libs/agno/pyproject.toml .
+          mypy --config-file ../libs/agno/pyproject.toml --explicit-package-bases .
         env:
           PYTHONPATH: ../libs/agno
 
