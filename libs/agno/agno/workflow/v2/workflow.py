@@ -3273,7 +3273,8 @@ class Workflow:
         """Update executor with workflow_session_state"""
         if self.workflow_session_state is not None:
             # Update session_state with workflow_session_state
-            executor.workflow_session_state = self.workflow_session_state
+            if hasattr(executor, "workflow_session_state"):
+                executor.workflow_session_state = self.workflow_session_state
 
     def _save_run_to_storage(self, workflow_run_response: WorkflowRunResponse) -> None:
         """Helper method to save workflow run response to storage"""
