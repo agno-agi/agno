@@ -48,6 +48,32 @@ class SurrealDb(VectorDb):
         LIMIT 1
     """
 
+    CONTENT_HASH_EXISTS_QUERY: Final[str] = """
+        SELECT * FROM {collection}
+        WHERE meta_data.content_hash = $content_hash
+        LIMIT 1
+    """
+
+    DELETE_BY_ID_QUERY: Final[str] = """
+        DELETE FROM {collection}
+        WHERE id = $id
+    """
+
+    DELETE_BY_NAME_QUERY: Final[str] = """
+        DELETE FROM {collection}
+        WHERE meta_data.name = $name
+    """
+
+    DELETE_BY_METADATA_QUERY: Final[str] = """
+        DELETE FROM {collection}
+        WHERE {conditions}
+    """
+
+    DELETE_BY_CONTENT_ID_QUERY: Final[str] = """
+        DELETE FROM {collection}
+        WHERE content_id = $content_id
+    """
+
     UPSERT_QUERY: Final[str] = """
         UPSERT {thing}
         SET content = $content,
@@ -213,10 +239,42 @@ class SurrealDb(VectorDb):
         result = self.client.query(self.NAME_EXISTS_QUERY.format(collection=self.collection), {"name": name})
         return bool(self._extract_result(result))
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def id_exists(self, id: str) -> bool:
+        """Check if a document exists by its ID.
+
+        Args:
+            id: The ID of the document to check.
+
+        Returns:
+            True if the document exists, False otherwise.
+
+        """
+        log_debug(f"Checking if document exists by ID: {id}")
+        result = self.client.query(self.ID_EXISTS_QUERY.format(collection=self.collection), {"id": id})
+        return bool(self._extract_result(result))
+
+    def content_hash_exists(self, content_hash: str) -> bool:
+        """Check if a document exists by its content hash.
+
+        Args:
+            content_hash: The content hash of the document to check.
+
+        Returns:
+            True if the document exists, False otherwise.
+
+        """
+        log_debug(f"Checking if document exists by content hash: {content_hash}")
+        result = self.client.query(
+            self.CONTENT_HASH_EXISTS_QUERY.format(collection=self.collection), 
+            {"content_hash": content_hash}
+        )
+        return bool(self._extract_result(result))
+
+    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents into the vector store.
 
         Args:
+            content_hash: The content hash for the documents.
             documents: A list of documents to insert.
             filters: A dictionary of filters to apply to the query.
 
@@ -224,15 +282,17 @@ class SurrealDb(VectorDb):
         for doc in documents:
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
+            meta_data["content_hash"] = content_hash
             data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
             if filters:
                 data["meta_data"].update(filters)
             self.client.create(self.collection, data)
 
-    def upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Upsert documents into the vector store.
 
         Args:
+            content_hash: The content hash for the documents.
             documents: A list of documents to upsert.
             filters: A dictionary of filters to apply to the query.
 
@@ -240,6 +300,7 @@ class SurrealDb(VectorDb):
         for doc in documents:
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
+            meta_data["content_hash"] = content_hash
             data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
             if filters:
                 data["meta_data"].update(filters)
@@ -321,6 +382,65 @@ class SurrealDb(VectorDb):
         self.client.query(self.DELETE_ALL_QUERY.format(collection=self.collection))
         return True
 
+    def delete_by_id(self, id: str) -> bool:
+        """Delete a document by its ID.
+
+        Args:
+            id: The ID of the document to delete.
+
+        Returns:
+            True if the document was deleted, False otherwise.
+
+        """
+        log_debug(f"Deleting document by ID: {id}")
+        result = self.client.query(self.DELETE_BY_ID_QUERY.format(collection=self.collection), {"id": id})
+        return bool(result)
+
+    def delete_by_name(self, name: str) -> bool:
+        """Delete documents by their name.
+
+        Args:
+            name: The name of the documents to delete.
+
+        Returns:
+            True if documents were deleted, False otherwise.
+
+        """
+        log_debug(f"Deleting documents by name: {name}")
+        result = self.client.query(self.DELETE_BY_NAME_QUERY.format(collection=self.collection), {"name": name})
+        return bool(result)
+
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        """Delete documents by their metadata.
+
+        Args:
+            metadata: The metadata to match for deletion.
+
+        Returns:
+            True if documents were deleted, False otherwise.
+
+        """
+        log_debug(f"Deleting documents by metadata: {metadata}")
+        conditions = [f"meta_data.{key} = ${key}" for key in metadata.keys()]
+        conditions_str = " AND ".join(conditions)
+        query = self.DELETE_BY_METADATA_QUERY.format(collection=self.collection, conditions=conditions_str)
+        result = self.client.query(query, metadata)
+        return bool(result)
+
+    def delete_by_content_id(self, content_id: str) -> bool:
+        """Delete documents by their content ID.
+
+        Args:
+            content_id: The content ID of the documents to delete.
+
+        Returns:
+            True if documents were deleted, False otherwise.
+
+        """
+        log_debug(f"Deleting documents by content ID: {content_id}")
+        result = self.client.query(self.DELETE_BY_CONTENT_ID_QUERY.format(collection=self.collection), {"content_id": content_id})
+        return bool(result)
+
     @staticmethod
     def _extract_result(query_result: Union[List[Dict[str, Any]], Dict[str, Any]]) -> Union[List[Any], Dict[str, Any]]:
         """Extract the actual result from SurrealDB query response.
@@ -380,10 +500,11 @@ class SurrealDb(VectorDb):
         )
         return bool(self._extract_result(response))
 
-    async def async_insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents into the vector store asynchronously.
 
         Args:
+            content_hash: The content hash for the documents.
             documents: A list of documents to insert.
             filters: A dictionary of filters to apply to the query.
 
@@ -391,16 +512,18 @@ class SurrealDb(VectorDb):
         for doc in documents:
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
+            meta_data["content_hash"] = content_hash
             data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
             if filters:
                 data["meta_data"].update(filters)
             log_debug(f"Inserting document asynchronously: {doc.name} ({doc.meta_data})")
             await self.async_client.create(self.collection, data)
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Upsert documents into the vector store asynchronously.
 
         Args:
+            content_hash: The content hash for the documents.
             documents: A list of documents to upsert.
             filters: A dictionary of filters to apply to the query.
 
@@ -408,6 +531,7 @@ class SurrealDb(VectorDb):
         for doc in documents:
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
+            meta_data["content_hash"] = content_hash
             data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
             if filters:
                 data["meta_data"].update(filters)

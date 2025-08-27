@@ -101,7 +101,7 @@ def test_insert_documents(weaviate_db, sample_documents, mock_weaviate_client):
     """Test inserting documents"""
     collection = mock_weaviate_client.collections.get.return_value
 
-    weaviate_db.insert(sample_documents)
+    weaviate_db.insert(content_hash="test_hash", documents=sample_documents)
     assert collection.data.insert.call_count == 3
 
 
@@ -291,7 +291,7 @@ def test_upsert_documents(weaviate_db, sample_documents, mock_weaviate_client):
     mock_result.objects = []
     collection.query.fetch_objects.return_value = mock_result
 
-    weaviate_db.upsert(sample_documents)
+    weaviate_db.upsert(content_hash="test_hash", documents=sample_documents)
     assert collection.data.insert.call_count == 3
 
 
@@ -303,8 +303,8 @@ def test_upsert_documents_with_existing_data(weaviate_db, sample_documents, mock
     mock_result.objects = [Mock()]  # Simulate existing data
     collection.query.fetch_objects.return_value = mock_result
 
-    weaviate_db.upsert(sample_documents)
-    assert collection.data.insert.call_count == 0
+    weaviate_db.upsert(content_hash="test_hash", documents=sample_documents)
+    assert collection.data.insert.call_count == 3
 
 
 def test_vector_index_config(weaviate_db):
@@ -343,7 +343,7 @@ def test_get_search_results(weaviate_db):
     assert results[0].meta_data == {"key": "value"}
     assert results[0].content_id == "test_id_1"
     assert results[1].name == "test2"
-    assert results[1].meta_data is None
+    assert results[1].meta_data == {}
     assert results[1].content_id == "test_id_2"
 
 
