@@ -1180,7 +1180,7 @@ class MongoDb(BaseDb):
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
         """Create an EvalRunRecord in the database."""
         try:
-            collection = self._get_collection(table_type="evals")
+            collection = self._get_collection(table_type="evals", create_collection_if_not_found=True)
             if collection is None:
                 return None
 

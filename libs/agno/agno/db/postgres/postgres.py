@@ -1427,7 +1427,7 @@ class PostgresDb(BaseDb):
             Exception: If an error occurs during creation.
         """
         try:
-            table = self._get_table(table_type="evals")
+            table = self._get_table(table_type="evals", create_table_if_not_found=True)
             if table is None:
                 return None
 

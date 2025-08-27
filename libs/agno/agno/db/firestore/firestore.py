@@ -1183,7 +1183,7 @@ class FirestoreDb(BaseDb):
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
         """Create an EvalRunRecord in the database."""
         try:
-            collection_ref = self._get_collection(table_type="evals")
+            collection_ref = self._get_collection(table_type="evals", create_collection_if_not_found=True)
 
             current_time = int(time.time())
             eval_dict = eval_run.model_dump()

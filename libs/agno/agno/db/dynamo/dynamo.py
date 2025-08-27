@@ -1553,7 +1553,7 @@ class DynamoDb(BaseDb):
             Exception: If an error occurs during creation.
         """
         try:
-            table_name = self._get_table("evals")
+            table_name = self._get_table("evals", create_table_if_not_found=True)
 
             item = serialize_eval_record(eval_run)
             current_time = int(datetime.now(timezone.utc).timestamp())

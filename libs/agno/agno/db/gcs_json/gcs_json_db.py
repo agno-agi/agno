@@ -847,7 +847,7 @@ class GcsJsonDb(BaseDb):
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
         """Create an EvalRunRecord in the GCS JSON file."""
         try:
-            eval_runs = self._read_json_file(self.eval_table_name)
+            eval_runs = self._read_json_file(self.eval_table_name, create_table_if_not_found=True)
 
             current_time = int(time.time())
             eval_dict = eval_run.model_dump()
