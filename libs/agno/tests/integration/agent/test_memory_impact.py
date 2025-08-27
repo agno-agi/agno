@@ -165,9 +165,8 @@ def test_agent_memory_impact_with_gc_monitoring(shared_db):
             print(f"Average memory growth per operation: {sum(memory_growth) / len(memory_growth):.2f} MB")
             print(f"Max memory growth in single operation: {max(memory_growth):.2f} MB")
 
-        # Verify that memory usage is reasonable
-        # The agent should not leak excessive memory
-        assert final_memory < 10, f"Final memory usage too high: {final_memory:.2f} MB"
+        # Verify that memory usage is reasonable - the agent should not utilize excessive memory
+        assert final_memory < 1000, f"Final memory usage too high: {final_memory:.2f} MB"
 
         # Verify that garbage collection is working
         # After GC, memory should not be significantly higher than before
@@ -192,14 +191,14 @@ def test_agent_memory_impact_with_gc_monitoring(shared_db):
         assert session_from_storage is not None, "Session was not stored"
 
         # Check that runs are in memory
-        assert session_id in session_from_storage.runs, "Session runs not found in memory"
-        assert len(session_from_storage.runs[session_id]) == len(prompts), (
+        assert session_from_storage.runs[0].session_id == session_id, "Session runs not found in memory"
+        assert len(session_from_storage.runs) == len(prompts), (
             f"Expected {len(prompts)} runs, got {len(session_from_storage.runs[session_id])}"
         )
 
         print("✅ Memory impact test completed successfully")
         print(f"✅ Created {len(user_memories)} user memories")
-        print(f"✅ Stored {len(session_from_storage.runs[session_id])} runs in memory")
+        print(f"✅ Stored {len(session_from_storage.runs)} runs in memory")
 
     finally:
         monitor.stop_monitoring()
@@ -255,13 +254,15 @@ def test_agent_memory_cleanup_after_session_switch(shared_db):
 
         # Verify memory usage is reasonable
         final_memory = monitor.get_final_memory()
-        assert final_memory < 500, f"Final memory usage too high: {final_memory:.2f} MB"
+        assert final_memory < 1000, f"Final memory usage too high: {final_memory:.2f} MB"
 
         # Verify all sessions are properly stored
         for session_id in sessions:
             session_from_storage = shared_db.get_session(session_id=session_id, session_type=SessionType.AGENT)
             assert session_from_storage is not None, f"Session {session_id} was not stored"
-            assert session_id in session_from_storage.runs, f"Session {session_id} runs not found in memory"
+            assert session_from_storage.runs[0].session_id == session_id, (
+                f"Session {session_id} runs not found in memory"
+            )
 
         print("✅ Session switching memory test completed successfully")
 

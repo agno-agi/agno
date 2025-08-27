@@ -1,4 +1,4 @@
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 from rich.console import Console
@@ -20,17 +20,11 @@ def test_print_response_with_message_panel():
         markdown=True,
         telemetry=False,
     )
-
     mock_console = Mock(spec=Console)
 
-    with patch("rich.live.Live") as mock_live_class:
-        with patch("agno.agent.agent.create_panel") as mock_create_panel:
-            # Configure the Live mock to work as a context manager
-            mock_live = Mock()
-            mock_live_class.return_value = mock_live
-            mock_live.__enter__ = Mock(return_value=mock_live)
-            mock_live.__exit__ = Mock(return_value=None)
-
+    # Use MagicMock explicitly in the patch
+    with patch("rich.live.Live", new=MagicMock) as mock_live_class:
+        with patch("agno.utils.response.create_panel") as mock_create_panel:
             # Mock a successful run response
             with patch.object(agent, "run") as mock_run:
                 mock_response = Mock()

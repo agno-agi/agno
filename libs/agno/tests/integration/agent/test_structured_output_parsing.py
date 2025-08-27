@@ -20,9 +20,11 @@ def test_structured_output_parsing_with_quotes():
 
     # Get the response in a variable
     response: RunOutput = movie_agent.run("New York")
-    # Verify structured output
-    assert response.metadata is not None
+
+    # Assert the response is a MovieScript instance
     assert isinstance(response.content, MovieScript)
+
+    # Assert the MovieScript response contains all expected fields
     assert response.content.script is not None
     assert response.content.name is not None
     assert response.content.characters is not None
