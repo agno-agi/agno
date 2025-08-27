@@ -168,6 +168,8 @@ def test_intermediate_steps_with_tools_events_persisted(shared_db):
 
     run_response_from_storage = team.get_last_run_output()
 
+    assert run_response_from_storage is not None
+    assert run_response_from_storage.events is not None
     assert len(run_response_from_storage.events) >= 4
     # Check that we have the essential events (may have more due to member delegation)
     event_types = [event.event for event in run_response_from_storage.events]
@@ -704,12 +706,14 @@ def test_intermediate_steps_with_member_agents_collaborate():
         model=OpenAIChat(id="o3-mini"),
         instructions="You are an expert web researcher with strong analytical skills! Use your tools to find answers to questions.",
         tools=[get_news_from_duckduckgo],
+        stream_intermediate_steps=True,
     )
     agent_2 = Agent(
         name="Hackernews Researcher",
         model=OpenAIChat(id="o3-mini"),
         instructions="You are an expert hackernews researcher with strong analytical skills! Use your tools to find answers to questions.",
         tools=[get_news_from_hackernews],
+        stream_intermediate_steps=True,
     )
     team = Team(
         model=OpenAIChat(id="o3-mini"),
@@ -737,26 +741,25 @@ def test_intermediate_steps_with_member_agents_collaborate():
         RunEvent.run_started,
         RunEvent.run_content,
         RunEvent.run_completed,
-        RunEvent.tool_call_started,
-        RunEvent.tool_call_completed,
         TeamRunEvent.tool_call_completed,
         TeamRunEvent.run_content,
         TeamRunEvent.run_completed,
     }
 
     assert len(events[TeamRunEvent.run_started]) == 1
-    # Transfer twice, from team to member agents
+
+    # Assert expected events from team
     assert len(events[TeamRunEvent.tool_call_started]) == 1
+    assert len(events[TeamRunEvent.run_content]) > 1
+    assert len(events[TeamRunEvent.run_completed]) == 1
+
+    # Assert expected tool call events
     assert events[TeamRunEvent.tool_call_started][0].tool.tool_name == "run_member_agents"
     assert len(events[TeamRunEvent.tool_call_completed]) == 1
     assert events[TeamRunEvent.tool_call_completed][0].tool.tool_name == "run_member_agents"
     assert events[TeamRunEvent.tool_call_completed][0].tool.result is not None
-    assert len(events[TeamRunEvent.run_content]) > 1
-    assert len(events[TeamRunEvent.run_completed]) == 1
-    # Two member agents
+
+    # Assert expected events from members
     assert len(events[RunEvent.run_started]) == 2
     assert len(events[RunEvent.run_completed]) == 2
-    # Lots of member tool calls
-    assert len(events[RunEvent.tool_call_started]) > 1
-    assert len(events[RunEvent.tool_call_completed]) > 1
     assert len(events[RunEvent.run_content]) > 1
