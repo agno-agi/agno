@@ -111,7 +111,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
 
         return UserMemorySchema.from_dict(user_memory)  # type: ignore
 
-    @router.get("/topics", response_model=List[str], status_code=200)
+    @router.get("/memories/topics", response_model=List[str], status_code=200)
     async def get_topics(
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> List[str]:
