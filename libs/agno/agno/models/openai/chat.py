@@ -123,8 +123,11 @@ class OpenAIChat(Model):
             OpenAIClient: An instance of the OpenAI client.
         """
         client_params: Dict[str, Any] = self._get_client_params()
-        if self.http_client is not None:
-            client_params["http_client"] = self.http_client
+        if self.http_client:
+            if isinstance(self.http_client, httpx.Client):
+                client_params["http_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.Client.")
         return OpenAIClient(**client_params)
 
     def get_async_client(self) -> AsyncOpenAIClient:
@@ -135,8 +138,15 @@ class OpenAIChat(Model):
             AsyncOpenAIClient: An instance of the asynchronous OpenAI client.
         """
         client_params: Dict[str, Any] = self._get_client_params()
-        if self.http_client and isinstance(self.http_client, httpx.AsyncClient):
-            client_params["http_client"] = self.http_client
+        if self.http_client:
+            if isinstance(self.http_client, httpx.AsyncClient):
+                client_params["http_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.AsyncClient. Using default httpx.AsyncClient.")
+                # Create a new async HTTP client with custom limits
+                client_params["http_client"] = httpx.AsyncClient(
+                    limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
+                )
         else:
             # Create a new async HTTP client with custom limits
             client_params["http_client"] = httpx.AsyncClient(
