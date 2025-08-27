@@ -2069,8 +2069,8 @@ class Team:
                     # Yield the audio and transcript bit by bit
                     should_yield = True
 
-                if model_response_event.image is not None:  # type: ignore
-                    self.add_image(model_response_event.image)  # type: ignore
+                if model_response_event.images is not None:  # type: ignore
+                    self.add_image(model_response_event.images)  # type: ignore
 
                     should_yield = True
 
@@ -2085,7 +2085,7 @@ class Team:
                                 redacted_thinking=model_response_event.redacted_thinking,
                                 response_audio=full_model_response.audio,
                                 citations=model_response_event.citations,
-                                image=model_response_event.image,  # type: ignore
+                                image=model_response_event.images,  # type: ignore
                             ),
                             run_response,
                             workflow_context=workflow_context,
@@ -2868,6 +2868,39 @@ class Team:
                 break
 
             self.print_response(input=user_input, stream=stream, markdown=markdown, **kwargs)
+
+    async def acli_app(
+        self,
+        input: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        user: str = "User",
+        emoji: str = ":sunglasses:",
+        stream: bool = False,
+        markdown: bool = False,
+        exit_on: Optional[List[str]] = None,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Run an interactive command-line interface to interact with the team.
+        Works with team dependencies requiring async logic.
+        """
+        from rich.prompt import Prompt
+
+        if input:
+            await self.aprint_response(
+                input=input, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
+            )
+
+        _exit_on = exit_on or ["exit", "quit", "bye"]
+        while True:
+            message = Prompt.ask(f"[bold] {emoji} {user} [/bold]")
+            if message in _exit_on:
+                break
+
+            await self.aprint_response(
+                input=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
+            )
 
     ###########################################################################
     # Helpers
