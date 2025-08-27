@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -16,6 +16,8 @@ def test_team_telemetry():
 
     # Mock the telemetry logging method
     with patch.object(team, "_log_team_telemetry") as mock_log:
+        agent.model = MagicMock()
+        team.model = MagicMock()
         team.run("This is a test run")
 
         # Assert the telemetry logging func was called
@@ -40,6 +42,11 @@ async def test_team_telemetry_async():
 
     # Mock the async telemetry logging method
     with patch.object(team, "_alog_team_telemetry") as mock_alog:
+        mock_model = AsyncMock()
+        mock_model.get_instructions_for_model = MagicMock(return_value=None)
+        mock_model.get_system_message_for_model = MagicMock(return_value=None)
+        agent.model = mock_model
+        team.model = mock_model
         await team.arun("This is a test run")
 
         # Assert the telemetry logging func was called

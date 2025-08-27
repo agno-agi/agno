@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from agno.agent.agent import Agent
 from agno.eval.accuracy import AccuracyEval
@@ -16,6 +16,7 @@ def test_accuracy_evals_telemetry():
 
     # Mock the API call that gets made when telemetry is enabled
     with patch("agno.api.evals.create_eval_run_telemetry") as mock_create:
+        agent.model = MagicMock()
         accuracy_eval.run(print_summary=False, print_results=False)
 
         # Verify API was called with correct parameters
