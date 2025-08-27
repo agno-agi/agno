@@ -28,7 +28,7 @@ def get_db(dbs: dict[str, BaseDb], db_id: Optional[str] = None) -> BaseDb:
     if db_id:
         db = dbs.get(db_id)
         if not db:
-            raise HTTPException(status_code=400, detail=f"Database with id '{db_id}' not found")
+            raise HTTPException(status_code=404, detail=f"Database with id '{db_id}' not found")
     else:
         db = next(iter(dbs.values()))
     return db
@@ -48,7 +48,7 @@ def get_knowledge_instance_by_db_id(knowledge_instances: List[Knowledge], db_id:
         if knowledge.contents_db and knowledge.contents_db.id == db_id:
             return knowledge
 
-    raise HTTPException(status_code=400, detail=f"Knowledge instance with id '{db_id}' not found")
+    raise HTTPException(status_code=404, detail=f"Knowledge instance with id '{db_id}' not found")
 
 
 def get_run_input(run_dict: Dict[str, Any], is_workflow_run: bool = False) -> str:
