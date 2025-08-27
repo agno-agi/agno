@@ -490,7 +490,7 @@ def print_response(
                 title="Message",
                 border_style="cyan",
             )
-            panels.append(message_panel)
+            panels.append(message_panel)  # type: ignore
             live_log.update(Group(*panels))
 
         # Run the agent
