@@ -133,7 +133,6 @@ def test_image_generation_streaming():
 
     image_received = False
     for chunk in response:
-        # Check for single image field (not images plural)
         if hasattr(chunk, "image") and chunk.image:  # type: ignore
             image_received = True
             assert chunk.image is not None  # type: ignore
