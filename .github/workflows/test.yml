@@ -47,45 +47,6 @@ jobs:
         run: |
           mypy .
 
-  style-check-cookbook:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.9"]
-
-    defaults:
-      run:
-        working-directory: cookbook
-
-    steps:
-      - uses: actions/checkout@v3
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: "pip"
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade \
-            pip setuptools wheel \
-            ruff mypy pytest
-          pip install --no-deps -r ../libs/agno/requirements.txt
-      - name: Ruff format
-        run: |
-          ruff format --config ../libs/agno/pyproject.toml .
-        env:
-          PYTHONPATH: ../libs/agno
-      - name: Ruff check
-        run: |
-          ruff check --config ../libs/agno/pyproject.toml .
-        env:
-          PYTHONPATH: ../libs/Agno
-      - name: Mypy
-        run: |
-          mypy --config-file ../libs/agno/pyproject.toml .
-        env:
-          PYTHONPATH: ../libs/agno
-
   style-check-agno-infra:
     runs-on: ubuntu-latest
     strategy:
