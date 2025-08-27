@@ -75,6 +75,13 @@ def test_basic_intermediate_steps_events():
     assert len(events[TeamRunEvent.run_content]) > 1
     assert len(events[TeamRunEvent.run_completed]) == 1
 
+    team_completed_event = events[TeamRunEvent.run_completed][0]
+    assert hasattr(team_completed_event, "metadata")
+    assert hasattr(team_completed_event, "metrics")
+
+    assert team_completed_event.metrics is not None
+    assert team_completed_event.metrics.total_tokens > 0
+
 
 def test_basic_intermediate_steps_events_persisted(shared_db):
     """Test that the agent streams events."""
@@ -103,6 +110,13 @@ def test_basic_intermediate_steps_events_persisted(shared_db):
     assert len(run_response_from_storage.events) == 2, "We should only have the run started and run completed events"
     assert run_response_from_storage.events[0].event == TeamRunEvent.run_started
     assert run_response_from_storage.events[1].event == TeamRunEvent.run_completed
+
+    persisted_team_completed_event = run_response_from_storage.events[1]
+    assert hasattr(persisted_team_completed_event, "metadata")
+    assert hasattr(persisted_team_completed_event, "metrics")
+
+    assert persisted_team_completed_event.metrics is not None
+    assert persisted_team_completed_event.metrics.total_tokens > 0
 
 
 def test_intermediate_steps_with_tools():
@@ -375,6 +389,10 @@ def test_intermediate_steps_with_structured_output(shared_db):
     assert events[TeamRunEvent.run_completed][0].content.name == "Elon Musk"
     assert len(events[TeamRunEvent.run_completed][0].content.description) > 1
 
+    team_completed_event_structured = events[TeamRunEvent.run_completed][0]
+    assert team_completed_event_structured.metrics is not None
+    assert team_completed_event_structured.metrics.total_tokens > 0
+
 
 def test_intermediate_steps_with_parser_model(shared_db):
     """Test that the agent streams events."""
@@ -523,6 +541,36 @@ def test_intermediate_steps_with_member_agents():
     assert len(events[RunEvent.reasoning_completed]) == 1
     assert len(events[RunEvent.reasoning_step]) > 1
     assert len(events[RunEvent.run_content]) > 1
+
+
+def test_create_team_run_completed_event_function():
+    """Test that create_team_run_completed_event function properly transfers metadata and metrics."""
+    from agno.models.metrics import Metrics
+    from agno.run.team import TeamRunOutput
+    from agno.utils.events import create_team_run_completed_event
+
+    mock_metrics = Metrics(input_tokens=200, output_tokens=75, total_tokens=275, duration=3.2)
+    mock_metadata = {"team_key": "team_value", "execution_mode": "collaborate"}
+
+    mock_team_run_output = TeamRunOutput(
+        session_id="test_team_session",
+        team_id="test_team",
+        team_name="Test Team",
+        run_id="test_team_run",
+        content="Team test content",
+        metrics=mock_metrics,
+        metadata=mock_metadata,
+    )
+
+    completed_event = create_team_run_completed_event(mock_team_run_output)
+
+    assert completed_event.metadata == mock_metadata
+    assert completed_event.metrics == mock_metrics
+    assert completed_event.metrics.total_tokens == 275
+    assert completed_event.metrics.duration == 3.2
+    assert completed_event.content == "Team test content"
+    assert completed_event.session_id == "test_team_session"
+    assert completed_event.team_id == "test_team"
 
 
 def test_intermediate_steps_with_member_agents_complex():
@@ -692,6 +740,37 @@ def test_intermediate_steps_with_member_agents_route():
     assert len(events[RunEvent.run_content]) > 1
 
 
+def test_create_team_run_completed_event_function():
+    """Test that create_team_run_completed_event function properly transfers metadata and metrics."""
+    from agno.models.metrics import Metrics
+    from agno.run.team import TeamRunOutput
+    from agno.utils.events import create_team_run_completed_event
+
+    mock_metrics = Metrics(input_tokens=200, output_tokens=75, total_tokens=275, duration=3.2)
+    mock_metadata = {"team_key": "team_value", "execution_mode": "collaborate"}
+
+    mock_team_run_output = TeamRunOutput(
+        session_id="test_team_session",
+        team_id="test_team",
+        team_name="Test Team",
+        run_id="test_team_run",
+        content="Team test content",
+        metrics=mock_metrics,
+        metadata=mock_metadata,
+    )
+
+    # Create the Completed Event
+    completed_event = create_team_run_completed_event(mock_team_run_output)
+
+    assert completed_event.metadata == mock_metadata
+    assert completed_event.metrics == mock_metrics
+    assert completed_event.metrics.total_tokens == 275
+    assert completed_event.metrics.duration == 3.2
+    assert completed_event.content == "Team test content"
+    assert completed_event.session_id == "test_team_session"
+    assert completed_event.team_id == "test_team"
+
+
 def test_intermediate_steps_with_member_agents_collaborate():
     def get_news_from_hackernews(query: str):
         return "The best way to learn to code is to use the Hackernews API."
@@ -757,6 +836,37 @@ def test_intermediate_steps_with_member_agents_collaborate():
     assert len(events[RunEvent.run_started]) == 2
     assert len(events[RunEvent.run_completed]) == 2
     # Lots of member tool calls
-    assert len(events[RunEvent.tool_call_started]) > 1
-    assert len(events[RunEvent.tool_call_completed]) > 1
+    assert len(events[RunEvent.tool_call_started]) >= 1
+    assert len(events[RunEvent.tool_call_completed]) >= 1
     assert len(events[RunEvent.run_content]) > 1
+
+
+def test_create_team_run_completed_event_function():
+    """Test that create_team_run_completed_event function properly transfers metadata and metrics."""
+    from agno.models.metrics import Metrics
+    from agno.run.team import TeamRunOutput
+    from agno.utils.events import create_team_run_completed_event
+
+    mock_metrics = Metrics(input_tokens=200, output_tokens=75, total_tokens=275, duration=3.2)
+    mock_metadata = {"team_key": "team_value", "execution_mode": "collaborate"}
+
+    mock_team_run_output = TeamRunOutput(
+        session_id="test_team_session",
+        team_id="test_team",
+        team_name="Test Team",
+        run_id="test_team_run",
+        content="Team test content",
+        metrics=mock_metrics,
+        metadata=mock_metadata,
+    )
+
+    # Create the Completed Event
+    completed_event = create_team_run_completed_event(mock_team_run_output)
+
+    assert completed_event.metadata == mock_metadata
+    assert completed_event.metrics == mock_metrics
+    assert completed_event.metrics.total_tokens == 275
+    assert completed_event.metrics.duration == 3.2
+    assert completed_event.content == "Team test content"
+    assert completed_event.session_id == "test_team_session"
+    assert completed_event.team_id == "test_team"

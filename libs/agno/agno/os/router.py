@@ -1099,6 +1099,14 @@ def get_base_router(
         except Exception as e:
             # Handle unexpected runtime errors
             raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
+        
+    @router.post("/workflows/{workflow_id}/runs/{run_id}/cancel")
+    async def cancel_workflow_run(workflow_id: str, run_id: str):
+        workflow = get_workflow_by_id(workflow_id, os.workflows)
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="Workflow not found")
+        workflow.cancel_run(run_id=run_id)
+        return JSONResponse(content={}, status_code=200)
 
     @router.get(
         "/workflows/{workflow_id}/sessions",
