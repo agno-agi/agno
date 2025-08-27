@@ -3,6 +3,7 @@ from unittest.mock import patch
 import pytest
 
 from agno.agent.agent import Agent
+from agno.models.openai import OpenAIChat
 
 
 def test_agent_telemetry():
@@ -14,7 +15,10 @@ def test_agent_telemetry():
 
     # Mock the telemetry logging method
     with patch.object(agent, "_log_agent_telemetry") as mock_log:
-        agent.run("This is a test run")
+        agent.run(
+            "This is a test run",
+            model=OpenAIChat("gpt-4o"),
+        )
 
         # Assert the telemetry logging func was called
         mock_log.assert_called_once()
@@ -37,7 +41,10 @@ async def test_agent_telemetry_async():
 
     # Mock the async telemetry logging method
     with patch.object(agent, "_alog_agent_telemetry") as mock_alog:
-        await agent.arun("This is a test run")
+        await agent.arun(
+            "This is a test run",
+            model=OpenAIChat("gpt-4o"),
+        )
 
         # Assert the telemetry logging func was called
         mock_alog.assert_called_once()

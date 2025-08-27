@@ -12,6 +12,7 @@ async def test_agent_aget_relevant_docs_from_knowledge_with_none_num_documents()
         def __init__(self):
             self.num_documents = 5
             self.vector_db = None
+            self.max_results = 5
 
         def validate_filters(self, filters):
             return filters or {}, []
@@ -24,8 +25,8 @@ async def test_agent_aget_relevant_docs_from_knowledge_with_none_num_documents()
 
     # Create Agent instance
     agent = Agent()
-    agent.knowledge = MockKnowledge()
-    agent.retriever = mock_retriever
+    agent.knowledge = MockKnowledge()  # type: ignore
+    agent.knowledge_retriever = mock_retriever  # type: ignore
 
     # Call the function with num_documents=None
     result = await agent.aget_relevant_docs_from_knowledge(query="test query", num_documents=None)
@@ -55,8 +56,8 @@ async def test_agent_aget_relevant_docs_from_knowledge_with_specific_num_documen
 
     # Create Agent instance
     agent = Agent()
-    agent.knowledge = MockKnowledge()
-    agent.retriever = mock_retriever
+    agent.knowledge = MockKnowledge()  # type: ignore
+    agent.knowledge_retriever = mock_retriever  # type: ignore
 
     # Call the function with specific num_documents
     result = await agent.aget_relevant_docs_from_knowledge(query="test query", num_documents=10)
@@ -74,6 +75,7 @@ async def test_agent_aget_relevant_docs_from_knowledge_without_retriever():
         def __init__(self):
             self.num_documents = 5
             self.vector_db = None
+            self.max_results = 5
 
         def validate_filters(self, filters):
             return filters or {}, []
@@ -85,8 +87,8 @@ async def test_agent_aget_relevant_docs_from_knowledge_without_retriever():
 
     # Create Agent instance
     agent = Agent()
-    agent.knowledge = MockKnowledge()
-    agent.retriever = None  # Do not set retriever
+    agent.knowledge = MockKnowledge()  # type: ignore
+    agent.knowledge_retriever = None  # type: ignore
 
     # Call the function with num_documents=None
     result = await agent.aget_relevant_docs_from_knowledge(query="test query", num_documents=None)
@@ -103,6 +105,7 @@ def test_agent_get_relevant_docs_from_knowledge_with_none_num_documents():
         def __init__(self):
             self.num_documents = 5
             self.vector_db = None
+            self.max_results = 5
 
         def validate_filters(self, filters):
             return filters or {}, []
@@ -115,8 +118,8 @@ def test_agent_get_relevant_docs_from_knowledge_with_none_num_documents():
 
     # Create Agent instance
     agent = Agent()
-    agent.knowledge = MockKnowledge()
-    agent.retriever = mock_retriever
+    agent.knowledge = MockKnowledge()  # type: ignore
+    agent.knowledge_retriever = mock_retriever  # type: ignore
 
     # Call the function with num_documents=None
     result = agent.get_relevant_docs_from_knowledge(query="test query", num_documents=None)
