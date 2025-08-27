@@ -70,6 +70,7 @@ jobs:
             pip setuptools wheel \
             ruff mypy pytest
           pip install --no-deps -r ../libs/agno/requirements.txt
+          pip install -e ../libs/agno
       - name: Ruff format
         run: |
           ruff format --config ../libs/agno/pyproject.toml .
