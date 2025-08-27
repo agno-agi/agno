@@ -72,13 +72,13 @@ jobs:
           pip install --no-deps -r ../libs/agno/requirements.txt
       - name: Ruff format
         run: |
-          ruff format .
+          ruff format --config ../libs/agno/pyproject.toml .
       - name: Ruff check
         run: |
-          ruff check .
+          ruff check --config ../libs/agno/pyproject.toml .
       - name: Mypy
         run: |
-          mypy .
+          mypy --config-file ../libs/agno/pyproject.toml .
 
   style-check-agno-infra:
     runs-on: ubuntu-latest
