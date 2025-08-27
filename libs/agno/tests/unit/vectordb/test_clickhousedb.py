@@ -380,11 +380,10 @@ async def test_async_upsert(mock_clickhouse):
     with patch.object(mock_clickhouse, "async_insert") as mock_async_insert:
         # Configure the mock to return a coroutine
         mock_async_insert.return_value = None
-
         await mock_clickhouse.async_upsert(documents=docs, content_hash="test_hash")
 
         # Check that async_insert was called
-        mock_async_insert.assert_called_once_with(documents=docs, filters=None)
+        mock_async_insert.assert_called_once_with(documents=docs, filters=None, content_hash="test_hash")
         # Check that query was called to finalize the upsert
         mock_clickhouse.async_client.query.assert_called_once()
 
