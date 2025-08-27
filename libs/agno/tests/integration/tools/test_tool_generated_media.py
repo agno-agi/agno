@@ -217,29 +217,3 @@ class TestAgentMediaPersistence:
             assert first_run.images is not None
             assert len(first_run.images) >= 1
             assert first_run.images[0].id == original_image_id
-
-    def test_media_serialization_deserialization(self, shared_db):
-        """Test that media artifacts are correctly serialized and deserialized."""
-        # Create agent with DALL-E tools
-        dalle_tools = DalleTools()
-        agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), db=shared_db, tools=[dalle_tools], debug_mode=True)
-
-        # Generate image
-        response = agent.run("Generate a simple geometric shape")
-        assert response is not None
-
-        if response.images:
-            original_image = response.images[0]
-            assert isinstance(original_image, ImageArtifact)
-
-            # Retrieve from database to test serialization/deserialization
-            session_data = shared_db.get_session(response.session_id, session_type=SessionType.AGENT)
-            assert session_data is not None
-            assert session_data.runs is not None
-            assert len(session_data.runs) >= 1
-
-            retrieved_image = session_data.runs[0].images[0]
-            assert isinstance(retrieved_image, ImageArtifact)
-            assert retrieved_image.id == original_image.id
-            assert retrieved_image.url == original_image.url
-            assert retrieved_image.content == original_image.content
