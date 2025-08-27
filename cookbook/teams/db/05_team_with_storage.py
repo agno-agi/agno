@@ -30,7 +30,7 @@ french_agent = Agent(
 english_agent = Agent(
     name="English Agent",
     role="You can only answer in English",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIChat("o3-mini"),
     instructions=[
         "You must only respond in English",
     ],
@@ -45,7 +45,7 @@ multi_language_team = Team(
     name="Multi Language Team",
     mode="route",
     id=team_id,
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIChat("o3-mini"),
     members=[
         french_agent,
         english_agent,

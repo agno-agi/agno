@@ -22,10 +22,10 @@ john_doe_id = "john_doe@example.com"
 
 # 1. Create memories by setting `enable_user_memories=True` in the Agent
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="o3-mini"),
 )
 team = Team(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="o3-mini"),
     members=[agent],
     db=db,
     enable_user_memories=True,
@@ -43,17 +43,17 @@ team.print_response(
 )
 
 # 2. Set a custom MemoryManager on the agent
-# memory_manager = MemoryManager(model=OpenAIChat(id="gpt-4o-mini"))
+# memory_manager = MemoryManager(model=OpenAIChat(id="o3-mini"))
 
 # memory_manager.clear()
 
 # agent = Agent(
-#     model=OpenAIChat(id="gpt-4o-mini"),
+#     model=OpenAIChat(id="o3-mini"),
 #     memory_manager=memory_manager,
 # )
 
 # team = Team(
-#     model=OpenAIChat(id="gpt-4o-mini"),
+#     model=OpenAIChat(id="o3-mini"),
 #     members=[agent],
 #     db=db,
 #     enable_user_memories=True,

@@ -61,7 +61,7 @@ website_agent = Agent(
     name="Website Agent",
     id="website-agent",
     role="Search the website for information",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
     tools=[DuckDuckGoTools(cache_results=True)],
     instructions=[
         "Search the website for information",

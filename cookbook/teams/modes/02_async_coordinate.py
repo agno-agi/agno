@@ -39,14 +39,14 @@ class Article(BaseModel):
 
 hn_researcher = Agent(
     name="HackerNews Researcher",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIChat("o3-mini"),
     role="Gets top stories from hackernews.",
     tools=[HackerNewsTools()],
 )
 
 web_searcher = Agent(
     name="Web Searcher",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIChat("o3-mini"),
     role="Searches the web for information on a topic",
     tools=[DuckDuckGoTools()],
     add_datetime_to_context=True,
@@ -81,8 +81,8 @@ hn_team = Team(
 
 async def main():
     """Main async function demonstrating coordinated team mode."""
-    await aprint_response(
-        input="Write an article about the top 2 stories on hackernews", team=hn_team
+    await hn_team.aprint_response(
+        input="Write an article about the top 2 stories on hackernews"
     )
 
 

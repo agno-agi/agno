@@ -1433,12 +1433,12 @@ async def aprint_response_stream(
                             )
                             final_panels.append(member_reasoning_panel)
 
-                    # Then add response
-                    show_markdown = False
-                    if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
-                        show_markdown = member_markdown.get(member_response.agent_id, False)
-                    elif isinstance(member_response, TeamRunOutput) and member_response.team_id is not None:
-                        show_markdown = member_markdown.get(member_response.team_id, False)
+                # Then add response
+                show_markdown = False
+                if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
+                    show_markdown = member_markdown.get(member_response.agent_id, False)
+                elif isinstance(member_response, TeamRunOutput) and member_response.team_id is not None:
+                    show_markdown = member_markdown.get(member_response.team_id, False)
 
                     member_response_content = team._parse_response_content(  # type: ignore
                         member_response,

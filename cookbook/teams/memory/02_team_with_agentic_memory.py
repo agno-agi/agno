@@ -18,11 +18,11 @@ db = PostgresDb(db_url=db_url)
 john_doe_id = "john_doe@example.com"
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="o3-mini"),
 )
 
 team = Team(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="o3-mini"),
     members=[agent],
     db=db,
     enable_agentic_memory=True,

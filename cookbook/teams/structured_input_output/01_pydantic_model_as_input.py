@@ -26,7 +26,7 @@ class ResearchTopic(BaseModel):
 # Create specialized Hacker News research agent
 hackernews_agent = Agent(
     name="Hackernews Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="o3-mini"),
     tools=[HackerNewsTools()],
     role="Extract key insights and content from Hackernews posts",
     instructions=[
@@ -39,7 +39,7 @@ hackernews_agent = Agent(
 # Create collaborative research team
 team = Team(
     name="Hackernews Research Team",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="o3-mini"),
     members=[hackernews_agent],
     mode="collaborate",
     instructions=[

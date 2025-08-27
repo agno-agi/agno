@@ -94,13 +94,14 @@ agno_assist_knowledge = Knowledge(
 )
 
 # Add Agno documentation content
-agno_assist_knowledge.add_content_sync(url="https://docs.agno.com/llms-full.txt")
+async def load_knowledge_bases():
+    await agno_assist_knowledge.add_contents(url="https://docs.agno.com/llms-full.txt")
 
 # Agno framework assistant
 agno_assist = Agent(
     name="Agno Assist",
     role="Help with Agno framework questions and code",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
     instructions="Search your knowledge before answering. Help write working Agno code.",
     tools=[
         KnowledgeTools(
@@ -155,12 +156,12 @@ async def main():
     """Main async function to demonstrate different team capabilities."""
 
     # Load the knowledge base (run once to populate)
-    # await agno_assist_knowledge.aload()
+    await load_knowledge_bases()
 
     # Example interactions:
 
     # 1. General capability query
-    await aprint_response(input="Hi! What are you capable of doing?", team=agent_team)
+    await agent_team.aprint_response(input="Hi! What are you capable of doing?")
 
     # 2. Technical code question
     # await agent_team.aprint_response(dedent("""

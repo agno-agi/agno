@@ -85,7 +85,7 @@ web_agent = Agent(
     name="Knowledge Search Agent",
     role="Handle knowledge search",
     knowledge=knowledge_base,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
 )
 
 # Create team with knowledge filters
@@ -94,7 +94,7 @@ team_with_knowledge = Team(
     members=[
         web_agent
     ],  # If you omit the member, the leader will search the knowledge base itself.
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
     knowledge=knowledge_base,
     show_members_responses=True,
     markdown=True,

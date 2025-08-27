@@ -14,18 +14,19 @@ from rich.pretty import pprint
 db = InMemoryDb()
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="o3-mini"),
     name="Research Assistant",
 )
 
 team = Team(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="o3-mini"),
     members=[agent],
     db=db,
     # Set add_history_to_context=true to add the previous chat history to the context sent to the Model.
     add_history_to_context=True,
     # Number of historical responses to add to the messages.
     num_history_runs=3,
+    session_id="test_session"
 )
 
 # -*- Create a run
@@ -36,7 +37,7 @@ print("\n" + "=" * 50)
 print("CHAT HISTORY AFTER FIRST RUN")
 print("=" * 50)
 try:
-    chat_history = team.get_chat_history()
+    chat_history = team.get_chat_history(session_id="test_session")
     pprint([m.model_dump(include={"role", "content"}) for m in chat_history])
 except Exception as e:
     print(f"Error getting chat history: {e}")
@@ -50,7 +51,7 @@ print("\n" + "=" * 50)
 print("CHAT HISTORY AFTER SECOND RUN")
 print("=" * 50)
 try:
-    chat_history = team.get_chat_history()
+    chat_history = team.get_chat_history(session_id="test_session")
     pprint([m.model_dump(include={"role", "content"}) for m in chat_history])
 except Exception as e:
     print(f"Error getting chat history: {e}")

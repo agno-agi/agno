@@ -4,11 +4,11 @@ from agno.team import Team
 from rich.pretty import pprint
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
 )
 
 team = Team(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
     members=[agent],
 )
 

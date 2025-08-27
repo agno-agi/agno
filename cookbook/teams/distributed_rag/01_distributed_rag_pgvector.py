@@ -49,17 +49,18 @@ hybrid_knowledge = Knowledge(
 )
 
 # Add content to knowledge bases
-vector_knowledge.add_content_sync(
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-)
-hybrid_knowledge.add_content_sync(
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-)
+async def load_knowledge_bases():
+    await vector_knowledge.add_contents(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+    )
+    await hybrid_knowledge.add_contents(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+    )
 
 # Vector Retriever Agent - Specialized in vector similarity search
 vector_retriever = Agent(
     name="Vector Retriever",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
     role="Retrieve information using vector similarity search in PostgreSQL",
     knowledge=vector_knowledge,
     search_knowledge=True,
@@ -75,7 +76,7 @@ vector_retriever = Agent(
 # Hybrid Searcher Agent - Specialized in hybrid search
 hybrid_searcher = Agent(
     name="Hybrid Searcher",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
     role="Perform hybrid search combining vector and text search",
     knowledge=hybrid_knowledge,
     search_knowledge=True,
@@ -91,7 +92,7 @@ hybrid_searcher = Agent(
 # Data Validator Agent - Specialized in data quality validation
 data_validator = Agent(
     name="Data Validator",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
     role="Validate retrieved data quality and relevance",
     instructions=[
         "Assess the quality and relevance of retrieved information.",
@@ -106,7 +107,7 @@ data_validator = Agent(
 # Response Composer Agent - Specialized in response composition
 response_composer = Agent(
     name="Response Composer",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
     role="Compose comprehensive responses with proper source attribution",
     instructions=[
         "Combine validated information from all team members.",
@@ -122,7 +123,7 @@ response_composer = Agent(
 distributed_pgvector_team = Team(
     name="Distributed PgVector RAG Team",
     mode="coordinate",  # Sequential coordination for database operations
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
     members=[vector_retriever, hybrid_searcher, data_validator, response_composer],
     instructions=[
         "Work together to provide comprehensive RAG responses using PostgreSQL pgvector.",
@@ -192,6 +193,8 @@ def complex_query_demo():
 
 if __name__ == "__main__":
     # Choose which demo to run
+
+    asyncio.run(load_knowledge_bases())
 
     # asyncio.run(async_pgvector_rag_demo())
 

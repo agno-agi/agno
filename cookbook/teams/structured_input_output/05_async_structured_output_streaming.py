@@ -42,7 +42,7 @@ class StockReport(BaseModel):
 # Stock price and analyst data agent with structured output
 stock_searcher = Agent(
     name="Stock Searcher",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIChat("o3-mini"),
     output_schema=StockAnalysis,
     role="Searches the web for information on a stock.",
     tools=[
@@ -56,7 +56,7 @@ stock_searcher = Agent(
 # Company information agent with structured output
 company_info_agent = Agent(
     name="Company Info Searcher",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIChat("o3-mini"),
     role="Searches the web for information on a stock.",
     output_schema=CompanyAnalysis,
     tools=[
@@ -72,7 +72,7 @@ company_info_agent = Agent(
 team = Team(
     name="Stock Research Team",
     mode="coordinate",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIChat("o3-mini"),
     members=[stock_searcher, company_info_agent],
     output_schema=StockReport,
     markdown=True,

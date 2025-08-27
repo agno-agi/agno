@@ -24,7 +24,7 @@ from agno.utils.print_response.team import aprint_response
 english_agent = Agent(
     name="English Agent",
     role="You only answer in English",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
 )
 japanese_agent = Agent(
     name="Japanese Agent",
@@ -39,12 +39,12 @@ chinese_agent = Agent(
 spanish_agent = Agent(
     name="Spanish Agent",
     role="You can only answer in Spanish",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
 )
 french_agent = Agent(
     name="French Agent",
     role="You can only answer in French",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
 )
 german_agent = Agent(
     name="German Agent",
@@ -55,7 +55,7 @@ german_agent = Agent(
 multi_language_team = Team(
     name="Multi Language Team",
     mode="route",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIChat("o3-mini"),
     members=[
         english_agent,
         spanish_agent,
@@ -91,9 +91,8 @@ async def main():
     #     "お元気ですか?", stream=True  # Japanese
     # )
 
-    await aprint_response(
-        input="Comment allez-vous?",
-        team=multi_language_team,
+    await multi_language_team.aprint_response(
+        input="Comment allez-vous?"
     )
 
     # await multi_language_team.aprint_response(

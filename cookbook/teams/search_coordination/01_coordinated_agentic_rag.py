@@ -17,7 +17,7 @@ Setup:
 from agno.agent import Agent
 from agno.knowledge.embedder.cohere import CohereEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.reranker import CohereReranker
+from agno.knowledge.reranker.cohere import CohereReranker
 from agno.models.anthropic import Claude
 from agno.team.team import Team
 from agno.vectordb.lancedb import LanceDb, SearchType

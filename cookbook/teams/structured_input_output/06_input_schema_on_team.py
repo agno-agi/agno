@@ -38,7 +38,7 @@ class ResearchProject(BaseModel):
 # Create research agents
 hackernews_agent = Agent(
     name="HackerNews Researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="o3-mini"),
     tools=[HackerNewsTools()],
     role="Research trending topics and discussions on HackerNews",
     instructions=[
@@ -50,7 +50,7 @@ hackernews_agent = Agent(
 
 web_researcher = Agent(
     name="Web Researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="o3-mini"),
     tools=[DuckDuckGoTools()],
     role="Conduct comprehensive web research",
     instructions=[
@@ -63,7 +63,7 @@ web_researcher = Agent(
 # Create team with input_schema for automatic validation
 research_team = Team(
     name="Research Team with Input Validation",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="o3-mini"),
     members=[hackernews_agent, web_researcher],
     mode="collaborate",
     input_schema=ResearchProject,

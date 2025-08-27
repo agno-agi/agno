@@ -33,7 +33,7 @@ from agno.utils.print_response.team import aprint_response
 reddit_researcher = Agent(
     name="Reddit Researcher",
     role="Research a topic on Reddit",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
     tools=[DuckDuckGoTools()],
     add_name_to_context=True,
     instructions=dedent("""
@@ -45,7 +45,7 @@ reddit_researcher = Agent(
 
 hackernews_researcher = Agent(
     name="HackerNews Researcher",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIChat("o3-mini"),
     role="Research a topic on HackerNews.",
     tools=[HackerNewsTools()],
     add_name_to_context=True,
@@ -60,7 +60,7 @@ hackernews_researcher = Agent(
 agent_team = Team(
     name="Discussion Team",
     mode="collaborate",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIChat("o3-mini"),
     members=[
         reddit_researcher,
         hackernews_researcher,
@@ -77,9 +77,8 @@ agent_team = Team(
 
 async def main():
     """Main async function demonstrating collaborative team mode."""
-    await aprint_response(
+    await agent_team.aprint_response(
         input="Start the discussion on the topic: 'What is the best way to learn to code?'",
-        team=agent_team,
         # stream=True,
         # stream_intermediate_steps=True,
     )

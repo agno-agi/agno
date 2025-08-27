@@ -68,7 +68,7 @@ if __name__ == "__main__":
     support_agent = Agent(
         name="Support Specialist",
         role="Handle customer inquiries",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="o3-mini"),
         instructions=[
             "You are a helpful customer support specialist.",
             "Always be polite, professional, and solution-oriented.",
@@ -79,7 +79,7 @@ if __name__ == "__main__":
     escalation_agent = Agent(
         name="Escalation Manager",
         role="Handle complex issues",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="o3-mini"),
         instructions=[
             "You handle escalated customer issues that require management attention.",
             "Focus on customer satisfaction and finding solutions.",
@@ -91,7 +91,7 @@ if __name__ == "__main__":
         name="Customer Support Team",
         members=[support_agent, escalation_agent],
         mode="coordinate",
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="o3-mini"),
         add_name_to_context=True,
         additional_input=support_examples,  # 🆕 Teaching examples
         instructions=[

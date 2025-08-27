@@ -61,7 +61,7 @@ shopping_list_agent = Agent(
     name="Shopping List Agent",
     role="Manage the shopping list",
     id="shopping_list_manager",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="o3-mini"),
     tools=[add_item, remove_item, remove_all_items],
     instructions=[
         "Manage the shopping list by adding and removing items",
@@ -77,7 +77,7 @@ shopping_mgmt_team = Team(
     role="Execute shopping list operations",
     id="shopping_management",
     mode="coordinate",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="o3-mini"),
     members=[shopping_list_agent],
     instructions=[
         "Manage adding and removing items from the shopping list using the Shopping List Agent",
@@ -101,7 +101,7 @@ recipe_agent = Agent(
     name="Recipe Suggester",
     id="recipe_suggester",
     role="Suggest recipes based on available ingredients",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="o3-mini"),
     tools=[get_ingredients],
     instructions=[
         "First, use the get_ingredients tool to get the current ingredients from the shopping list",
@@ -133,7 +133,7 @@ meal_planning_team = Team(
     role="Plan meals based on shopping list items",
     id="meal_planning",
     mode="coordinate",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="o3-mini"),
     members=[recipe_agent],
     instructions=[
         "You are a meal planning team that suggests recipes based on shopping list items.",
@@ -182,7 +182,7 @@ shopping_team = Team(
     name="Shopping List Team",
     role="Orchestrate shopping list management and meal planning",
     mode="coordinate",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="o3-mini"),
     session_state={"shopping_list": [], "chores": []},
     tools=[list_items, add_chore],
     id="shopping_list_team",

@@ -27,7 +27,7 @@ db = PostgresDb(db_url=db_url, session_table="team_metrics_sessions")
 # Create stock research agent
 stock_searcher = Agent(
     name="Stock Searcher",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIChat("o3-mini"),
     role="Searches the web for information on a stock.",
     tools=[YFinanceTools()],
 )
@@ -36,7 +36,7 @@ stock_searcher = Agent(
 team = Team(
     name="Stock Research Team",
     mode="route",
-    model=OpenAIChat("gpt-4o"),
+    model=OpenAIChat("o3-mini"),
     members=[stock_searcher],
     db=db,  # Database required for session metrics
     session_id="team_metrics_demo",
@@ -76,7 +76,7 @@ pprint(run_output.metrics)
 print("=" * 50)
 print("SESSION METRICS")
 print("=" * 50)
-pprint(team.get_session_metrics())
+pprint(team.get_session_metrics(session_id="team_metrics_demo"))
 
 # Analyze individual member metrics
 print("=" * 50)

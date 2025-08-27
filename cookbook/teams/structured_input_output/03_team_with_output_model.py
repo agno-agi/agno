@@ -16,7 +16,7 @@ itinerary_planner = Agent(
 )
 
 travel_expert = Team(
-    model=OpenAIChat(id="gpt-4.1"),
+    model=OpenAIChat(id="o3-mini"),
     members=[itinerary_planner],
     output_model=OpenAIChat(id="o3-mini"),
 )

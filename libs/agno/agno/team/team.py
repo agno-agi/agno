@@ -2659,6 +2659,7 @@ class Team:
             )
         else:
             await aprint_response(
+                team=self,
                 input=input,
                 console=console,
                 show_message=show_message,

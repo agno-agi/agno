@@ -70,10 +70,10 @@ weather_expert = Agent(
 )
 
 national_park_expert = Team(
-    model=OpenAIChat(id="gpt-4.1"),
+    model=OpenAIChat(id="o3-mini"),
     members=[itinerary_planner, weather_expert],
     output_schema=NationalParkAdventure,
-    parser_model=OpenAIChat(id="gpt-4o"),
+    parser_model=OpenAIChat(id="o3-mini"),
 )
 
 # Get the response in a variable

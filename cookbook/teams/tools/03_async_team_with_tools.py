@@ -32,7 +32,7 @@ wikipedia_agent = Agent(
 website_agent = Agent(
     name="Website Agent",
     role="Search the website for information",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
     tools=[DuckDuckGoTools()],
     instructions=[
         "Search the website for information",

@@ -45,17 +45,19 @@ context_knowledge = Knowledge(
 )
 
 # Add content to knowledge bases
-primary_knowledge.add_content_sync(
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-)
-context_knowledge.add_content_sync(
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-)
+async def load_knowledge_bases():
+    """Load content into both knowledge bases."""
+    await primary_knowledge.add_contents(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+    )
+    await context_knowledge.add_contents(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+    )
 
 # Primary Retriever Agent - Specialized in main document retrieval
 primary_retriever = Agent(
     name="Primary Retriever",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
     role="Retrieve primary documents and core information from knowledge base",
     knowledge=primary_knowledge,
     search_knowledge=True,
@@ -71,7 +73,7 @@ primary_retriever = Agent(
 # Context Expander Agent - Specialized in expanding context
 context_expander = Agent(
     name="Context Expander",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
     role="Expand context by finding related and supplementary information",
     knowledge=context_knowledge,
     search_knowledge=True,
@@ -87,7 +89,7 @@ context_expander = Agent(
 # Answer Synthesizer Agent - Specialized in synthesis
 answer_synthesizer = Agent(
     name="Answer Synthesizer",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
     role="Synthesize retrieved information into comprehensive answers",
     instructions=[
         "Combine information from the Primary Retriever and Context Expander.",
@@ -102,7 +104,7 @@ answer_synthesizer = Agent(
 # Quality Validator Agent - Specialized in validation
 quality_validator = Agent(
     name="Quality Validator",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
     role="Validate answer quality and suggest improvements",
     instructions=[
         "Review the synthesized answer for accuracy and completeness.",
@@ -118,7 +120,7 @@ quality_validator = Agent(
 distributed_rag_team = Team(
     name="Distributed RAG Team",
     mode="coordinate",  # Sequential coordination for RAG processing
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
     members=[
         primary_retriever,
         context_expander,
@@ -149,7 +151,7 @@ async def async_distributed_rag_demo():
     # await distributed_rag_team.aprint_response(
     #     query, stream=True, stream_intermediate_steps=True
     # )
-    await aprint_response(input=query, team=distributed_rag_team)
+    await distributed_rag_team.aprint_response(input=query)
 
 
 def sync_distributed_rag_demo():
@@ -160,7 +162,7 @@ def sync_distributed_rag_demo():
     query = "How do I make chicken and galangal in coconut milk soup? Include cooking tips and variations."
 
     # Run distributed RAG
-    print_response(distributed_rag_team, query)
+    distributed_rag_team.print_response(input=query)
 
 
 def multi_course_meal_demo():
@@ -172,11 +174,12 @@ def multi_course_meal_demo():
     I'd like to start with a soup, then a thai curry for the main course and finish with a dessert.
     Please include cooking techniques and any special tips."""
 
-    print_response(distributed_rag_team, query)
+    distributed_rag_team.print_response(input=query)
 
 
 if __name__ == "__main__":
     # Choose which demo to run
+    asyncio.run(load_knowledge_bases())
     asyncio.run(async_distributed_rag_demo())
 
     # multi_course_meal_demo()

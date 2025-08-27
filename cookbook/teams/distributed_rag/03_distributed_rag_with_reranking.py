@@ -47,17 +47,18 @@ validation_knowledge = Knowledge(
 )
 
 # Add content to knowledge bases
-reranked_knowledge.add_content_sync(
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-)
-validation_knowledge.add_content_sync(
-    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-)
+async def load_knowledge_bases():
+    await vector_knowledge.add_contents(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+    )
+    await hybrid_knowledge.add_contents(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+    )
 
 # Initial Retriever Agent - Specialized in broad initial retrieval
 initial_retriever = Agent(
     name="Initial Retriever",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
     role="Perform broad initial retrieval to gather candidate information",
     knowledge=reranked_knowledge,
     search_knowledge=True,
@@ -73,7 +74,7 @@ initial_retriever = Agent(
 # Reranking Specialist Agent - Specialized in result optimization
 reranking_specialist = Agent(
     name="Reranking Specialist",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
     role="Apply advanced reranking to optimize retrieval results",
     knowledge=reranked_knowledge,
     search_knowledge=True,
@@ -89,7 +90,7 @@ reranking_specialist = Agent(
 # Context Analyzer Agent - Specialized in context analysis
 context_analyzer = Agent(
     name="Context Analyzer",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
     role="Analyze context and relevance of reranked results",
     knowledge=validation_knowledge,
     search_knowledge=True,
@@ -105,7 +106,7 @@ context_analyzer = Agent(
 # Final Synthesizer Agent - Specialized in optimal synthesis
 final_synthesizer = Agent(
     name="Final Synthesizer",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
     role="Synthesize reranked results into optimal comprehensive responses",
     instructions=[
         "Synthesize information from all team members into optimal responses.",
@@ -121,7 +122,7 @@ final_synthesizer = Agent(
 distributed_reranking_team = Team(
     name="Distributed Reranking RAG Team",
     mode="coordinate",  # Sequential coordination for reranking optimization
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="o3-mini"),
     members=[
         initial_retriever,
         reranking_specialist,
@@ -181,9 +182,9 @@ def advanced_culinary_demo():
 
 if __name__ == "__main__":
     # Choose which demo to run
-
+    asyncio.run(load_knowledge_bases())
     asyncio.run(async_reranking_rag_demo())
 
-    advanced_culinary_demo()
+    # advanced_culinary_demo()
 
-    sync_reranking_rag_demo()
+    # sync_reranking_rag_demo()
