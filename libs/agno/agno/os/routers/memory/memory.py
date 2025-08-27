@@ -139,7 +139,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
 
         return UserMemorySchema.from_dict(user_memory)  # type: ignore
 
-    @router.get("/users", response_model=PaginatedResponse[UserStatsSchema], status_code=200)
+    @router.get("/memories/users", response_model=PaginatedResponse[UserStatsSchema], status_code=200)
     async def get_user_memory_stats(
         limit: Optional[int] = Query(default=20, description="Number of items to return"),
         page: Optional[int] = Query(default=1, description="Page number"),
