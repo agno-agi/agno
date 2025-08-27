@@ -70,16 +70,21 @@ jobs:
             pip setuptools wheel \
             ruff mypy pytest
           pip install --no-deps -r ../libs/agno/requirements.txt
-          pip install -e ../libs/agno
       - name: Ruff format
         run: |
           ruff format --config ../libs/agno/pyproject.toml .
+        env:
+          PYTHONPATH: ../libs/agno
       - name: Ruff check
         run: |
           ruff check --config ../libs/agno/pyproject.toml .
+        env:
+          PYTHONPATH: ../libs/Agno
       - name: Mypy
         run: |
           mypy --config-file ../libs/agno/pyproject.toml .
+        env:
+          PYTHONPATH: ../libs/agno
 
   style-check-agno-infra:
     runs-on: ubuntu-latest
