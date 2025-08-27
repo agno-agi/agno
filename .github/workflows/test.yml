@@ -46,7 +46,7 @@ jobs:
       - name: Mypy
         run: |
           mypy .
-          
+
   style-check-cookbook:
     runs-on: ubuntu-latest
     strategy:
@@ -78,7 +78,7 @@ jobs:
           ruff check .
       - name: Mypy
         run: |
-          mypy .
+          mypy . --no-namespace-packages
 
   style-check-agno-infra:
     runs-on: ubuntu-latest
