@@ -1783,7 +1783,6 @@ class Team:
                         stream_intermediate_steps=stream_intermediate_steps,
                         workflow_context=workflow_context,
                         yield_run_response=yield_run_response,
-                        run_dependencies=run_dependencies,
                     )
                     return response_iterator  # type: ignore
                 else:
@@ -3791,7 +3790,6 @@ class Team:
                 store_member_responses=store_member_responses,
                 debug_mode=debug_mode,
                 add_history_to_context=add_history_to_context,
-                dependencies=dependencies,
             )
             _tools.append(run_member_agents_func)
 

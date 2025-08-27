@@ -156,7 +156,7 @@ def test_text_knowledge_base_with_metadata_path(setup_vector_db):
     assert (
         "entry" in response.content.lower()
         or "junior" in response.content.lower()
-        or "Jordan" in response.content.lower()
+        or "jordan" in response.content.lower()
     )
     assert "senior developer" not in response.content.lower()
 

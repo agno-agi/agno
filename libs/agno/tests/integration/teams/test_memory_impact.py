@@ -404,6 +404,10 @@ async def test_team_memory_with_multiple_members(shared_db):
                         "MockUsage", (), {"total_tokens": 100, "prompt_tokens": 50, "completion_tokens": 50}
                     )(),
                     "finish_reason": "stop",
+                    "images": [],
+                    "videos": [],
+                    "audios": [],
+                    "files": [],
                 },
             )()
 
@@ -506,7 +510,7 @@ async def test_team_memory_with_multiple_members(shared_db):
             print(f"Average memory growth per operation: {avg_growth:.2f} MB")
 
         # STRICT MEMORY LIMITS: Final memory must be under 20MB
-        assert final_memory < 5, f"Memory usage too high with multiple members: {final_memory:.2f} MB (limit: 5MB)"
+        assert final_memory < 20, f"Memory usage too high with multiple members: {final_memory:.2f} MB (limit: 20MB)"
 
         # Verify memory growth patterns are reasonable
         if memory_growth:

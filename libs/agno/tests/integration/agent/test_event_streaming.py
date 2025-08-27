@@ -466,6 +466,7 @@ def test_intermediate_steps_with_parser_model(shared_db):
     assert events[RunEvent.run_completed][0].content.name == "Elon Musk"  # type: ignore
     assert len(events[RunEvent.run_completed][0].content.description) > 1  # type: ignore
 
+    assert run_response is not None
     assert run_response.content is not None
     assert run_response.content_type == "Person"
     assert run_response.content["name"] == "Elon Musk"
@@ -480,7 +481,12 @@ def test_run_completed_event_metrics_validation(shared_db):
         telemetry=False,
     )
 
-    response_generator = agent.run("Get the current stock price of AAPL", stream=True, stream_intermediate_steps=True)
+    response_generator = agent.run(
+        "Get the current stock price of AAPL",
+        session_id="test_session",
+        stream=True,
+        stream_intermediate_steps=True,
+    )
 
     events = {}
     for run_response_delta in response_generator:
@@ -503,7 +509,9 @@ def test_run_completed_event_metrics_validation(shared_db):
     assert metrics.duration is not None, "Duration should be populated on completion"
     assert metrics.duration > 0, "Duration should be greater than 0"
 
-    stored_run = shared_db.get_sessions()[0].runs[0]
+    stored_session = agent.get_session(session_id="test_session")
+    assert stored_session is not None and stored_session.runs is not None
+    stored_run = stored_session.runs[0]
     assert stored_run.metrics is not None
     assert stored_run.metrics.total_tokens > 0
 
