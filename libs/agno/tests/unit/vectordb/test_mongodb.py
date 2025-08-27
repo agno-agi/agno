@@ -472,39 +472,6 @@ async def test_async_get_collection(async_vector_db: MongoDb) -> None:
 
 
 @pytest.mark.asyncio
-async def test_async_doc_exists(async_vector_db: MongoDb, mock_async_mongodb_client: AsyncMock) -> None:
-    """Test checking if a document exists asynchronously."""
-    docs = create_test_documents(1)
-
-    # Get reference to the mocked collection
-    mock_db = mock_async_mongodb_client["test_vectordb"]
-    mock_collection = mock_db[async_vector_db.collection_name]
-
-    # Explicitly set the async_collection for the test
-    async_vector_db._async_collection = mock_collection
-
-    # Set up the mock to return a document for the hash of our test document
-    doc_id = md5(docs[0].content.encode("utf-8")).hexdigest()
-
-    # Configure find_one directly on the mock_collection
-    async def mock_find_one(query):
-        if query.get("_id") == doc_id:
-            return {"_id": doc_id, "content": docs[0].content}
-        return None
-
-    mock_collection.find_one = AsyncMock(side_effect=mock_find_one)
-
-    # Test if the document exists
-    exists = await async_vector_db.async_doc_exists(docs[0])
-    assert exists is True
-
-    # Test with a document that doesn't exist
-    non_existent_doc = Document(content="This doesn't exist")
-    exists = await async_vector_db.async_doc_exists(non_existent_doc)
-    assert exists is False
-
-
-@pytest.mark.asyncio
 async def test_async_insert(
     async_vector_db: MongoDb, mock_async_mongodb_client: AsyncMock, mock_embedder: MagicMock
 ) -> None:

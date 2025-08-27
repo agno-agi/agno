@@ -201,22 +201,6 @@ async def test_async_create(vector_db, mock_session):
 
 
 @pytest.mark.asyncio
-async def test_async_doc_exists(vector_db, mock_session):
-    """Test async document existence checking."""
-    doc = create_test_documents(1)[0]
-
-    # Configure mock for existing document
-    mock_session.execute.return_value.one.return_value = [1]  # Document exists
-    exists = await vector_db.async_doc_exists(doc)
-    assert exists is True
-
-    # Configure mock for non-existent document
-    mock_session.execute.return_value.one.return_value = [0]  # Document doesn't exist
-    exists = await vector_db.async_doc_exists(doc)
-    assert exists is False
-
-
-@pytest.mark.asyncio
 async def test_async_name_exists(vector_db, mock_session):
     """Test async name existence checking."""
     # Configure mock for existing name

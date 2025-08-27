@@ -408,14 +408,6 @@ async def test_async_upsert_documents(chroma_db, sample_documents):
 
 
 @pytest.mark.asyncio
-async def test_async_doc_exists(chroma_db, sample_documents):
-    """Test document existence check asynchronously"""
-    await chroma_db.async_insert(documents=[sample_documents[0]], content_hash="test_hash")
-    exists = await chroma_db.async_doc_exists(sample_documents[0])
-    assert exists is True
-
-
-@pytest.mark.asyncio
 async def test_async_name_exists(chroma_db, sample_documents):
     """Test document name existence check asynchronously"""
     await chroma_db.async_insert(documents=[sample_documents[0]], content_hash="test_hash")

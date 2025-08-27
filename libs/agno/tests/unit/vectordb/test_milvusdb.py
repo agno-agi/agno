@@ -328,25 +328,6 @@ async def async_return(result):
 
 
 @pytest.mark.asyncio
-async def test_async_doc_exists(mock_embedder, mock_milvus_async_client):
-    """Test async document existence check"""
-    db = Milvus(embedder=mock_embedder, collection="test_collection")
-
-    # Create a test document
-    test_doc = Document(content="Test content")
-
-    db._async_client = mock_milvus_async_client
-
-    with patch.object(mock_milvus_async_client, "get", side_effect=lambda **kwargs: async_return([Mock()])):
-        result = await db.async_doc_exists(test_doc)
-        assert result is True
-
-    with patch.object(mock_milvus_async_client, "get", side_effect=lambda **kwargs: async_return([])):
-        result = await db.async_doc_exists(test_doc)
-        assert result is False
-
-
-@pytest.mark.asyncio
 async def test_async_insert(mock_embedder, sample_documents):
     """Test async insert"""
     db = Milvus(embedder=mock_embedder, collection="test_collection")

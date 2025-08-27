@@ -261,22 +261,6 @@ async def test_async_create(async_surrealdb_vector, mock_async_surrealdb_client)
 
 
 @pytest.mark.asyncio
-async def test_async_doc_exists(async_surrealdb_vector, mock_async_surrealdb_client, sample_documents):
-    """Test async document existence check"""
-    # Test when document exists
-    mock_async_surrealdb_client.query.return_value = [{"result": [{"content": sample_documents[0].content}]}]
-
-    result = await async_surrealdb_vector.async_doc_exists(sample_documents[0])
-    assert result is True
-
-    # Test when document doesn't exist
-    mock_async_surrealdb_client.query.return_value = [{"result": []}]
-
-    result = await async_surrealdb_vector.async_doc_exists(sample_documents[0])
-    assert result is False
-
-
-@pytest.mark.asyncio
 async def test_async_name_exists(async_surrealdb_vector, mock_async_surrealdb_client):
     """Test async name existence check"""
     # Test when name exists

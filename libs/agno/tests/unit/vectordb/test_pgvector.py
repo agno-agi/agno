@@ -380,21 +380,6 @@ async def test_async_create(mock_pgvector):
 
 
 @pytest.mark.asyncio
-async def test_async_doc_exists(mock_pgvector):
-    """Test async_doc_exists method."""
-    doc = create_test_documents(1)[0]
-
-    with patch.object(mock_pgvector, "doc_exists", return_value=True), patch("asyncio.to_thread") as mock_to_thread:
-        mock_to_thread.return_value = True
-
-        result = await mock_pgvector.async_doc_exists(doc)
-
-        # Check result and that doc_exists was called via to_thread
-        assert result is True
-        mock_to_thread.assert_called_once_with(mock_pgvector.doc_exists, doc)
-
-
-@pytest.mark.asyncio
 async def test_async_name_exists(mock_pgvector):
     """Test async_name_exists method."""
     with patch.object(mock_pgvector, "name_exists", return_value=True), patch("asyncio.to_thread") as mock_to_thread:

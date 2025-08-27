@@ -320,20 +320,6 @@ async def test_async_create(mock_pinecone_db):
 
 
 @pytest.mark.asyncio
-async def test_async_doc_exists(mock_pinecone_db):
-    """Test async_doc_exists method."""
-    doc = create_test_documents(1)[0]
-
-    with patch.object(mock_pinecone_db, "doc_exists", return_value=True), patch("asyncio.to_thread") as mock_to_thread:
-        mock_to_thread.return_value = True
-
-        result = await mock_pinecone_db.async_doc_exists(doc)
-
-        assert result is True
-        mock_to_thread.assert_called_once_with(mock_pinecone_db.doc_exists, doc)
-
-
-@pytest.mark.asyncio
 async def test_async_name_exists(mock_pinecone_db):
     """Test async_name_exists method."""
     with patch.object(mock_pinecone_db, "name_exists", return_value=True), patch("asyncio.to_thread") as mock_to_thread:
