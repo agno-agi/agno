@@ -224,7 +224,7 @@ def test_upsert(mock_pinecone_db, mock_embedder):
     mock_embedder.get_embedding_and_usage.return_value = ([0.1] * 1024, {"prompt_tokens": 10, "total_tokens": 10})
 
     # Test upsert
-    mock_pinecone_db.upsert(docs)
+    mock_pinecone_db.upsert(documents=docs, content_hash="test_hash")
 
     # Check that index.upsert was called with the right arguments
     mock_pinecone_db.index.upsert.assert_called_once()
@@ -243,8 +243,8 @@ def test_upsert(mock_pinecone_db, mock_embedder):
 def test_insert_not_supported(mock_pinecone_db):
     """Test that insert logs warning and redirects to upsert."""
     with patch.object(mock_pinecone_db, "upsert") as mock_upsert:
-        mock_pinecone_db.insert([])
-        mock_upsert.assert_called_once_with([], None)
+        mock_pinecone_db.insert(documents=[], content_hash="test_hash")
+        mock_upsert.assert_called_once()
 
 
 def test_search(mock_pinecone_db, mock_embedder):
@@ -361,7 +361,7 @@ async def test_async_upsert(mock_pinecone_db, mock_embedder):
         patch("asyncio.gather", gather_mock),
     ):
         # Call the method
-        await mock_pinecone_db.async_upsert(docs)
+        await mock_pinecone_db.async_upsert(documents=docs, content_hash="test_hash")
 
         # Verify gather was called
         gather_mock.assert_called_once()
@@ -380,8 +380,8 @@ async def test_async_upsert(mock_pinecone_db, mock_embedder):
 async def test_async_insert_not_supported(mock_pinecone_db):
     """Test that async_insert logs warning and redirects to async_upsert."""
     with patch.object(mock_pinecone_db, "async_upsert") as mock_async_upsert:
-        await mock_pinecone_db.async_insert([])
-        mock_async_upsert.assert_called_once_with([], None)
+        await mock_pinecone_db.async_insert(documents=[], content_hash="test_hash")
+        mock_async_upsert.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -413,7 +413,7 @@ def test_delete_by_id(mock_pinecone_db, sample_documents):
     """Test deleting documents by ID"""
     # Mock insert and get_count
     with patch.object(mock_pinecone_db, "insert"), patch.object(mock_pinecone_db, "get_count") as mock_get_count:
-        mock_pinecone_db.insert(sample_documents)
+        mock_pinecone_db.insert(documents=sample_documents, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_id method
@@ -442,7 +442,7 @@ def test_delete_by_name(mock_pinecone_db, sample_documents):
     """Test deleting documents by name"""
     # Mock insert and get_count
     with patch.object(mock_pinecone_db, "insert"), patch.object(mock_pinecone_db, "get_count") as mock_get_count:
-        mock_pinecone_db.insert(sample_documents)
+        mock_pinecone_db.insert(documents=sample_documents, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_name method
@@ -465,7 +465,7 @@ def test_delete_by_metadata(mock_pinecone_db, sample_documents):
     """Test deleting documents by metadata"""
     # Mock insert and get_count
     with patch.object(mock_pinecone_db, "insert"), patch.object(mock_pinecone_db, "get_count") as mock_get_count:
-        mock_pinecone_db.insert(sample_documents)
+        mock_pinecone_db.insert(documents=sample_documents, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_metadata method
@@ -499,7 +499,7 @@ def test_delete_by_content_id(mock_pinecone_db, sample_documents):
 
     # Mock insert and get_count
     with patch.object(mock_pinecone_db, "insert"), patch.object(mock_pinecone_db, "get_count") as mock_get_count:
-        mock_pinecone_db.insert(sample_documents)
+        mock_pinecone_db.insert(documents=sample_documents, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_content_id method
@@ -543,7 +543,7 @@ def test_delete_by_name_multiple_documents(mock_pinecone_db):
 
     # Mock insert and get_count
     with patch.object(mock_pinecone_db, "insert"), patch.object(mock_pinecone_db, "get_count") as mock_get_count:
-        mock_pinecone_db.insert(docs)
+        mock_pinecone_db.insert(documents=docs, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_name and name_exists methods
@@ -586,7 +586,7 @@ def test_delete_by_metadata_complex(mock_pinecone_db):
 
     # Mock insert and get_count
     with patch.object(mock_pinecone_db, "insert"), patch.object(mock_pinecone_db, "get_count") as mock_get_count:
-        mock_pinecone_db.insert(docs)
+        mock_pinecone_db.insert(documents=docs, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_metadata method

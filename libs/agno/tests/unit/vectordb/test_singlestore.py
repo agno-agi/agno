@@ -70,7 +70,7 @@ def sample_documents() -> List[Document]:
 
 def test_insert_documents(singlestore_db, sample_documents, mock_session):
     """Test inserting documents"""
-    singlestore_db.insert(sample_documents)
+    singlestore_db.insert(documents=sample_documents, content_hash="test_hash")
 
     # Verify insert was called for each document
     assert mock_session.execute.call_count == len(sample_documents)
@@ -112,7 +112,7 @@ def test_upsert_documents(singlestore_db, sample_documents, mock_session):
     modified_doc = Document(
         content="Tom Kha Gai is a spicy and sour Thai coconut soup", meta_data={"cuisine": "Thai", "type": "soup"}
     )
-    singlestore_db.upsert([modified_doc])
+    singlestore_db.upsert(documents=[modified_doc], content_hash="test_hash")
 
     # Verify upsert was called
     mock_session.execute.assert_called()
@@ -146,7 +146,7 @@ async def test_error_handling(singlestore_db, mock_session):
     assert len(results) == 0
 
     # Test inserting empty document list
-    singlestore_db.insert([])
+    singlestore_db.insert(documents=[], content_hash="test_hash")
     mock_session.execute.return_value.scalar.return_value = 0
     assert singlestore_db.get_count() == 0
 
@@ -162,7 +162,7 @@ def test_delete_by_id(singlestore_db, sample_documents, mock_session):
     """Test deleting documents by ID"""
     # Mock insert and get_count
     with patch.object(singlestore_db, "insert"), patch.object(singlestore_db, "get_count") as mock_get_count:
-        singlestore_db.insert(sample_documents)
+        singlestore_db.insert(documents=sample_documents, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_id method
@@ -196,7 +196,7 @@ def test_delete_by_name(singlestore_db, sample_documents, mock_session):
 
     # Mock insert and get_count
     with patch.object(singlestore_db, "insert"), patch.object(singlestore_db, "get_count") as mock_get_count:
-        singlestore_db.insert(sample_documents)
+        singlestore_db.insert(documents=sample_documents, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_name method
@@ -219,7 +219,7 @@ def test_delete_by_metadata(singlestore_db, sample_documents, mock_session):
     """Test deleting documents by metadata"""
     # Mock insert and get_count
     with patch.object(singlestore_db, "insert"), patch.object(singlestore_db, "get_count") as mock_get_count:
-        singlestore_db.insert(sample_documents)
+        singlestore_db.insert(documents=sample_documents, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_metadata method
@@ -253,7 +253,7 @@ def test_delete_by_content_id(singlestore_db, sample_documents, mock_session):
 
     # Mock insert and get_count
     with patch.object(singlestore_db, "insert"), patch.object(singlestore_db, "get_count") as mock_get_count:
-        singlestore_db.insert(sample_documents)
+        singlestore_db.insert(documents=sample_documents, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_content_id method
@@ -297,7 +297,7 @@ def test_delete_by_name_multiple_documents(singlestore_db, mock_session):
 
     # Mock insert and get_count
     with patch.object(singlestore_db, "insert"), patch.object(singlestore_db, "get_count") as mock_get_count:
-        singlestore_db.insert(docs)
+        singlestore_db.insert(documents=docs, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_name and name_exists methods
@@ -340,7 +340,7 @@ def test_delete_by_metadata_complex(singlestore_db, mock_session):
 
     # Mock insert and get_count
     with patch.object(singlestore_db, "insert"), patch.object(singlestore_db, "get_count") as mock_get_count:
-        singlestore_db.insert(docs)
+        singlestore_db.insert(documents=docs, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_metadata method
