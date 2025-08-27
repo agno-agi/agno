@@ -215,8 +215,7 @@ def test_image_generation_with_detailed_prompt():
             if decoded_string.startswith('iVBORw0KGgo') or decoded_string.startswith('/9j/'):
                 import base64
                 image_content = base64.b64decode(decoded_string)
-        except Exception:
-            # If decoding fails, assume it's already binary data
+        except (UnicodeDecodeError, ValueError):
             pass
 
     image = PILImage.open(BytesIO(image_content))
