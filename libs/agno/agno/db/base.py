@@ -226,7 +226,7 @@ class BaseDb(ABC):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
-        model_id: Optional[str] = None,
+        model_id: Optional[List[str]] = None,
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,

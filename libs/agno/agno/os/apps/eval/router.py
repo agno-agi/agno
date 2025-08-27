@@ -31,6 +31,21 @@ def parse_eval_types_filter(
         raise HTTPException(status_code=422, detail=f"Invalid eval_type: {e}")
 
 
+def parse_model_ids(model_id: Optional[str] = Query(default=None)) -> Optional[List[str]]:
+    """
+    Parse a comma-separated string of model IDs into a list of model IDs
+    Example: apple, banana, orange -> ['apple', 'banana', 'orange']
+    """
+    if not model_id:
+        return None
+
+    try:
+        return [mid.strip() for mid in model_id.split(",") if mid.strip()]
+
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Invalid model_id: {e}")
+
+
 def attach_routes(
     router: APIRouter, db: BaseDb, agents: Optional[List[Agent]] = None, teams: Optional[List[Team]] = None
 ) -> APIRouter:
@@ -39,7 +54,7 @@ def attach_routes(
         agent_id: Optional[str] = Query(default=None, description="Agent ID"),
         team_id: Optional[str] = Query(default=None, description="Team ID"),
         workflow_id: Optional[str] = Query(default=None, description="Workflow ID"),
-        model_id: Optional[str] = Query(default=None, description="Model ID"),
+        model_id: Optional[List[str]] = Depends(parse_model_ids),
         filter_type: Optional[EvalFilterType] = Query(default=None, description="Filter type", alias="type"),
         eval_types: Optional[List[EvalType]] = Depends(parse_eval_types_filter),
         limit: Optional[int] = Query(default=20, description="Number of eval runs to return"),

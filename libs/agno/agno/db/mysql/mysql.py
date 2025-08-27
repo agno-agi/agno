@@ -1480,7 +1480,7 @@ class MySQLDb(BaseDb):
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
         workflow_id: Optional[str] = None,
-        model_id: Optional[str] = None,
+        model_id: Optional[List[str]] = None,
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
@@ -1495,7 +1495,7 @@ class MySQLDb(BaseDb):
             agent_id (Optional[str]): The ID of the agent to filter by.
             team_id (Optional[str]): The ID of the team to filter by.
             workflow_id (Optional[str]): The ID of the workflow to filter by.
-            model_id (Optional[str]): The ID of the model to filter by.
+            model_id (Optional[List[str]]): The ID(s) of the model(s) to filter by.
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
@@ -1522,7 +1522,7 @@ class MySQLDb(BaseDb):
                 if workflow_id is not None:
                     stmt = stmt.where(table.c.workflow_id == workflow_id)
                 if model_id is not None:
-                    stmt = stmt.where(table.c.model_id == model_id)
+                    stmt = stmt.where(table.c.model_id.in_(model_id))
                 if eval_type is not None and len(eval_type) > 0:
                     stmt = stmt.where(table.c.eval_type.in_(eval_type))
                 if filter_type is not None:
