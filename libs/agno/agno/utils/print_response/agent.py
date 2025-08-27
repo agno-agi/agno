@@ -693,10 +693,11 @@ def build_panels(
         panels.append(thinking_panel)
 
     # Add tool calls panel if available
-    if isinstance(run_response, RunOutput) and run_response.formatted_tool_calls:
+    if isinstance(run_response, RunOutput) and run_response.tools:
         # Create bullet points for each tool call
         tool_calls_content = Text()
-        for formatted_tool_call in run_response.formatted_tool_calls:
+        formatted_tool_calls = format_tool_calls(run_response.tools)
+        for formatted_tool_call in formatted_tool_calls:
             tool_calls_content.append(f"• {formatted_tool_call}\n")
 
         tool_calls_panel = create_panel(

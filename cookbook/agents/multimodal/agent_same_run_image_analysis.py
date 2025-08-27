@@ -11,6 +11,5 @@ response = agent.run(
 )
 
 if response.images:
-    print('Agent Response', response.content)
+    print("Agent Response", response.content)
     print(response.images[0].url)
-

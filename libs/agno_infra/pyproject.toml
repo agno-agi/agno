@@ -29,10 +29,12 @@ classifiers = [
 ]
 
 dependencies = [
-  "click==8.1.8",
+  "python-dotenv",
+  "python-multipart",
   "rich",
   "tomli",
   "typer",
+  "typing-extensions",
 ]
 
 [project.optional-dependencies]

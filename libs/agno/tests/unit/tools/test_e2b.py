@@ -1,8 +1,8 @@
 """Unit tests for E2BTools class."""
 
 import os
-from unittest.mock import Mock, patch
 import sys
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -15,7 +15,7 @@ with patch.dict("sys.modules", {"e2b_code_interpreter": Mock()}):
     # Create a mock Sandbox class
     mock_sandbox_class = Mock()
     sys.modules["e2b_code_interpreter"].Sandbox = mock_sandbox_class
-    
+
     # Now import the E2BTools class
     from agno.tools.e2b import E2BTools
 
@@ -37,7 +37,7 @@ def mock_e2b_tools():
         # Set up our mock sandbox instance
         mock_sandbox = Mock()
         mock_sandbox_class.return_value = mock_sandbox
-        
+
         # Set up sandbox attributes and methods
         mock_sandbox.files = Mock()
         mock_sandbox.commands = Mock()
@@ -53,19 +53,18 @@ def mock_e2b_tools():
             # Mock the methods we'll test
             tools.run_python_code = Mock(return_value='["Logs:\\nHello, World!"]')
             tools.upload_file = Mock(return_value="/sandbox/file.txt")
-            
+
             # Mock ToolResult returns for updated methods
             mock_image_result = ToolResult(
-                content="Image added as artifact with ID test-image-id",
-                images=[Mock(spec=ImageArtifact)]
+                content="Image added as artifact with ID test-image-id", images=[Mock(spec=ImageArtifact)]
             )
             tools.download_png_result = Mock(return_value=mock_image_result)
-            
+
             mock_chart_result = ToolResult(
                 content="Interactive bar chart data saved to /local/output.json\nTitle: Sample Chart\nX-axis: Categories\nY-axis: Values\n"
             )
             tools.download_chart_data = Mock(return_value=mock_chart_result)
-            
+
             tools.download_file_from_sandbox = Mock(return_value="/local/output.txt")
             tools.list_files = Mock(
                 return_value="Contents of /:\n- file1.txt (File, 100 bytes)\n- dir1 (Directory, Unknown size)\n"
@@ -173,7 +172,7 @@ def test_download_png_result(mock_e2b_tools, mock_agent):
     result = mock_e2b_tools.download_png_result(mock_agent, 0, "/local/output.png")
 
     mock_e2b_tools.download_png_result.assert_called_once_with(mock_agent, 0, "/local/output.png")
-    
+
     # Check that it returns a ToolResult
     assert isinstance(result, ToolResult)
     assert "Image added as artifact with ID" in result.content
@@ -186,7 +185,7 @@ def test_download_chart_data(mock_e2b_tools, mock_agent):
     result = mock_e2b_tools.download_chart_data(mock_agent, 0, "/local/output.json")
 
     mock_e2b_tools.download_chart_data.assert_called_once_with(mock_agent, 0, "/local/output.json")
-    
+
     # Check that it returns a ToolResult
     assert isinstance(result, ToolResult)
     assert "Interactive bar chart data saved to" in result.content

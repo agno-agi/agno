@@ -210,7 +210,7 @@ def test_get_screenshot_no_api_key(mock_agent):
         tools.api_key = None  # Then remove it to test the method behavior
 
         result = tools.get_screenshot(mock_agent, "https://example.com")
-        
+
         # Check that result is a ToolResult with error content
         assert isinstance(result, ToolResult)
         assert result.content == "Please provide a Bright Data API key"
@@ -220,7 +220,7 @@ def test_get_screenshot_no_api_key(mock_agent):
 def test_get_screenshot_no_url(brightdata_tools, mock_agent):
     """Test get_screenshot without URL."""
     result = brightdata_tools.get_screenshot(mock_agent, "")
-    
+
     # Check that result is a ToolResult with error content
     assert isinstance(result, ToolResult)
     assert result.content == "Please provide a URL to screenshot"
@@ -235,7 +235,7 @@ def test_get_screenshot_http_error(brightdata_tools, mock_requests, mock_agent):
     mock_requests.post.return_value = mock_response
 
     result = brightdata_tools.get_screenshot(mock_agent, "https://example.com")
-    
+
     # Check that result is a ToolResult with error content
     assert isinstance(result, ToolResult)
     assert "Error taking screenshot of https://example.com: Error 500: Internal Server Error" in result.content

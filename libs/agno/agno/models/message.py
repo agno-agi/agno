@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from agno.media import Audio, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact, AudioArtifact
+from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.models.metrics import Metrics
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 

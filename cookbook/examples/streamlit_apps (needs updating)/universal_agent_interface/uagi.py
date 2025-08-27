@@ -88,7 +88,7 @@ def create_uagi(
     agents: List[Agent] = []
     if config.agents:
         for agent_name in config.agents:
-            agent = get_agent(agent_name, model, uagi_memory, uagi_knowledge)
+            agent = get_agent(agent_name, model, uagi_db, uagi_knowledge)
             if agent is not None:
                 agents.append(agent)
             else:

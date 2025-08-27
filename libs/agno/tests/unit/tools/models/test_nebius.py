@@ -146,7 +146,7 @@ def test_generate_image_success(mock_nebius_tools, mock_agent, mock_successful_r
         assert result.content == "Image generated successfully."
         assert result.images is not None
         assert len(result.images) == 1
-        
+
         # Verify the ImageArtifact properties
         image_artifact = result.images[0]
         assert isinstance(image_artifact, ImageArtifact)
@@ -154,7 +154,7 @@ def test_generate_image_success(mock_nebius_tools, mock_agent, mock_successful_r
         assert image_artifact.original_prompt == prompt
         assert image_artifact.mime_type == "image/png"
         assert image_artifact.content == b"fake_image_base64"
-        
+
         mock_client.images.generate.assert_called_once_with(
             model=mock_nebius_tools.image_model,
             prompt=prompt,
@@ -177,7 +177,7 @@ def test_generate_image_no_data(mock_nebius_tools, mock_agent, mock_failed_respo
     assert isinstance(result, ToolResult)
     assert result.content == "Failed to generate image: No data received from API."
     assert result.images is None
-    
+
     mock_client.images.generate.assert_called_once()
 
 
@@ -192,12 +192,12 @@ def test_generate_image_api_error(mock_nebius_tools, mock_agent):
     result = mock_nebius_tools.generate_image(mock_agent, prompt)
 
     expected_error = f"Failed to generate image: {error_message}"
-    
+
     # Check that it returns a ToolResult with error
     assert isinstance(result, ToolResult)
     assert result.content == expected_error
     assert result.images is None
-    
+
     mock_client.images.generate.assert_called_once()
 
 
@@ -209,7 +209,7 @@ def test_generate_image_with_custom_params():
         mock_client = MagicMock()
         mock_data = MagicMock()
         # Fix: Use properly encoded base64 data like in the other tests
-        mock_data.b64_json = base64.b64encode(b"fake_image_base64").decode('utf-8')
+        mock_data.b64_json = base64.b64encode(b"fake_image_base64").decode("utf-8")
         mock_response = MagicMock()
         mock_response.data = [mock_data]
 

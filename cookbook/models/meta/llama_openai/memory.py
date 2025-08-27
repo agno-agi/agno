@@ -7,7 +7,7 @@ Steps:
 """
 
 from agno.agent import Agent
-from agno.db.postgres.postgres import PostgresDb
+from agno.db.postgres import PostgresDb
 from agno.models.meta import LlamaOpenAI
 from rich.pretty import pprint
 
