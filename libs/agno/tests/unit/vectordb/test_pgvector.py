@@ -199,7 +199,7 @@ def test_insert(mock_pgvector):
 
     # Bypass the SQLAlchemy-specific parts by patching the insert method directly
     with patch.object(mock_pgvector, "insert", wraps=lambda docs, **kwargs: None):
-        mock_pgvector.insert(docs)
+        mock_pgvector.insert(docs=docs, content_hash="test_hash")
 
 
 def test_upsert(mock_pgvector):
@@ -208,7 +208,7 @@ def test_upsert(mock_pgvector):
 
     # Bypass the SQLAlchemy-specific parts by patching the upsert method directly
     with patch.object(mock_pgvector, "upsert", wraps=lambda docs, **kwargs: None):
-        mock_pgvector.upsert(docs)
+        mock_pgvector.upsert(docs=docs, content_hash="test_hash")
 
 
 def test_insert_builds_records_and_uses_expected_ids(mock_pgvector, mock_embedder):
@@ -229,7 +229,7 @@ def test_insert_builds_records_and_uses_expected_ids(mock_pgvector, mock_embedde
         insert_stmt_sentinel = object()
         mock_insert.return_value = insert_stmt_sentinel
 
-        mock_pgvector.insert(docs, filters={"tag": "t1"})
+        mock_pgvector.insert(documents=docs, content_hash="test_hash", filters={"tag": "t1"})
 
         # Ensure we executed with an insert statement and batch records
         assert sess.execute.call_count == 1
@@ -276,7 +276,7 @@ def test_upsert_builds_records_and_sets_conflict_on_id(mock_pgvector, mock_embed
         insert_stmt.values.return_value = after_values
         after_values.on_conflict_do_update.return_value = upsert_stmt
 
-        mock_pgvector.upsert(docs, filters={"role": "test"})
+        mock_pgvector.upsert(documents=docs, content_hash="test_hash")
 
         # Ensure values() received our batch_records so we can validate IDs
         assert insert_stmt.values.called
@@ -400,7 +400,7 @@ async def test_async_insert(mock_pgvector):
     with patch.object(mock_pgvector, "insert"), patch("asyncio.to_thread") as mock_to_thread:
         mock_to_thread.return_value = None
 
-        await mock_pgvector.async_insert(docs)
+        await mock_pgvector.async_insert(documents=docs, content_hash="test_hash")
 
         # Check that insert was called via to_thread
         mock_to_thread.assert_called_once_with(mock_pgvector.insert, docs, None)
@@ -414,7 +414,7 @@ async def test_async_upsert(mock_pgvector):
     with patch.object(mock_pgvector, "upsert"), patch("asyncio.to_thread") as mock_to_thread:
         mock_to_thread.return_value = None
 
-        await mock_pgvector.async_upsert(docs)
+        await mock_pgvector.async_upsert(documents=docs, content_hash="test_hash")
 
         # Check that upsert was called via to_thread
         mock_to_thread.assert_called_once_with(mock_pgvector.upsert, docs, None)
@@ -467,7 +467,7 @@ def test_delete_by_id(mock_pgvector, sample_documents):
     """Test deleting documents by ID"""
     # Mock insert and get_count
     with patch.object(mock_pgvector, "insert"), patch.object(mock_pgvector, "get_count") as mock_get_count:
-        mock_pgvector.insert(sample_documents)
+        mock_pgvector.insert(documents=sample_documents, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_id method
@@ -496,7 +496,7 @@ def test_delete_by_name(mock_pgvector, sample_documents):
     """Test deleting documents by name"""
     # Mock insert and get_count
     with patch.object(mock_pgvector, "insert"), patch.object(mock_pgvector, "get_count") as mock_get_count:
-        mock_pgvector.insert(sample_documents)
+        mock_pgvector.insert(documents=sample_documents, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_name method
@@ -519,7 +519,7 @@ def test_delete_by_metadata(mock_pgvector, sample_documents):
     """Test deleting documents by metadata"""
     # Mock insert and get_count
     with patch.object(mock_pgvector, "insert"), patch.object(mock_pgvector, "get_count") as mock_get_count:
-        mock_pgvector.insert(sample_documents)
+        mock_pgvector.insert(documents=sample_documents, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_metadata method
@@ -553,7 +553,7 @@ def test_delete_by_content_id(mock_pgvector, sample_documents):
 
     # Mock insert and get_count
     with patch.object(mock_pgvector, "insert"), patch.object(mock_pgvector, "get_count") as mock_get_count:
-        mock_pgvector.insert(sample_documents)
+        mock_pgvector.insert(documents=sample_documents, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_content_id method
@@ -597,7 +597,7 @@ def test_delete_by_name_multiple_documents(mock_pgvector):
 
     # Mock insert and get_count
     with patch.object(mock_pgvector, "insert"), patch.object(mock_pgvector, "get_count") as mock_get_count:
-        mock_pgvector.insert(docs)
+        mock_pgvector.insert(documents=docs, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_name and name_exists methods
@@ -640,7 +640,7 @@ def test_delete_by_metadata_complex(mock_pgvector):
 
     # Mock insert and get_count
     with patch.object(mock_pgvector, "insert"), patch.object(mock_pgvector, "get_count") as mock_get_count:
-        mock_pgvector.insert(docs)
+        mock_pgvector.insert(documents=docs, content_hash="test_hash")
         mock_get_count.return_value = 3
 
     # Mock delete_by_metadata method
