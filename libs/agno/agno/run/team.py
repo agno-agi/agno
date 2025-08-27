@@ -141,6 +141,10 @@ class RunCancelledEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.run_cancelled.value
     reason: Optional[str] = None
 
+    @property
+    def is_cancelled(self):
+        return True
+
 
 @dataclass
 class MemoryUpdateStartedEvent(BaseTeamRunEvent):

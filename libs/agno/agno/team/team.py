@@ -2882,7 +2882,19 @@ class Team:
         exit_on: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> None:
+        """Run an interactive command-line interface to interact with the team."""
+
+        from inspect import isawaitable
+
         from rich.prompt import Prompt
+
+        # Ensuring the team is not using async tools
+        if self.tools is not None:
+            for tool in self.tools:
+                if isawaitable(tool):
+                    raise NotImplementedError("Use `acli_app` to use async tools.")
+                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                    raise NotImplementedError("Use `acli_app` to use MCP tools.")
 
         if input:
             self.print_response(input=input, stream=stream, markdown=markdown, **kwargs)
@@ -2894,6 +2906,39 @@ class Team:
                 break
 
             self.print_response(input=user_input, stream=stream, markdown=markdown, **kwargs)
+
+    async def acli_app(
+        self,
+        input: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        user: str = "User",
+        emoji: str = ":sunglasses:",
+        stream: bool = False,
+        markdown: bool = False,
+        exit_on: Optional[List[str]] = None,
+        **kwargs: Any,
+    ) -> None:
+        """
+        Run an interactive command-line interface to interact with the team.
+        Works with team dependencies requiring async logic.
+        """
+        from rich.prompt import Prompt
+
+        if input:
+            await self.aprint_response(
+                input=input, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
+            )
+
+        _exit_on = exit_on or ["exit", "quit", "bye"]
+        while True:
+            message = Prompt.ask(f"[bold] {emoji} {user} [/bold]")
+            if message in _exit_on:
+                break
+
+            await self.aprint_response(
+                input=message, stream=stream, markdown=markdown, user_id=user_id, session_id=session_id, **kwargs
+            )
 
     ###########################################################################
     # Helpers
@@ -5687,6 +5732,7 @@ class Team:
                     if (member_agent.knowledge_filters and member_agent.knowledge)
                     else None,
                 )
+                check_if_run_cancelled(member_agent_run_response)  # type: ignore
 
                 try:
                     if member_agent_run_response.content is None and (  # type: ignore

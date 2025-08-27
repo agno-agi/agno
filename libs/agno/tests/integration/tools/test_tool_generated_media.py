@@ -12,24 +12,19 @@ from agno.tools.dalle import DalleTools
 @pytest.fixture
 def openai_agent():
     """Create an agent with OpenAI model and DALL-E tools."""
-    return Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        db=InMemoryDb(),
-        tools=[DalleTools()],
-        debug_mode=True
-    )
+    return Agent(model=OpenAIChat(id="gpt-4o-mini"), db=InMemoryDb(), tools=[DalleTools()], debug_mode=True)
 
 
 @pytest.fixture
 def gemini_agent():
     """Create an agent with Gemini model for audio generation."""
     from agno.tools.openai import OpenAITools
-    
+
     return Agent(
         model=Gemini(id="gemini-2.5-pro"),
         db=InMemoryDb(),
         tools=[OpenAITools(enable_speech_generation=True)],
-        debug_mode=True
+        debug_mode=True,
     )
 
 
@@ -158,12 +153,7 @@ def test_openai_speech_generation_in_run_output(gemini_agent):
 
 def test_media_persistence_across_runs(shared_db):
     """Test that media persists correctly across multiple runs."""
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        db=shared_db,
-        tools=[DalleTools()],
-        debug_mode=True
-    )
+    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), db=shared_db, tools=[DalleTools()], debug_mode=True)
 
     # First run: Generate image
     response1 = agent.run("Generate an image of a sunset")
