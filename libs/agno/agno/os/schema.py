@@ -109,6 +109,7 @@ class ModelResponse(BaseModel):
 class AgentResponse(BaseModel):
     id: Optional[str] = None
     name: Optional[str] = None
+    db_id: Optional[str] = None
     model: Optional[ModelResponse] = None
     tools: Optional[Dict[str, Any]] = None
     sessions: Optional[Dict[str, Any]] = None
@@ -319,6 +320,7 @@ class AgentResponse(BaseModel):
         return AgentResponse(
             id=agent.id,
             name=agent.name,
+            db_id=agent.db.id if agent.db else None,
             model=ModelResponse(**_agent_model_data) if _agent_model_data else None,
             tools=filter_meaningful_config(tools_info, {}),
             sessions=filter_meaningful_config(sessions_info, agent_defaults),
@@ -337,6 +339,7 @@ class AgentResponse(BaseModel):
 class TeamResponse(BaseModel):
     id: Optional[str] = None
     name: Optional[str] = None
+    db_id: Optional[str] = None
     description: Optional[str] = None
     mode: Optional[str] = None
     model: Optional[ModelResponse] = None
@@ -538,6 +541,7 @@ class TeamResponse(BaseModel):
             id=team.id,
             name=team.name,
             mode=team.mode,
+            db_id=team.db.id if team.db else None,
             model=ModelResponse(**_team_model_data) if _team_model_data else None,
             tools=filter_meaningful_config(tools_info, {}),
             sessions=filter_meaningful_config(sessions_info, team_defaults),
@@ -563,6 +567,7 @@ class TeamResponse(BaseModel):
 class WorkflowResponse(BaseModel):
     id: Optional[str] = None
     name: Optional[str] = None
+    db_id: Optional[str] = None
     description: Optional[str] = None
     input_schema: Optional[Dict[str, Any]] = None
     steps: Optional[List[Dict[str, Any]]] = None
@@ -616,6 +621,7 @@ class WorkflowResponse(BaseModel):
         return cls(
             id=workflow.id,
             name=workflow.name,
+            db_id=workflow.db.id if workflow.db else None,
             description=workflow.description,
             steps=steps,
             input_schema=get_workflow_input_schema_dict(workflow),
