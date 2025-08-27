@@ -4,6 +4,7 @@ This example shows how to create an interactive CLI app with an agent.
 
 Run `pip install openai agno duckduckgo-search` to install dependencies.
 """
+
 from textwrap import dedent
 
 from agno.agent import Agent
@@ -39,7 +40,7 @@ writing_assistant = Agent(
 if __name__ == "__main__":
     print("🔍 I can research topics, help brainstorm, edit text, and more!")
     print("✏️ Type 'exit', 'quit', or 'bye' to end our session.\n")
-    
+
     writing_assistant.cli_app(
         input="Hello! What writing project are you working on today? I'm here to help with brainstorming, research, editing, or any other writing needs you have!",
         user="Writer",

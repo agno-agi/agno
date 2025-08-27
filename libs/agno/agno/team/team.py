@@ -2882,7 +2882,19 @@ class Team:
         exit_on: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> None:
+        """Run an interactive command-line interface to interact with the team."""
+
+        from inspect import isawaitable
+
         from rich.prompt import Prompt
+
+        # Ensuring the team is not using async tools
+        if self.tools is not None:
+            for tool in self.tools:
+                if isawaitable(tool):
+                    raise NotImplementedError("Use `acli_app` to use async tools.")
+                if tool.__class__.__name__ in ["MCPTools", "MultiMCPTools"]:
+                    raise NotImplementedError("Use `acli_app` to use MCP tools.")
 
         if input:
             self.print_response(input=input, stream=stream, markdown=markdown, **kwargs)

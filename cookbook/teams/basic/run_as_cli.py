@@ -126,10 +126,10 @@ writing_team = Team(
 if __name__ == "__main__":
     print("💡 Tell us about your writing project and watch the team collaborate!")
     print("✏️ Type 'exit', 'quit', or 'bye' to end our session.\n")
-    
+
     writing_team.cli_app(
         input="Hello! We're excited to work on your writing project. What would you like us to help you create today? Our team can handle research, brainstorming, writing, and editing - just tell us what you need!",
-        user="Client", 
+        user="Client",
         emoji="👥",
         stream=True,
     )
@@ -141,7 +141,7 @@ if __name__ == "__main__":
 
     # asyncio.run(writing_team.acli_app(
     #     input="Hello! We're excited to work on your writing project. What would you like us to help you create today? Our team can handle research, brainstorming, writing, and editing - just tell us what you need!",
-    #     user="Client", 
+    #     user="Client",
     #     emoji="👥",
     #     stream=True,
     # ))
