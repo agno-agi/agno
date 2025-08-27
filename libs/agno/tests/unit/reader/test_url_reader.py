@@ -21,7 +21,7 @@ def test_read_url_success(mock_response):
     """Test successful URL reading"""
     url = "https://example.com"
 
-    with patch("agno.document.reader.url_reader.fetch_with_retry", return_value=mock_response):
+    with patch("agno.knowledge.reader.url_reader.fetch_with_retry", return_value=mock_response):
         reader = URLReader()
         reader.chunk = False
         documents = reader.read(url)
@@ -36,7 +36,7 @@ def test_read_url_with_path(mock_response):
     """Test URL reading with path components"""
     url = "https://example.com/blog/post-1"
 
-    with patch("agno.document.reader.url_reader.fetch_with_retry", return_value=mock_response):
+    with patch("agno.knowledge.reader.url_reader.fetch_with_retry", return_value=mock_response):
         reader = URLReader()
         reader.chunk = False
         documents = reader.read(url)
@@ -58,7 +58,7 @@ def test_read_url_with_proxy(mock_response):
     url = "https://example.com"
     proxy = "http://proxy.example.com:8080"
 
-    with patch("agno.document.reader.url_reader.fetch_with_retry", return_value=mock_response) as mock_fetch:
+    with patch("agno.knowledge.reader.url_reader.fetch_with_retry", return_value=mock_response) as mock_fetch:
         reader = URLReader(proxy=proxy)
         reader.chunk = False
         documents = reader.read(url)
@@ -73,7 +73,9 @@ def test_read_url_request_error():
     """Test URL reading when fetch_with_retry raises RequestError"""
     url = "https://example.com"
 
-    with patch("agno.document.reader.url_reader.fetch_with_retry", side_effect=httpx.RequestError("Connection failed")):
+    with patch(
+        "agno.knowledge.reader.url_reader.fetch_with_retry", side_effect=httpx.RequestError("Connection failed")
+    ):
         reader = URLReader()
         with pytest.raises(httpx.RequestError):
             reader.read(url)
@@ -84,7 +86,7 @@ def test_read_url_http_error():
     url = "https://example.com"
 
     with patch(
-        "agno.document.reader.url_reader.fetch_with_retry",
+        "agno.knowledge.reader.url_reader.fetch_with_retry",
         side_effect=httpx.HTTPStatusError("404 Not Found", request=Mock(), response=Mock()),
     ):
         reader = URLReader()
@@ -97,7 +99,7 @@ def test_chunking(mock_response):
     url = "https://example.com"
     mock_response.text = "Hello, world! " * 1000
 
-    with patch("agno.document.reader.url_reader.fetch_with_retry", return_value=mock_response):
+    with patch("agno.knowledge.reader.url_reader.fetch_with_retry", return_value=mock_response):
         reader = URLReader()
         reader.chunk = True
         reader.chunking_strategy = FixedSizeChunking(chunk_size=100)
@@ -113,7 +115,7 @@ async def test_async_read_url_success(mock_response):
     """Test successful async URL reading"""
     url = "https://example.com"
 
-    with patch("agno.document.reader.url_reader.async_fetch_with_retry", return_value=mock_response):
+    with patch("agno.knowledge.reader.url_reader.async_fetch_with_retry", return_value=mock_response):
         reader = URLReader()
         reader.chunk = False  # Disable chunking for this test
         documents = await reader.async_read(url)
@@ -138,7 +140,7 @@ async def test_async_read_url_with_proxy(mock_response):
     url = "https://example.com"
     proxy = "http://proxy.example.com:8080"
 
-    with patch("agno.document.reader.url_reader.async_fetch_with_retry", return_value=mock_response) as mock_fetch:
+    with patch("agno.knowledge.reader.url_reader.async_fetch_with_retry", return_value=mock_response) as mock_fetch:
         reader = URLReader(proxy=proxy)
         reader.chunk = False
         documents = await reader.async_read(url)
@@ -159,7 +161,7 @@ async def test_async_read_url_request_error():
     url = "https://example.com"
 
     with patch(
-        "agno.document.reader.url_reader.async_fetch_with_retry", side_effect=httpx.RequestError("Connection failed")
+        "agno.knowledge.reader.url_reader.async_fetch_with_retry", side_effect=httpx.RequestError("Connection failed")
     ):
         reader = URLReader()
         with pytest.raises(httpx.RequestError):
@@ -172,7 +174,7 @@ async def test_async_read_url_http_error():
     url = "https://example.com"
 
     with patch(
-        "agno.document.reader.url_reader.async_fetch_with_retry",
+        "agno.knowledge.reader.url_reader.async_fetch_with_retry",
         side_effect=httpx.HTTPStatusError("404 Not Found", request=Mock(), response=Mock()),
     ):
         reader = URLReader()
@@ -186,7 +188,7 @@ async def test_async_chunking(mock_response):
     url = "https://example.com"
     mock_response.text = "Hello, world! " * 1000
 
-    with patch("agno.document.reader.url_reader.async_fetch_with_retry", return_value=mock_response):
+    with patch("agno.knowledge.reader.url_reader.async_fetch_with_retry", return_value=mock_response):
         reader = URLReader()
         reader.chunk = True
         reader.chunking_strategy = FixedSizeChunking(chunk_size=100)
