@@ -78,7 +78,7 @@ jobs:
           ruff check .
       - name: Mypy
         run: |
-          mypy . --no-namespace-packages
+          mypy .
 
   style-check-agno-infra:
     runs-on: ubuntu-latest
