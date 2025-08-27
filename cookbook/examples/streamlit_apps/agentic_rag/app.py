@@ -147,10 +147,20 @@ def main():
     # Sample Question
     ###############################################################
     st.sidebar.markdown("#### ❓ Sample Questions")
+    if st.sidebar.button("🖼️ What can you do?"):
+        add_message(
+            "user",
+            "What can you do?",
+        )
     if st.sidebar.button("📝 Summarize"):
         add_message(
             "user",
             "Can you summarize what is currently in the knowledge base (use `search_knowledge_base` tool)?",
+        )
+    if st.sidebar.button("🔍 What is Agentic RAG?"):
+        add_message(
+            "user",
+            "What is Agentic RAG?",
         )
 
     ###############################################################
