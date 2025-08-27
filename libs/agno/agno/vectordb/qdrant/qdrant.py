@@ -1024,3 +1024,25 @@ class Qdrant(VectorDb):
         except Exception as e:
             log_error(f"Error updating metadata for content_id '{content_id}': {e}")
             raise
+
+    def close(self) -> None:
+        """Close the Qdrant client connections."""
+        if self._client is not None:
+            try:
+                self._client.close()
+                log_debug("Qdrant client closed successfully")
+            except Exception as e:
+                log_debug(f"Error closing Qdrant client: {e}")
+            finally:
+                self._client = None
+
+    async def async_close(self) -> None:
+        """Close the Qdrant client connections asynchronously."""
+        if self._async_client is not None:
+            try:
+                await self._async_client.close()
+                log_debug("Async Qdrant client closed successfully")
+            except Exception as e:
+                log_debug(f"Error closing async Qdrant client: {e}")
+            finally:
+                self._async_client = None

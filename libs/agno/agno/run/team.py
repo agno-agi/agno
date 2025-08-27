@@ -128,6 +128,8 @@ class RunCompletedEvent(BaseTeamRunEvent):
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_messages: Optional[List[Message]] = None
     member_responses: List[Union["TeamRunOutput", RunOutput]] = field(default_factory=list)
+    metadata: Optional[Dict[str, Any]] = None
+    metrics: Optional[Metrics] = None
 
 
 @dataclass

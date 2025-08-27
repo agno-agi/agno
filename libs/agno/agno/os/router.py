@@ -1099,7 +1099,7 @@ def get_base_router(
         except Exception as e:
             # Handle unexpected runtime errors
             raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
-        
+
     @router.post("/workflows/{workflow_id}/runs/{run_id}/cancel")
     async def cancel_workflow_run(workflow_id: str, run_id: str):
         workflow = get_workflow_by_id(workflow_id, os.workflows)

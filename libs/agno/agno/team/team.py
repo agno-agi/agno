@@ -1001,6 +1001,10 @@ class Team:
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         store_member_responses: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> TeamRunOutput: ...
@@ -1022,6 +1026,10 @@ class Team:
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         store_member_responses: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         yield_run_response: bool = False,
         **kwargs: Any,
@@ -1043,6 +1051,10 @@ class Team:
         files: Optional[Sequence[File]] = None,
         store_member_responses: Optional[bool] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
         yield_run_response: bool = False,
         **kwargs: Any,
@@ -1072,9 +1084,18 @@ class Team:
         # Update session state from DB
         session_state = self.update_session_state(session=team_session, session_state=session_state)
 
-        # Resolve dependencies
-        if self.dependencies is not None:
-            self._resolve_run_dependencies()
+        # Determine runtime dependencies
+        run_dependencies = dependencies if dependencies is not None else self.dependencies
+
+        # Resolve callable dependencies if present
+        if run_dependencies is not None:
+            self._resolve_run_dependencies(run_dependencies)
+
+        # Determine runtime context parameters
+        add_dependencies = (
+            add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+        )
+        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
         # Extract workflow context from kwargs if present
         workflow_context = kwargs.pop("workflow_context", None)
@@ -1111,12 +1132,19 @@ class Team:
         )
         self.model = cast(Model, self.model)
 
+        if metadata is not None:
+            if self.metadata is not None:
+                merge_dictionaries(metadata, self.metadata)
+            else:
+                metadata = self.metadata
+
         # Create a new run_response for this attempt
         run_response = TeamRunOutput(
             run_id=run_id,
             session_id=session_id,
             team_id=self.id,
             team_name=self.name,
+            metadata=metadata,
         )
 
         run_response.model = self.model.id if self.model is not None else None
@@ -1141,6 +1169,10 @@ class Team:
             files=files,
             workflow_context=workflow_context,
             store_member_responses=store_member_responses,
+            debug_mode=debug_mode,
+            add_history_to_context=add_history,
+            dependencies=run_dependencies,
+            metadata=metadata,
         )
 
         # If no retries are set, use the team's default retries
@@ -1169,6 +1201,9 @@ class Team:
                         videos=videos,
                         files=files,
                         knowledge_filters=effective_filters,
+                        add_history_to_context=add_history,
+                        dependencies=run_dependencies,
+                        add_dependencies_to_context=add_dependencies,
                         **kwargs,
                     )
                 else:
@@ -1182,6 +1217,9 @@ class Team:
                         videos=videos,
                         files=files,
                         knowledge_filters=effective_filters,
+                        add_history_to_context=add_history,
+                        dependencies=run_dependencies,
+                        add_dependencies_to_context=add_dependencies,
                         **kwargs,
                     )
                 if len(run_messages.messages) == 0:
@@ -1284,9 +1322,6 @@ class Team:
         7. Log the team run
         """
         self.model = cast(Model, self.model)
-        # Resolving here for async requirement
-        if self.dependencies is not None:
-            await self._aresolve_run_dependencies()
 
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
@@ -1374,10 +1409,6 @@ class Team:
         4. Save session to storage
         5. Log Team Run
         """
-        # Resolving here for async requirement
-        if self.dependencies is not None:
-            await self._aresolve_run_dependencies()
-
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
         # Register run for cancellation tracking
@@ -1522,7 +1553,11 @@ class Team:
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         store_member_responses: Optional[bool] = None,
-        debug_mode: bool = False,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> TeamRunOutput: ...
 
@@ -1543,7 +1578,11 @@ class Team:
         files: Optional[Sequence[File]] = None,
         store_member_responses: Optional[bool] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
-        debug_mode: bool = False,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         yield_run_response: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]: ...
@@ -1564,7 +1603,11 @@ class Team:
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         store_member_responses: Optional[bool] = None,
-        debug_mode: bool = False,
+        add_history_to_context: Optional[bool] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         yield_run_response: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
@@ -1591,6 +1634,19 @@ class Team:
 
         # Update session state from DB
         session_state = self.update_session_state(session=team_session, session_state=session_state)
+
+        # Determine run dependencies (runtime override takes priority)
+        run_dependencies = dependencies if dependencies is not None else self.dependencies
+
+        # Resolve callable dependencies if present
+        if run_dependencies is not None:
+            self._resolve_run_dependencies(dependencies=run_dependencies)
+
+        # Determine runtime context parameters
+        add_dependencies = (
+            add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+        )
+        add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
         # Extract workflow context from kwargs if present
         workflow_context = kwargs.pop("workflow_context", None)
@@ -1627,12 +1683,19 @@ class Team:
 
         self.model = cast(Model, self.model)
 
+        if metadata is not None:
+            if self.metadata is not None:
+                merge_dictionaries(metadata, self.metadata)
+            else:
+                metadata = self.metadata
+
         # Create a new run_response for this attempt
         run_response = TeamRunOutput(
             run_id=run_id,
             session_id=session_id,
             team_id=self.id,
             team_name=self.name,
+            metadata=metadata,
         )
 
         run_response.model = self.model.id if self.model is not None else None
@@ -1657,6 +1720,10 @@ class Team:
             files=files,
             workflow_context=workflow_context,
             store_member_responses=store_member_responses,
+            debug_mode=debug_mode,
+            add_history_to_context=add_history_to_context,
+            dependencies=dependencies,
+            metadata=metadata,
         )
 
         # If no retries are set, use the team's default retries
@@ -1684,6 +1751,9 @@ class Team:
                         videos=videos,
                         files=files,
                         knowledge_filters=effective_filters,
+                        add_history_to_context=add_history,
+                        dependencies=run_dependencies,
+                        add_dependencies_to_context=add_dependencies,
                         **kwargs,
                     )
                 else:
@@ -1697,6 +1767,9 @@ class Team:
                         videos=videos,
                         files=files,
                         knowledge_filters=effective_filters,
+                        add_history_to_context=add_history,
+                        dependencies=run_dependencies,
+                        add_dependencies_to_context=add_dependencies,
                         **kwargs,
                     )
 
@@ -1710,6 +1783,7 @@ class Team:
                         stream_intermediate_steps=stream_intermediate_steps,
                         workflow_context=workflow_context,
                         yield_run_response=yield_run_response,
+                        run_dependencies=run_dependencies,
                     )
                     return response_iterator  # type: ignore
                 else:
@@ -2699,6 +2773,10 @@ class Team:
         files: Optional[Sequence[File]] = None,
         markdown: Optional[bool] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
         if not tags_to_include_in_markdown:
@@ -2735,6 +2813,10 @@ class Team:
                 markdown=markdown,
                 stream_intermediate_steps=stream_intermediate_steps,
                 knowledge_filters=knowledge_filters,
+                add_history_to_context=add_history_to_context,
+                dependencies=dependencies,
+                metadata=metadata,
+                debug_mode=debug_mode,
                 **kwargs,
             )
         else:
@@ -2755,6 +2837,10 @@ class Team:
                 files=files,
                 markdown=markdown,
                 knowledge_filters=knowledge_filters,
+                add_history_to_context=add_history_to_context,
+                dependencies=dependencies,
+                metadata=metadata,
+                debug_mode=debug_mode,
                 **kwargs,
             )
 
@@ -2778,6 +2864,10 @@ class Team:
         files: Optional[Sequence[File]] = None,
         markdown: Optional[bool] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        debug_mode: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
         if not tags_to_include_in_markdown:
@@ -2814,10 +2904,15 @@ class Team:
                 markdown=markdown,
                 stream_intermediate_steps=stream_intermediate_steps,
                 knowledge_filters=knowledge_filters,
+                add_history_to_context=add_history_to_context,
+                dependencies=dependencies,
+                metadata=metadata,
+                debug_mode=debug_mode,
                 **kwargs,
             )
         else:
             await aprint_response(
+                team=self,
                 input=input,
                 console=console,
                 show_message=show_message,
@@ -2833,6 +2928,10 @@ class Team:
                 files=files,
                 markdown=markdown,
                 knowledge_filters=knowledge_filters,
+                add_history_to_context=add_history_to_context,
+                dependencies=dependencies,
+                metadata=metadata,
+                debug_mode=debug_mode,
                 **kwargs,
             )
 
@@ -3496,38 +3595,38 @@ class Team:
                     run_response,
                 )
 
-    def _resolve_run_dependencies(self) -> None:
+    def _resolve_run_dependencies(self, dependencies: Optional[Dict[str, Any]] = None) -> None:
         from inspect import signature
 
         log_debug("Resolving dependencies")
-        if not isinstance(self.dependencies, dict):
+        if not isinstance(dependencies, dict):
             log_warning("Dependencies is not a dict")
             return
 
-        for key, value in self.dependencies.items():
+        for key, value in dependencies.items():
             if not callable(value):
-                self.dependencies[key] = value
+                dependencies[key] = value
                 continue
 
             try:
                 sig = signature(value)
                 resolved_value = value(agent=self) if "agent" in sig.parameters else value()
 
-                self.dependencies[key] = resolved_value
+                dependencies[key] = resolved_value
             except Exception as e:
                 log_warning(f"Failed to resolve dependencies for {key}: {e}")
 
-    async def _aresolve_run_dependencies(self) -> None:
+    async def _aresolve_run_dependencies(self, dependencies: Optional[Dict[str, Any]] = None) -> None:
         from inspect import iscoroutine, signature
 
         log_debug("Resolving context (async)")
-        if not isinstance(self.dependencies, dict):
+        if not isinstance(dependencies, dict):
             log_warning("Dependencies is not a dict")
             return
 
-        for key, value in self.dependencies.items():
+        for key, value in dependencies.items():
             if not callable(value):
-                self.dependencies[key] = value
+                dependencies[key] = value
                 continue
 
             try:
@@ -3537,7 +3636,7 @@ class Team:
                 if iscoroutine(resolved_value):
                     resolved_value = await resolved_value
 
-                self.dependencies[key] = resolved_value
+                dependencies[key] = resolved_value
             except Exception as e:
                 log_warning(f"Failed to resolve context for '{key}': {e}")
 
@@ -3559,6 +3658,10 @@ class Team:
         workflow_context: Optional[Dict] = None,
         store_member_responses: bool = False,
         debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         # Prepare tools
         _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
@@ -3615,6 +3718,9 @@ class Team:
                 videos=videos,
                 files=files,
                 user_id=user_id,
+                dependencies=dependencies,
+                add_dependencies_to_context=add_dependencies_to_context,
+                metadata=metadata,
             )
             forward_task_func: Function = self._get_forward_task_function(
                 input=user_message,
@@ -3634,6 +3740,8 @@ class Team:
                 workflow_context=workflow_context,
                 store_member_responses=store_member_responses,
                 debug_mode=debug_mode,
+                add_history_to_context=add_history_to_context,
+                dependencies=dependencies,
             )
             _tools.append(forward_task_func)
             if self.get_member_information_tool:
@@ -3658,6 +3766,8 @@ class Team:
                     workflow_context=workflow_context,
                     store_member_responses=store_member_responses,
                     debug_mode=debug_mode,
+                    add_history_to_context=add_history_to_context,
+                    dependencies=dependencies,
                 )
             )
             if self.get_member_information_tool:
@@ -3680,6 +3790,8 @@ class Team:
                 workflow_context=workflow_context,
                 store_member_responses=store_member_responses,
                 debug_mode=debug_mode,
+                add_history_to_context=add_history_to_context,
+                dependencies=dependencies,
             )
             _tools.append(run_member_agents_func)
 
@@ -4081,6 +4193,10 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        add_history_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> RunMessages:
         """This function returns a RunMessages object with the following attributes:
@@ -4135,7 +4251,7 @@ class Team:
                     run_response.additional_input.extend(messages_to_add_to_run_response)
 
         # 3. Add history to run_messages
-        if self.add_history_to_context:
+        if add_history_to_context:
             from copy import deepcopy
 
             history = session.get_messages_from_last_n_runs(
@@ -4170,6 +4286,9 @@ class Team:
             videos=videos,
             files=files,
             knowledge_filters=knowledge_filters,
+            dependencies=dependencies,
+            add_dependencies_to_context=add_dependencies_to_context,
+            metadata=metadata,
             **kwargs,
         )
         # Add user message to run_messages
@@ -4191,6 +4310,9 @@ class Team:
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        add_dependencies_to_context: Optional[bool] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
         # Get references from the knowledge base to use in the user message
@@ -4287,6 +4409,8 @@ class Team:
                         session_state=session.session_data.get("session_state")
                         if session.session_data is not None
                         else None,
+                        dependencies=dependencies,
+                        metadata=metadata,
                     )
 
                 # Convert to string for concatenation operations
@@ -4304,9 +4428,9 @@ class Team:
                     user_msg_content_str += self._convert_documents_to_string(references.references) + "\n"
                     user_msg_content_str += "</references>"
                 # 4.2 Add context to user message
-                if self.add_dependencies_to_context and self.dependencies is not None:
+                if add_dependencies_to_context and dependencies is not None:
                     user_msg_content_str += "\n\n<additional context>\n"
-                    user_msg_content_str += self._convert_dependencies_to_string(self.dependencies) + "\n"
+                    user_msg_content_str += self._convert_dependencies_to_string(dependencies) + "\n"
                     user_msg_content_str += "</additional context>"
 
                 # Use the string version for the final content
@@ -4382,7 +4506,12 @@ class Team:
         return messages
 
     def _format_message_with_state_variables(
-        self, message: Any, user_id: Optional[str] = None, session_state: Optional[Dict[str, Any]] = None
+        self,
+        message: Any,
+        user_id: Optional[str] = None,
+        session_state: Optional[Dict[str, Any]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Any:
         """Format a message with the session state variables."""
         import re
@@ -4390,11 +4519,11 @@ class Team:
 
         if not isinstance(message, str):
             return message
-
+        # Should already be resolved and passed from run() method
         format_variables = ChainMap(
             session_state or {},
-            self.dependencies or {},
-            self.metadata or {},
+            dependencies or {},
+            metadata or {},
             {"user_id": user_id} if user_id is not None else {},
         )
         converted_msg = message
@@ -4717,6 +4846,7 @@ class Team:
         workflow_context: Optional[Dict] = None,
         store_member_responses: bool = False,
         debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
     ) -> Function:
         if not images:
             images = []
@@ -4779,6 +4909,7 @@ class Team:
                         stream_intermediate_steps=stream_intermediate_steps,
                         workflow_context=workflow_context,
                         debug_mode=debug_mode,
+                        add_history_to_context=add_history_to_context,
                         yield_run_response=True,
                     )
                     member_agent_run_response = None
@@ -4806,6 +4937,7 @@ class Team:
                         stream=False,
                         workflow_context=workflow_context,
                         debug_mode=debug_mode,
+                        add_history_to_context=add_history_to_context,
                     )
 
                     check_if_run_cancelled(member_agent_run_response)  # type: ignore
@@ -5114,6 +5246,8 @@ class Team:
         workflow_context: Optional[Dict] = None,
         store_member_responses: bool = False,
         debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> Function:
         if not images:
             images = []
@@ -5188,6 +5322,7 @@ class Team:
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
                     debug_mode=debug_mode,
+                    add_history_to_context=add_history_to_context,
                     workflow_context=workflow_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
@@ -5218,6 +5353,7 @@ class Team:
                     files=files,
                     stream=False,
                     debug_mode=debug_mode,
+                    add_history_to_context=add_history_to_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
@@ -5350,6 +5486,7 @@ class Team:
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
                     debug_mode=debug_mode,
+                    add_history_to_context=add_history_to_context,
                     workflow_context=workflow_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
@@ -5378,6 +5515,7 @@ class Team:
                     files=files,
                     stream=False,
                     debug_mode=debug_mode,
+                    add_history_to_context=add_history_to_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
@@ -5467,6 +5605,8 @@ class Team:
         workflow_context: Optional[Dict] = None,
         store_member_responses: bool = False,
         debug_mode: Optional[bool] = None,
+        add_history_to_context: Optional[bool] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
     ) -> Function:
         if not images:
             images = []
@@ -5514,7 +5654,10 @@ class Team:
             member_agent_task = input.get_content_string() if input is not None else ""
 
             # Add history for the member if enabled
-            if member_agent.add_history_to_context:
+            should_add_member_history = (
+                add_history_to_context if add_history_to_context is not None else member_agent.add_history_to_context
+            )
+            if should_add_member_history:
                 history = self._get_history_for_member_agent(session, member_agent)
                 if history:
                     history.append(Message(role="user", content=member_agent_task))
@@ -5543,6 +5686,7 @@ class Team:
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
                     debug_mode=debug_mode,
+                    add_history_to_context=add_history_to_context,
                     workflow_context=workflow_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
@@ -5571,6 +5715,7 @@ class Team:
                     files=files,
                     stream=False,
                     debug_mode=debug_mode,
+                    add_history_to_context=add_history_to_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
@@ -5669,7 +5814,6 @@ class Team:
             # If found in subteam, include the path in the task description
             member_agent_task = input.get_content_string() if input is not None else ""
 
-            # Add history for the member if enabled
             if member_agent.add_history_to_context:
                 history = self._get_history_for_member_agent(session, member_agent)
                 if history:
@@ -5701,6 +5845,7 @@ class Team:
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_context=workflow_context,
                     debug_mode=debug_mode,
+                    add_history_to_context=add_history_to_context,
                     knowledge_filters=knowledge_filters
                     if not member_agent.knowledge_filters and member_agent.knowledge
                     else None,
@@ -5728,6 +5873,7 @@ class Team:
                     files=files,
                     stream=False,
                     debug_mode=debug_mode,
+                    add_history_to_context=add_history_to_context,
                     knowledge_filters=knowledge_filters
                     if (member_agent.knowledge_filters and member_agent.knowledge)
                     else None,

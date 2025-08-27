@@ -73,6 +73,13 @@ def test_basic_intermediate_steps_events():
     assert len(events[RunEvent.run_content]) > 1
     assert len(events[RunEvent.run_completed]) == 1
 
+    completed_event = events[RunEvent.run_completed][0]
+    assert hasattr(completed_event, "metadata")
+    assert hasattr(completed_event, "metrics")
+
+    assert completed_event.metrics is not None
+    assert completed_event.metrics.total_tokens > 0
+
 
 def test_basic_intermediate_steps_events_persisted(shared_db):
     """Test that the agent streams events."""
@@ -99,6 +106,13 @@ def test_basic_intermediate_steps_events_persisted(shared_db):
     assert len(run_response_from_storage.events) == 2, "We should only have the run started and run completed events"
     assert run_response_from_storage.events[0].event == RunEvent.run_started
     assert run_response_from_storage.events[1].event == RunEvent.run_completed
+
+    persisted_completed_event = run_response_from_storage.events[1]
+    assert hasattr(persisted_completed_event, "metadata")
+    assert hasattr(persisted_completed_event, "metrics")
+
+    assert persisted_completed_event.metrics is not None
+    assert persisted_completed_event.metrics.total_tokens > 0
 
 
 def test_intermediate_steps_with_tools():
@@ -133,6 +147,10 @@ def test_intermediate_steps_with_tools():
     assert len(events[RunEvent.tool_call_completed]) == 1
     assert events[RunEvent.tool_call_completed][0].content is not None  # type: ignore
     assert events[RunEvent.tool_call_completed][0].tool.result is not None  # type: ignore
+
+    completed_event = events[RunEvent.run_completed][0]
+    assert completed_event.metrics is not None
+    assert completed_event.metrics.total_tokens > 0
 
 
 def test_intermediate_steps_with_tools_events_persisted(shared_db):
@@ -388,6 +406,10 @@ def test_intermediate_steps_with_structured_output(shared_db):
     assert events[RunEvent.run_completed][0].content.name == "Elon Musk"  # type: ignore
     assert len(events[RunEvent.run_completed][0].content.description) > 1  # type: ignore
 
+    completed_event_structured = events[RunEvent.run_completed][0]
+    assert completed_event_structured.metrics is not None
+    assert completed_event_structured.metrics.total_tokens > 0
+
     assert run_response.content is not None
     assert run_response.content_type == "Person"
     assert run_response.content["name"] == "Elon Musk"
@@ -447,3 +469,70 @@ def test_intermediate_steps_with_parser_model(shared_db):
     assert run_response.content is not None
     assert run_response.content_type == "Person"
     assert run_response.content["name"] == "Elon Musk"
+
+
+def test_run_completed_event_metrics_validation(shared_db):
+    """Test that RunCompletedEvent properly includes populated metrics on completion."""
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        db=shared_db,
+        store_events=True,
+        telemetry=False,
+    )
+
+    response_generator = agent.run("Get the current stock price of AAPL", stream=True, stream_intermediate_steps=True)
+
+    events = {}
+    for run_response_delta in response_generator:
+        if run_response_delta.event not in events:
+            events[run_response_delta.event] = []
+        events[run_response_delta.event].append(run_response_delta)
+
+    assert RunEvent.run_completed in events
+    completed_event = events[RunEvent.run_completed][0]
+
+    assert completed_event.metadata is not None or completed_event.metadata is None  # Can be None or dict
+    assert completed_event.metrics is not None, "Metrics should be populated on completion"
+
+    metrics = completed_event.metrics
+    assert metrics.total_tokens > 0, "Total tokens should be greater than 0"
+    assert metrics.input_tokens >= 0, "Input tokens should be non-negative"
+    assert metrics.output_tokens >= 0, "Output tokens should be non-negative"
+    assert metrics.total_tokens == metrics.input_tokens + metrics.output_tokens, "Total should equal input + output"
+
+    assert metrics.duration is not None, "Duration should be populated on completion"
+    assert metrics.duration > 0, "Duration should be greater than 0"
+
+    stored_run = shared_db.get_sessions()[0].runs[0]
+    assert stored_run.metrics is not None
+    assert stored_run.metrics.total_tokens > 0
+
+
+def test_create_run_completed_event_function():
+    """Test that create_run_completed_event function properly transfers metadata and metrics."""
+    from agno.models.metrics import Metrics
+    from agno.run.agent import RunOutput
+    from agno.utils.events import create_run_completed_event
+
+    mock_metrics = Metrics(input_tokens=100, output_tokens=50, total_tokens=150, duration=2.5)
+    mock_metadata = {"test_key": "test_value", "run_type": "validation"}
+
+    mock_run_output = RunOutput(
+        session_id="test_session",
+        agent_id="test_agent",
+        agent_name="Test Agent",
+        run_id="test_run",
+        content="Test content",
+        metrics=mock_metrics,
+        metadata=mock_metadata,
+    )
+
+    completed_event = create_run_completed_event(mock_run_output)
+
+    assert completed_event.metadata == mock_metadata
+    assert completed_event.metrics == mock_metrics
+    assert completed_event.metrics.total_tokens == 150
+    assert completed_event.metrics.duration == 2.5
+    assert completed_event.content == "Test content"
+    assert completed_event.session_id == "test_session"
+    assert completed_event.agent_id == "test_agent"
