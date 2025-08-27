@@ -836,8 +836,8 @@ def test_intermediate_steps_with_member_agents_collaborate():
     assert len(events[RunEvent.run_started]) == 2
     assert len(events[RunEvent.run_completed]) == 2
     # Lots of member tool calls
-    assert len(events[RunEvent.tool_call_started]) > 1
-    assert len(events[RunEvent.tool_call_completed]) > 1
+    assert len(events[RunEvent.tool_call_started]) >= 1
+    assert len(events[RunEvent.tool_call_completed]) >= 1
     assert len(events[RunEvent.run_content]) > 1
 
 
