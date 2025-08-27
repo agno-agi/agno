@@ -641,7 +641,7 @@ async def test_async_upsert(
     async_vector_db._async_collection = mock_collection
 
     # Perform the upsert
-    await async_vector_db.async_upsert(documents=[doc], content_hash="test_hash")
+    await async_vector_db.async_upsert(content_hash="test_hash", documents=[doc])
 
     # Verify update_one was called
     mock_collection.update_one.assert_called_once()
