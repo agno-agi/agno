@@ -1,6 +1,6 @@
 import uuid
 from hashlib import md5
-from typing import Any, Dict, Generator, List
+from typing import Any, Dict, Generator, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -141,10 +141,10 @@ def vector_db(mock_mongodb_client: MagicMock, mock_embedder: MagicMock) -> Mongo
     # Setup specific mocks for this instance
     db._db = mock_mongodb_client["test_vectordb"]
     db._collection = db._db[collection_name]
-    
+
     # Mock the search index existence check to avoid tuple unpacking issues
     db._search_index_exists = MagicMock(return_value=True)
-    
+
     # Mock _get_collection to ensure it returns the mocked collection
     db._get_collection = MagicMock(return_value=db._collection)
 
@@ -260,7 +260,7 @@ def test_document_existence(vector_db: MongoDb, mock_mongodb_client: MagicMock) 
     docs = create_test_documents(1)
 
     # Setup mock responses for find_one
-    def mock_find_one(query: Dict[str, Any]) -> Dict[str, Any]:
+    def mock_find_one(query: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         # For doc_exists
         if "_id" in query and query["_id"] == md5(docs[0].content.encode("utf-8")).hexdigest():
             return {"_id": "doc_0", "content": "This is test document 0", "name": "test_doc_0"}
@@ -619,7 +619,7 @@ async def test_async_upsert(
 
     # Ensure the document has an embedding
     doc.embedding = mock_embedder.get_embedding(doc.content)
-    name_suffix = ''.join(random.choices(string.ascii_letters + string.digits, k=4))
+    name_suffix = "".join(random.choices(string.ascii_letters + string.digits, k=4))
 
     # Mock the prepare_doc method to avoid embedding issues during test
     original_prepare_doc = async_vector_db.prepare_doc
