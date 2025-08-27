@@ -506,6 +506,19 @@ def get_base_router(
             return run_response.to_dict()
 
     @router.post(
+        "/agents/{agent_id}/runs/{run_id}/cancel",
+    )
+    async def cancel_agent_run(
+        agent_id: str,
+        run_id: str,
+    ):
+        agent = get_agent_by_id(agent_id, os.agents)
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        return JSONResponse(content={}, status_code=200)
+
+    @router.post(
         "/agents/{agent_id}/runs/{run_id}/continue",
     )
     async def continue_agent_run(
@@ -814,6 +827,20 @@ def get_base_router(
                 stream=False,
             )
             return run_response.to_dict()
+
+    @router.post(
+        "/teams/{team_id}/runs/{run_id}/cancel",
+    )
+    async def cancel_team_run(
+        team_id: str,
+        run_id: str,
+    ):
+        team = get_team_by_id(team_id, os.teams)
+        if team is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        team.cancel_run(run_id=run_id)
+        return JSONResponse(content={}, status_code=200)
 
     @router.delete(
         "/teams/{team_id}/sessions/{session_id}",

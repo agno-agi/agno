@@ -1,5 +1,4 @@
-from agno.agent import Agent
-from agno.models.message import Message
+from agno.agent import Agent, Message
 
 Agent().print_response(
     input=[
@@ -20,5 +19,6 @@ Agent().print_response(
             content="Also, please summarize the key findings in bullet points for my slides.",
         ),
     ],
+    stream=True,
     markdown=True,
 )

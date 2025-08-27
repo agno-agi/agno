@@ -42,6 +42,14 @@ from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
 from agno.run.base import RunStatus
+from agno.run.cancel import (
+    cancel_run as cancel_run_global,
+)
+from agno.run.cancel import (
+    cleanup_run,
+    raise_if_cancelled,
+    register_run,
+)
 from agno.run.messages import RunMessages
 from agno.run.team import TeamRunEvent, TeamRunOutput, TeamRunOutputEvent
 from agno.session import SessionSummaryManager, TeamSession
@@ -93,7 +101,6 @@ from agno.utils.response import (
     async_generator_wrapper,
     check_if_run_cancelled,
     escape_markdown_tags,
-    format_tool_calls,
     generator_wrapper,
 )
 from agno.utils.safe_formatter import SafeFormatter
@@ -732,6 +739,17 @@ class Team:
     def set_tools(self, tools: List[Union[Toolkit, Callable, Function, Dict]]):
         self.tools = tools
 
+    def cancel_run(self, run_id: str) -> bool:
+        """Cancel a running team execution.
+
+        Args:
+            run_id (str): The run_id to cancel.
+
+        Returns:
+            bool: True if the run was found and marked for cancellation, False otherwise.
+        """
+        return cancel_run_global(run_id)
+
     def _run(
         self,
         run_response: TeamRunOutput,
@@ -752,8 +770,14 @@ class Team:
         """
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
+        # Register run for cancellation tracking
+        register_run(run_response.run_id)  # type: ignore
+
         # 1. Reason about the task(s) if reasoning is enabled
         self._handle_reasoning(run_response=run_response, run_messages=run_messages)
+
+        # Check for cancellation before model call
+        raise_if_cancelled(run_response.run_id)  # type: ignore
 
         # 2. Get the model response for the team leader
         self.model = cast(Model, self.model)
@@ -765,6 +789,9 @@ class Team:
             tool_choice=self.tool_choice,
             tool_call_limit=self.tool_call_limit,
         )
+
+        # Check for cancellation after model call
+        raise_if_cancelled(run_response.run_id)  # type: ignore
 
         # If an output model is provided, generate output using the output model
         self._parse_response_with_output_model(model_response, run_messages)
@@ -803,6 +830,9 @@ class Team:
 
         log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
+        # Always clean up the run tracking
+        cleanup_run(run_response.run_id)  # type: ignore
+
         return run_response
 
     def _run_stream(
@@ -828,96 +858,131 @@ class Team:
 
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
-        # Start the Run by yielding a RunStarted event
-        if stream_intermediate_steps:
-            yield self._handle_event(create_team_run_started_event(run_response), run_response, workflow_context)
+        # Register run for cancellation tracking
+        register_run(run_response.run_id)  # type: ignore
 
-        # 1. Reason about the task(s) if reasoning is enabled
-        yield from self._handle_reasoning_stream(
-            run_response=run_response,
-            run_messages=run_messages,
-        )
+        try:
+            # Start the Run by yielding a RunStarted event
+            if stream_intermediate_steps:
+                yield self._handle_event(create_team_run_started_event(run_response), run_response, workflow_context)
 
-        # 2. Get a response from the model
-        if self.output_model is None:
-            yield from self._handle_model_response_stream(
-                session=session,
+            # 1. Reason about the task(s) if reasoning is enabled
+            yield from self._handle_reasoning_stream(
                 run_response=run_response,
                 run_messages=run_messages,
-                response_format=response_format,
-                stream_intermediate_steps=stream_intermediate_steps,
-                workflow_context=workflow_context,
             )
-        else:
-            for event in self._handle_model_response_stream(
-                session=session,
-                run_response=run_response,
-                run_messages=run_messages,
-                response_format=response_format,
-                stream_intermediate_steps=stream_intermediate_steps,
-                workflow_context=workflow_context,
-            ):
-                from agno.run.team import IntermediateRunContentEvent, RunContentEvent
 
-                if isinstance(event, RunContentEvent):
-                    if stream_intermediate_steps:
-                        yield IntermediateRunContentEvent(
-                            content=event.content,
-                            content_type=event.content_type,
-                        )
-                else:
+            # Check for cancellation before model processing
+            raise_if_cancelled(run_response.run_id)  # type: ignore
+
+            # 2. Get a response from the model
+            if self.output_model is None:
+                for event in self._handle_model_response_stream(
+                    session=session,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    response_format=response_format,
+                    stream_intermediate_steps=stream_intermediate_steps,
+                    workflow_context=workflow_context,
+                ):
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    yield event
+            else:
+                for event in self._handle_model_response_stream(
+                    session=session,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    response_format=response_format,
+                    stream_intermediate_steps=stream_intermediate_steps,
+                    workflow_context=workflow_context,
+                ):
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    from agno.run.team import IntermediateRunContentEvent, RunContentEvent
+
+                    if isinstance(event, RunContentEvent):
+                        if stream_intermediate_steps:
+                            yield IntermediateRunContentEvent(
+                                content=event.content,
+                                content_type=event.content_type,
+                            )
+                    else:
+                        yield event
+
+                for event in self._generate_response_with_output_model_stream(
+                    session=session,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    stream_intermediate_steps=stream_intermediate_steps,
+                    workflow_context=workflow_context,
+                ):
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
 
-            yield from self._generate_response_with_output_model_stream(
-                session=session,
-                run_response=run_response,
-                run_messages=run_messages,
-                stream_intermediate_steps=stream_intermediate_steps,
-                workflow_context=workflow_context,
+            # Check for cancellation after model processing
+            raise_if_cancelled(run_response.run_id)  # type: ignore
+
+            # If a parser model is provided, structure the response separately
+            yield from self._parse_response_with_parser_model_stream(
+                session=session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
             )
 
-        # If a parser model is provided, structure the response separately
-        yield from self._parse_response_with_parser_model_stream(
-            session=session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
-        )
+            # 4. Add the run to memory
+            session.upsert_run(run_response=run_response)
 
-        # 4. Add the run to memory
-        session.upsert_run(run_response=run_response)
+            # 5. Update Team Memory
+            yield from self._make_memories_and_summaries(
+                run_response=run_response,
+                run_messages=run_messages,
+                session=session,
+                user_id=user_id,
+            )
 
-        # 5. Update Team Memory
-        yield from self._make_memories_and_summaries(
-            run_response=run_response,
-            run_messages=run_messages,
-            session=session,
-            user_id=user_id,
-        )
+            # 5. Calculate session metrics
+            self._update_session_metrics(session=session)
 
-        # 5. Calculate session metrics
-        self._update_session_metrics(session=session)
+            run_response.status = RunStatus.completed
 
-        run_response.status = RunStatus.completed
+            completed_event = self._handle_event(
+                create_team_run_completed_event(
+                    from_run_response=run_response,
+                ),
+                run_response,
+                workflow_context,
+            )
 
-        completed_event = self._handle_event(
-            create_team_run_completed_event(
-                from_run_response=run_response,
-            ),
-            run_response,
-            workflow_context,
-        )
+            # 6. Save session to storage
+            self.save_session(session=session)
 
-        # 6. Save session to storage
-        self.save_session(session=session)
+            if stream_intermediate_steps:
+                yield completed_event
 
-        if stream_intermediate_steps:
-            yield completed_event
+            if yield_run_response:
+                yield run_response
 
-        if yield_run_response:
-            yield run_response
+            # Log Team Telemetry
+            self._log_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
-        # Log Team Telemetry
-        self._log_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
+            log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
-        log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
+        except RunCancelledException as e:
+            # Handle run cancellation during streaming
+            log_info(f"Team run {run_response.run_id} was cancelled during streaming")
+            run_response.status = RunStatus.cancelled
+            run_response.content = str(e)
+
+            # Yield the cancellation event
+            yield self._handle_event(
+                create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+                run_response,
+                workflow_context,
+            )
+
+            # Add the RunOutput to Team Session even when cancelled
+            session.upsert_run(run_response=run_response)
+            self.save_session(session=session)
+        finally:
+            # Always clean up the run tracking
+            cleanup_run(run_response.run_id)  # type: ignore
 
     @overload
     def run(
@@ -1191,13 +1256,26 @@ class Team:
                     else:
                         delay = self.delay_between_retries
                     time.sleep(delay)
-            except (KeyboardInterrupt, RunCancelledException):
+            except RunCancelledException as e:
+                # Handle run cancellation
+                log_info(f"Team run {run_response.run_id} was cancelled")
+                run_response.content = str(e)
+                run_response.status = RunStatus.cancelled
+
+                # Add the RunOutput to Team Session even when cancelled
+                team_session.upsert_run(run_response=run_response)
+                self.save_session(session=team_session)
+
+                return run_response
+            except KeyboardInterrupt:
                 run_response.content = "Operation cancelled by user"
                 run_response.status = RunStatus.cancelled
 
                 if stream:
                     return generator_wrapper(  # type: ignore
-                        create_team_run_cancelled_event(run_response, "Operation cancelled by user")
+                        create_team_run_cancelled_event(
+                            from_run_response=run_response, reason="Operation cancelled by user"
+                        )
                     )
                 else:
                     return run_response
@@ -1245,8 +1323,14 @@ class Team:
 
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
+        # Register run for cancellation tracking
+        register_run(run_response.run_id)  # type: ignore
+
         # 1. Reason about the task(s) if reasoning is enabled
         await self._ahandle_reasoning(run_response=run_response, run_messages=run_messages)
+
+        # Check for cancellation before model call
+        raise_if_cancelled(run_response.run_id)  # type: ignore
 
         # 2. Get the model response for the team leader
         model_response = await self.model.aresponse(
@@ -1257,6 +1341,9 @@ class Team:
             tool_call_limit=self.tool_call_limit,
             response_format=response_format,
         )  # type: ignore
+
+        # Check for cancellation after model call
+        raise_if_cancelled(run_response.run_id)  # type: ignore
 
         # If an output model is provided, generate output using the output model
         await self._agenerate_response_with_output_model(model_response=model_response, run_messages=run_messages)
@@ -1295,6 +1382,9 @@ class Team:
 
         log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
+        # Always clean up the run tracking
+        cleanup_run(run_response.run_id)  # type: ignore
+
         return run_response
 
     async def _arun_stream(
@@ -1324,96 +1414,130 @@ class Team:
 
         log_debug(f"Team Run Start: {run_response.run_id}", center=True)
 
-        # Start the Run by yielding a RunStarted event
-        if stream_intermediate_steps:
-            yield self._handle_event(
-                create_team_run_started_event(from_run_response=run_response), run_response, workflow_context
-            )
+        # Register run for cancellation tracking
+        register_run(run_response.run_id)  # type: ignore
 
-        # 1. Reason about the task(s) if reasoning is enabled
-        async for item in self._ahandle_reasoning_stream(run_response=run_response, run_messages=run_messages):
-            yield item
+        try:
+            # Start the Run by yielding a RunStarted event
+            if stream_intermediate_steps:
+                yield self._handle_event(
+                    create_team_run_started_event(from_run_response=run_response), run_response, workflow_context
+                )
 
-        # 2. Get a response from the model
-        if self.output_model is None:
-            async for event in self._ahandle_model_response_stream(
-                session=session,
-                run_response=run_response,
-                run_messages=run_messages,
-                response_format=response_format,
-                stream_intermediate_steps=stream_intermediate_steps,
-                workflow_context=workflow_context,
-            ):
-                yield event
-        else:
-            async for event in self._ahandle_model_response_stream(
-                session=session,
-                run_response=run_response,
-                run_messages=run_messages,
-                response_format=response_format,
-                stream_intermediate_steps=stream_intermediate_steps,
-                workflow_context=workflow_context,
-            ):
-                from agno.run.team import IntermediateRunContentEvent, RunContentEvent
+            # 1. Reason about the task(s) if reasoning is enabled
+            async for item in self._ahandle_reasoning_stream(run_response=run_response, run_messages=run_messages):
+                raise_if_cancelled(run_response.run_id)  # type: ignore
+                yield item
 
-                if isinstance(event, RunContentEvent):
-                    if stream_intermediate_steps:
-                        yield IntermediateRunContentEvent(
-                            content=event.content,
-                            content_type=event.content_type,
-                        )
-                else:
+            # Check for cancellation before model processing
+            raise_if_cancelled(run_response.run_id)  # type: ignore
+
+            # 2. Get a response from the model
+            if self.output_model is None:
+                async for event in self._ahandle_model_response_stream(
+                    session=session,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    response_format=response_format,
+                    stream_intermediate_steps=stream_intermediate_steps,
+                    workflow_context=workflow_context,
+                ):
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    yield event
+            else:
+                async for event in self._ahandle_model_response_stream(
+                    session=session,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    response_format=response_format,
+                    stream_intermediate_steps=stream_intermediate_steps,
+                    workflow_context=workflow_context,
+                ):
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
+                    from agno.run.team import IntermediateRunContentEvent, RunContentEvent
+
+                    if isinstance(event, RunContentEvent):
+                        if stream_intermediate_steps:
+                            yield IntermediateRunContentEvent(
+                                content=event.content,
+                                content_type=event.content_type,
+                            )
+                    else:
+                        yield event
+
+                async for event in self._agenerate_response_with_output_model_stream(
+                    session=session,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    stream_intermediate_steps=stream_intermediate_steps,
+                    workflow_context=workflow_context,
+                ):
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
 
-            async for event in self._agenerate_response_with_output_model_stream(
-                session=session,
-                run_response=run_response,
-                run_messages=run_messages,
-                stream_intermediate_steps=stream_intermediate_steps,
-                workflow_context=workflow_context,
+            # Check for cancellation after model processing
+            raise_if_cancelled(run_response.run_id)  # type: ignore
+
+            # If a parser model is provided, structure the response separately
+            async for event in self._aparse_response_with_parser_model_stream(
+                session=session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
             ):
                 yield event
 
-        # If a parser model is provided, structure the response separately
-        async for event in self._aparse_response_with_parser_model_stream(
-            session=session, run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
-        ):
-            yield event
+            # 3. Add the run to memory
+            session.upsert_run(run_response=run_response)
 
-        # 3. Add the run to memory
-        session.upsert_run(run_response=run_response)
+            # 4. Update Team Memory
+            async for event in self._amake_memories_and_summaries(
+                run_response=run_response,
+                session=session,
+                run_messages=run_messages,
+                user_id=user_id,
+            ):
+                yield event
 
-        # 4. Update Team Memory
-        async for event in self._amake_memories_and_summaries(
-            run_response=run_response,
-            session=session,
-            run_messages=run_messages,
-            user_id=user_id,
-        ):
-            yield event
+            # 5. Calculate session metrics
+            self._update_session_metrics(session=session)
 
-        # 5. Calculate session metrics
-        self._update_session_metrics(session=session)
+            run_response.status = RunStatus.completed
 
-        run_response.status = RunStatus.completed
+            completed_event = self._handle_event(
+                create_team_run_completed_event(from_run_response=run_response), run_response, workflow_context
+            )
 
-        completed_event = self._handle_event(
-            create_team_run_completed_event(from_run_response=run_response), run_response, workflow_context
-        )
+            # 6. Save session to storage
+            self.save_session(session=session)
 
-        # 6. Save session to storage
-        self.save_session(session=session)
+            if stream_intermediate_steps:
+                yield completed_event
 
-        if stream_intermediate_steps:
-            yield completed_event
+            if yield_run_response:
+                yield run_response
 
-        if yield_run_response:
-            yield run_response
+            # 7. Log Team Telemetry
+            await self._alog_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
-        # 7. Log Team Telemetry
-        await self._alog_team_telemetry(session_id=session.session_id, run_id=run_response.run_id)
+            log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
 
-        log_debug(f"Team Run End: {run_response.run_id}", center=True, symbol="*")
+        except RunCancelledException as e:
+            # Handle run cancellation during async streaming
+            log_info(f"Team run {run_response.run_id} was cancelled during async streaming")
+            run_response.status = RunStatus.cancelled
+            run_response.content = str(e)
+
+            # Yield the cancellation event
+            yield self._handle_event(
+                create_team_run_cancelled_event(from_run_response=run_response, reason=str(e)),
+                run_response,
+                workflow_context,
+            )
+
+            # Add the RunOutput to Team Session even when cancelled
+            session.upsert_run(run_response=run_response)
+            self.save_session(session=session)
+        finally:
+            # Always clean up the run tracking
+            cleanup_run(run_response.run_id)  # type: ignore
 
     @overload
     async def arun(
@@ -1679,13 +1803,26 @@ class Team:
                     import time
 
                     time.sleep(delay)
-            except (KeyboardInterrupt, RunCancelledException):
+            except RunCancelledException as e:
+                # Handle run cancellation
+                log_info(f"Team run {run_response.run_id} was cancelled")
+                run_response.content = str(e)
                 run_response.status = RunStatus.cancelled
+
+                # Add the RunOutput to Team Session even when cancelled
+                team_session.upsert_run(run_response=run_response)
+                self.save_session(session=team_session)
+
+                return run_response
+            except KeyboardInterrupt:
                 run_response.content = "Operation cancelled by user"
+                run_response.status = RunStatus.cancelled
 
                 if stream:
                     return async_generator_wrapper(
-                        create_team_run_cancelled_event(run_response, "Operation cancelled by user")
+                        create_team_run_cancelled_event(
+                            from_run_response=run_response, reason="Operation cancelled by user"
+                        )
                     )
                 else:
                     return run_response
@@ -1738,8 +1875,6 @@ class Team:
                 run_response.tools = model_response.tool_executions
             else:
                 run_response.tools.extend(model_response.tool_executions)
-
-        run_response.formatted_tool_calls = format_tool_calls(run_response.tools or [])
 
         # Update the run_response audio with the model response audio
         if model_response.audio is not None:
@@ -2056,8 +2191,6 @@ class Team:
                             ),
                             run_response,
                         )
-                # Format tool calls whenever new ones are added during streaming
-                run_response.formatted_tool_calls = format_tool_calls(run_response.tools or [])
 
             # If the model response is a tool_call_completed, update the existing tool call in the run_response
             elif model_response_event.event == ModelResponseEvent.tool_call_completed.value:

@@ -16,7 +16,6 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
 db = PostgresDb(db_url=db_url)
 
-
 # You can also override the entire `system_message` for the memory manager
 memory_manager = MemoryManager(
     model=OpenAIChat(id="gpt-4o"),
@@ -33,7 +32,6 @@ agent = Agent(
     db=db,
     memory_manager=memory_manager,
     enable_user_memories=True,
-    enable_session_summaries=True,
     user_id=john_doe_id,
 )
 
@@ -44,7 +42,7 @@ agent.print_response(
 agent.print_response("I dont like to swim", stream=True)
 
 
-memories = memory_manager.get_user_memories(user_id=john_doe_id)
+memories = agent.get_user_memories(user_id=john_doe_id)
 
 print("John Doe's memories:")
 pprint(memories)

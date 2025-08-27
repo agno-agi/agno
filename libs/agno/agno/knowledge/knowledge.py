@@ -453,6 +453,7 @@ class Knowledge:
         # Determine file type from URL
         url_path = Path(parsed_url.path)  # type: ignore
         file_extension = url_path.suffix.lower()
+        read_documents = []
         try:
             if content.url.endswith("llms-full.txt") or content.url.endswith("llms.txt"):  # type: ignore
                 log_info("Detected llms, using url reader")
@@ -473,18 +474,18 @@ class Knowledge:
                     reader = content.reader
                 else:
                     reader = self._select_url_file_reader(file_extension)
-                    if reader is not None:
-                        log_info(f"Selected reader: {reader.__class__.__name__}")
-                        # TODO: We will refactor this to eventually pass authorization to all readers
-                        import inspect
+                if reader is not None:
+                    log_info(f"Selected reader: {reader.__class__.__name__}")
+                    # TODO: We will refactor this to eventually pass authorization to all readers
+                    import inspect
 
-                        read_signature = inspect.signature(reader.read)
-                        if "password" in read_signature.parameters and content.auth and content.auth.password:
-                            read_documents = reader.read(content.url, name=content.name, password=content.auth.password)
-                        else:
-                            read_documents = reader.read(content.url, name=content.name)
+                    read_signature = inspect.signature(reader.read)
+                    if "password" in read_signature.parameters and content.auth and content.auth.password:
+                        read_documents = reader.read(content.url, name=content.name, password=content.auth.password)
                     else:
-                        log_info(f"No reader found for file extension: {file_extension}")
+                        read_documents = reader.read(content.url, name=content.name)
+                else:
+                    log_info(f"No reader found for file extension: {file_extension}")
             else:
                 log_info(f"No file extension found for URL: {content.url}, determining website type")
                 if content.reader:
