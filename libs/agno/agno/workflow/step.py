@@ -246,7 +246,7 @@ class Step:
 
                         kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
-                            kwargs["store_member_responses"] = True
+                            kwargs["store_member_output"] = True
 
                         session_state_copy = copy(session_state)
                         response = self.active_executor.run(  # type: ignore
@@ -390,7 +390,7 @@ class Step:
 
                         kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
-                            kwargs["store_member_responses"] = True
+                            kwargs["store_member_output"] = True
 
                         session_state_copy = copy(session_state)
                         response_stream = self.active_executor.run(  # type: ignore[call-overload, misc]
@@ -577,7 +577,7 @@ class Step:
 
                         kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
-                            kwargs["store_member_responses"] = True
+                            kwargs["store_member_output"] = True
 
                         session_state_copy = copy(session_state)
                         response = await self.active_executor.arun(  # type: ignore
@@ -739,7 +739,7 @@ class Step:
 
                         kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
-                            kwargs["store_member_responses"] = True
+                            kwargs["store_member_output"] = True
 
                         session_state_copy = copy(session_state)
                         response_stream = self.active_executor.arun(  # type: ignore
@@ -845,9 +845,9 @@ class Step:
                 # Add the primary executor run
                 workflow_run_response.step_executor_runs.append(raw_response)
 
-                # Add direct member agent runs (in case of a team we force store_member_responses=True here)
+                # Add direct member agent runs (in case of a team we force store_member_output=True here)
                 if isinstance(raw_response, TeamRunOutput) and getattr(
-                    self.active_executor, "store_member_responses", False
+                    self.active_executor, "store_member_output", False
                 ):
                     for mr in raw_response.member_responses or []:
                         if isinstance(mr, RunOutput):

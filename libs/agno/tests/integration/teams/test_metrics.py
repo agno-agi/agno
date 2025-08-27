@@ -22,7 +22,7 @@ def test_team_metrics_basic(shared_db):
         model=OpenAIChat("gpt-4o"),
         members=[stock_agent],
         db=shared_db,
-        store_member_responses=True,
+        store_member_output=True,
     )
 
     response = team.run("What is the current stock price of AAPL?")
@@ -67,7 +67,7 @@ def test_team_metrics_streaming(shared_db):
         model=OpenAIChat("gpt-4o"),
         members=[stock_agent],
         db=shared_db,
-        store_member_responses=True,
+        store_member_output=True,
     )
 
     # Run with streaming

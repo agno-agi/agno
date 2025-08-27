@@ -33,7 +33,7 @@ def test_route_team_basic():
         mode="route",
         model=OpenAIChat("gpt-4o"),
         members=[web_agent, finance_agent],
-        store_member_responses=True,
+        store_member_output=True,
     )
 
     # This should route to the finance agent
@@ -80,7 +80,7 @@ def test_route_team_structured_output():
         mode="route",
         model=OpenAIChat("gpt-4o"),
         members=[web_agent, finance_agent],
-        store_member_responses=True,
+        store_member_output=True,
     )
 
     # This should route to the finance agent
@@ -125,7 +125,7 @@ def test_route_team_with_multiple_agents():
         mode="route",
         model=OpenAIChat("gpt-4o"),
         members=[web_agent, finance_agent, analysis_agent],
-        store_member_responses=True,
+        store_member_output=True,
     )
 
     # This should route to both finance and web agents
@@ -149,7 +149,7 @@ def test_route_team_with_expected_output():
         mode="route",
         model=OpenAIChat("gpt-4o"),
         members=[qa_agent, math_agent],
-        store_member_responses=True,
+        store_member_output=True,
     )
 
     # This should route to the math agent with specific expected output
@@ -192,7 +192,7 @@ def test_route_team_multiple_calls():
         mode="route",
         model=OpenAIChat("gpt-4o"),
         members=[web_agent, finance_agent],
-        store_member_responses=True,
+        store_member_output=True,
     )
 
     # This should route to the finance agent
