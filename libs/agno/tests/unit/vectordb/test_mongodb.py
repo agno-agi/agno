@@ -219,7 +219,7 @@ def test_insert_and_search(vector_db: MongoDb, mock_mongodb_client: MagicMock, m
     for doc in docs:
         doc.embedding = mock_embedder.get_embedding(doc.content)
 
-    vector_db.insert(docs)
+    vector_db.insert(documents=docs, content_hash="test_hash")
 
     # Test search functionality
     results = vector_db.search("test document", limit=1)
@@ -395,7 +395,7 @@ def test_upsert(vector_db: MongoDb, mock_mongodb_client: MagicMock, mock_embedde
     }
 
     # Perform the upsert
-    vector_db.upsert([modified_doc])
+    vector_db.upsert(documents=[modified_doc], content_hash="test_hash")
 
     # Verify the update was called
     collection.update_one.assert_called_once()
@@ -501,7 +501,7 @@ async def test_async_insert(
     async_vector_db._async_collection = mock_collection
 
     # Perform the insert
-    await async_vector_db.async_insert(docs)
+    await async_vector_db.async_insert(documents=docs, content_hash="test_hash")
 
     # Verify insert_many was called
     mock_collection.insert_many.assert_called_once()
@@ -627,7 +627,7 @@ async def test_async_upsert(
     async_vector_db._async_collection = mock_collection
 
     # Perform the upsert
-    await async_vector_db.async_upsert([doc])
+    await async_vector_db.async_upsert(documents=[doc], content_hash="test_hash")
 
     # Verify update_one was called
     mock_collection.update_one.assert_called_once()
