@@ -102,7 +102,7 @@ jobs:
           python -m pip install --upgrade \
             pip setuptools wheel \
             ruff mypy pytest
-          pip install --no-deps -r requirements.txt
+          pip install -r requirements.txt
       - name: Ruff format
         run: |
           ruff format .

@@ -153,7 +153,7 @@ def test_name_exists(surrealdb_vector, mock_surrealdb_client):
 
 def test_insert(surrealdb_vector, mock_surrealdb_client, sample_documents):
     """Test inserting documents"""
-    surrealdb_vector.insert(sample_documents)
+    surrealdb_vector.insert(content_hash="test_hash", documents=sample_documents)
 
     # Verify create was called for each document
     assert mock_surrealdb_client.create.call_count == 3
@@ -167,7 +167,7 @@ def test_insert(surrealdb_vector, mock_surrealdb_client, sample_documents):
 
 
 def test_upsert(surrealdb_vector, mock_surrealdb_client, sample_documents):
-    surrealdb_vector.upsert(sample_documents)
+    surrealdb_vector.upsert(content_hash="test_hash", documents=sample_documents)
 
     # Verify query was called for each document
     assert mock_surrealdb_client.query.call_count == 3
@@ -279,7 +279,7 @@ async def test_async_name_exists(async_surrealdb_vector, mock_async_surrealdb_cl
 @pytest.mark.asyncio
 async def test_async_insert(async_surrealdb_vector, mock_async_surrealdb_client, sample_documents):
     """Test async inserting documents"""
-    await async_surrealdb_vector.async_insert(sample_documents)
+    await async_surrealdb_vector.async_insert(content_hash="test_hash", documents=sample_documents)
 
     # Verify create was called for each document
     assert mock_async_surrealdb_client.create.await_count == 3
@@ -295,7 +295,7 @@ async def test_async_insert(async_surrealdb_vector, mock_async_surrealdb_client,
 @pytest.mark.asyncio
 async def test_async_upsert(async_surrealdb_vector, mock_async_surrealdb_client, sample_documents):
     """Test async upserting documents"""
-    await async_surrealdb_vector.async_upsert(sample_documents)
+    await async_surrealdb_vector.async_upsert(content_hash="test_hash", documents=sample_documents)
 
     # Verify query was called for each document
     assert mock_async_surrealdb_client.query.await_count == 3
