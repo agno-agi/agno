@@ -1,5 +1,5 @@
 import os
-from typing import Optional
+from typing import Any, List, Optional
 
 try:
     from neo4j import GraphDatabase
@@ -51,7 +51,7 @@ class Neo4jTools(Toolkit):
 
         # Create the Neo4j driver
         try:
-            self.driver = GraphDatabase.driver(uri, auth=(user, password))
+            self.driver = GraphDatabase.driver(uri, auth=(user, password))  # type: ignore
             self.driver.verify_connectivity()
             log_debug("Connected to Neo4j database")
         except Exception as e:
@@ -61,7 +61,7 @@ class Neo4jTools(Toolkit):
         self.database = database or "neo4j"
 
         # Register toolkit methods as tools
-        tools = []
+        tools: List[Any] = []
         if list_labels:
             tools.append(self.list_labels)
         if list_relationships:
