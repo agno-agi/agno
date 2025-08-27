@@ -370,7 +370,7 @@ async def test_async_read_scrape_mode(mock_scrape_response):
         assert documents[0].content == "# Test Website\n\nThis is test content from a scraped website."
 
         # Verify async_scrape was called
-        mock_async_scrape.assert_called_once_with("https://example.com")
+        mock_async_scrape.assert_called_once_with("https://example.com", None)
 
 
 @pytest.mark.asyncio
@@ -398,7 +398,7 @@ async def test_async_read_crawl_mode(mock_crawl_response):
         assert len(result) == 2
 
         # Verify async_crawl was called
-        mock_async_crawl.assert_called_once_with("https://example.com")
+        mock_async_crawl.assert_called_once_with("https://example.com", None)
 
 
 @pytest.mark.asyncio
