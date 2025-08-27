@@ -58,7 +58,6 @@ class VegetarianRecipeAgent:
         agent = Agent(
             model=OpenAIChat(id="gpt-4o"),
             markdown=True,
-            debug_mode=True,
             instructions="You are a vegetarian recipe agent",
         )
 

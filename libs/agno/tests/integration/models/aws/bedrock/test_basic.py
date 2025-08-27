@@ -163,6 +163,7 @@ async def test_async_with_memory():
     """Test async agent with memory functionality."""
     agent = Agent(
         model=AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0"),
+        db=SqliteDb(db_file="tmp/aws-bedrock/test_with_memory.db"),
         add_history_to_context=True,
         telemetry=False,
         markdown=True,

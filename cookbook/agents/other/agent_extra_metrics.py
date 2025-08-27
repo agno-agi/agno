@@ -19,7 +19,6 @@ agent = Agent(
         audio={"voice": "sage", "format": "wav"},
     ),
     markdown=True,
-    debug_mode=True,
 )
 run_response = agent.run(
     "What's in these recording?",
@@ -35,7 +34,6 @@ agent = Agent(
     model=OpenAIChat(id="o3-mini"),
     markdown=True,
     telemetry=False,
-    debug_mode=True,
 )
 run_response = agent.run(
     "Solve the trolley problem. Evaluate multiple ethical frameworks. Include an ASCII diagram of your solution.",

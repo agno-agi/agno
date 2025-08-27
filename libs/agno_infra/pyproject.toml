@@ -29,9 +29,16 @@ classifiers = [
 ]
 
 dependencies = [
+  "gitpython",
+  "httpx",
+  "python-dotenv",
+  "python-multipart",
+  "pydantic-settings",
+  "pydantic",
   "rich",
   "tomli",
   "typer",
+  "typing-extensions",
 ]
 
 [project.optional-dependencies]

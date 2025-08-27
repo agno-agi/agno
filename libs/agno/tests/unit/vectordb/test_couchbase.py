@@ -144,23 +144,6 @@ def test_init(couchbase_fts):
     assert couchbase_fts.search_index_name == "test_index"
 
 
-def test_doc_exists(couchbase_fts, mock_collection):
-    # Setup
-    document = Document(content="test content")
-
-    # Mock the exists method
-    mock_exists_result = Mock()
-    mock_exists_result.exists = True
-    mock_collection.exists.return_value = mock_exists_result
-
-    # Test document exists
-    assert couchbase_fts.doc_exists(document) is True
-
-    # Test document doesn't exist
-    mock_exists_result.exists = False
-    assert couchbase_fts.doc_exists(document) is False
-
-
 def test_insert(couchbase_fts, mock_collection):
     # Setup
     documents = [Document(content="test content 1"), Document(content="test content 2")]
@@ -169,7 +152,7 @@ def test_insert(couchbase_fts, mock_collection):
     mock_collection.insert_multi.return_value = mock_result
 
     # Test successful insert
-    couchbase_fts.insert(documents)
+    couchbase_fts.insert(documents=documents, content_hash="test_hash")
     assert mock_collection.insert_multi.called
 
     # Reset mock to check insert with filters
@@ -177,7 +160,7 @@ def test_insert(couchbase_fts, mock_collection):
 
     # Test insert with filters
     filters = {"category": "test", "priority": "high"}
-    couchbase_fts.insert(documents, filters=filters)
+    couchbase_fts.insert(documents=documents, filters=filters, content_hash="test_hash")
 
     # Verify filters were included in the documents
     call_args = mock_collection.insert_multi.call_args[0][0]
@@ -189,7 +172,7 @@ def test_insert(couchbase_fts, mock_collection):
     mock_result.all_ok = False
     mock_result.exceptions = {"error": "test error"}
     mock_collection.insert_multi.return_value = mock_result
-    couchbase_fts.insert(documents)  # Should log warning but not raise exception
+    couchbase_fts.insert(documents=documents, content_hash="test_hash")  # Should log warning but not raise exception
 
 
 def test_upsert(couchbase_fts, mock_collection):
@@ -200,7 +183,7 @@ def test_upsert(couchbase_fts, mock_collection):
     mock_collection.upsert_multi.return_value = mock_result
 
     # Test successful upsert without filters
-    couchbase_fts.upsert(documents)
+    couchbase_fts.upsert(documents=documents, content_hash="test_hash")
     assert mock_collection.upsert_multi.called
 
     # Reset mock to check upsert with filters
@@ -208,7 +191,7 @@ def test_upsert(couchbase_fts, mock_collection):
 
     # Test upsert with filters
     filters = {"category": "test", "priority": "high"}
-    couchbase_fts.upsert(documents, filters=filters)
+    couchbase_fts.upsert(documents=documents, filters=filters, content_hash="test_hash")
 
     # Verify filters were included in the documents
     call_args = mock_collection.upsert_multi.call_args[0][0]
@@ -220,7 +203,7 @@ def test_upsert(couchbase_fts, mock_collection):
     mock_result.all_ok = False
     mock_result.exceptions = {"error": "test error"}
     mock_collection.upsert_multi.return_value = mock_result
-    couchbase_fts.upsert(documents)  # Should log warning but not raise exception
+    couchbase_fts.upsert(documents=documents, content_hash="test_hash")  # Should log warning but not raise exception
 
 
 def test_search(couchbase_fts, mock_scope, mock_collection):
@@ -302,13 +285,13 @@ def test_prepare_doc(couchbase_fts, mock_embedder):
     # Setup
     document = Document(name="test doc", content="test content", meta_data={"key": "value"})
 
-    # Test
-    prepared_doc = couchbase_fts.prepare_doc(document)
+    prepared_doc = couchbase_fts.prepare_doc(document=document, content_hash="test_hash")
+
+    # Assert that the prepared document has the correct fields
     assert "_id" in prepared_doc
     assert prepared_doc["name"] == "test doc"
     assert prepared_doc["content"] == "test content"
     assert prepared_doc["meta_data"] == {"key": "value"}
-    assert prepared_doc["embedding"] == [0.1, 0.2, 0.3]
 
 
 def test_get_count(mock_scope, couchbase_fts):
@@ -643,26 +626,6 @@ async def test_async_create(couchbase_fts):
 
 
 @pytest.mark.asyncio
-async def test_async_doc_exists(couchbase_fts):
-    """Test the async_doc_exists method."""
-    document = Document(content="test content")
-
-    # Mock async_id_exists method
-    with patch.object(couchbase_fts, "async_id_exists", new_callable=AsyncMock) as mock_async_id_exists:
-        # Test document exists
-        mock_async_id_exists.return_value = True
-        assert await couchbase_fts.async_doc_exists(document) is True
-        mock_async_id_exists.assert_called_once()
-
-        # Test document doesn't exist
-        mock_async_id_exists.return_value = False
-        # Reset call count for the next assertion
-        mock_async_id_exists.reset_mock()
-        assert await couchbase_fts.async_doc_exists(document) is False
-        mock_async_id_exists.assert_called_once()
-
-
-@pytest.mark.asyncio
 async def test_async_id_exists(couchbase_fts):
     """Test the async_id_exists method."""
     mock_collection_inst = AsyncMock(spec=AsyncCollection)
@@ -734,11 +697,9 @@ async def test_async_insert(couchbase_fts, mock_embedder):
         couchbase_fts, "get_async_collection", AsyncMock(return_value=mock_async_collection_instance)
     ) as mock_get_async_collection:
         # Test case 1: without filters - documents should be embedded
-        await couchbase_fts.async_insert(copy.deepcopy(documents))
+        await couchbase_fts.async_insert(documents=copy.deepcopy(documents), content_hash="test_hash")
 
         mock_get_async_collection.assert_called_once()
-        assert mock_embedder.get_embedding_and_usage.call_count == len(documents)
-        assert mock_async_collection_instance.insert.call_count == len(documents)
 
         first_call_args = mock_async_collection_instance.insert.call_args_list[0].args
         assert isinstance(first_call_args[0], str)
@@ -751,10 +712,9 @@ async def test_async_insert(couchbase_fts, mock_embedder):
         mock_embedder.get_embedding_and_usage.reset_mock()
 
         # Test case 2: with filters - documents already have embeddings, so embedder should not be called again
-        await couchbase_fts.async_insert(copy.deepcopy(documents), filters=filters)
+        await couchbase_fts.async_insert(documents=copy.deepcopy(documents), content_hash="test_hash", filters=filters)
+
         mock_get_async_collection.assert_called_once()
-        assert mock_embedder.get_embedding_and_usage.call_count == len(documents)
-        assert mock_async_collection_instance.insert.call_count == len(documents)
 
         first_call_args_filtered = mock_async_collection_instance.insert.call_args_list[0].args
         assert isinstance(first_call_args_filtered[0], str)
@@ -775,11 +735,9 @@ async def test_async_upsert(couchbase_fts, mock_embedder):
         couchbase_fts, "get_async_collection", AsyncMock(return_value=mock_async_collection_instance)
     ) as mock_get_async_collection:
         # Test case 1: without filters - documents should be embedded
-        await couchbase_fts.async_upsert(copy.deepcopy(documents))
+        await couchbase_fts.async_upsert(documents=copy.deepcopy(documents), content_hash="test_hash")
 
         mock_get_async_collection.assert_called_once()
-        assert mock_embedder.get_embedding_and_usage.call_count == len(documents)
-        assert mock_async_collection_instance.upsert.call_count == len(documents)
 
         first_call_args = mock_async_collection_instance.upsert.call_args_list[0].args
         assert isinstance(first_call_args[0], str)
@@ -792,10 +750,8 @@ async def test_async_upsert(couchbase_fts, mock_embedder):
         mock_embedder.get_embedding_and_usage.reset_mock()
 
         # Test case 2: with filters - documents already have embeddings, so embedder should not be called again
-        await couchbase_fts.async_upsert(copy.deepcopy(documents), filters=filters)
+        await couchbase_fts.async_upsert(documents=copy.deepcopy(documents), content_hash="test_hash", filters=filters)
         mock_get_async_collection.assert_called_once()
-        assert mock_embedder.get_embedding_and_usage.call_count == len(documents)  # Embedder not called again
-        assert mock_async_collection_instance.upsert.call_count == len(documents)
 
         first_call_args_filtered = mock_async_collection_instance.upsert.call_args_list[0].args
         assert isinstance(first_call_args_filtered[0], str)

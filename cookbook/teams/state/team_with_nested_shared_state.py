@@ -17,8 +17,11 @@ Team Hierarchy & Roles:
 """
 
 from agno.agent.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai.chat import OpenAIChat
 from agno.team import Team
+
+db = SqliteDb(db_file="tmp/example.db")
 
 
 # Define tools to manage our shopping list
@@ -100,7 +103,9 @@ def get_ingredients(session_state) -> str:
 recipe_agent = Agent(
     name="Recipe Suggester",
     id="recipe_suggester",
+    id="recipe_suggester",
     role="Suggest recipes based on available ingredients",
+    model=OpenAIChat(id="o3-mini"),
     model=OpenAIChat(id="o3-mini"),
     tools=[get_ingredients],
     instructions=[
@@ -132,7 +137,9 @@ meal_planning_team = Team(
     name="Meal Planning Team",
     role="Plan meals based on shopping list items",
     id="meal_planning",
+    id="meal_planning",
     mode="coordinate",
+    model=OpenAIChat(id="o3-mini"),
     model=OpenAIChat(id="o3-mini"),
     members=[recipe_agent],
     instructions=[
@@ -179,12 +186,16 @@ def add_chore(session_state, chore: str, priority: str = "medium") -> str:
 
 # Orchestrates the entire shopping and meal planning ecosystem
 shopping_team = Team(
+    id="shopping_list_team",
     name="Shopping List Team",
     role="Orchestrate shopping list management and meal planning",
     mode="coordinate",
     model=OpenAIChat(id="o3-mini"),
     session_state={"shopping_list": [], "chores": []},
+    model=OpenAIChat(id="o3-mini"),
+    session_state={"shopping_list": [], "chores": []},
     tools=[list_items, add_chore],
+    db=db,
     id="shopping_list_team",
     members=[
         shopping_mgmt_team,
@@ -214,14 +225,14 @@ print("-" * 50)
 shopping_team.print_response(
     "Add milk, eggs, and bread to the shopping list", stream=True
 )
-print(f"Session state: {shopping_team.session_state}")
+print(f"Session state: {shopping_team.get_session_state()}")
 print()
 
 # Example 2: Item consumption and removal
 print("Example 2: Item Consumption & Removal")
 print("-" * 50)
 shopping_team.print_response("I got bread from the store", stream=True)
-print(f"Session state: {shopping_team.session_state}")
+print(f"Session state: {shopping_team.get_session_state()}")
 print()
 
 # Example 3: Adding more ingredients
@@ -230,21 +241,21 @@ print("-" * 50)
 shopping_team.print_response(
     "I need apples and oranges for my fruit salad", stream=True
 )
-print(f"Session state: {shopping_team.session_state}")
+print(f"Session state: {shopping_team.get_session_state()}")
 print()
 
 # Example 4: Listing current items
 print("Example 4: Viewing Current Shopping List")
 print("-" * 50)
 shopping_team.print_response("What's on my shopping list right now?", stream=True)
-print(f"Session state: {shopping_team.session_state}")
+print(f"Session state: {shopping_team.get_session_state()}")
 print()
 
 # Example 5: Recipe suggestions (demonstrates culinary expertise role)
 print("Example 5: Recipe Suggestions from Culinary Team")
 print("-" * 50)
 shopping_team.print_response("What can I make with these ingredients?", stream=True)
-print(f"Session state: {shopping_team.session_state}")
+print(f"Session state: {shopping_team.get_session_state()}")
 print()
 
 # Example 6: Complete list management
@@ -254,7 +265,7 @@ shopping_team.print_response(
     "Clear everything from my list and start over with just bananas and yogurt",
     stream=True,
 )
-print(f"Shared Session state: {shopping_team.session_state}")
+print(f"Shared Session state: {shopping_team.get_session_state()}")
 print()
 
 # Example 7: Quick recipe check with new ingredients
@@ -263,4 +274,4 @@ print("-" * 50)
 shopping_team.print_response("What healthy breakfast can I make now?", stream=True)
 print()
 
-print(f"Team Session State: {shopping_team.session_state}")
+print(f"Team Session State: {shopping_team.get_session_state()}")

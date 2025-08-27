@@ -385,6 +385,7 @@ WorkflowRunOutputEvent = Union[
     WorkflowStartedEvent,
     WorkflowCompletedEvent,
     WorkflowErrorEvent,
+    WorkflowCancelledEvent,
     StepStartedEvent,
     StepCompletedEvent,
     StepErrorEvent,

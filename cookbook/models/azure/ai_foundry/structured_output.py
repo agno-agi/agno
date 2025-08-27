@@ -29,7 +29,6 @@ agent = Agent(
     model=AzureAIFoundry(id="gpt-4o"),
     description="You help people write movie scripts.",
     output_schema=MovieScript,
-    # debug_mode=True,
 )
 
 # Get the response in a variable

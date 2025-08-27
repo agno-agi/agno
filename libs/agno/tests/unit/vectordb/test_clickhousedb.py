@@ -114,25 +114,6 @@ def test_create(mock_clickhouse):
         assert not mock_clickhouse.client.command.called
 
 
-def test_doc_exists(mock_clickhouse):
-    """Test doc_exists method."""
-    doc = create_test_documents(1)[0]
-
-    # Test when document doesn't exist
-    query_result = MagicMock()
-    query_result.result_rows = []
-    mock_clickhouse.client.query.return_value = query_result
-
-    assert mock_clickhouse.doc_exists(doc) is False
-    mock_clickhouse.client.query.assert_called()
-
-    # Test when document exists
-    query_result.result_rows = [["hash123"]]
-    mock_clickhouse.client.query.return_value = query_result
-
-    assert mock_clickhouse.doc_exists(doc) is True
-
-
 def test_name_exists(mock_clickhouse):
     """Test name_exists method."""
     # Test when name doesn't exist
@@ -181,7 +162,7 @@ def test_insert(mock_clickhouse, mock_embedder):
     mock_embedder.get_embedding.return_value = [0.1] * 1024
 
     # Test insert
-    mock_clickhouse.insert(docs)
+    mock_clickhouse.insert(documents=docs, content_hash="test_hash")
 
     # Check that client.insert was called with the right arguments
     mock_clickhouse.client.insert.assert_called_once()
@@ -198,10 +179,11 @@ def test_upsert(mock_clickhouse):
 
     # Test upsert by patching insert
     with patch.object(mock_clickhouse, "insert") as mock_insert:
-        mock_clickhouse.upsert(docs)
+        mock_clickhouse.client.query.return_value = False
+        mock_clickhouse.upsert(documents=docs, content_hash="test_hash")
 
         # Check that insert was called
-        mock_insert.assert_called_once_with(documents=docs, filters=None)
+        mock_insert.assert_called_once_with(documents=docs, filters=None, content_hash="test_hash")
         # Check that query was called to finalize the upsert
         mock_clickhouse.client.query.assert_called_once()
 
@@ -350,25 +332,6 @@ async def test_async_create(mock_clickhouse):
 
 
 @pytest.mark.asyncio
-async def test_async_doc_exists(mock_clickhouse):
-    """Test async_doc_exists method."""
-    doc = create_test_documents(1)[0]
-
-    # Test when document doesn't exist
-    query_result = MagicMock()
-    query_result.result_rows = []
-    mock_clickhouse.async_client.query.return_value = query_result
-
-    assert await mock_clickhouse.async_doc_exists(doc) is False
-
-    # Test when document exists
-    query_result.result_rows = [["hash123"]]
-    mock_clickhouse.async_client.query.return_value = query_result
-
-    assert await mock_clickhouse.async_doc_exists(doc) is True
-
-
-@pytest.mark.asyncio
 async def test_async_name_exists(mock_clickhouse):
     """Test async_name_exists method."""
     # Test when name doesn't exist
@@ -397,7 +360,7 @@ async def test_async_insert(mock_clickhouse, mock_embedder):
     mock_embedder.get_embedding.return_value = [0.1] * 1024
 
     # Test async_insert
-    await mock_clickhouse.async_insert(docs)
+    await mock_clickhouse.async_insert(documents=docs, content_hash="test_hash")
 
     # Check that async_client.insert was called with the right arguments
     mock_clickhouse.async_client.insert.assert_called_once()
@@ -417,11 +380,10 @@ async def test_async_upsert(mock_clickhouse):
     with patch.object(mock_clickhouse, "async_insert") as mock_async_insert:
         # Configure the mock to return a coroutine
         mock_async_insert.return_value = None
-
-        await mock_clickhouse.async_upsert(docs)
+        await mock_clickhouse.async_upsert(documents=docs, content_hash="test_hash")
 
         # Check that async_insert was called
-        mock_async_insert.assert_called_once_with(documents=docs, filters=None)
+        mock_async_insert.assert_called_once_with(documents=docs, filters=None, content_hash="test_hash")
         # Check that query was called to finalize the upsert
         mock_clickhouse.async_client.query.assert_called_once()
 

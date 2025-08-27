@@ -95,7 +95,7 @@ def test_insert_and_search(vector_db, mock_table):
     mock_table.metric_ann_search.return_value = [mock_hit]
 
     # Test insert
-    vector_db.insert(docs)
+    vector_db.insert(documents=docs, content_hash="test_content_hash")
 
     # Verify insert was called
     assert mock_table.put_async.called
@@ -114,13 +114,10 @@ def test_insert_and_search(vector_db, mock_table):
 def test_document_existence(vector_db, mock_session):
     """Test document existence checking methods."""
     docs = create_test_documents(1)
-    vector_db.insert(docs)
+    vector_db.insert(documents=docs, content_hash="test_content_hash")
 
     # Configure mock responses
     mock_session.execute.return_value.one.return_value = [1]  # Document exists
-
-    # Test by document object
-    assert vector_db.doc_exists(docs[0]) is True
 
     # Test by name
     assert vector_db.name_exists("test_doc_0") is True
@@ -152,14 +149,14 @@ def test_upsert(vector_db, mock_table):
     mock_table.metric_ann_search.return_value = [mock_hit]
 
     # Initial insert
-    vector_db.insert(docs)
+    vector_db.insert(documents=docs, content_hash="test_content_hash")
     assert mock_table.put_async.called
 
     # Modify document and upsert
     modified_doc = Document(
         id=docs[0].id, content="Modified content", meta_data={"type": "modified"}, name=docs[0].name
     )
-    vector_db.upsert([modified_doc])
+    vector_db.upsert(documents=[modified_doc], content_hash="test_content_hash")
 
     # Verify modification
     results = vector_db.search("Modified content", limit=1)
@@ -204,22 +201,6 @@ async def test_async_create(vector_db, mock_session):
 
 
 @pytest.mark.asyncio
-async def test_async_doc_exists(vector_db, mock_session):
-    """Test async document existence checking."""
-    doc = create_test_documents(1)[0]
-
-    # Configure mock for existing document
-    mock_session.execute.return_value.one.return_value = [1]  # Document exists
-    exists = await vector_db.async_doc_exists(doc)
-    assert exists is True
-
-    # Configure mock for non-existent document
-    mock_session.execute.return_value.one.return_value = [0]  # Document doesn't exist
-    exists = await vector_db.async_doc_exists(doc)
-    assert exists is False
-
-
-@pytest.mark.asyncio
 async def test_async_name_exists(vector_db, mock_session):
     """Test async name existence checking."""
     # Configure mock for existing name
@@ -249,7 +230,7 @@ async def test_async_insert_and_search(vector_db, mock_table):
     mock_table.metric_ann_search.return_value = [mock_hit]
 
     # Test async insert
-    await vector_db.async_insert(docs)
+    await vector_db.async_insert(documents=docs, content_hash="test_content_hash")
     assert mock_table.put_async.called
 
     # Test async search
@@ -275,7 +256,7 @@ async def test_async_upsert(vector_db, mock_table):
     mock_table.metric_ann_search.return_value = [mock_hit]
 
     # Test async upsert
-    await vector_db.async_upsert(docs)
+    await vector_db.async_upsert(documents=docs, content_hash="test_content_hash")
     assert mock_table.put_async.called
 
     # Check results with async search

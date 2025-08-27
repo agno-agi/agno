@@ -20,7 +20,7 @@ load_dotenv(override=True)
 from agno.agent import Agent  # noqa: E402
 
 # Importing storage and tool classes
-from agno.db.agent.sqlite import SqliteAgentStorage  # noqa: E402
+from agno.db.sqlite import SqliteDb  # noqa: E402
 from agno.models.groq import Groq  # noqa: E402
 from agno.tools.duckduckgo import DuckDuckGoTools  # noqa: E402
 from agno.tools.exa import ExaTools  # noqa: E402
@@ -42,8 +42,7 @@ tmp_dir.mkdir(parents=True, exist_ok=True)
 
 # ************* Agent Storage *************
 # Configure SQLite storage for agent sessions
-agent_storage = SqliteAgentStorage(
-    table_name="answer_engine_sessions",  # Table to store agent sessions
+db = SqliteDb(
     db_file=str(tmp_dir.joinpath("agents.db")),  # SQLite database file
 )
 # *************************************
@@ -172,7 +171,7 @@ def tutor_agent(
         model=model,
         user_id=user_id,
         session_id=session_id or str(uuid.uuid4()),
-        storage=agent_storage,
+        db=db,
         tools=tools,
         # Allow Llama Tutor to read both chat history and tool call history for better context.
         read_chat_history=True,

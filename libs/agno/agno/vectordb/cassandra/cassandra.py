@@ -428,8 +428,8 @@ class Cassandra(VectorDb):
                     # Update the document with merged metadata
                     row_id = getattr(row, "row_id")
                     update_query = f"""
-                        UPDATE {self.keyspace}.{self.table_name} 
-                        SET metadata_s = %s 
+                        UPDATE {self.keyspace}.{self.table_name}
+                        SET metadata_s = %s
                         WHERE row_id = %s
                     """
                     self.session.execute(update_query, (updated_metadata, row_id))

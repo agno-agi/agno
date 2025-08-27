@@ -20,7 +20,6 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[OpenAITools(image_model="gpt-image-1")],
     markdown=True,
-    debug_mode=True,
 )
 
 response = agent.run(

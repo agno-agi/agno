@@ -1,6 +1,7 @@
 from textwrap import dedent
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 
 
@@ -39,9 +40,10 @@ def list_items(session_state) -> str:
 
 # Create a Shopping List Manager Agent that maintains state
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="o3-mini"),
     # Initialize the session state with an empty shopping list (default session state for all sessions)
     session_state={"shopping_list": []},
+    db=SqliteDb(db_file="tmp/example.db"),
     tools=[add_item, remove_item, list_items],
     # You can use variables from the session state in the instructions
     instructions=dedent("""\
@@ -56,19 +58,19 @@ agent = Agent(
 
 # Example usage
 agent.print_response("Add milk, eggs, and bread to the shopping list", stream=True)
-print(f"Session state: {agent.session_state}")
+print(f"Session state: {agent.get_session_state()}")
 
 agent.print_response("I got bread", stream=True)
-print(f"Session state: {agent.session_state}")
+print(f"Session state: {agent.get_session_state()}")
 
 agent.print_response("I need apples and oranges", stream=True)
-print(f"Session state: {agent.session_state}")
+print(f"Session state: {agent.get_session_state()}")
 
 agent.print_response("whats on my list?", stream=True)
-print(f"Session state: {agent.session_state}")
+print(f"Session state: {agent.get_session_state()}")
 
 agent.print_response(
     "Clear everything from my list and start over with just bananas and yogurt",
     stream=True,
 )
-print(f"Session state: {agent.session_state}")
+print(f"Session state: {agent.get_session_state()}")

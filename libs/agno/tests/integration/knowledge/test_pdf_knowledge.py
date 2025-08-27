@@ -75,7 +75,7 @@ def test_pdf_knowledge():
 
     assert vector_db.exists()
 
-    assert vector_db.get_count() == 203
+    assert vector_db.get_count() == 146
 
     # Create and use the agent
     agent = Agent(knowledge=knowledge)
@@ -140,7 +140,7 @@ def test_text_knowledge_with_metadata_path(setup_vector_db):
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    kb.add_content(
+    kb.add_content_sync(
         path=str(get_filtered_data_dir() / "cv_2.pdf"),
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )

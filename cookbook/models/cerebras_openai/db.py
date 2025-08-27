@@ -13,7 +13,6 @@ agent = Agent(
     model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
     db=db,
     tools=[DuckDuckGoTools()],
-    debug_mode=True,
     add_history_to_context=True,
 )
 agent.print_response("How many people live in Canada?")

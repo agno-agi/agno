@@ -21,4 +21,4 @@ agent = Agent(
 
 # Example usage
 agent.print_response("Add milk, eggs, and bread to the shopping list", stream=True)
-print(f"Final session state: {agent.session_state}")
+print(f"Final session state: {agent.get_session_state()}")
