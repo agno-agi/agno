@@ -1,13 +1,6 @@
 """📝 Interactive Writing Assistant - CLI App Example
 
 This example shows how to create an interactive CLI app with an agent.
-The writing assistant helps with brainstorming, editing, research, and writing tasks.
-
-Perfect for:
-- Brainstorming ideas
-- Getting writing feedback  
-- Research assistance
-- Content editing and improvement
 
 Run `pip install openai agno duckduckgo-search` to install dependencies.
 """
@@ -17,13 +10,12 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 
-# Create a writing assistant with research capabilities
 writing_assistant = Agent(
     name="Writing Assistant",
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[DuckDuckGoTools()],
     instructions=dedent("""\
-        You are a friendly and professional writing assistant! ✍️
+        You are a friendly and professional writing assistant! 
         
         Your capabilities include:
         - **Brainstorming**: Help generate ideas, topics, and creative concepts
@@ -44,12 +36,9 @@ writing_assistant = Agent(
     markdown=True,
 )
 
-# Launch the interactive CLI
 if __name__ == "__main__":
-    print("🚀 Welcome to your Interactive Writing Assistant!")
-    print("💡 Type 'help' for writing tips, or just tell me what you're working on.")
     print("🔍 I can research topics, help brainstorm, edit text, and more!")
-    print("✏️  Type 'exit', 'quit', or 'bye' to end our session.\n")
+    print("✏️ Type 'exit', 'quit', or 'bye' to end our session.\n")
     
     writing_assistant.cli_app(
         input="Hello! What writing project are you working on today? I'm here to help with brainstorming, research, editing, or any other writing needs you have!",

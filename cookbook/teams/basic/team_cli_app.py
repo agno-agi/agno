@@ -1,20 +1,6 @@
 """✍️ Interactive Writing Team - CLI App Example
 
 This example shows how to create an interactive CLI app with a collaborative writing team.
-The team includes specialized agents that work together on writing projects through
-research, brainstorming, content creation, and editing.
-
-Team Members:
-- Research Specialist: Gathers current information and facts
-- Creative Brainstormer: Generates ideas and creative concepts  
-- Content Writer: Creates structured, engaging content
-- Editor: Polishes grammar, style, and clarity
-
-Perfect for:
-- Collaborative writing projects
-- Research-backed content creation
-- Creative brainstorming sessions
-- Professional editing and feedback
 
 Run `pip install openai agno duckduckgo-search` to install dependencies.
 """
@@ -26,16 +12,13 @@ from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 
-# Create specialized writing team members
-
-# Research Specialist - Gathers information and verifies facts
 research_agent = Agent(
     name="Research Specialist",
     role="Information Research and Fact Verification",
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[DuckDuckGoTools()],
     instructions=dedent("""\
-        You are an expert research specialist! 🔍
+        You are an expert research specialist! 
         
         Your expertise:
         - **Deep Research**: Find comprehensive, current information on any topic
@@ -51,13 +34,12 @@ research_agent = Agent(
         """),
 )
 
-# Creative Brainstormer - Generates ideas and creative concepts
 brainstorm_agent = Agent(
     name="Creative Brainstormer",
     role="Idea Generation and Creative Concepts",
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions=dedent("""\
-        You are a creative brainstorming expert! 💡
+        You are a creative brainstorming expert! 
         
         Your specialty:
         - **Idea Generation**: Create unique, engaging content concepts
@@ -73,13 +55,12 @@ brainstorm_agent = Agent(
         """),
 )
 
-# Content Writer - Creates structured, engaging content
 writer_agent = Agent(
     name="Content Writer",
     role="Content Creation and Storytelling",
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions=dedent("""\
-        You are a skilled content writer! ✍️
+        You are a skilled content writer! 
         
         Your craft includes:
         - **Structured Writing**: Create clear, logical content flow
@@ -95,13 +76,12 @@ writer_agent = Agent(
         """),
 )
 
-# Editor - Polishes grammar, style, and clarity
 editor_agent = Agent(
     name="Editor",
     role="Content Editing and Quality Assurance",
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions=dedent("""\
-        You are a meticulous editor! ✏️
+        You are a meticulous editor! 
         
         Your expertise:
         - **Grammar & Style**: Perfect language mechanics and flow
@@ -117,13 +97,12 @@ editor_agent = Agent(
         """),
 )
 
-# Create the collaborative writing team
 writing_team = Team(
     name="Writing Team",
     members=[research_agent, brainstorm_agent, writer_agent, editor_agent],
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions=dedent("""\
-        You are a collaborative writing team that excels at creating high-quality content! 📝
+        You are a collaborative writing team that excels at creating high-quality content!
         
         Team Process:
         1. **Research Phase**: Gather comprehensive, current information
@@ -144,13 +123,9 @@ writing_team = Team(
     markdown=True,
 )
 
-# Launch the interactive CLI
 if __name__ == "__main__":
-    print("🚀 Welcome to your Interactive Writing Team!")
-    print("👥 Our specialized team includes Research, Brainstorming, Writing, and Editing experts")
     print("💡 Tell us about your writing project and watch the team collaborate!")
-    print("✨ Each team member will contribute their expertise to create amazing content")
-    print("✏️  Type 'exit', 'quit', or 'bye' to end our session.\n")
+    print("✏️ Type 'exit', 'quit', or 'bye' to end our session.\n")
     
     writing_team.cli_app(
         input="Hello! We're excited to work on your writing project. What would you like us to help you create today? Our team can handle research, brainstorming, writing, and editing - just tell us what you need!",
