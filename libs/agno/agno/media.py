@@ -157,7 +157,7 @@ class Video(BaseModel):
 
     @classmethod
     def from_artifact(cls, artifact: VideoArtifact) -> "Video":
-        return cls(url=artifact.url)
+        return cls(url=artifact.url, content=artifact.content, format=artifact.mime_type)
 
 
 class Audio(BaseModel):
@@ -329,7 +329,7 @@ class Image(BaseModel):
 
     @classmethod
     def from_artifact(cls, artifact: ImageArtifact) -> "Image":
-        return cls(url=artifact.url)
+        return cls(url=artifact.url, content=artifact.content, format=artifact.mime_type)
 
 
 class File(BaseModel):
