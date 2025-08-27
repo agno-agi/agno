@@ -169,20 +169,6 @@ def test_create(mock_pgvector):
         mock_pgvector.table.create.assert_called_once()
 
 
-def test_doc_exists(mock_pgvector):
-    """Test doc_exists method."""
-    doc = create_test_documents(1)[0]
-
-    with patch.object(mock_pgvector, "_record_exists") as mock_record_exists:
-        # Test when document exists
-        mock_record_exists.return_value = True
-        assert mock_pgvector.doc_exists(doc) is True
-
-        # Test when document doesn't exist
-        mock_record_exists.return_value = False
-        assert mock_pgvector.doc_exists(doc) is False
-
-
 def test_name_exists(mock_pgvector):
     """Test name_exists method."""
     with patch.object(mock_pgvector, "_record_exists") as mock_record_exists:

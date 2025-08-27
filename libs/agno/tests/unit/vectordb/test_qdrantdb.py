@@ -135,17 +135,6 @@ def test_insert_documents(qdrant_db, sample_documents, mock_qdrant_client):
         assert len(kwargs["points"]) == 3
 
 
-def test_doc_exists(qdrant_db, sample_documents, mock_qdrant_client):
-    """Test document existence check"""
-    # Test when document exists
-    mock_qdrant_client.retrieve.return_value = [Mock()]
-    assert qdrant_db.doc_exists(sample_documents[0]) is True
-
-    # Test when document doesn't exist
-    mock_qdrant_client.retrieve.return_value = []
-    assert qdrant_db.doc_exists(sample_documents[0]) is False
-
-
 def test_name_exists(qdrant_db, mock_qdrant_client):
     """Test name existence check"""
     # Test when name exists

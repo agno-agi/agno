@@ -202,22 +202,6 @@ def test_drop(mock_pinecone_db):
         mock_pinecone_db.client.delete_index.assert_not_called()
 
 
-def test_doc_exists(mock_pinecone_db):
-    """Test doc_exists method."""
-    doc = create_test_documents(1)[0]
-
-    # Test when document doesn't exist
-    mock_pinecone_db.index.fetch.return_value.vectors = {}
-
-    assert mock_pinecone_db.doc_exists(doc) is False
-    mock_pinecone_db.index.fetch.assert_called_with(ids=[doc.id], namespace=TEST_NAMESPACE)
-
-    # Test when document exists
-    mock_pinecone_db.index.fetch.return_value.vectors = {doc.id: {"id": doc.id}}
-
-    assert mock_pinecone_db.doc_exists(doc) is True
-
-
 def test_name_exists(mock_pinecone_db):
     """Test name_exists method."""
     # Test when index exists

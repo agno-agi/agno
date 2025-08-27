@@ -138,19 +138,6 @@ def test_exists(surrealdb_vector, mock_surrealdb_client):
     assert surrealdb_vector.exists() is False
 
 
-def test_doc_exists(surrealdb_vector, mock_surrealdb_client, sample_documents):
-    """Test document existence check"""
-    # Test when document exists
-    mock_surrealdb_client.query.return_value = [{"result": [{"content": sample_documents[0].content}]}]
-
-    assert surrealdb_vector.doc_exists(sample_documents[0]) is True
-
-    # Test when document doesn't exist
-    mock_surrealdb_client.query.return_value = [{"result": []}]
-
-    assert surrealdb_vector.doc_exists(sample_documents[0]) is False
-
-
 def test_name_exists(surrealdb_vector, mock_surrealdb_client):
     """Test name existence check"""
     # Test when name exists

@@ -119,12 +119,6 @@ def test_upsert_documents(lance_db, sample_documents):
     assert results[0].content is not None
 
 
-def test_doc_exists(lance_db, sample_documents):
-    """Test document existence check"""
-    lance_db.insert([sample_documents[0]])
-    assert lance_db.doc_exists(sample_documents[0]) is True
-
-
 def test_name_exists(lance_db, sample_documents):
     """Test name existence check"""
     lance_db.insert([sample_documents[0]])

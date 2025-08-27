@@ -131,17 +131,6 @@ def test_insert_documents(milvus_db, sample_documents, mock_milvus_client):
         assert "content" in kwargs["data"]
 
 
-def test_doc_exists(milvus_db, sample_documents, mock_milvus_client):
-    """Test document existence check"""
-    # Test when document exists
-    mock_milvus_client.get.return_value = [Mock()]
-    assert milvus_db.doc_exists(sample_documents[0]) is True
-
-    # Test when document doesn't exist
-    mock_milvus_client.get.return_value = []
-    assert milvus_db.doc_exists(sample_documents[0]) is False
-
-
 def test_name_exists(milvus_db, mock_milvus_client):
     """Test name existence check"""
     # Test when name exists

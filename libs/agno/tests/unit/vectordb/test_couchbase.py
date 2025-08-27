@@ -144,23 +144,6 @@ def test_init(couchbase_fts):
     assert couchbase_fts.search_index_name == "test_index"
 
 
-def test_doc_exists(couchbase_fts, mock_collection):
-    # Setup
-    document = Document(content="test content")
-
-    # Mock the exists method
-    mock_exists_result = Mock()
-    mock_exists_result.exists = True
-    mock_collection.exists.return_value = mock_exists_result
-
-    # Test document exists
-    assert couchbase_fts.doc_exists(document) is True
-
-    # Test document doesn't exist
-    mock_exists_result.exists = False
-    assert couchbase_fts.doc_exists(document) is False
-
-
 def test_insert(couchbase_fts, mock_collection):
     # Setup
     documents = [Document(content="test content 1"), Document(content="test content 2")]

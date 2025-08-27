@@ -114,25 +114,6 @@ def test_create(mock_clickhouse):
         assert not mock_clickhouse.client.command.called
 
 
-def test_doc_exists(mock_clickhouse):
-    """Test doc_exists method."""
-    doc = create_test_documents(1)[0]
-
-    # Test when document doesn't exist
-    query_result = MagicMock()
-    query_result.result_rows = []
-    mock_clickhouse.client.query.return_value = query_result
-
-    assert mock_clickhouse.doc_exists(doc) is False
-    mock_clickhouse.client.query.assert_called()
-
-    # Test when document exists
-    query_result.result_rows = [["hash123"]]
-    mock_clickhouse.client.query.return_value = query_result
-
-    assert mock_clickhouse.doc_exists(doc) is True
-
-
 def test_name_exists(mock_clickhouse):
     """Test name_exists method."""
     # Test when name doesn't exist

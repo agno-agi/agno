@@ -137,17 +137,6 @@ def test_distance_metrics(mock_engine):
         assert db_l2.distance == Distance.l2
 
 
-def test_doc_exists(singlestore_db, sample_documents, mock_session):
-    """Test document existence check"""
-    # Mock document exists
-    mock_session.execute.return_value.first.return_value = True
-    assert singlestore_db.doc_exists(sample_documents[0]) is True
-
-    # Mock document doesn't exist
-    mock_session.execute.return_value.first.return_value = None
-    assert singlestore_db.doc_exists(sample_documents[0]) is False
-
-
 @pytest.mark.asyncio
 async def test_error_handling(singlestore_db, mock_session):
     """Test error handling scenarios"""
