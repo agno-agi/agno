@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunOutput
 from agno.db.sqlite import SqliteDb
-from agno.models.aimlapi import AIMLApi
+from agno.models.aimlapi import AIMLAPI
 
 
 def _assert_metrics(response: RunOutput):
@@ -26,7 +26,7 @@ def _assert_metrics(response: RunOutput):
 
 
 def test_basic():
-    agent = Agent(model=AIMLApi(id="gpt-4o-mini"), markdown=True, telemetry=False)
+    agent = Agent(model=AIMLAPI(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
     response: RunOutput = agent.run("Tell me, why is the sky blue in 2 sentences")
 
@@ -39,7 +39,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=AIMLApi(id="gpt-4o-mini"), markdown=True, telemetry=False)
+    agent = Agent(model=AIMLAPI(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
     response_stream = agent.run("Tell me, why is the sky blue in 2 sentences", stream=True)
 
@@ -54,7 +54,7 @@ def test_basic_stream():
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(model=AIMLApi(id="gpt-4o-mini"), markdown=True, telemetry=False)
+    agent = Agent(model=AIMLAPI(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
     response = await agent.arun("Tell me, why is the sky blue in 2 sentences")
 
@@ -67,7 +67,7 @@ async def test_async_basic():
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    agent = Agent(model=AIMLApi(id="gpt-4o-mini"), markdown=True, telemetry=False)
+    agent = Agent(model=AIMLAPI(id="gpt-4o-mini"), markdown=True, telemetry=False)
 
     async for response in agent.arun("Tell me, why is the sky blue in 2 sentences", stream=True):
         assert response.content is not None
@@ -76,7 +76,7 @@ async def test_async_basic_stream():
 def test_with_memory():
     agent = Agent(
         db=SqliteDb(db_file="tmp/test_with_memory.db"),
-        model=AIMLApi(id="gpt-4o-mini"),
+        model=AIMLAPI(id="gpt-4o-mini"),
         add_history_to_context=True,
         markdown=True,
         telemetry=False,
@@ -107,7 +107,7 @@ def test_output_schema():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=AIMLApi(id="gpt-4o-mini"),
+        model=AIMLAPI(id="gpt-4o-mini"),
         markdown=True,
         # use_json_mode=True, if gemini-like / deepseek
         telemetry=False,
@@ -130,7 +130,7 @@ def test_json_response_mode():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=AIMLApi(id="gpt-4o-mini"),
+        model=AIMLAPI(id="gpt-4o-mini"),
         use_json_mode=True,
         telemetry=False,
         output_schema=MovieScript,
@@ -152,7 +152,7 @@ def test_structured_outputs_deprecated():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=AIMLApi(id="gpt-4o-mini"),
+        model=AIMLAPI(id="gpt-4o-mini"),
         structured_outputs=False,  # They don't support native structured outputs
         # use_json_mode=True, if gemini-like / deepseek
         telemetry=False,
@@ -170,7 +170,7 @@ def test_structured_outputs_deprecated():
 
 def test_history():
     agent = Agent(
-        model=AIMLApi(id="gpt-4o-mini"),
+        model=AIMLAPI(id="gpt-4o-mini"),
         db=SqliteDb(db_file="tmp/aimlapi/test_basic.db"),
         add_history_to_context=True,
         telemetry=False,

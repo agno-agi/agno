@@ -1,0 +1,10 @@
+agno
+anthropic
+ddgs
+google-genai
+groq
+nest_asyncio
+openai
+psycopg[binary]
+sqlalchemy
+streamlit

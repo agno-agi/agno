@@ -1178,8 +1178,9 @@ class Knowledge:
         if self.valid_metadata_filters is None:
             self.valid_metadata_filters = set()
 
-        for key in metadata.keys():
-            self.valid_metadata_filters.add(key)
+        if metadata is not None:
+            for key in metadata.keys():
+                self.valid_metadata_filters.add(key)
 
     @cached_property
     def _get_filters_from_db(self) -> Set[str]:

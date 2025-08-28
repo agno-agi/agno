@@ -11,9 +11,9 @@ knowledge = Knowledge(
     vector_db=PgVector(table_name="recipes", db_url=db_url),
 )
 # Add content to the knowledge
-knowledge.add_content(
+knowledge.add_content_sync(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
 )
 
-agent = Agent(model=WatsonX(id="ibm/granite-20b-code-instruct"), knowledge=knowledge)
+agent = Agent(model=WatsonX(id="mistralai/mistral-small-3-1-24b-instruct-2503"), knowledge=knowledge)
 agent.print_response("How to make Thai curry?", markdown=True)

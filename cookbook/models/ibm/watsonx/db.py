@@ -10,7 +10,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
 
 agent = Agent(
-    model=WatsonX(id="ibm/granite-20b-code-instruct"),
+    model=WatsonX(id="mistralai/mistral-small-3-1-24b-instruct-2503"),
     db=db,
     tools=[DuckDuckGoTools()],
     add_history_to_context=True,

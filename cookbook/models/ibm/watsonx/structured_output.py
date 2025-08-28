@@ -26,7 +26,7 @@ class MovieScript(BaseModel):
 
 
 movie_agent = Agent(
-    model=WatsonX(id="ibm/granite-20b-code-instruct"),
+    model=WatsonX(id="mistralai/mistral-small-3-1-24b-instruct-2503"),
     description="You help people write movie scripts.",
     output_schema=MovieScript,
 )
