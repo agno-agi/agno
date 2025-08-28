@@ -92,10 +92,6 @@ agno_assist_knowledge = Knowledge(
     ),
 )
 
-# Add Agno documentation content
-async def load_knowledge_bases():
-    await agno_assist_knowledge.add_contents(url="https://docs.agno.com/llms-full.txt")
-
 # Agno framework assistant
 agno_assist = Agent(
     name="Agno Assist",
@@ -154,8 +150,8 @@ agent_team = Team(
 async def main():
     """Main async function to demonstrate different team capabilities."""
 
-    # Load the knowledge base (run once to populate)
-    await load_knowledge_bases()
+    # Add Agno documentation content
+    await agno_assist_knowledge.add_contents(url="https://docs.agno.com/llms-full.txt")
 
     # Example interactions:
 

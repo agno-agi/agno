@@ -46,15 +46,6 @@ validation_knowledge = Knowledge(
     ),
 )
 
-# Add content to knowledge bases
-async def load_knowledge_bases():
-    await reranked_knowledge.add_contents(
-        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-    )
-    await validation_knowledge.add_contents(
-        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-    )
-
 # Initial Retriever Agent - Specialized in broad initial retrieval
 initial_retriever = Agent(
     name="Initial Retriever",
@@ -150,6 +141,14 @@ async def async_reranking_rag_demo():
 
     query = "What's the best way to prepare authentic Tom Kha Gai? I want traditional methods and modern variations."
 
+    # Add content to knowledge bases
+    await reranked_knowledge.add_contents(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+    )
+    await validation_knowledge.add_contents(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+    )
+
     # Run async distributed reranking RAG
     await aprint_response(input=query, team=distributed_reranking_team)
 
@@ -160,6 +159,14 @@ def sync_reranking_rag_demo():
     print("=" * 35)
 
     query = "What's the best way to prepare authentic Tom Kha Gai? I want traditional methods and modern variations."
+
+    # Add content to knowledge bases
+    reranked_knowledge.add_contents_sync(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+    )
+    validation_knowledge.add_contents_sync(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+    )
 
     # Run distributed reranking RAG
     print_response(distributed_reranking_team, query)
@@ -177,12 +184,19 @@ def advanced_culinary_demo():
     - Best practices for storage and usage
     - How to adapt recipes for different dietary needs"""
 
+    # Add content to knowledge bases
+    reranked_knowledge.add_contents_sync(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+    )
+    validation_knowledge.add_contents_sync(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+    )
+
     print_response(distributed_reranking_team, query)
 
 
 if __name__ == "__main__":
     # Choose which demo to run
-    asyncio.run(load_knowledge_bases())
     asyncio.run(async_reranking_rag_demo())
 
     # advanced_culinary_demo()

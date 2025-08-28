@@ -43,16 +43,6 @@ context_knowledge = Knowledge(
     ),
 )
 
-# Add content to knowledge bases
-async def load_knowledge_bases():
-    """Load content into both knowledge bases."""
-    await primary_knowledge.add_contents(
-        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-    )
-    await context_knowledge.add_contents(
-        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-    )
-
 # Primary Retriever Agent - Specialized in main document retrieval
 primary_retriever = Agent(
     name="Primary Retriever",
@@ -146,6 +136,14 @@ async def async_distributed_rag_demo():
 
     query = "How do I make chicken and galangal in coconut milk soup? Include cooking tips and variations."
 
+    # Add content to knowledge bases
+    await primary_knowledge.add_contents(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+    )
+    await context_knowledge.add_contents(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+    )
+
     # # Run async distributed RAG
     # await distributed_rag_team.aprint_response(
     #     query, stream=True, stream_intermediate_steps=True
@@ -160,6 +158,14 @@ def sync_distributed_rag_demo():
 
     query = "How do I make chicken and galangal in coconut milk soup? Include cooking tips and variations."
 
+    # Add content to knowledge bases
+    primary_knowledge.add_contents_sync(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+    )
+    context_knowledge.add_contents_sync(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+    )
+
     # Run distributed RAG
     distributed_rag_team.print_response(input=query)
 
@@ -173,12 +179,19 @@ def multi_course_meal_demo():
     I'd like to start with a soup, then a thai curry for the main course and finish with a dessert.
     Please include cooking techniques and any special tips."""
 
+    # Add content to knowledge bases
+    primary_knowledge.add_contents_sync(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+    )
+    context_knowledge.add_contents_sync(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+    )
+
     distributed_rag_team.print_response(input=query)
 
 
 if __name__ == "__main__":
     # Choose which demo to run
-    asyncio.run(load_knowledge_bases())
     asyncio.run(async_distributed_rag_demo())
 
     # multi_course_meal_demo()

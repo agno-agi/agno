@@ -22,7 +22,6 @@ from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.utils.print_response.team import aprint_response, print_response
 from agno.vectordb.pgvector import PgVector, SearchType
 
 # Database connection URL
@@ -47,15 +46,6 @@ hybrid_knowledge = Knowledge(
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
 )
-
-# Add content to knowledge bases
-async def load_knowledge_bases():
-    await vector_knowledge.add_contents(
-        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-    )
-    await hybrid_knowledge.add_contents(
-        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
-    )
 
 # Vector Retriever Agent - Specialized in vector similarity search
 vector_retriever = Agent(
@@ -147,8 +137,15 @@ async def async_pgvector_rag_demo():
     query = "How do I make chicken and galangal in coconut milk soup? What are the key ingredients and techniques?"
 
     try:
+        # Add content to knowledge bases
+        await vector_knowledge.add_contents(
+            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+        )
+        await hybrid_knowledge.add_contents(
+            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+        )
         # Run async distributed PgVector RAG
-        await aprint_response(input=query, team=distributed_pgvector_team)
+        await distributed_pgvector_team.aprint_response(input=query)
     except Exception as e:
         print(f"❌ Error: {e}")
         print("💡 Make sure PostgreSQL with pgvector is running!")
@@ -163,8 +160,15 @@ def sync_pgvector_rag_demo():
     query = "How do I make chicken and galangal in coconut milk soup? What are the key ingredients and techniques?"
 
     try:
+        # Add content to knowledge bases
+        vector_knowledge.add_contents_sync(
+            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+        )
+        hybrid_knowledge.add_contents_sync(
+            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+        )
         # Run distributed PgVector RAG
-        print_response(distributed_pgvector_team, query)
+        distributed_pgvector_team.print_response(input=query)
     except Exception as e:
         print(f"❌ Error: {e}")
         print("💡 Make sure PostgreSQL with pgvector is running!")
@@ -184,7 +188,15 @@ def complex_query_demo():
     - Any dietary considerations or alternatives"""
 
     try:
-        print_response(distributed_pgvector_team, query)
+        # Add content to knowledge bases
+        vector_knowledge.add_contents_sync(
+            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+        )
+        hybrid_knowledge.add_contents_sync(
+            url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
+        )
+
+        distributed_pgvector_team.print_response(input=query)
     except Exception as e:
         print(f"❌ Error: {e}")
         print("💡 Make sure PostgreSQL with pgvector is running!")
@@ -193,8 +205,6 @@ def complex_query_demo():
 
 if __name__ == "__main__":
     # Choose which demo to run
-
-    asyncio.run(load_knowledge_bases())
 
     # asyncio.run(async_pgvector_rag_demo())
 

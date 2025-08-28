@@ -21,15 +21,13 @@ def hydrate_session(session: dict) -> dict:
     Returns:
         dict: The hydrated session dictionary.
     """
-    if session.get("summary") is not None and isinstance(session["summary"], dict):
+    if session.get("summary") is not None:
         session["summary"] = SessionSummary.from_dict(session["summary"])
     if session.get("runs") is not None:
         if session["session_type"] == SessionType.AGENT:
-            session["runs"] = [RunOutput.from_dict(run) if isinstance(run, dict) else run for run in session["runs"]]
+            session["runs"] = [RunOutput.from_dict(run) for run in session["runs"]]
         elif session["session_type"] == SessionType.TEAM:
-            session["runs"] = [
-                TeamRunOutput.from_dict(run) if isinstance(run, dict) else run for run in session["runs"]
-            ]
+            session["runs"] = [TeamRunOutput.from_dict(run) for run in session["runs"]]
 
     return session
 

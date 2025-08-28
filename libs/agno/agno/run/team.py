@@ -66,15 +66,11 @@ class BaseTeamRunEvent(BaseRunOutputEvent):
 
         member_responses_final = []
         for response in member_responses or []:
-            # Handle case where response is already a TeamRunOutput or RunOutput object
-            if hasattr(response, "run_id") or not isinstance(response, dict):
-                member_responses_final.append(response)
-            elif "agent_id" in response:
+            if "agent_id" in response:
                 run_response_parsed = RunOutput.from_dict(response)
-                member_responses_final.append(run_response_parsed)
             else:
                 run_response_parsed = TeamRunOutput.from_dict(response)  # type: ignore
-                member_responses_final.append(run_response_parsed)
+            member_responses_final.append(run_response_parsed)
 
         if member_responses_final:
             event.member_responses = member_responses_final

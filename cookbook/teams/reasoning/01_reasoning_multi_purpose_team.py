@@ -129,9 +129,6 @@ agno_assist_knowledge = Knowledge(
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
 )
-# Add content to the knowledge
-async def load_knowledge_bases():
-    await agno_assist_knowledge.add_contents(url="https://docs.agno.com/llms-full.txt")
 
 agno_assist = Agent(
     name="Agno Assist",
@@ -212,8 +209,8 @@ agent_team = Team(
 )
 
 if __name__ == "__main__":
-    # Load the knowledge base (comment out after first run)
-    # asyncio.run(load_knowledge_bases)
+    # Load the knowledge base
+    asyncio.run(agno_assist_knowledge.add_contents(url="https://docs.agno.com/llms-full.txt"))
 
     # asyncio.run(agent_team.aprint_response("Hi! What are you capable of doing?"))
 
@@ -235,9 +232,9 @@ if __name__ == "__main__":
 
     # Medical research
     txt_path = Path(__file__).parent.resolve() / "medical_history.txt"
-    loaded_txt = open(txt_path, "r").read()
-    asyncio.run(agent_team.print_response(
+    loaded_txt = open(txt_path, "r", encoding="utf-8").read()
+    agent_team.print_response(
         input=dedent(f"""I have a patient with the following medical information:\n {loaded_txt}
                          What is the most likely diagnosis?
                         """),
-    ))
+    )

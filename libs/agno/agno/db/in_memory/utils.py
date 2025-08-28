@@ -21,7 +21,7 @@ def hydrate_session(session: dict) -> dict:
     Returns:
         dict: The hydrated session dictionary.
     """
-    if session.get("summary") is not None and isinstance(session["summary"], dict):
+    if session.get("summary") is not None:
         session["summary"] = SessionSummary.from_dict(session["summary"])
     if session.get("runs") is not None:
         if session["session_type"] == SessionType.AGENT:
