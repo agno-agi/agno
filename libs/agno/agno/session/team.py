@@ -60,12 +60,9 @@ class TeamSession:
         runs = data.get("runs", [])
         serialized_runs: List[Union[TeamRunOutput, RunOutput]] = []
         for run in runs:
-            # Handle case where run is already a TeamRunOutput or RunOutput object
-            if hasattr(run, "run_id") or not isinstance(run, dict):
-                serialized_runs.append(run)
-            elif isinstance(run, dict) and "agent_id" in run:
+            if "agent_id" in run:
                 serialized_runs.append(RunOutput.from_dict(run))
-            elif isinstance(run, dict) and "team_id" in run:
+            elif "team_id" in run:
                 serialized_runs.append(TeamRunOutput.from_dict(run))
 
         return cls(
