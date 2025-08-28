@@ -32,7 +32,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
 
             return MetricsResponse(
                 metrics=[DayAggregatedMetrics.from_dict(metric) for metric in metrics],
-                updated_at=datetime.fromtimestamp(latest_updated_at, tz=timezone.utc) if latest_updated_at else None,
+                updated_at=datetime.fromtimestamp(latest_updated_at, tz=timezone.utc) if latest_updated_at is not None else None,
             )
 
         except Exception as e:

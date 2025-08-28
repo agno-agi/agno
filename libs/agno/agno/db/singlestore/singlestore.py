@@ -1236,7 +1236,7 @@ class SingleStoreDb(BaseDb):
             Exception: If an error occurs during metrics calculation.
         """
         try:
-            table = self._get_table(table_type="metrics")
+            table = self._get_table(table_type="metrics", create_table_if_not_found=True)
             if table is None:
                 return None
 
@@ -1307,7 +1307,7 @@ class SingleStoreDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = self._get_table(table_type="metrics")
+            table = self._get_table(table_type="metrics", create_table_if_not_found=True)
             if table is None:
                 return [], 0
 
