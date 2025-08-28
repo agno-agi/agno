@@ -1407,7 +1407,7 @@ async def aprint_response_stream(
             final_panels.append(thinking_panel)
 
         # Add member tool calls and responses in correct order
-        if hasattr(run_response, "member_responses") and run_response.member_responses:
+        if run_response is not None and hasattr(run_response, "member_responses"):
             for i, member_response in enumerate(run_response.member_responses):
                 member_id = None
                 if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
@@ -1456,8 +1456,8 @@ async def aprint_response_stream(
 
                     # Add reasoning steps if any
                     reasoning_steps = []
-                    if member_response.metadata is not None and member_response.metadata.reasoning_steps is not None:
-                        reasoning_steps = member_response.metadata.reasoning_steps
+                    if hasattr(member_response, "reasoning_steps") and member_response.reasoning_steps is not None:
+                        reasoning_steps = member_response.reasoning_steps
                     if reasoning_steps and show_reasoning:
                         for j, step in enumerate(reasoning_steps, 1):
                             member_reasoning_panel = build_reasoning_step_panel(

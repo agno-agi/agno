@@ -28,7 +28,6 @@ from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
-from agno.utils.print_response.team import aprint_response
 
 reddit_researcher = Agent(
     name="Reddit Researcher",

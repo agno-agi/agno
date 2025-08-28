@@ -21,7 +21,6 @@ from agno.tools.knowledge import KnowledgeTools
 from agno.tools.pubmed import PubmedTools
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
-from agno.utils.print_response.team import aprint_response
 from agno.vectordb.lancedb.lance_db import LanceDb
 from agno.vectordb.search import SearchType
 

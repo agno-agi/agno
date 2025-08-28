@@ -9,12 +9,9 @@ Prerequisites:
 2. Ensure PostgreSQL is running on localhost:5532
 """
 
-from typing import Iterator
-
-from agno.agent import Agent, RunOutput
+from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
-from agno.run.team import TeamRunOutput
 from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
 from agno.utils.pprint import pprint_run_response

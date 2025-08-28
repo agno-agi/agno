@@ -48,10 +48,10 @@ validation_knowledge = Knowledge(
 
 # Add content to knowledge bases
 async def load_knowledge_bases():
-    await vector_knowledge.add_contents(
+    await reranked_knowledge.add_contents(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
-    await hybrid_knowledge.add_contents(
+    await validation_knowledge.add_contents(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
 

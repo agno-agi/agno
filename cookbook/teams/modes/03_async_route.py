@@ -19,7 +19,6 @@ from agno.models.anthropic import Claude
 from agno.models.deepseek import DeepSeek
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-from agno.utils.print_response.team import aprint_response
 
 english_agent = Agent(
     name="English Agent",

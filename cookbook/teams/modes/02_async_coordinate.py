@@ -25,7 +25,6 @@ from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.hackernews import HackerNewsTools
 from agno.tools.newspaper4k import Newspaper4kTools
-from agno.utils.print_response.team import aprint_response
 from pydantic import BaseModel, Field
 
 
