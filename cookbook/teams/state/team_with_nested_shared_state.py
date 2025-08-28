@@ -103,9 +103,7 @@ def get_ingredients(session_state) -> str:
 recipe_agent = Agent(
     name="Recipe Suggester",
     id="recipe_suggester",
-    id="recipe_suggester",
     role="Suggest recipes based on available ingredients",
-    model=OpenAIChat(id="o3-mini"),
     model=OpenAIChat(id="o3-mini"),
     tools=[get_ingredients],
     instructions=[
@@ -137,9 +135,7 @@ meal_planning_team = Team(
     name="Meal Planning Team",
     role="Plan meals based on shopping list items",
     id="meal_planning",
-    id="meal_planning",
     mode="coordinate",
-    model=OpenAIChat(id="o3-mini"),
     model=OpenAIChat(id="o3-mini"),
     members=[recipe_agent],
     instructions=[
@@ -192,11 +188,8 @@ shopping_team = Team(
     mode="coordinate",
     model=OpenAIChat(id="o3-mini"),
     session_state={"shopping_list": [], "chores": []},
-    model=OpenAIChat(id="o3-mini"),
-    session_state={"shopping_list": [], "chores": []},
     tools=[list_items, add_chore],
     db=db,
-    id="shopping_list_team",
     members=[
         shopping_mgmt_team,
         meal_planning_team,

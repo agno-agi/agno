@@ -1407,8 +1407,8 @@ async def aprint_response_stream(
             final_panels.append(thinking_panel)
 
         # Add member tool calls and responses in correct order
-        if hasattr(team, "run_response") and team.run_response and team.run_response.member_responses:
-            for i, member_response in enumerate(team.run_response.member_responses):
+        if hasattr(run_response, "member_responses") and run_response.member_responses:
+            for i, member_response in enumerate(run_response.member_responses):
                 member_id = None
                 if isinstance(member_response, RunOutput) and member_response.agent_id is not None:
                     member_id = member_response.agent_id

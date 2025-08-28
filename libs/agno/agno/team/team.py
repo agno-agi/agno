@@ -1783,7 +1783,6 @@ class Team:
                         stream_intermediate_steps=stream_intermediate_steps,
                         workflow_context=workflow_context,
                         yield_run_response=yield_run_response,
-                        run_dependencies=run_dependencies,
                     )
                     return response_iterator  # type: ignore
                 else:
