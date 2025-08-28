@@ -661,7 +661,7 @@ def test_intermediate_steps_with_member_agents_route():
         name="Math Agent",
         model=OpenAIChat(id="gpt-4o-mini"),
         instructions="You can do Math!",
-        tools=[CalculatorTools()],
+        tools=[CalculatorTools(factorial=False)],
     )
     team = Team(
         model=OpenAIChat(id="gpt-4o-mini"),

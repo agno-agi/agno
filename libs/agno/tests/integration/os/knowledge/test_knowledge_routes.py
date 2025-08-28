@@ -10,9 +10,8 @@ from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
 from agno.knowledge.content import Content, FileData
-from agno.knowledge.knowledge import Knowledge
-from agno.os.apps.knowledge.router import attach_routes
-from agno.os.apps.knowledge.schemas import ContentStatus
+from agno.knowledge.knowledge import ContentStatus, Knowledge
+from agno.os.routers.knowledge.knowledge import attach_routes
 
 
 @pytest.fixture
@@ -273,7 +272,7 @@ class TestBackgroundTaskProcessing:
 
     async def test_process_content_success(self, mock_knowledge, mock_content):
         """Test successful content processing."""
-        from agno.os.apps.knowledge.router import process_content
+        from agno.os.routers.knowledge.knowledge import process_content
 
         content_id = str(uuid4())
         reader_id = "text_reader"
@@ -297,7 +296,7 @@ class TestBackgroundTaskProcessing:
 
     async def test_process_content_with_exception(self, mock_knowledge, mock_content):
         """Test content processing with exception."""
-        from agno.os.apps.knowledge.router import process_content
+        from agno.os.routers.knowledge.knowledge import process_content
 
         content_id = str(uuid4())
         reader_id = "test_reader"

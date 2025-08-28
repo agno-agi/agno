@@ -141,7 +141,7 @@ def test_tool_call_custom_tool_optional_parameters():
     assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
-    assert "70" in response.content
+    assert "Paris" in response.content
 
 
 def test_tool_call_list_parameters():

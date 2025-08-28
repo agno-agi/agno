@@ -170,12 +170,12 @@ def test_tool_call_custom_tool_optional_parameters():
     )
 
     response = agent.run("What is the weather in Paris?")
-    assert response.messages is not None
 
     # Check that the tool call was made as expected
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
-    assert "Tokyo" in response.content
+    assert "70" in response.content
 
 
 def test_tool_call_list_parameters():
