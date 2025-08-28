@@ -128,6 +128,8 @@ class RunCompletedEvent(BaseTeamRunEvent):
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_messages: Optional[List[Message]] = None
     member_responses: List[Union["TeamRunOutput", RunOutput]] = field(default_factory=list)
+    metadata: Optional[Dict[str, Any]] = None
+    metrics: Optional[Metrics] = None
 
 
 @dataclass
@@ -140,6 +142,10 @@ class RunErrorEvent(BaseTeamRunEvent):
 class RunCancelledEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.run_cancelled.value
     reason: Optional[str] = None
+
+    @property
+    def is_cancelled(self):
+        return True
 
 
 @dataclass
@@ -282,7 +288,6 @@ class TeamRunOutput:
     parent_run_id: Optional[str] = None
 
     tools: Optional[List[ToolExecution]] = None
-    formatted_tool_calls: Optional[List[str]] = None
 
     images: Optional[List[ImageArtifact]] = None  # Images from member runs
     videos: Optional[List[VideoArtifact]] = None  # Videos from member runs

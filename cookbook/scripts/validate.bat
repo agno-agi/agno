@@ -9,6 +9,7 @@ SETLOCAL ENABLEDELAYEDEXPANSION
 REM Get current directory
 SET "CURR_DIR=%~dp0"
 SET "COOKBOOK_DIR=%CURR_DIR%\.."
+SET "AGNO_DIR=%COOKBOOK_DIR%\..\libs\agno"
 
 ECHO.
 ECHO ##################################################
@@ -43,11 +44,11 @@ IF %ERRORLEVEL% NEQ 0 (
 
 ECHO.
 ECHO ##################################################
-ECHO # Running: mypy %COOKBOOK_DIR%
+ECHO # Running: mypy %COOKBOOK_DIR% --config-file %AGNO_DIR%\pyproject.toml
 ECHO ##################################################
 ECHO.
 
-python -m mypy "%COOKBOOK_DIR%"
+python -m mypy "%COOKBOOK_DIR%" --config-file "%AGNO_DIR%\pyproject.toml"
 IF %ERRORLEVEL% NEQ 0 (
     ECHO [ERROR] mypy validation failed with exit code %ERRORLEVEL%
     EXIT /B %ERRORLEVEL%

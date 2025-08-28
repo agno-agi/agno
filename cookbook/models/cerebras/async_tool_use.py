@@ -8,7 +8,6 @@ agent = Agent(
     model=Cerebras(id="llama-4-scout-17b-16e-instruct"),
     tools=[DuckDuckGoTools()],
     markdown=True,
-    debug_mode=True,
 )
 
 asyncio.run(agent.aprint_response("Whats happening in France?"))

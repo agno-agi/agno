@@ -11,7 +11,7 @@ def test_message_as_input():
         markdown=True,
     )
 
-    response = agent.run(message=Message(role="user", content="Hello, how are you?"))
+    response = agent.run(input=Message(role="user", content="Hello, how are you?"))
     assert response.content is not None
 
 
@@ -22,7 +22,7 @@ def test_list_as_input():
     )
 
     response = agent.run(
-        message=[
+        input=[
             {"type": "text", "text": "What's in this image?"},
             {
                 "type": "image_url",
@@ -42,7 +42,7 @@ def test_dict_as_input():
     )
 
     response = agent.run(
-        message={
+        input={
             "role": "user",
             "content": "Hello, how are you?",
         }
@@ -60,5 +60,5 @@ def test_base_model_as_input():
         topic: str
         content: str
 
-    response = agent.run(message=InputMessage(topic="Greetings", content="Hello, how are you?"))
+    response = agent.run(input=InputMessage(topic="Greetings", content="Hello, how are you?"))
     assert response.content is not None

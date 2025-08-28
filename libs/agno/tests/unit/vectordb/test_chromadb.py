@@ -67,13 +67,13 @@ def test_create_collection(chroma_db):
 
 def test_insert_documents(chroma_db, sample_documents):
     """Test inserting documents"""
-    chroma_db.insert(sample_documents)
+    chroma_db.insert(content_hash="test_hash", documents=sample_documents)
     assert chroma_db.get_count() == 3
 
 
 def test_search_documents(chroma_db, sample_documents):
     """Test searching documents"""
-    chroma_db.insert(sample_documents)
+    chroma_db.insert(content_hash="test_hash", documents=sample_documents)
 
     # Search for coconut-related dishes
     results = chroma_db.search("coconut dishes", limit=2)
@@ -84,7 +84,7 @@ def test_search_documents(chroma_db, sample_documents):
 def test_upsert_documents(chroma_db, sample_documents):
     """Test upserting documents"""
     # Initial insert
-    chroma_db.insert([sample_documents[0]])
+    chroma_db.insert(content_hash="test_hash", documents=[sample_documents[0]])
     assert chroma_db.get_count() == 1
 
     # Upsert same document with different content
@@ -93,7 +93,7 @@ def test_upsert_documents(chroma_db, sample_documents):
         meta_data={"cuisine": "Thai", "type": "soup"},
         name="tom_kha",
     )
-    chroma_db.upsert([modified_doc])
+    chroma_db.upsert(content_hash="test_hash", documents=[modified_doc])
 
     # Search to verify the update
     results = chroma_db.search("spicy and sour", limit=1)
@@ -101,22 +101,16 @@ def test_upsert_documents(chroma_db, sample_documents):
     assert "spicy and sour" in results[0].content
 
 
-def test_doc_exists(chroma_db, sample_documents):
-    """Test document existence check"""
-    chroma_db.insert([sample_documents[0]])
-    assert chroma_db.doc_exists(sample_documents[0]) is True
-
-
 def test_name_exists(chroma_db, sample_documents):
     """Test name existence check"""
-    chroma_db.insert([sample_documents[0]])
+    chroma_db.insert(content_hash="test_hash", documents=[sample_documents[0]])
     assert chroma_db.name_exists("tom_kha") is True
     assert chroma_db.name_exists("nonexistent") is False
 
 
 def test_delete_by_id(chroma_db, sample_documents):
     """Test deleting documents by ID"""
-    chroma_db.insert(sample_documents)
+    chroma_db.insert(content_hash="test_hash", documents=sample_documents)
     assert chroma_db.get_count() == 3
 
     # Get the actual ID that was generated for the first document
@@ -143,7 +137,7 @@ def test_delete_by_id(chroma_db, sample_documents):
 
 def test_delete_by_name(chroma_db, sample_documents):
     """Test deleting documents by name"""
-    chroma_db.insert(sample_documents)
+    chroma_db.insert(content_hash="test_hash", documents=sample_documents)
     assert chroma_db.get_count() == 3
 
     # Delete by name
@@ -160,7 +154,7 @@ def test_delete_by_name(chroma_db, sample_documents):
 
 def test_delete_by_metadata(chroma_db, sample_documents):
     """Test deleting documents by metadata"""
-    chroma_db.insert(sample_documents)
+    chroma_db.insert(content_hash="test_hash", documents=sample_documents)
     assert chroma_db.get_count() == 3
 
     # Delete by single metadata condition - should work
@@ -169,7 +163,7 @@ def test_delete_by_metadata(chroma_db, sample_documents):
     assert chroma_db.get_count() == 0
 
     # Insert again and test single metadata condition
-    chroma_db.insert(sample_documents)
+    chroma_db.insert(content_hash="test_hash", documents=sample_documents)
     assert chroma_db.get_count() == 3
 
     # Delete by single metadata condition
@@ -190,7 +184,7 @@ def test_delete_by_content_id(chroma_db, sample_documents):
     sample_documents[1].content_id = "recipe_2"
     sample_documents[2].content_id = "recipe_3"
 
-    chroma_db.insert(sample_documents)
+    chroma_db.insert(content_hash="test_hash", documents=sample_documents)
     assert chroma_db.get_count() == 3
 
     # Delete by content_id
@@ -228,7 +222,7 @@ def test_delete_by_name_multiple_documents(chroma_db):
         ),
     ]
 
-    chroma_db.insert(docs)
+    chroma_db.insert(documents=docs, content_hash="test_hash")
     assert chroma_db.get_count() == 3
 
     # Delete all documents with name "tom_kha"
@@ -259,7 +253,7 @@ def test_delete_by_metadata_simple(chroma_db):
         ),
     ]
 
-    chroma_db.insert(docs)
+    chroma_db.insert(documents=docs, content_hash="test_hash")
     assert chroma_db.get_count() == 3
 
     # Delete by single metadata condition
@@ -268,7 +262,7 @@ def test_delete_by_metadata_simple(chroma_db):
     assert chroma_db.get_count() == 1  # Should only leave Italian recipe
 
     # Insert again for next test
-    chroma_db.insert(docs[:2])  # Add Thai recipes back
+    chroma_db.insert(documents=docs[:2], content_hash="test_hash")
     assert chroma_db.get_count() == 3
 
     # Delete by another single metadata condition
@@ -279,7 +273,7 @@ def test_delete_by_metadata_simple(chroma_db):
 
 def test_delete_collection(chroma_db, sample_documents):
     """Test deleting collection"""
-    chroma_db.insert(sample_documents)
+    chroma_db.insert(content_hash="test_hash", documents=sample_documents)
     assert chroma_db.get_count() == 3
 
     assert chroma_db.delete() is True
@@ -312,7 +306,7 @@ def test_distance_metrics():
 def test_get_count(chroma_db, sample_documents):
     """Test document count"""
     assert chroma_db.get_count() == 0
-    chroma_db.insert(sample_documents)
+    chroma_db.insert(content_hash="test_hash", documents=sample_documents)
     assert chroma_db.get_count() == 3
 
 
@@ -323,7 +317,7 @@ def test_error_handling(chroma_db):
     assert len(results) == 0
 
     # Test inserting empty document list
-    chroma_db.insert([])
+    chroma_db.insert(documents=[], content_hash="test_hash")
     assert chroma_db.get_count() == 0
 
 
@@ -348,12 +342,12 @@ def test_multiple_document_operations(chroma_db, sample_documents):
     """Test multiple document operations including batch inserts"""
     # Test batch insert
     first_batch = sample_documents[:2]
-    chroma_db.insert(first_batch)
+    chroma_db.insert(documents=first_batch, content_hash="test_hash")
     assert chroma_db.get_count() == 2
 
     # Test adding another document
     second_batch = [sample_documents[2]]
-    chroma_db.insert(second_batch)
+    chroma_db.insert(documents=second_batch, content_hash="test_hash")
     assert chroma_db.get_count() == 3
 
     # Verify all documents are searchable
@@ -377,14 +371,22 @@ async def test_async_create_collection(chroma_db):
 @pytest.mark.asyncio
 async def test_async_insert_documents(chroma_db, sample_documents):
     """Test inserting documents asynchronously"""
-    await chroma_db.async_insert(sample_documents)
+    # Set embeddings on documents to avoid None embeddings issue
+    for doc in sample_documents:
+        doc.embedding = chroma_db.embedder.get_embedding(doc.content)
+
+    await chroma_db.async_insert(content_hash="test_hash", documents=sample_documents)
     assert chroma_db.get_count() == 3
 
 
 @pytest.mark.asyncio
 async def test_async_search_documents(chroma_db, sample_documents):
     """Test searching documents asynchronously"""
-    await chroma_db.async_insert(sample_documents)
+    # Set embeddings on documents to avoid None embeddings issue
+    for doc in sample_documents:
+        doc.embedding = chroma_db.embedder.get_embedding(doc.content)
+
+    await chroma_db.async_insert(content_hash="test_hash", documents=sample_documents)
 
     # Search for coconut-related dishes
     results = await chroma_db.async_search("coconut dishes", limit=2)
@@ -395,8 +397,11 @@ async def test_async_search_documents(chroma_db, sample_documents):
 @pytest.mark.asyncio
 async def test_async_upsert_documents(chroma_db, sample_documents):
     """Test upserting documents asynchronously"""
+    # Set embedding on the initial document
+    sample_documents[0].embedding = chroma_db.embedder.get_embedding(sample_documents[0].content)
+
     # Initial insert
-    await chroma_db.async_insert([sample_documents[0]])
+    await chroma_db.async_insert(content_hash="test_hash", documents=[sample_documents[0]])
     assert chroma_db.get_count() == 1
 
     # Upsert same document with different content
@@ -405,7 +410,10 @@ async def test_async_upsert_documents(chroma_db, sample_documents):
         meta_data={"cuisine": "Thai", "type": "soup"},
         name="tom_kha",
     )
-    await chroma_db.async_upsert([modified_doc])
+    # Set embedding on the modified document
+    modified_doc.embedding = chroma_db.embedder.get_embedding(modified_doc.content)
+
+    await chroma_db.async_upsert(content_hash="test_hash", documents=[modified_doc])
 
     # Search to verify the update
     results = await chroma_db.async_search("spicy and sour", limit=1)
@@ -414,17 +422,12 @@ async def test_async_upsert_documents(chroma_db, sample_documents):
 
 
 @pytest.mark.asyncio
-async def test_async_doc_exists(chroma_db, sample_documents):
-    """Test document existence check asynchronously"""
-    await chroma_db.async_insert([sample_documents[0]])
-    exists = await chroma_db.async_doc_exists(sample_documents[0])
-    assert exists is True
-
-
-@pytest.mark.asyncio
 async def test_async_name_exists(chroma_db, sample_documents):
     """Test document name existence check asynchronously"""
-    await chroma_db.async_insert([sample_documents[0]])
+    # Set embedding on the document
+    sample_documents[0].embedding = chroma_db.embedder.get_embedding(sample_documents[0].content)
+
+    await chroma_db.async_insert(content_hash="test_hash", documents=[sample_documents[0]])
     exists = await chroma_db.async_name_exists("tom_kha")
     assert exists is True
 

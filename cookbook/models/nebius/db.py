@@ -13,7 +13,6 @@ agent = Agent(
     model=Nebius(),
     db=db,
     tools=[DuckDuckGoTools()],
-    debug_mode=True,
     add_history_to_context=True,
 )
 agent.print_response("How many people live in Canada?")

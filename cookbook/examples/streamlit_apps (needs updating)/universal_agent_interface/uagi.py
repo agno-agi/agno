@@ -5,11 +5,9 @@ from typing import List, Optional
 
 from agents import get_agent
 from agno.agent import Agent
-from agno.db.sqlite import SqliteStorage
+from agno.db.sqlite.sqlite import SqliteDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.memory import Memory
-from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.groq import Groq
@@ -39,10 +37,7 @@ class UAgIConfig:
     agents: Optional[List[str]] = None
 
 
-uagi_memory = Memory(
-    db=SqliteMemoryDb(table_name="uagi_memory", db_file=str(MEMORY_PATH))
-)
-uagi_storage = SqliteStorage(db_file=str(STORAGE_PATH), table_name="uagi_sessions")
+uagi_db = SqliteDb(db_file=str(STORAGE_PATH))
 uagi_knowledge = Knowledge(
     vector_db=LanceDb(
         table_name="uagi_knowledge",
@@ -93,7 +88,7 @@ def create_uagi(
     agents: List[Agent] = []
     if config.agents:
         for agent_name in config.agents:
-            agent = get_agent(agent_name, model, uagi_memory, uagi_knowledge)
+            agent = get_agent(agent_name, model, uagi_db, uagi_knowledge)
             if agent is not None:
                 agents.append(agent)
             else:
@@ -136,14 +131,13 @@ def create_uagi(
         session_id=session_id,
         tools=tools,
         members=agents,
-        memory=uagi_memory,
-        storage=uagi_storage,
+        db=uagi_db,
         knowledge=uagi_knowledge,
         description=description,
         instructions=instructions,
-        enable_team_history=True,
-        read_team_history=True,
-        num_of_interactions_from_history=3,
+        enable_session_summaries=True,
+        enable_user_memories=True,
+        num_history_runs=3,
         show_members_responses=True,
         enable_agentic_memory=True,
         markdown=True,

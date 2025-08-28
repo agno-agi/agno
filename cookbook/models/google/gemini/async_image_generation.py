@@ -18,15 +18,18 @@ async def generate_image():
     # Print the response in the terminal - using arun instead of run
     _ = await agent.arun("Make me an image of a cat in a tree.")
 
-    images = agent.get_images()
-    if images and isinstance(images, list):
-        for image_response in images:
+    # Retrieve and display generated images using get_last_run_output
+    run_response = agent.get_last_run_output()
+    if run_response and isinstance(run_response, RunOutput) and run_response.images:
+        for image_response in run_response.images:
             image_bytes = image_response.content
             if image_bytes:
                 image = Image.open(BytesIO(image_bytes))
                 image.show()
                 # Save the image to a file
                 # image.save("generated_image.png")
+    else:
+        print("No images found in run response")
 
 
 if __name__ == "__main__":

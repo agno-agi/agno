@@ -7,7 +7,6 @@ Steps:
 """
 
 from agno.agent import Agent
-from agno.db.base import SessionType
 from agno.db.postgres import PostgresDb
 from agno.models.meta import Llama
 from rich.pretty import pprint
@@ -27,7 +26,6 @@ agent = Agent(
     # Enable session summaries
     enable_session_summaries=True,
     # Show debug logs so, you can see the memory being created
-    debug_mode=True,
 )
 
 # -*- Share personal information
@@ -35,22 +33,18 @@ agent.print_response("My name is John Billings", stream=True)
 
 # -*- Print memories and session summary
 if agent.db:
-    pprint(agent.db.get_user_memories(user_id="test_user"))
+    pprint(agent.get_user_memories(user_id="test_user"))
     pprint(
-        agent.db.get_session(
-            session_id="test_session", session_type=SessionType.AGENT
-        ).summary  # type: ignore
+        agent.get_session(session_id="test_session").summary  # type: ignore
     )
 
 # -*- Share personal information
 agent.print_response("I live in NYC", stream=True)
 # -*- Print memories and session summary
 if agent.db:
-    pprint(agent.db.get_user_memories(user_id="test_user"))
+    pprint(agent.get_user_memories(user_id="test_user"))
     pprint(
-        agent.db.get_session(
-            session_id="test_session", session_type=SessionType.AGENT
-        ).summary  # type: ignore
+        agent.get_session(session_id="test_session").summary  # type: ignore
     )
 
 
