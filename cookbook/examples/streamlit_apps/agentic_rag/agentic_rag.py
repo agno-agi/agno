@@ -1,8 +1,8 @@
-"""🤖 Agentic RAG Agent - Your AI Knowledge Assistant!
+"""🤖 Agentic RAG - Your AI Knowledge Agent!
 This advanced example shows how to build a sophisticated RAG (Retrieval Augmented Generation) system that
-leverages vector search and LLMs to provide deep insights from any knowledge base.
+leverages vector search and Language Models to provide deep insights from any knowledge base.
 
-The agent can:
+The Agent can:
 - Process and understand documents from multiple sources (PDFs, websites, text files)
 - Build a searchable knowledge base using vector embeddings
 - Maintain conversation context and memory across sessions
@@ -10,7 +10,7 @@ The agent can:
 - Generate summaries and extract key insights
 - Answer follow-up questions and clarifications
 
-Example queries to try:
+Example Queries to Try:
 - "What are the key points from this document?"
 - "Can you summarize the main arguments and supporting evidence?"
 - "What are the important statistics and findings?"
@@ -19,7 +19,7 @@ Example queries to try:
 - "Can you explain [concept X] in more detail?"
 - "What other sources support or contradict these claims?"
 
-The agent uses:
+The Agent uses:
 - Vector similarity search for relevant document retrieval
 - Conversation memory for contextual responses
 - Citation tracking for source attribution

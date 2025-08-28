@@ -1,10 +1,8 @@
-import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
 from agno.agent import Agent
-from agno.db.base import SessionType
 from agno.utils.log import logger
 
 
@@ -226,7 +224,6 @@ def _load_session(session_id: str, model_id: str, agent_creation_callback: calla
                 if hasattr(selected_session, "runs") and selected_session.runs:
                     for run_idx, run in enumerate(selected_session.runs):
                         messages = getattr(run, "messages", None)
-                        msg_count = len(messages) if messages else 0
 
                         if messages:
                             user_msg = None

@@ -1,7 +1,6 @@
 import streamlit as st
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
-from agno.models.groq import Groq
 from agno.models.openai import OpenAIChat
 
 
@@ -13,8 +12,6 @@ def get_model_from_id(model_id: str):
         return Claude(id=model_id.split("anthropic:")[1])
     elif model_id.startswith("google:"):
         return Gemini(id=model_id.split("google:")[1])
-    elif model_id.startswith("groq:"):
-        return Groq(id=model_id.split("groq:")[1])
     else:
         return OpenAIChat(id="gpt-4o")
 
@@ -38,5 +35,4 @@ MODELS = [
     "gpt-5",
     "claude-4-sonnet",
     "gemini-2.5-pro",
-    "kimi-k2-instruct",
 ]

@@ -1,5 +1,5 @@
-import os
 import tempfile
+from os import unlink
 
 import nest_asyncio
 import streamlit as st
@@ -20,7 +20,7 @@ from utils import MODELS, about_section
 nest_asyncio.apply()
 st.set_page_config(
     page_title="Agentic RAG",
-    page_icon="💎",
+    page_icon="🤖",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -64,9 +64,9 @@ def main():
     ####################################################################
     # App header
     ####################################################################
-    st.markdown("<h1 class='main-title'>Agentic RAG </h1>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-title'>Agentic RAG</h1>", unsafe_allow_html=True)
     st.markdown(
-        "<p class='subtitle'>Your intelligent research assistant powered by Agno</p>",
+        "<p class='subtitle'>Your intelligent RAG Agent powered by Agno</p>",
         unsafe_allow_html=True,
     )
 
@@ -131,7 +131,7 @@ def main():
                 description=f"Uploaded file: {uploaded_file.name}",
             )
 
-            os.unlink(tmp_path)
+            unlink(tmp_path)
             st.sidebar.success(f"{uploaded_file.name} added to knowledge base")
         except Exception as e:
             st.sidebar.error(f"Error processing file: {str(e)}")
