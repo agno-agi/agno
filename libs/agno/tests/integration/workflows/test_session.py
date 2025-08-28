@@ -126,9 +126,7 @@ def test_workflow_with_state_shared_downstream(shared_db):
     )
 
     # Create an Agent that maintains state
-    response = workflow.run(
-        "Add oranges to my shopping list", session_id="session_1", session_state={"shopping_list": []}
-    )
+    workflow.run("Add oranges to my shopping list", session_id="session_1", session_state={"shopping_list": []})
 
     session_from_storage = workflow.get_session(session_id="session_1")
     assert session_from_storage.session_data["session_state"] == {"shopping_list": ["oranges"]}
