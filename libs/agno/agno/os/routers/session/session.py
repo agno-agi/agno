@@ -15,6 +15,7 @@ from agno.os.schema import (
     SortOrder,
     TeamRunSchema,
     TeamSessionDetailSchema,
+    WorkflowRunSchema,
     WorkflowSessionDetailSchema,
 )
 from agno.os.settings import AgnoAPISettings
@@ -87,13 +88,13 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
             return WorkflowSessionDetailSchema.from_session(session)  # type: ignore
 
     @router.get(
-        "/sessions/{session_id}/runs", response_model=Union[List[RunSchema], List[TeamRunSchema]], status_code=200
+        "/sessions/{session_id}/runs", response_model=Union[List[RunSchema], List[TeamRunSchema], List[WorkflowRunSchema]], status_code=200
     )
     async def get_session_runs(
         session_id: str = Path(..., description="Session ID", alias="session_id"),
         session_type: SessionType = Query(default=SessionType.AGENT, description="Session type filter", alias="type"),
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
-    ) -> Union[List[RunSchema], List[TeamRunSchema]]:
+    ) -> Union[List[RunSchema], List[TeamRunSchema], List[WorkflowRunSchema]]:
         db = get_db(dbs, db_id)
         session = db.get_session(session_id=session_id, session_type=session_type, deserialize=False)
         if not session:
@@ -108,6 +109,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
 
         elif session_type == SessionType.TEAM:
             return [TeamRunSchema.from_dict(run) for run in runs]
+
+        elif session_type == SessionType.WORKFLOW:
+            return [WorkflowRunSchema.from_dict(run) for run in runs]
 
         else:
             return [RunSchema.from_dict(run) for run in runs]
