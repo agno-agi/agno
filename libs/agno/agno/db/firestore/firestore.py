@@ -960,7 +960,7 @@ class FirestoreDb(BaseDb):
     def calculate_metrics(self) -> Optional[list[dict]]:
         """Calculate metrics for all dates without complete metrics."""
         try:
-            collection_ref = self._get_collection(table_type="metrics")
+            collection_ref = self._get_collection(table_type="metrics", create_collection_if_not_found=True)
 
             starting_date = self._get_metrics_calculation_starting_date(collection_ref)
             if starting_date is None:

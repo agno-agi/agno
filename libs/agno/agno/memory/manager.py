@@ -54,8 +54,6 @@ class MemoryManager:
         memory_capture_instructions: Optional[str] = None,
         additional_instructions: Optional[str] = None,
         db: Optional[BaseDb] = None,
-        delete_memories: bool = False,
-        clear_memories: bool = False,
         debug_mode: bool = False,
     ):
         self.model = model
@@ -65,8 +63,6 @@ class MemoryManager:
         self.memory_capture_instructions = memory_capture_instructions
         self.additional_instructions = additional_instructions
         self.db = db
-        self.delete_memories = delete_memories
-        self.clear_memories = clear_memories
         self.debug_mode = debug_mode
         self._tools_for_model: Optional[List[Dict[str, Any]]] = None
         self._functions_for_model: Optional[Dict[str, Function]] = None
@@ -756,8 +752,6 @@ class MemoryManager:
         db: BaseDb,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
-        delete_memories: bool = True,
-        clear_memories: bool = True,
     ) -> str:
         if self.model is None:
             log_error("No model provided for memory manager")
@@ -807,8 +801,6 @@ class MemoryManager:
         existing_memories: List[Dict[str, Any]],
         user_id: str,
         db: BaseDb,
-        delete_memories: bool = True,
-        clear_memories: bool = True,
     ) -> str:
         if self.model is None:
             log_error("No model provided for memory manager")

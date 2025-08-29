@@ -954,7 +954,7 @@ class MongoDb(BaseDb):
     def calculate_metrics(self) -> Optional[list[dict]]:
         """Calculate metrics for all dates without complete metrics."""
         try:
-            collection = self._get_collection(table_type="metrics")
+            collection = self._get_collection(table_type="metrics", create_collection_if_not_found=True)
             if collection is None:
                 return None
 
