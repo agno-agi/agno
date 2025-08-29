@@ -82,6 +82,7 @@ class ConfigResponse(BaseModel):
     description: Optional[str] = None
     available_models: Optional[List[str]] = None
     databases: List[str]
+    chat: Optional[ChatConfig] = None
 
     session: Optional[SessionConfig] = None
     metrics: Optional[MetricsConfig] = None
@@ -93,7 +94,6 @@ class ConfigResponse(BaseModel):
     teams: List[TeamSummaryResponse]
     workflows: List[WorkflowSummaryResponse]
     interfaces: List[InterfaceResponse]
-    chat: Optional[ChatConfig] = None
 
 
 class Model(BaseModel):

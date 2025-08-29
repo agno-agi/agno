@@ -12,7 +12,6 @@ from starlette.requests import Request
 from agno.agent.agent import Agent
 from agno.os.config import (
     AgentOSConfig,
-    ChatConfig,
     DatabaseConfig,
     EvalsConfig,
     EvalsDomainConfig,
@@ -280,11 +279,6 @@ class AgentOS:
                 )
 
         return evals_config
-
-    def _get_chat_config(self) -> Optional[ChatConfig]:
-        if not self.config or not self.config.chat:
-            return None
-        return self.config.chat
 
     def _setup_routers(self) -> None:
         """Add all routers to the FastAPI app."""
