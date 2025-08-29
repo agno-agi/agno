@@ -87,7 +87,7 @@ class FirecrawlTools(Toolkit):
         if self.formats:
             params["formats"] = self.formats
 
-        scrape_result = self.app.scrape_url(url, **params)
+        scrape_result = self.app.scrape(url, **params)
         return json.dumps(scrape_result.model_dump(), cls=CustomJSONEncoder)
 
     def crawl_website(self, url: str, limit: Optional[int] = None) -> str:
@@ -108,7 +108,7 @@ class FirecrawlTools(Toolkit):
 
         params["poll_interval"] = self.poll_interval
 
-        crawl_result = self.app.crawl_url(url, **params)
+        crawl_result = self.app.crawl(url, **params)
         return json.dumps(crawl_result.model_dump(), cls=CustomJSONEncoder)
 
     def map_website(self, url: str) -> str:
@@ -118,7 +118,7 @@ class FirecrawlTools(Toolkit):
             url (str): The URL to map.
 
         """
-        map_result = self.app.map_url(url)
+        map_result = self.app.map(url)
         return json.dumps(map_result.model_dump(), cls=CustomJSONEncoder)
 
     def search(self, query: str, limit: Optional[int] = None):
