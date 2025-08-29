@@ -302,6 +302,7 @@ def get_base_router(
         tags=["Core"],
     )
     async def config() -> ConfigResponse:
+        print(os.config)
         return ConfigResponse(
             os_id=os.os_id or "Unnamed OS",
             description=os.description,
@@ -319,6 +320,7 @@ def get_base_router(
                 InterfaceResponse(type=interface.type, version=interface.version, route=interface.router_prefix)
                 for interface in os.interfaces
             ],
+            chat=os._get_chat_config(),
         )
 
     @router.get(

@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.models.message import Message
-from agno.os.config import EvalsConfig, KnowledgeConfig, MemoryConfig, MetricsConfig, SessionConfig
+from agno.os.config import ChatConfig, EvalsConfig, KnowledgeConfig, MemoryConfig, MetricsConfig, SessionConfig
 from agno.os.utils import (
     format_team_tools,
     format_tools,
@@ -93,6 +93,7 @@ class ConfigResponse(BaseModel):
     teams: List[TeamSummaryResponse]
     workflows: List[WorkflowSummaryResponse]
     interfaces: List[InterfaceResponse]
+    chat: Optional[ChatConfig] = None
 
 
 class Model(BaseModel):
