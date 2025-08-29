@@ -3,6 +3,8 @@ from enum import Enum
 from time import time
 from typing import Any, Dict, List, Optional
 
+from pydantic import BaseModel
+
 from agno.media import AudioResponse, ImageArtifact
 from agno.models.message import Citations, MessageMetrics
 from agno.tools.function import UserInputField
@@ -110,6 +112,29 @@ class ModelResponse:
     created_at: int = int(time())
 
     extra: Optional[Dict[str, Any]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        _dict = asdict(self)
+        if self.audio is not None:
+            _dict["audio"] = self.audio.to_dict()
+        if self.image is not None:
+            _dict["image"] = self.image.to_dict()
+
+        if self.tool_executions is not None:
+            _dict["tool_executions"] = [tool_execution.to_dict() for tool_execution in self.tool_executions]
+
+        response_usage = _dict.pop("response_usage", None)
+        if response_usage is not None:
+            if isinstance(response_usage, BaseModel):
+                _dict["response_usage"] = response_usage.model_dump()
+            else:
+                _dict["response_usage"] = response_usage
+
+        return _dict
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ModelResponse":
+        return cls(**data)
 
 
 class FileType(str, Enum):
