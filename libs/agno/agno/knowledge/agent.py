@@ -161,7 +161,8 @@ class AgentKnowledge(BaseModel):
 
             # Upsert documents if upsert is True and vector db supports upsert
             if upsert and self.vector_db.upsert_available():
-                self.vector_db.upsert(documents=documents_to_load, filters=doc.meta_data)
+                for doc in documents_to_load:
+                    self.vector_db.upsert(documents=[doc], filters=doc.meta_data)
             # Insert documents
             else:
                 # Filter out documents which already exist in the vector db
@@ -170,7 +171,8 @@ class AgentKnowledge(BaseModel):
                     documents_to_load = self.filter_existing_documents(document_list)
 
                 if documents_to_load:
-                    self.vector_db.insert(documents=documents_to_load, filters=doc.meta_data)
+                    for doc in documents_to_load:
+                        self.vector_db.insert(documents=[doc], filters=doc.meta_data)
 
             num_documents += len(documents_to_load)
         log_info(f"Added {num_documents} documents to knowledge base")
@@ -204,7 +206,8 @@ class AgentKnowledge(BaseModel):
 
             # Upsert documents if upsert is True and vector db supports upsert
             if upsert and self.vector_db.upsert_available():
-                await self.vector_db.async_upsert(documents=documents_to_load, filters=doc.meta_data)
+                for doc in documents_to_load:
+                    await self.vector_db.async_upsert(documents=[doc], filters=doc.meta_data)
             # Insert documents
             else:
                 # Filter out documents which already exist in the vector db
@@ -213,7 +216,8 @@ class AgentKnowledge(BaseModel):
                     documents_to_load = await self.async_filter_existing_documents(document_list)
 
                 if documents_to_load:
-                    await self.vector_db.async_insert(documents=documents_to_load, filters=doc.meta_data)
+                    for doc in documents_to_load:
+                        await self.vector_db.async_insert(documents=[doc], filters=doc.meta_data)
 
             num_documents += len(documents_to_load)
         log_info(f"Added {num_documents} documents to knowledge base")

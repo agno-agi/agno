@@ -749,9 +749,7 @@ class Agent:
                 self.session_id = session_id = str(uuid4())
 
         # Use the default user_id when necessary
-        if user_id is not None and user_id != "":
-            user_id = user_id
-        else:
+        if user_id is None or user_id == "":
             user_id = self.user_id
 
         # Determine the session_state
