@@ -302,7 +302,6 @@ def get_base_router(
         tags=["Core"],
     )
     async def config() -> ConfigResponse:
-        print(os.config)
         return ConfigResponse(
             os_id=os.os_id or "Unnamed OS",
             description=os.description,
