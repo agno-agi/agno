@@ -34,7 +34,6 @@ from agno.os.utils import (
     get_agent_by_id,
     get_team_by_id,
     get_workflow_by_id,
-    get_workflow_input_schema_dict,
     process_audio,
     process_document,
     process_image,
@@ -754,7 +753,7 @@ def get_base_router(
                 await websocket_manager.disconnect_by_run_id(run_id)
 
     @router.get(
-        "/workflows/",
+        "/workflows",
         response_model=List[WorkflowResponse],
         response_model_exclude_none=True,
         tags=["Workflows"],
@@ -763,18 +762,10 @@ def get_base_router(
         if os.workflows is None:
             return []
 
-        return [
-            WorkflowResponse(
-                id=str(workflow.id),
-                name=workflow.name,
-                description=workflow.description,
-                input_schema=get_workflow_input_schema_dict(workflow),
-            )
-            for workflow in os.workflows
-        ]
+        return [WorkflowSummaryResponse.from_workflow(workflow) for workflow in os.workflows]
 
     @router.get(
-        "/workflows/{workflow_id}/",
+        "/workflows/{workflow_id}",
         response_model=WorkflowResponse,
         response_model_exclude_none=True,
         tags=["Workflows"],
