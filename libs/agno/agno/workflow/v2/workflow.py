@@ -13,7 +13,8 @@ from typing import (
     Literal,
     Optional,
     Union,
-    overload,
+    overload, Set,
+    Set
 )
 from uuid import uuid4
 
@@ -3311,3 +3312,1072 @@ class Workflow:
 
                             # Set workflow_session_state on team members
                             self._update_executor_workflow_session_state(member)
+
+    def _serialize_tool_hierarchical(self, tool: Any) -> Dict[str, Any]:
+        """Serialize a tool with full information for hierarchical structure."""
+        tool_info = {
+            "name": getattr(tool, 'name', str(type(tool).__name__)),
+            "type": type(tool).__name__,
+        }
+
+        if hasattr(tool, 'description'):
+            tool_info["description"] = tool.description
+        if hasattr(tool, 'category'):
+            tool_info["category"] = tool.category
+        if hasattr(tool, '__doc__') and tool.__doc__:
+            tool_info["docstring"] = tool.__doc__.strip()
+
+        # Add activation status if available
+        if hasattr(tool, 'is_active'):
+            if callable(tool.is_active):
+                tool_info["is_active"] = tool.is_active()
+            else:
+                tool_info["is_active"] = tool.is_active
+        elif hasattr(tool, 'active'):
+            tool_info["is_active"] = tool.active
+        elif hasattr(tool, 'enabled'):
+            tool_info["is_active"] = tool.enabled
+        else:
+            # Assume active if no activation info available
+            tool_info["is_active"] = True
+
+        # Add additional metadata if available
+        if hasattr(tool, 'version'):
+            tool_info["version"] = tool.version
+        if hasattr(tool, 'priority'):
+            tool_info["priority"] = tool.priority
+
+        return tool_info
+
+    def _expand_toolkit_tools(self, item: Any) -> list:
+        """Expand toolkit tools into individual tool entries."""
+        tools_list = []
+
+        # Check if this is a toolkit with tools
+        if hasattr(item, 'tools') and item.tools:
+            # This is a toolkit, expand its tools
+            toolkit_name = getattr(item, 'name', str(type(item).__name__))
+            for tool in item.tools:
+                # Recursively handle nested toolkits
+                if self._is_toolkit(tool):
+                    tools_list.extend(self._expand_toolkit_tools(tool))
+                else:
+                    tool_info = self._serialize_tool_hierarchical(tool)
+                    # Add toolkit source information
+                    tool_info["toolkit"] = toolkit_name
+                    tools_list.append(tool_info)
+        else:
+            # This is a regular tool
+            if self._is_toolkit(item):
+                # Handle edge case where toolkit might have tools in different attribute
+                tools_list.extend(self._expand_toolkit_tools(item))
+            else:
+                tools_list.append(self._serialize_tool_hierarchical(item))
+
+        return tools_list
+
+    def _is_toolkit(self, item: Any) -> bool:
+        """Check if an item is a toolkit."""
+        # Check if it's an instance of Toolkit class or has toolkit-like attributes
+        toolkit_indicators = [
+            'Toolkit' in str(type(item).__name__),
+            hasattr(item, 'tools') and hasattr(item, 'name'),
+            str(type(item).__name__).endswith('Toolkit')
+        ]
+        return any(toolkit_indicators)
+
+    def _serialize_agent_hierarchical(self, agent: Any, used_ids: Set[str] = None, index: int = None) -> Dict[str, Any]:
+        """Serialize an agent with full information for hierarchical structure."""
+        if used_ids is None:
+            used_ids = set()
+
+        agent_name = getattr(agent, 'name', None) or 'Unnamed Agent'
+        agent_dict = {
+            "type": "agent",
+            "id": self._generate_unique_id(agent_name, "agent", used_ids, index),
+            "name": agent_name,
+            "description": getattr(agent, 'description', None) or '',
+
+        }
+
+        # Add agent-specific properties
+        if hasattr(agent, 'agent_id'):
+            agent_dict["agent_id"] = agent.agent_id
+        if hasattr(agent, 'role'):
+            agent_dict["role"] = agent.role
+        if hasattr(agent, 'agent_type'):
+            agent_dict["agent_type"] = agent.agent_type
+
+        # Serialize tools (expand toolkits into individual tools)
+        if hasattr(agent, 'tools') and agent.tools:
+            expanded_tools = []
+            for tool in agent.tools:
+                expanded_tools.extend(self._expand_toolkit_tools(tool))
+            agent_dict["tools"] = expanded_tools
+            agent_dict["tool_count"] = len(expanded_tools)
+        else:
+            agent_dict["tools"] = []
+            agent_dict["tool_count"] = 0
+
+        # Add capabilities if available
+        if hasattr(agent, 'capabilities'):
+            agent_dict["capabilities"] = agent.capabilities
+
+        # Add configuration information
+        for attr in ['guardrail_info', 'telemetry_info', 'observability', 'mode']:
+            if hasattr(agent, attr):
+                agent_dict[attr] = getattr(agent, attr)
+
+        return agent_dict
+
+    def _serialize_team_hierarchical(self, team: Any, used_ids: Set[str] = None, index: int = None) -> Dict[str, Any]:
+        """Serialize a team with full hierarchical information."""
+        if used_ids is None:
+            used_ids = set()
+
+        team_name = getattr(team, 'name', None) or 'Unnamed Team'
+        team_dict = {
+            "type": "team",
+            "id": self._generate_unique_id(team_name, "team", used_ids, index),
+            "name": team_name,
+            "description": getattr(team, 'description', None) or '',
+
+        }
+
+        # Add team-specific properties
+        if hasattr(team, 'mode'):
+            team_dict["mode"] = team.mode
+        if hasattr(team, 'success_criteria'):
+            team_dict["success_criteria"] = team.success_criteria
+
+        # Serialize team tools (expand toolkits into individual tools)
+        if hasattr(team, 'tools') and team.tools:
+            expanded_tools = []
+            for tool in team.tools:
+                expanded_tools.extend(self._expand_toolkit_tools(tool))
+            team_dict["tools"] = expanded_tools
+            team_dict["tool_count"] = len(expanded_tools)
+        else:
+            team_dict["tools"] = []
+            team_dict["tool_count"] = 0
+
+        # Recursively serialize members (agents and sub-teams)
+        members = []
+        if hasattr(team, 'members') and team.members:
+            for i, member in enumerate(team.members):
+                if hasattr(member, 'members'):  # It's a sub-team
+                    members.append(self._serialize_team_hierarchical(member, used_ids, i))
+                else:  # It's an agent
+                    members.append(self._serialize_agent_hierarchical(member, used_ids, i))
+
+        team_dict["members"] = members
+        team_dict["member_count"] = len(members)
+
+        return team_dict
+
+    def _generate_unique_id(self, base_name: str, step_type: str, used_ids: Set[str], index: int = None) -> str:
+        """Generate a unique, human-readable ID for a workflow step."""
+        import re
+
+        # Clean the base name to make it URL-friendly and readable
+        clean_name = re.sub(r'[^a-zA-Z0-9\s]', '', base_name.lower())
+        clean_name = re.sub(r'\s+', '-', clean_name.strip())
+
+        # Create base ID with type prefix
+        type_prefix = step_type.lower().replace(' ', '-')
+        if clean_name:
+            base_id = f"{type_prefix}-{clean_name}"
+        else:
+            base_id = f"{type_prefix}-step"
+
+        # Add index if provided
+        if index is not None:
+            base_id = f"{base_id}-{index}"
+
+        # Ensure uniqueness
+        unique_id = base_id
+        counter = 1
+        while unique_id in used_ids:
+            unique_id = f"{base_id}-{counter}"
+            counter += 1
+
+        used_ids.add(unique_id)
+        return unique_id
+
+    def _step_to_dict_hierarchical(self, step_item: Union[Step, Condition, any], used_ids: Set[str] = None,
+        index: int = None) -> Dict[str, Any]:
+        """Convert a workflow step to hierarchical dictionary representation with full team/agent details."""
+
+        # Initialize used_ids if not provided
+        if used_ids is None:
+            used_ids = set()
+
+        # Handle Step objects
+        if isinstance(step_item, Step):
+            step_dict = {
+                "type": "Step",
+                "id": self._generate_unique_id(step_item.name, "Step", used_ids, index),
+                "name": step_item.name,
+                "description": step_item.description or "No description provided",
+            }
+
+            # Add executor information with hierarchical team/agent structure
+            if hasattr(step_item, 'active_executor') and step_item.active_executor:
+                executor = step_item.active_executor
+                if hasattr(executor, '__name__'):
+                    step_dict["executor"] = {
+                        "type": "function",
+                        "name": executor.__name__
+                    }
+                elif hasattr(executor, 'members'):  # It's a team
+                    step_dict["executor"] = self._serialize_team_hierarchical(executor)
+                elif hasattr(executor, 'instructions'):  # It's an agent
+                    step_dict["executor"] = self._serialize_agent_hierarchical(executor)
+                else:
+                    step_dict["executor"] = {
+                        "type": "unknown",
+                        "name": str(type(executor).__name__)
+                    }
+            elif hasattr(step_item, 'executor') and step_item.executor:
+                # Handle function executors
+                if callable(step_item.executor):
+                    step_dict["executor"] = {
+                        "type": "function",
+                        "name": step_item.executor.__name__
+                    }
+                else:
+                    step_dict["executor"] = {
+                        "type": "unknown",
+                        "name": str(type(step_item.executor).__name__)
+                    }
+
+            return step_dict
+
+        # Handle Condition objects
+        elif isinstance(step_item, Condition):
+            condition_name = getattr(step_item, 'name', None) or 'Conditional Execution'
+            condition_dict = {
+                "type": "Condition",
+                "id": self._generate_unique_id(condition_name, "Condition", used_ids, index),
+                "name": condition_name,
+                "description": getattr(step_item, 'description', None) or 'Conditional workflow execution',
+
+                "evaluator": {
+                    "function": step_item.evaluator.__name__ if hasattr(step_item.evaluator, '__name__') else str(
+                        step_item.evaluator),
+                    "description": getattr(step_item.evaluator, '__doc__', 'No description available')
+                },
+                "steps": []
+            }
+
+            # Recursively process nested steps
+            if hasattr(step_item, 'steps') and step_item.steps:
+                for i, nested_step in enumerate(step_item.steps):
+                    condition_dict["steps"].append(self._step_to_dict_hierarchical(nested_step, used_ids, i))
+
+            return condition_dict
+
+        # Handle Loop objects
+        elif isinstance(step_item, Loop):
+            loop_name = getattr(step_item, 'name', None) or 'Loop Execution'
+            loop_dict = {
+                "type": "Loop",
+                "id": self._generate_unique_id(loop_name, "Loop", used_ids, index),
+                "name": loop_name,
+                "description": getattr(step_item, 'description', None) or 'Loop-based workflow execution',
+                "max_iterations": step_item.max_iterations,
+                "steps": []
+            }
+
+            # Add loop end condition if available
+            if hasattr(step_item, 'end_condition') and step_item.end_condition:
+                loop_dict["end_condition"] = {
+                    "function": step_item.end_condition.__name__ if hasattr(step_item.end_condition, '__name__') else str(step_item.end_condition),
+                    "description": getattr(step_item.end_condition, '__doc__', 'No description available')
+                }
+
+            # Recursively process nested steps
+            if hasattr(step_item, 'steps') and step_item.steps:
+                for i, nested_step in enumerate(step_item.steps):
+                    loop_dict["steps"].append(self._step_to_dict_hierarchical(nested_step, used_ids, i))
+
+            return loop_dict
+
+        # Handle Parallel objects
+        elif isinstance(step_item, Parallel):
+            parallel_name = getattr(step_item, 'name', None) or 'Parallel Execution'
+            parallel_dict = {
+                "type": "Parallel",
+                "id": self._generate_unique_id(parallel_name, "Parallel", used_ids, index),
+                "name": parallel_name,
+                "description": getattr(step_item, 'description', None) or 'Parallel workflow execution',
+                "step_count": len(step_item.steps) if step_item.steps else 0,
+                "steps": []
+            }
+
+            # Recursively process nested steps
+            if hasattr(step_item, 'steps') and step_item.steps:
+                for i, nested_step in enumerate(step_item.steps):
+                    parallel_dict["steps"].append(self._step_to_dict_hierarchical(nested_step, used_ids, i))
+
+            return parallel_dict
+
+        # Handle Router objects
+        elif isinstance(step_item, Router):
+            router_name = getattr(step_item, 'name', None) or 'Router'
+            router_dict = {
+                "type": "Router",
+                "id": self._generate_unique_id(router_name, "Router", used_ids, index),
+                "name": router_name,
+                "description": getattr(step_item, 'description', None) or 'Router-based workflow execution',
+                "selector": {
+                    "function": step_item.selector.__name__ if hasattr(step_item.selector, '__name__') else str(step_item.selector),
+                    "description": getattr(step_item.selector, '__doc__', 'No description available')
+                },
+                "choice_count": len(step_item.choices) if step_item.choices else 0,
+                "choices": []
+            }
+
+            # Process router choices (choices is a list of steps, not a dictionary)
+            if hasattr(step_item, 'choices') and step_item.choices:
+                for i, choice_step in enumerate(step_item.choices):
+                    router_dict["choices"].append(self._step_to_dict_hierarchical(choice_step, used_ids, i))
+
+            return router_dict
+
+        # Handle Steps objects
+        elif hasattr(step_item, 'steps') and hasattr(step_item, '_prepare_steps'):
+            steps_name = getattr(step_item, 'name', 'Sequential Steps')
+            steps_dict = {
+                "type": "Steps",
+                "id": self._generate_unique_id(steps_name, "Steps", used_ids, index),
+                "name": steps_name,
+                "description": getattr(step_item, 'description', 'Sequential execution of multiple steps'),
+
+                "step_count": len(step_item.steps) if step_item.steps else 0,
+                "steps": []
+            }
+
+            # Recursively process nested steps
+            if hasattr(step_item, 'steps') and step_item.steps:
+                for i, nested_step in enumerate(step_item.steps):
+                    steps_dict["steps"].append(self._step_to_dict_hierarchical(nested_step, used_ids, i))
+
+            return steps_dict
+
+        # Handle team objects directly
+        elif hasattr(step_item, 'members'):
+            team_dict = self._serialize_team_hierarchical(step_item, used_ids, index)
+            return team_dict
+
+        # Handle agent objects directly
+        elif hasattr(step_item, 'instructions'):
+            agent_dict = self._serialize_agent_hierarchical(step_item, used_ids, index)
+            return agent_dict
+
+        # Handle callable functions directly
+        elif callable(step_item):
+            function_name = step_item.__name__
+            return {
+                "type": "Function",
+                "id": self._generate_unique_id(function_name, "Function", used_ids, index),
+                "name": function_name,
+                "description": getattr(step_item, '__doc__', 'User-defined function'),
+
+            }
+
+        # Fallback to original method for other complex types
+        else:
+            return self._step_to_dict(step_item)
+
+    def _step_to_dict(self, step_item: Union[Step, Condition, any]) -> Dict[str, Any]:
+        """Convert a workflow step or primitive to dictionary representation"""
+
+        # Handle Step objects
+        if isinstance(step_item, Step):
+            step_dict = {
+                "type": "Step",
+                "name": step_item.name,
+                "description": step_item.description or "No description provided"
+            }
+
+            # Add executor information
+            if hasattr(step_item, 'active_executor') and step_item.active_executor:
+                executor = step_item.active_executor
+                if hasattr(executor, '__name__'):
+                    step_dict["executor"] = {
+                        "type": "function",
+                        "name": executor.__name__
+                    }
+                elif hasattr(executor, 'name'):
+                    executor_type = "agent" if hasattr(executor, 'instructions') else "team" if hasattr(executor,
+                                                                                                        'members') else "unknown"
+                    step_dict["executor"] = {
+                        "type": executor_type,
+                        "name": executor.name
+                    }
+
+                    # Add team member count if it's a team
+                    if hasattr(executor, 'members'):
+                        step_dict["executor"]["member_count"] = len(executor.members)
+
+                    # Add agent tools if it's an agent (expand toolkits into individual tools)
+                    if executor_type == "agent" and hasattr(executor, 'tools') and executor.tools:
+                        expanded_tools = []
+                        for tool in executor.tools:
+                            expanded_tools.extend(self._expand_toolkit_tools(tool))
+                        step_dict["executor"]["tools"] = expanded_tools
+                        step_dict["executor"]["tool_count"] = len(expanded_tools)
+
+                else:
+                    step_dict["executor"] = {
+                        "type": "unknown",
+                        "name": str(type(executor).__name__)
+                    }
+            elif hasattr(step_item, 'executor') and step_item.executor:
+                # Handle function executors
+                if callable(step_item.executor):
+                    step_dict["executor"] = {
+                        "type": "function",
+                        "name": step_item.executor.__name__
+                    }
+                else:
+                    step_dict["executor"] = {
+                        "type": "unknown",
+                        "name": str(type(step_item.executor).__name__)
+                    }
+
+            return step_dict
+
+        # Handle Condition objects
+        elif isinstance(step_item, Condition):
+            condition_dict = {
+                "type": "Condition",
+                "name": getattr(step_item, 'name', 'Conditional Execution'),
+                "description": getattr(step_item, 'description', 'Conditional workflow execution'),
+                "evaluator": {
+                    "function": step_item.evaluator.__name__ if hasattr(step_item.evaluator, '__name__') else str(
+                        step_item.evaluator),
+                    "description": getattr(step_item.evaluator, '__doc__', 'No description available')
+                },
+                "steps": []
+            }
+
+            # Recursively process nested steps
+            if hasattr(step_item, 'steps') and step_item.steps:
+                for nested_step in step_item.steps:
+                    condition_dict["steps"].append(self._step_to_dict(nested_step))
+
+            return condition_dict
+
+        # Handle Steps objects
+        elif hasattr(step_item, 'steps') and hasattr(step_item, '_prepare_steps'):
+            steps_dict = {
+                "type": "Steps",
+                "name": getattr(step_item, 'name', 'Sequential Steps'),
+                "description": getattr(step_item, 'description', 'Sequential execution of multiple steps'),
+                "step_count": len(step_item.steps) if step_item.steps else 0,
+                "steps": []
+            }
+
+            # Recursively process nested steps
+            if hasattr(step_item, 'steps') and step_item.steps:
+                for nested_step in step_item.steps:
+                    steps_dict["steps"].append(self._step_to_dict(nested_step))
+
+            return steps_dict
+
+        # Handle Loop objects
+        elif hasattr(step_item, 'max_iterations') and hasattr(step_item, 'steps'):
+            loop_dict = {
+                "type": "Loop",
+                "name": getattr(step_item, 'name', 'Loop Execution'),
+                "description": getattr(step_item, 'description', 'Loop-based workflow execution'),
+                "max_iterations": step_item.max_iterations,
+                "steps": []
+            }
+
+            # Add loop end condition if available
+            if hasattr(step_item, 'end_condition') and step_item.end_condition:
+                loop_dict["end_condition"] = {
+                    "function": step_item.end_condition.__name__ if hasattr(step_item.end_condition,
+                                                                            '__name__') else str(
+                        step_item.end_condition),
+                    "description": getattr(step_item.end_condition, '__doc__', 'No description available')
+                }
+
+            # Recursively process nested steps
+            if hasattr(step_item, 'steps') and step_item.steps:
+                for nested_step in step_item.steps:
+                    loop_dict["steps"].append(self._step_to_dict(nested_step))
+
+            return loop_dict
+
+        # Handle Parallel objects
+        elif hasattr(step_item, 'steps') and hasattr(step_item,
+                                                     '__class__') and 'Parallel' in step_item.__class__.__name__:
+            parallel_dict = {
+                "type": "Parallel",
+                "name": getattr(step_item, 'name', 'Parallel Execution'),
+                "description": getattr(step_item, 'description', 'Parallel workflow execution'),
+                "step_count": len(step_item.steps) if step_item.steps else 0,
+                "steps": []
+            }
+
+            # Recursively process nested steps
+            if hasattr(step_item, 'steps') and step_item.steps:
+                for nested_step in step_item.steps:
+                    parallel_dict["steps"].append(self._step_to_dict(nested_step))
+
+            return parallel_dict
+
+        # Handle Router objects
+        elif hasattr(step_item, 'choices') and hasattr(step_item, 'selector'):
+            router_dict = {
+                "type": "Router",
+                "name": getattr(step_item, 'name', 'Router'),
+                "description": getattr(step_item, 'description', 'Router-based workflow execution'),
+                "selector": {
+                    "function": step_item.selector.__name__ if hasattr(step_item.selector, '__name__') else str(
+                        step_item.selector),
+                    "description": getattr(step_item.selector, '__doc__', 'No description available')
+                },
+                "choice_count": len(step_item.choices) if step_item.choices else 0,
+                "choices": {}
+            }
+
+            # Process router choices
+            if hasattr(step_item, 'choices') and step_item.choices:
+                for choice_name, choice_steps in step_item.choices.items():
+                    router_dict["choices"][choice_name] = []
+                    if isinstance(choice_steps, list):
+                        for choice_step in choice_steps:
+                            router_dict["choices"][choice_name].append(self._step_to_dict(choice_step))
+                    else:
+                        router_dict["choices"][choice_name].append(self._step_to_dict(choice_steps))
+
+            return router_dict
+
+        # Handle Team objects directly (not wrapped in Step)
+        elif hasattr(step_item, 'members') and hasattr(step_item, 'name'):
+            team_dict = {
+                "type": "Team",
+                "name": step_item.name,
+                "description": getattr(step_item, 'description', 'AI Team'),
+                "member_count": len(step_item.members),
+                "members": [getattr(member, 'name', 'Unnamed Member') for member in step_item.members]
+            }
+
+            # Add team tools information (expand toolkits into individual tools)
+            if hasattr(step_item, 'tools') and step_item.tools:
+                expanded_tools = []
+                for tool in step_item.tools:
+                    expanded_tools.extend(self._expand_toolkit_tools(tool))
+                team_dict["tools"] = expanded_tools
+                team_dict["tool_count"] = len(expanded_tools)
+            else:
+                team_dict["tools"] = []
+                team_dict["tool_count"] = 0
+
+            return team_dict
+
+        # Handle Agent objects directly (not wrapped in Step)
+        elif hasattr(step_item, 'name') and hasattr(step_item, 'instructions'):
+            agent_dict = {
+                "type": "Agent",
+                "name": step_item.name,
+                "description": getattr(step_item, 'description', 'AI Agent'),
+            }
+
+            # Add agent tools information (expand toolkits into individual tools)
+            if hasattr(step_item, 'tools') and step_item.tools:
+                expanded_tools = []
+                for tool in step_item.tools:
+                    expanded_tools.extend(self._expand_toolkit_tools(tool))
+                agent_dict["tools"] = expanded_tools
+                agent_dict["tool_count"] = len(expanded_tools)
+            else:
+                agent_dict["tools"] = []
+                agent_dict["tool_count"] = 0
+
+            return agent_dict
+
+        # Handle callable functions directly
+        elif callable(step_item):
+            return {
+                "type": "Function",
+                "name": step_item.__name__,
+                "description": getattr(step_item, '__doc__', 'User-defined function'),
+            }
+
+        # Fallback for unknown types
+        else:
+            return {
+                "type": "Unknown",
+                "name": getattr(step_item, 'name', str(type(step_item).__name__)),
+                "description": getattr(step_item, 'description',
+                                       f'Unknown workflow component: {type(step_item).__name__}'),
+                "class": type(step_item).__name__
+            }
+
+    def _get_workflow_activated_tools(self) -> list:
+        """Get activated tools from the workflow's toolbox."""
+        activated_tools = []
+
+        # Check if workflow has tools attribute (workflow-level tools)
+        if hasattr(self, 'tools') and self.tools:
+            for tool in self.tools:
+                activated_tools.extend(self._expand_toolkit_tools(tool))
+
+        # Check if workflow has a toolbox with activated tools
+        if hasattr(self, 'toolbox') and self.toolbox:
+            if hasattr(self.toolbox, 'get_activated_tools'):
+                # Method to get activated tools from toolbox
+                for tool in self.toolbox.get_activated_tools():
+                    activated_tools.extend(self._expand_toolkit_tools(tool))
+            elif hasattr(self.toolbox, 'activated_tools'):
+                # Direct attribute for activated tools
+                for tool in self.toolbox.activated_tools:
+                    activated_tools.extend(self._expand_toolkit_tools(tool))
+            elif hasattr(self.toolbox, 'tools'):
+                # Fallback: all tools in toolbox
+                for tool in self.toolbox.tools:
+                    activated_tools.extend(self._expand_toolkit_tools(tool))
+
+        # Check for other common patterns for workflow tools
+        if hasattr(self, 'activated_tools') and self.activated_tools:
+            for tool in self.activated_tools:
+                activated_tools.extend(self._expand_toolkit_tools(tool))
+
+        # Remove duplicates based on tool name
+        seen_names = set()
+        unique_tools = []
+        for tool in activated_tools:
+            tool_name = tool.get('name')
+            if tool_name and tool_name not in seen_names:
+                seen_names.add(tool_name)
+                unique_tools.append(tool)
+
+        return unique_tools
+
+    def to_dict_hierarchical(self) -> Dict[str, Any]:
+        """
+        Convert workflow to hierarchical dictionary representation with full team/agent nesting.
+        """
+
+        # Base workflow information
+        workflow_dict = {
+            "workflow_id": self.workflow_id,
+            "name": self.name,
+            "description": self.description,
+            "discoverable": getattr(self, 'discoverable', False),
+            "steps": [],
+            "tools": self._get_workflow_activated_tools(),
+            "metadata": {
+                "total_steps": 0,
+                "step_types": {},
+                "has_conditions": False,
+                "has_loops": False,
+                "has_parallel": False,
+                "has_routers": False,
+                "has_agents": False,
+                "has_teams": False,
+                "has_functions": False,
+                "has_nested_steps": False,
+                "total_workflow_tools": 0,
+            }
+        }
+
+        # Initialize unique ID tracking
+        used_ids = set()
+
+        # Process steps using hierarchical serialization
+        if self.steps and not callable(self.steps):
+            from agno.workflow.v2.steps import Steps
+
+            # Handle Steps wrapper
+            if isinstance(self.steps, Steps):
+                steps_list = self.steps.steps
+            else:
+                steps_list = self.steps
+
+            # Convert each step to dictionary
+            for i, step in enumerate(steps_list):
+                step_dict = self._step_to_dict_hierarchical(step, used_ids, i)
+                step_dict["index"] = i
+                workflow_dict["steps"].append(step_dict)
+
+                # Update metadata
+                step_type = step_dict.get("type", "Unknown")
+                workflow_dict["metadata"]["step_types"][step_type] = workflow_dict["metadata"]["step_types"].get(
+                    step_type, 0) + 1
+
+                # Update capability flags
+                self._update_metadata_flags(workflow_dict["metadata"], step_dict)
+
+            workflow_dict["metadata"]["total_steps"] = len(steps_list)
+
+        elif callable(self.steps):
+            # Handle callable workflow
+            callable_name = self.steps.__name__ if hasattr(self.steps, '__name__') else "Custom Function"
+            workflow_dict["steps"] = [{
+                "type": "CallableWorkflow",
+                "id": self._generate_unique_id(callable_name, "CallableWorkflow", used_ids, 0),
+                "name": callable_name,
+                "description": getattr(self.steps, '__doc__', 'User-defined callable workflow'),
+                "index": 0
+            }]
+            workflow_dict["metadata"]["total_steps"] = 1
+            workflow_dict["metadata"]["step_types"]["CallableWorkflow"] = 1
+            workflow_dict["metadata"]["has_functions"] = True
+
+        # Update workflow tools count in metadata
+        workflow_dict["metadata"]["total_workflow_tools"] = len(workflow_dict["tools"])
+
+        return workflow_dict
+
+    def _update_metadata_flags(self, metadata: Dict[str, Any], step_dict: Dict[str, Any]) -> None:
+        """Update metadata capability flags based on step information."""
+        step_type = step_dict.get("type", "Unknown")
+
+        if step_type == "Condition":
+            metadata["has_conditions"] = True
+        elif step_type == "Loop":
+            metadata["has_loops"] = True
+        elif step_type == "Parallel":
+            metadata["has_parallel"] = True
+        elif step_type == "Router":
+            metadata["has_routers"] = True
+        elif step_type == "Steps":
+            metadata["has_nested_steps"] = True
+        elif step_type in ["agent", "agent_ref"]:
+            metadata["has_agents"] = True
+        elif step_type in ["team", "team_ref"]:
+            metadata["has_teams"] = True
+        elif step_type == "Function":
+            metadata["has_functions"] = True
+        elif step_type == "Step":
+            executor_type = step_dict.get("executor", {}).get("type")
+            if executor_type in ["agent", "agent_ref"]:
+                metadata["has_agents"] = True
+            elif executor_type in ["team", "team_ref"]:
+                metadata["has_teams"] = True
+            elif executor_type == "function":
+                metadata["has_functions"] = True
+
+    def generate_mermaid_diagram(self, layout: str = "TD") -> str:
+        """
+        Generate a Mermaid flowchart diagram showing the actual workflow execution flow.
+
+        Args:
+            layout: Mermaid layout direction (TD=top-down, LR=left-right, etc.)
+
+        Returns:
+            Mermaid diagram as string showing sequential workflow execution
+        """
+        # Use hierarchical representation for better step flow visualization
+        hierarchical = self.to_dict_hierarchical()
+
+        mermaid_lines = [f"flowchart {layout}"]
+
+        # Start node
+        mermaid_lines.append(f'    Start(["{self.name}"])')
+
+        node_counter = 1
+
+        def create_step_flow(steps, parent_node="Start"):
+            nonlocal node_counter
+            current_node = parent_node
+            condition_no_branches = []  # Track conditions that need "No" branch connections
+            step_node_ids = []  # Track actual node IDs in order
+
+            for i, step in enumerate(steps):
+                step_type = step.get("type")
+                step_name = step.get("name") or f"Step {i + 1}"
+                step_name = step_name.replace('"', "'") if step_name else f"Step {i + 1}"
+
+                if step_type == "Step":
+                    # Create step node
+                    step_node_id = f"step_{node_counter}"
+                    node_counter += 1
+                    step_node_ids.append(step_node_id)  # Track this node ID
+
+                    # Determine step content based on executor
+                    executor = step.get("executor", {})
+                    executor_type = executor.get("type", "")
+
+                    if executor_type == "function":
+                        func_name = executor.get("name", "Function")
+                        mermaid_lines.append(f'    {step_node_id}["{step_name}<br/>{func_name}"]')
+                    elif executor_type == "team":
+                        team_name = executor.get("name", "Team")
+                        member_count = executor.get("member_count", 0)
+                        mermaid_lines.append(
+                            f'    {step_node_id}["{step_name}<br/>{team_name} ({member_count} members)"]')
+                    elif executor_type == "agent":
+                        agent_name = executor.get("name", "Agent")
+                        tool_count = executor.get("tool_count", 0)
+                        mermaid_lines.append(f'    {step_node_id}["{step_name}<br/>{agent_name} ({tool_count} tools)"]')
+                    else:
+                        mermaid_lines.append(f'    {step_node_id}["{step_name}"]')
+
+                    # Connect to previous node
+                    mermaid_lines.append(f"    {current_node} --> {step_node_id}")
+                    current_node = step_node_id
+
+                elif step_type == "Condition":
+                    # Create condition decision node
+                    condition_node_id = f"condition_{node_counter}"
+                    node_counter += 1
+                    step_node_ids.append(condition_node_id)  # Track this node ID
+
+                    evaluator = step.get("evaluator", {})
+                    evaluator_name = evaluator.get("function", "condition")
+
+                    mermaid_lines.append(f'    {condition_node_id}{{{step_name}<br/>{evaluator_name}?}}')
+                    mermaid_lines.append(f"    {current_node} --> {condition_node_id}")
+
+                    # Process nested steps for the "Yes" branch
+                    nested_steps = step.get("steps", [])
+
+                    if nested_steps:
+                        # Process each nested step sequentially
+                        nested_current_node = condition_node_id
+
+                        for j, nested_step in enumerate(nested_steps):
+                            nested_step_type = nested_step.get("type")
+                            nested_step_name = nested_step.get("name") or f"Nested Step {j + 1}"
+                            nested_step_name = nested_step_name.replace('"',
+                                                                        "'") if nested_step_name else f"Nested Step {j + 1}"
+
+                            nested_node_id = f"nested_{node_counter}"
+                            node_counter += 1
+
+                            if nested_step_type == "Step":
+                                executor = nested_step.get("executor", {})
+                                executor_type = executor.get("type", "")
+
+                                if executor_type == "function":
+                                    func_name = executor.get("name", "Function")
+                                    mermaid_lines.append(f'    {nested_node_id}["{nested_step_name}<br/>{func_name}"]')
+                                elif executor_type == "team":
+                                    team_name = executor.get("name", "Team")
+                                    member_count = executor.get("member_count", 0)
+                                    mermaid_lines.append(
+                                        f'    {nested_node_id}["{nested_step_name}<br/>{team_name} ({member_count} members)"]')
+                                elif executor_type == "agent":
+                                    agent_name = executor.get("name", "Agent")
+                                    tool_count = executor.get("tool_count", 0)
+                                    mermaid_lines.append(
+                                        f'    {nested_node_id}["{nested_step_name}<br/>{agent_name} ({tool_count} tools)"]')
+                                else:
+                                    mermaid_lines.append(f'    {nested_node_id}["{nested_step_name}"]')
+
+                            elif nested_step_type == "Function":
+                                func_name = nested_step.get("name", "Function")
+                                mermaid_lines.append(f'    {nested_node_id}["{func_name}"]')
+
+                            elif nested_step_type == "Team":
+                                team_name = nested_step.get("name", "Team")
+                                member_count = nested_step.get("member_count", 0)
+                                mermaid_lines.append(
+                                    f'    {nested_node_id}["{team_name}<br/>Team ({member_count} members)"]')
+
+                            elif nested_step_type == "Agent":
+                                agent_name = nested_step.get("name", "Agent")
+                                tool_count = nested_step.get("tool_count", 0)
+                                mermaid_lines.append(
+                                    f'    {nested_node_id}["{agent_name}<br/>Agent ({tool_count} tools)"]')
+
+                            else:
+                                mermaid_lines.append(f'    {nested_node_id}["{nested_step_name}"]')
+
+                            # Connect to previous node
+                            if j == 0:
+                                # First nested step connects from condition with "Yes" label
+                                mermaid_lines.append(f"    {nested_current_node} -->|Yes| {nested_node_id}")
+                            else:
+                                # Subsequent steps connect sequentially
+                                mermaid_lines.append(f"    {nested_current_node} --> {nested_node_id}")
+
+                            nested_current_node = nested_node_id
+
+                        # Store the last nested node for later connection to next main step
+                        current_node = nested_current_node
+                    else:
+                        # No nested steps, condition continues normally
+                        current_node = condition_node_id
+
+                    # Track this condition for "No" branch connection if there are more steps
+                    if i + 1 < len(steps):
+                        condition_no_branches.append((condition_node_id, i + 1))
+
+                elif step_type == "Function":
+                    # Direct function step
+                    func_node_id = f"function_{node_counter}"
+                    node_counter += 1
+                    step_node_ids.append(func_node_id)  # Track this node ID
+
+                    func_name = step.get("name", "Function")
+                    mermaid_lines.append(f'    {func_node_id}["{func_name}"]')
+                    mermaid_lines.append(f"    {current_node} --> {func_node_id}")
+                    current_node = func_node_id
+
+                elif step_type == "Team":
+                    # Direct team step
+                    team_node_id = f"team_{node_counter}"
+                    node_counter += 1
+                    step_node_ids.append(team_node_id)  # Track this node ID
+
+                    team_name = step.get("name", "Team")
+                    member_count = step.get("member_count", 0)
+                    mermaid_lines.append(f'    {team_node_id}["{team_name}<br/>Team ({member_count} members)"]')
+                    mermaid_lines.append(f"    {current_node} --> {team_node_id}")
+                    current_node = team_node_id
+
+                elif step_type == "Agent":
+                    # Direct agent step
+                    agent_node_id = f"agent_{node_counter}"
+                    node_counter += 1
+                    step_node_ids.append(agent_node_id)  # Track this node ID
+
+                    agent_name = step.get("name", "Agent")
+                    tool_count = step.get("tool_count", 0)
+                    mermaid_lines.append(f'    {agent_node_id}["{agent_name}<br/>Agent ({tool_count} tools)"]')
+                    mermaid_lines.append(f"    {current_node} --> {agent_node_id}")
+                    current_node = agent_node_id
+
+                elif step_type == "Loop":
+                    # Loop execution node
+                    loop_node_id = f"loop_{node_counter}"
+                    node_counter += 1
+                    step_node_ids.append(loop_node_id)  # Track this node ID
+
+                    loop_name = step.get("name", "Loop")
+                    max_iterations = step.get("max_iterations", "∞")
+                    mermaid_lines.append(f'    {loop_node_id}["{loop_name}<br/>Max: {max_iterations}"]')
+                    mermaid_lines.append(f"    {current_node} --> {loop_node_id}")
+
+                    # Process nested steps within the loop
+                    nested_steps = step.get("steps", [])
+                    if nested_steps:
+                        loop_end_node = create_step_flow(nested_steps, loop_node_id)
+                        # Create loop back connection
+                        mermaid_lines.append(f"    {loop_end_node} -.->|Loop| {loop_node_id}")
+                        current_node = loop_end_node
+                    else:
+                        current_node = loop_node_id
+
+                elif step_type == "Parallel":
+                    # Parallel execution node
+                    parallel_node_id = f"parallel_{node_counter}"
+                    node_counter += 1
+                    step_node_ids.append(parallel_node_id)  # Track this node ID
+
+                    parallel_name = step.get("name", "Parallel")
+                    step_count = step.get("step_count", 0)
+                    mermaid_lines.append(f'    {parallel_node_id}["{parallel_name}<br/>({step_count} parallel steps)"]')
+                    mermaid_lines.append(f"    {current_node} --> {parallel_node_id}")
+
+                    # Process nested parallel steps
+                    nested_steps = step.get("steps", [])
+                    if nested_steps:
+                        # Create a merge node for parallel execution
+                        merge_node_id = f"merge_{node_counter}"
+                        node_counter += 1
+                        mermaid_lines.append(f'    {merge_node_id}[Merge]')
+
+                        # Process each parallel branch
+                        for j, parallel_step in enumerate(nested_steps):
+                            branch_end_node = create_step_flow([parallel_step], parallel_node_id)
+                            mermaid_lines.append(f"    {branch_end_node} --> {merge_node_id}")
+
+                        current_node = merge_node_id
+                    else:
+                        current_node = parallel_node_id
+
+                elif step_type == "Router":
+                    # Router decision node
+                    router_node_id = f"router_{node_counter}"
+                    node_counter += 1
+                    step_node_ids.append(router_node_id)  # Track this node ID
+
+                    router_name = step.get("name", "Router")
+                    selector = step.get("selector", {})
+                    selector_name = selector.get("function", "selector")
+                    choice_count = step.get("choice_count", 0)
+
+                    mermaid_lines.append(f'    {router_node_id}{{{router_name}<br/>{selector_name}<br/>({choice_count} choices)}}')
+                    mermaid_lines.append(f"    {current_node} --> {router_node_id}")
+
+                    # Process router choices
+                    choices = step.get("choices", [])
+                    if choices:
+                        # Create a merge node for router choices
+                        merge_node_id = f"merge_{node_counter}"
+                        node_counter += 1
+                        mermaid_lines.append(f'    {merge_node_id}[Merge]')
+
+                        # Process each choice branch
+                        for j, choice_step in enumerate(choices):
+                            choice_end_node = create_step_flow([choice_step], router_node_id)
+                            choice_label = f"Choice {j+1}"
+                            mermaid_lines.append(f"    {choice_end_node} --> {merge_node_id}")
+
+                        current_node = merge_node_id
+                    else:
+                        current_node = router_node_id
+
+                elif step_type == "Steps":
+                    # Sequential steps container
+                    steps_node_id = f"steps_{node_counter}"
+                    node_counter += 1
+                    step_node_ids.append(steps_node_id)  # Track this node ID
+
+                    steps_name = step.get("name", "Sequential Steps")
+                    step_count = step.get("step_count", 0)
+                    mermaid_lines.append(f'    {steps_node_id}["{steps_name}<br/>({step_count} steps)"]')
+                    mermaid_lines.append(f"    {current_node} --> {steps_node_id}")
+
+                    # Process nested sequential steps
+                    nested_steps = step.get("steps", [])
+                    if nested_steps:
+                        current_node = create_step_flow(nested_steps, steps_node_id)
+                    else:
+                        current_node = steps_node_id
+
+            # Connect condition "No" branches to their next steps using actual node IDs
+            for condition_node_id, next_step_index in condition_no_branches:
+                if next_step_index < len(step_node_ids):
+                    next_node_id = step_node_ids[next_step_index]
+                    mermaid_lines.append(f"    {condition_node_id} -->|No| {next_node_id}")
+
+            return current_node
+
+        # Process main workflow steps
+        workflow_steps = hierarchical.get("steps", [])
+        final_node = create_step_flow(workflow_steps)
+
+        # Add end node
+        mermaid_lines.append(f'    End([End])')
+        mermaid_lines.append(f"    {final_node} --> End")
+
+        # Add styling for different node types
+        mermaid_lines.append("")
+        mermaid_lines.append("    %% Styling")
+        mermaid_lines.append("    classDef startEnd fill:#e1f5fe")
+        mermaid_lines.append("    classDef condition fill:#fff3e0")
+        mermaid_lines.append("    classDef step fill:#f3e5f5")
+        mermaid_lines.append("    classDef team fill:#e8f5e8")
+        mermaid_lines.append("    classDef agent fill:#fff8e1")
+        mermaid_lines.append("    classDef function fill:#fce4ec")
+        mermaid_lines.append("    classDef loop fill:#e3f2fd")
+        mermaid_lines.append("    classDef parallel fill:#f1f8e9")
+        mermaid_lines.append("    classDef router fill:#fef7e0")
+        mermaid_lines.append("    classDef steps fill:#f8f9fa")
+        mermaid_lines.append("    classDef merge fill:#eeeeee")
+
+        mermaid_lines.append("    class Start,End startEnd")
+
+        return "\n".join(mermaid_lines)
+
