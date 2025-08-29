@@ -21,5 +21,5 @@ knowledge.add_content(
 )
 
 # Create and use the agent
-agent = Agent(knowledge=knowledge, show_tool_calls=True)
+agent = Agent(knowledge=knowledge)
 agent.print_response("How to make Tom Kha Gai", markdown=True)
