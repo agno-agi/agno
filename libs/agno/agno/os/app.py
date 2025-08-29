@@ -281,9 +281,10 @@ class AgentOS:
 
         return evals_config
 
-    def _get_chat_config(self) -> ChatConfig:
-        chat_config = self.config.chat if self.config and self.config.chat else ChatConfig()
-        return chat_config
+    def _get_chat_config(self) -> Optional[ChatConfig]:
+        if not self.config or not self.config.chat:
+            return None
+        return self.config.chat
 
     def _setup_routers(self) -> None:
         """Add all routers to the FastAPI app."""
