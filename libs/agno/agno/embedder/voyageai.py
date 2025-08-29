@@ -1,23 +1,22 @@
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from agno.embedder.base import Embedder
 from agno.utils.log import logger
 
 try:
     from voyageai import Client as VoyageClient
-    from voyageai.object import EmbeddingsObject
+    from voyageai.object import EmbeddingsObject, ContextualizedEmbeddingsObject
 except ImportError:
     raise ImportError("`voyageai` not installed. Please install using `pip install voyageai`")
 
 
 @dataclass
 class VoyageAIEmbedder(Embedder):
-    id: str = "voyage-2"
+    id: str = "voyage-context-3"
     dimensions: int = 1024
     request_params: Optional[Dict[str, Any]] = None
     api_key: Optional[str] = None
-    base_url: str = "https://api.voyageai.com/v1/embeddings"
     max_retries: Optional[int] = None
     timeout: Optional[float] = None
     client_params: Optional[Dict[str, Any]] = None
@@ -39,26 +38,54 @@ class VoyageAIEmbedder(Embedder):
         self.voyage_client = VoyageClient(**_client_params)
         return self.voyage_client
 
-    def _response(self, text: str) -> EmbeddingsObject:
+    def _contextualized_response(self, documents_chunks: List[List[str]], input_type: str = "document") -> ContextualizedEmbeddingsObject:
+        """Get contextualized embedding response for multiple documents with chunks"""
         _request_params: Dict[str, Any] = {
-            "texts": [text],
+            "inputs": documents_chunks,  # List[List[str]] format
+            "model": self.id,
+            "input_type": input_type,
+        }
+        if self.request_params:
+            _request_params.update(self.request_params)
+        return self.client.contextualized_embed(**_request_params)
+
+    def _standard_response(self, text: str) -> EmbeddingsObject:
+        """Get standard embedding response for a single text"""
+        _request_params: Dict[str, Any] = {
+            "texts": [text], 
             "model": self.id,
         }
         if self.request_params:
             _request_params.update(self.request_params)
         return self.client.embed(**_request_params)
 
-    def get_embedding(self, text: str) -> List[float]:
-        response: EmbeddingsObject = self._response(text=text)
+    def get_embedding(self, text: str) -> Dict[str, Any]:
+        """Get embedding for a single text with usage info"""
         try:
-            return response.embeddings[0]
+            response = self._standard_response(text=text)
+            return {
+                "embeddings": response.embeddings[0],
+                "total_tokens": response.total_tokens
+            }
         except Exception as e:
-            logger.warning(e)
-            return []
+            logger.warning(f"Error getting standard embedding: {e}")
+            return {"embeddings": [], "total_tokens": None}
 
-    def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
-        response: EmbeddingsObject = self._response(text=text)
-
-        embedding = response.embeddings[0]
-        usage = {"total_tokens": response.total_tokens}
-        return embedding, usage
+    def get_contextualized_embeddings(
+        self, 
+        documents_chunks: List[List[str]], 
+        input_type: str = "document"
+    ) -> Dict[str, Any]:
+        """
+         Get contextualized embeddings for multiple documents, each with their own chunks.
+        """
+        try:
+            response = self._contextualized_response(documents_chunks, input_type)
+            embeddings = [emb for r in response.results for emb in r.embeddings]
+            return {
+                "embeddings": embeddings,
+                "total_tokens": response.total_tokens
+            }
+        except Exception as e:
+            logger.warning(f"Error getting contextualized embeddings: {e}")
+            return {"embeddings": [], "total_tokens": None}
