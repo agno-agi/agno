@@ -21,12 +21,14 @@ MODELS_LAB_URLS = {
     "MP4": "https://modelslab.com/api/v6/video/text2video",
     "MP3": "https://modelslab.com/api/v6/voice/music_gen",
     "GIF": "https://modelslab.com/api/v6/video/text2video",
+    "WAV": "https://modelslab.com/api/v6/voice/sfx",
 }
 
 MODELS_LAB_FETCH_URLS = {
     "MP4": "https://modelslab.com/api/v6/video/fetch",
     "MP3": "https://modelslab.com/api/v6/voice/fetch",
     "GIF": "https://modelslab.com/api/v6/video/fetch",
+    "WAV": "https://modelslab.com/api/v6/voice/fetch",
 }
 
 
@@ -77,6 +79,13 @@ class ModelsLabTools(Toolkit):
                 "output_type": self.file_type.value,
             }
             base_payload |= video_template  # Use |= instead of update()
+        elif self.file_type == FileType.WAV:
+            sfx_template = {
+                "duration": 10,
+                "output_format": "wav",
+                "temp": False,
+            }
+            base_payload |= sfx_template  # Use |= instead of update()
         else:
             audio_template = {
                 "base64": False,
@@ -94,7 +103,7 @@ class ModelsLabTools(Toolkit):
             agent.add_video(VideoArtifact(id=str(media_id), url=media_url, eta=str(eta)))
         elif self.file_type == FileType.GIF:
             agent.add_image(ImageArtifact(id=str(media_id), url=media_url))
-        elif self.file_type == FileType.MP3:
+        elif self.file_type in [FileType.MP3, FileType.WAV]:
             agent.add_audio(AudioArtifact(id=str(media_id), url=media_url))
 
     def _wait_for_media(self, media_id: str, eta: int) -> bool:
@@ -147,19 +156,28 @@ class ModelsLabTools(Toolkit):
                 return f"Error: {result['error']}"
 
             eta = result.get("eta")
-            url_links = result.get("future_links")
             media_id = str(uuid4())
 
-            for media_url in url_links:
-                self._add_media_artifact(agent, media_id, media_url, str(eta))
+            # Handle different response structures
+            if self.file_type == FileType.WAV:
+                # SFX API returns direct URLs in 'output' array
+                url_links = result.get("output", [])
+                for media_url in url_links:
+                    self._add_media_artifact(agent, media_id, media_url, str(eta))
+                return "SFX has been generated successfully"
+            else:
+                # Other APIs return 'future_links'
+                url_links = result.get("future_links")
+                for media_url in url_links:
+                    self._add_media_artifact(agent, media_id, media_url, str(eta))
 
-            if self.wait_for_completion and isinstance(eta, int):
-                if self._wait_for_media(media_id, eta):
-                    log_info("Media generation completed successfully")
-                else:
-                    logger.warning("Media generation timed out")
+                if self.wait_for_completion and isinstance(eta, int):
+                    if self._wait_for_media(media_id, eta):
+                        log_info("Media generation completed successfully")
+                    else:
+                        logger.warning("Media generation timed out")
 
-            return f"{self.file_type.value.capitalize()} has been generated successfully and will be ready in {eta} seconds"
+                return f"{self.file_type.value.capitalize()} has been generated successfully and will be ready in {eta} seconds"
 
         except RequestException as e:
             error_msg = f"Network error while generating {self.file_type.value}: {e}"
