@@ -342,12 +342,12 @@ def create_run_output_content_event(
     content: Optional[Any] = None,
     content_type: Optional[str] = None,
     reasoning_content: Optional[str] = None,
-    redacted_thinking: Optional[str] = None,
+    redacted_reasoning_content: Optional[str] = None,
     citations: Optional[Citations] = None,
     response_audio: Optional[AudioResponse] = None,
     image: Optional[ImageArtifact] = None,
 ) -> RunContentEvent:
-    thinking_combined = (reasoning_content or "") + (redacted_thinking or "")
+    thinking_combined = (reasoning_content or "") + (redacted_reasoning_content or "")
 
     return RunContentEvent(
         session_id=from_run_response.session_id,
@@ -372,12 +372,12 @@ def create_team_run_output_content_event(
     content: Optional[Any] = None,
     content_type: Optional[str] = None,
     reasoning_content: Optional[str] = None,
-    redacted_thinking: Optional[str] = None,
+    redacted_reasoning_content: Optional[str] = None,
     citations: Optional[Citations] = None,
     response_audio: Optional[AudioResponse] = None,
     image: Optional[ImageArtifact] = None,
 ) -> TeamRunContentEvent:
-    thinking_combined = (reasoning_content or "") + (redacted_thinking or "")
+    thinking_combined = (reasoning_content or "") + (redacted_reasoning_content or "")
 
     return TeamRunContentEvent(
         session_id=from_run_response.session_id,

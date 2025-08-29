@@ -542,7 +542,7 @@ class Claude(Model):
                         "signature": block.signature,
                     }
                 elif block.type == "redacted_thinking":
-                    model_response.redacted_thinking = block.data
+                    model_response.redacted_reasoning_content = block.data
 
         # Extract tool calls from the response
         if response.stop_reason == "tool_use":
@@ -593,8 +593,8 @@ class Claude(Model):
         model_response = ModelResponse()
 
         if isinstance(response, ContentBlockStartEvent):
-            if response.content_block.type == "redacted_thinking":
-                model_response.redacted_thinking = response.content_block.data
+            if response.content_block.type == "redacted_reasoning_content":
+                model_response.redacted_reasoning_content = response.content_block.data
 
         if isinstance(response, ContentBlockDeltaEvent):
             # Handle text content

@@ -39,7 +39,7 @@ class MessageData:
     response_role: Optional[Literal["system", "user", "assistant", "tool"]] = None
     response_content: Any = ""
     response_reasoning_content: Any = ""
-    response_redacted_thinking: Any = ""
+    response_redacted_reasoning_content: Any = ""
     response_citations: Optional[Citations] = None
     response_tool_calls: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -497,8 +497,8 @@ class Model(ABC):
                 model_response.content += assistant_message.get_content_string()
         if assistant_message.reasoning_content is not None:
             model_response.reasoning_content = assistant_message.reasoning_content
-        if assistant_message.redacted_thinking is not None:
-            model_response.redacted_thinking = assistant_message.redacted_thinking
+        if assistant_message.redacted_reasoning_content is not None:
+            model_response.redacted_reasoning_content = assistant_message.redacted_reasoning_content
         if assistant_message.citations is not None:
             model_response.citations = assistant_message.citations
         if assistant_message.audio_output is not None:
@@ -552,8 +552,8 @@ class Model(ABC):
                 model_response.content += assistant_message.get_content_string()
         if assistant_message.reasoning_content is not None:
             model_response.reasoning_content = assistant_message.reasoning_content
-        if assistant_message.redacted_thinking is not None:
-            model_response.redacted_thinking = assistant_message.redacted_thinking
+        if assistant_message.redacted_reasoning_content is not None:
+            model_response.redacted_reasoning_content = assistant_message.redacted_reasoning_content
         if assistant_message.citations is not None:
             model_response.citations = assistant_message.citations
         if assistant_message.audio_output is not None:
@@ -616,8 +616,8 @@ class Model(ABC):
                 assistant_message.audio_output = provider_response.audios[-1]  # Taking last (most recent) audio
 
         # Add redacted thinking content to assistant message
-        if provider_response.redacted_thinking is not None:
-            assistant_message.redacted_thinking = provider_response.redacted_thinking
+        if provider_response.redacted_reasoning_content is not None:
+            assistant_message.redacted_reasoning_content = provider_response.redacted_reasoning_content
 
         # Add reasoning content to assistant message
         if provider_response.reasoning_content is not None:
@@ -710,8 +710,8 @@ class Model(ABC):
                     assistant_message.content = stream_data.response_content
                 if stream_data.response_reasoning_content:
                     assistant_message.reasoning_content = stream_data.response_reasoning_content
-                if stream_data.response_redacted_thinking:
-                    assistant_message.redacted_thinking = stream_data.response_redacted_thinking
+                if stream_data.response_redacted_reasoning_content:
+                    assistant_message.redacted_reasoning_content = stream_data.response_redacted_reasoning_content
                 if stream_data.response_provider_data:
                     assistant_message.provider_data = stream_data.response_provider_data
                 if stream_data.response_citations:
@@ -870,8 +870,8 @@ class Model(ABC):
                     assistant_message.content = stream_data.response_content
                 if stream_data.response_reasoning_content:
                     assistant_message.reasoning_content = stream_data.response_reasoning_content
-                if stream_data.response_redacted_thinking:
-                    assistant_message.redacted_thinking = stream_data.response_redacted_thinking
+                if stream_data.response_redacted_reasoning_content:
+                    assistant_message.redacted_reasoning_content = stream_data.response_redacted_reasoning_content
                 if stream_data.response_provider_data:
                     assistant_message.provider_data = stream_data.response_provider_data
                 if stream_data.response_audio:
@@ -973,8 +973,8 @@ class Model(ABC):
             stream_data.response_reasoning_content += model_response_delta.reasoning_content
             should_yield = True
 
-        if model_response_delta.redacted_thinking is not None:
-            stream_data.response_redacted_thinking += model_response_delta.redacted_thinking
+        if model_response_delta.redacted_reasoning_content is not None:
+            stream_data.response_redacted_reasoning_content += model_response_delta.redacted_reasoning_content
             should_yield = True
 
         if model_response_delta.citations is not None:

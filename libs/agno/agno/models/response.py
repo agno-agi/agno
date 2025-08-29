@@ -104,7 +104,7 @@ class ModelResponse:
 
     provider_data: Optional[Dict[str, Any]] = None
 
-    redacted_thinking: Optional[str] = None
+    redacted_reasoning_content: Optional[str] = None
     reasoning_content: Optional[str] = None
 
     citations: Optional[Citations] = None

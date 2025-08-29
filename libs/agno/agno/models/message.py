@@ -76,7 +76,7 @@ class Message(BaseModel):
     video_output: Optional[VideoArtifact] = None
 
     # The thinking content from the model
-    redacted_thinking: Optional[str] = None
+    redacted_reasoning_content: Optional[str] = None
 
     # Data from the provider we might need on subsequent messages
     provider_data: Optional[Dict[str, Any]] = None
@@ -137,7 +137,7 @@ class Message(BaseModel):
             "tool_args": self.tool_args,
             "tool_call_error": self.tool_call_error,
             "tool_calls": self.tool_calls,
-            "redacted_thinking": self.redacted_thinking,
+            "redacted_reasoning_content": self.redacted_reasoning_content,
             "provider_data": self.provider_data,
         }
         # Filter out None and empty collections

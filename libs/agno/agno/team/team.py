@@ -2173,7 +2173,7 @@ class Team:
                                 from_run_response=run_response,
                                 content=model_response_event.content,
                                 reasoning_content=model_response_event.reasoning_content,
-                                redacted_thinking=model_response_event.redacted_thinking,
+                                redacted_reasoning_content=model_response_event.redacted_reasoning_content,
                                 response_audio=full_model_response.audio,
                                 citations=model_response_event.citations,
                                 image=model_response_event.images[-1] if model_response_event.images else None,

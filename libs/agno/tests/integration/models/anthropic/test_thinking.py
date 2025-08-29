@@ -87,11 +87,11 @@ async def test_async_thinking_stream():
         assert response.content is not None or response.reasoning_content is not None  # type: ignore
 
 
-def test_redacted_thinking():
+def test_redacted_reasoning_content():
     agent = _get_thinking_agent()
     # Testing string from anthropic
     response = agent.run(
-        "ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB"
+        "ANTHROPIC_MAGIC_STRING_TRIGGER_redacted_reasoning_content_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB"
     )
     assert response.reasoning_content is not None
 
@@ -108,7 +108,7 @@ def test_thinking_with_tool_calls():
     assert "TSLA" in response.content
 
 
-def test_redacted_thinking_with_tool_calls():
+def test_redacted_reasoning_content_with_tool_calls():
     agent = _get_thinking_agent(
         tools=[YFinanceTools(cache_results=True)],
         add_history_to_context=True,
@@ -117,7 +117,7 @@ def test_redacted_thinking_with_tool_calls():
 
     # Put a redacted thinking message in the history
     agent.run(
-        "ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB"
+        "ANTHROPIC_MAGIC_STRING_TRIGGER_redacted_reasoning_content_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB"
     )
 
     response = agent.run("What is the current price of TSLA?")

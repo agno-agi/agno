@@ -257,10 +257,12 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
                     )
                 )
 
-            if message.redacted_thinking is not None:
+            if message.redacted_reasoning_content is not None:
                 from anthropic.types import RedactedThinkingBlock
 
-                content.append(RedactedThinkingBlock(data=message.redacted_thinking, type="redacted_thinking"))
+                content.append(
+                    RedactedThinkingBlock(data=message.redacted_reasoning_content, type="redacted_reasoning_content")
+                )
 
             if isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
                 content.append(TextBlock(text=message.content, type="text"))

@@ -2930,14 +2930,14 @@ class Agent:
             # Update the run_response content with the model response content
             run_response.content = model_response.content
 
-        # Update the run_response thinking with the model response thinking
+        # Update the run_response reasoning content with the model response reasoning content
         if model_response.reasoning_content is not None:
             run_response.reasoning_content = model_response.reasoning_content
-        if model_response.redacted_thinking is not None:
+        if model_response.redacted_reasoning_content is not None:
             if run_response.reasoning_content is None:
-                run_response.reasoning_content = model_response.redacted_thinking
+                run_response.reasoning_content = model_response.redacted_reasoning_content
             else:
-                run_response.reasoning_content += model_response.redacted_thinking
+                run_response.reasoning_content += model_response.redacted_reasoning_content
 
         # Update the run_response citations with the model response citations
         if model_response.citations is not None:
@@ -3194,18 +3194,18 @@ class Agent:
                     run_response.reasoning_content = model_response.reasoning_content
 
                 if model_response_event.reasoning_content is not None:
-                    model_response.reasoning_content = (
-                        model_response.reasoning_content or ""
-                    ) + model_response_event.reasoning_content
+                    if not model_response.reasoning_content:
+                        model_response.reasoning_content = model_response_event.reasoning_content
+                    else:
+                        model_response.reasoning_content += model_response_event.reasoning_content
                     run_response.reasoning_content = model_response.reasoning_content
 
-                if model_response_event.redacted_thinking is not None:
-                    model_response.redacted_thinking = (
-                        model_response.redacted_thinking or ""
-                    ) + model_response_event.redacted_thinking
-
-                    # We only have reasoning_content on response
-                    run_response.reasoning_content = model_response.redacted_thinking
+                if model_response_event.redacted_reasoning_content is not None:
+                    if not model_response.reasoning_content:
+                        model_response.reasoning_content = model_response_event.redacted_reasoning_content
+                    else:
+                        model_response.reasoning_content += model_response_event.redacted_reasoning_content
+                    run_response.reasoning_content = model_response.reasoning_content
 
                 if model_response_event.citations is not None:
                     # We get citations in one chunk
@@ -3225,7 +3225,7 @@ class Agent:
                 elif (
                     model_response_event.content is not None
                     or model_response_event.reasoning_content is not None
-                    or model_response_event.redacted_thinking is not None
+                    or model_response_event.redacted_reasoning_content is not None
                     or model_response_event.citations is not None
                 ):
                     yield self._handle_event(
@@ -3233,7 +3233,7 @@ class Agent:
                             from_run_response=run_response,
                             content=model_response_event.content,
                             reasoning_content=model_response_event.reasoning_content,
-                            redacted_thinking=model_response_event.redacted_thinking,
+                            redacted_reasoning_content=model_response_event.redacted_reasoning_content,
                             citations=model_response_event.citations,
                         ),
                         run_response,
