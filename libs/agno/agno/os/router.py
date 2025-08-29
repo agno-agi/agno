@@ -51,6 +51,35 @@ if TYPE_CHECKING:
     from agno.os.app import AgentOS
 
 
+def format_sse_event(json_data: str) -> str:
+    """Parse JSON data into SSE-compliant format.
+
+    Args:
+        json_data: JSON string containing the event data
+
+    Returns:
+        SSE-formatted response:
+
+        ```
+        event: EventName
+        data: { ... }
+
+        event: AnotherEventName
+        data: { ... }
+        ```
+    """
+    try:
+        # Parse the JSON to extract the event type
+        data = json.loads(json_data)
+        event_type = data.get("event", "message")
+
+        # Format as SSE: event: <event_type>\ndata: <json_data>\n\n
+        return f"event: {event_type}\ndata: {json_data}\n\n"
+    except (json.JSONDecodeError, KeyError):
+        # Fallback to generic message event if parsing fails
+        return f"event: message\ndata: {json_data}\n\n"
+
+
 class WebSocketManager:
     """Manages WebSocket connections for workflow runs"""
 
@@ -123,7 +152,8 @@ async def agent_response_streamer(
             stream_intermediate_steps=True,
         )
         async for run_response_chunk in run_response:
-            yield run_response_chunk.to_json()
+            yield format_sse_event(run_response_chunk.to_json())
+
     except Exception as e:
         import traceback
 
@@ -131,7 +161,7 @@ async def agent_response_streamer(
         error_response = RunErrorEvent(
             content=str(e),
         )
-        yield error_response.to_json()
+        yield format_sse_event(error_response.to_json())
 
 
 async def agent_continue_response_streamer(
@@ -151,7 +181,8 @@ async def agent_continue_response_streamer(
             stream_intermediate_steps=True,
         )
         async for run_response_chunk in continue_response:
-            yield run_response_chunk.to_json()
+            yield format_sse_event(run_response_chunk.to_json())
+
     except Exception as e:
         import traceback
 
@@ -159,7 +190,7 @@ async def agent_continue_response_streamer(
         error_response = RunErrorEvent(
             content=str(e),
         )
-        yield error_response.to_json()
+        yield format_sse_event(error_response.to_json())
         return
 
 
@@ -187,7 +218,8 @@ async def team_response_streamer(
             stream_intermediate_steps=True,
         )
         async for run_response_chunk in run_response:
-            yield run_response_chunk.to_json()
+            yield format_sse_event(run_response_chunk.to_json())
+
     except Exception as e:
         import traceback
 
@@ -195,7 +227,7 @@ async def team_response_streamer(
         error_response = TeamRunErrorEvent(
             content=str(e),
         )
-        yield error_response.to_json()
+        yield format_sse_event(error_response.to_json())
         return
 
 
@@ -259,7 +291,8 @@ async def workflow_response_streamer(
         )
 
         async for run_response_chunk in run_response:
-            yield run_response_chunk.to_json()
+            yield format_sse_event(run_response_chunk.to_json())
+
     except Exception as e:
         import traceback
 
@@ -267,7 +300,7 @@ async def workflow_response_streamer(
         error_response = WorkflowErrorEvent(
             error=str(e),
         )
-        yield error_response.to_json()
+        yield format_sse_event(error_response.to_json())
         return
 
 
