@@ -3,8 +3,9 @@ from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
 from agno.knowledge.chunking.fixed import FixedSizeChunking
-from agno.knowledge.chunking.strategy import ChunkingStrategy
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyFactory, ChunkingStrategyType
 from agno.knowledge.document.base import Document
+from agno.knowledge.types import ContentType
 
 
 @dataclass
@@ -40,11 +41,27 @@ class Reader:
         self.description = description
         self.max_results = max_results
 
+    def set_chunking_strategy_from_string(self, strategy_name: str, **kwargs) -> None:
+        """Set the chunking strategy from a string name."""
+        try:
+            strategy_type = ChunkingStrategyType.from_string(strategy_name)
+            self.chunking_strategy = ChunkingStrategyFactory.create_strategy(strategy_type, **kwargs)
+        except ValueError as e:
+            raise ValueError(f"Failed to set chunking strategy: {e}")
+
     def read(self, obj: Any, name: Optional[str] = None, password: Optional[str] = None) -> List[Document]:
         raise NotImplementedError
 
     async def async_read(self, obj: Any, name: Optional[str] = None, password: Optional[str] = None) -> List[Document]:
         raise NotImplementedError
+
+    @classmethod
+    def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
+        raise NotImplementedError
+
+    @classmethod
+    def get_supported_content_types(cls) -> List[ContentType]:
+         raise NotImplementedError
 
     def chunk_document(self, document: Document) -> List[Document]:
         if self.chunking_strategy is None:

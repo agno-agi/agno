@@ -14,7 +14,8 @@ from agno.cli.console import (
 )
 from agno.infra.config import InfraConfig
 from agno.infra.enums import InfraStarterTemplate
-from agno.utilities.logging import logger
+from agno.utilities.logging import log_warning, logger
+from agno.utils.log import log_info
 
 TEMPLATE_TO_NAME_MAP: Dict[InfraStarterTemplate, str] = {
     InfraStarterTemplate.agent_infra_docker: "agent-infra-docker",
@@ -68,7 +69,7 @@ def create_infra_from_template(
 
             # Get starter template from the user
             template_choices = [str(idx) for idx, _ in enumerate(templates, start=1)]
-            template_inp_raw = Prompt.ask("Template Number", choices=template_choices, default="1", show_choices=False)
+            template_inp_raw = Prompt.ask("Chosen Template", choices=template_choices, default="1", show_choices=False)
             # Convert input to int
             template_inp = int(template_inp_raw) if template_inp_raw is not None else None
 
@@ -93,7 +94,7 @@ def create_infra_from_template(
             default_infra_name = TEMPLATE_TO_NAME_MAP.get(infra_template, "agent-infra-docker")
         logger.debug(f"Asking for infra name with default: {default_infra_name}")
         # Ask user for infra name if not provided
-        infra_dir_name = Prompt.ask("Infra Name", default=default_infra_name, console=console)
+        infra_dir_name = Prompt.ask("Infra Project Directory", default=default_infra_name, console=console)
 
     if repo_to_clone is None:
         logger.error("URL or Template is required")
@@ -125,8 +126,8 @@ def create_infra_from_template(
         try:
             _dot_git_exists = not rmdir_recursive(_dot_git_folder)
         except Exception as e:
-            logger.warning(f"Failed to delete {_dot_git_folder}: {e}")
-            logger.info("Please delete the .git folder manually")
+            log_warning(f"Failed to delete {_dot_git_folder}: {e}")
+            log_info("Please delete the .git folder manually")
             pass
 
     agno_config.add_new_infra_to_config(infra_root_path=infra_root_path)
@@ -143,8 +144,8 @@ def create_infra_from_template(
             str(infra_secrets_dir),
         )
     except Exception as e:
-        logger.warning(f"Could not create infra/secrets: {e}")
-        logger.warning("Please manually copy infra/example_secrets to infra/secrets")
+        log_warning(f"Could not create infra/secrets: {e}")
+        log_warning("Please manually copy infra/example_secrets to infra/secrets")
 
     print_info(f"Your new infra is available at {str(infra_root_path)}\n")
     return setup_infra(infra_root_path=infra_root_path)

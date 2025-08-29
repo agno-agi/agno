@@ -88,7 +88,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
             return WorkflowSessionDetailSchema.from_session(session)  # type: ignore
 
     @router.get(
-        "/sessions/{session_id}/runs", response_model=Union[List[RunSchema], List[TeamRunSchema], List[WorkflowRunSchema]], status_code=200
+        "/sessions/{session_id}/runs",
+        response_model=Union[List[RunSchema], List[TeamRunSchema], List[WorkflowRunSchema]],
+        status_code=200,
     )
     async def get_session_runs(
         session_id: str = Path(..., description="Session ID", alias="session_id"),

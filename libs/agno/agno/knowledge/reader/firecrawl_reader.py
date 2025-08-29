@@ -2,9 +2,11 @@ import asyncio
 from dataclasses import dataclass
 from typing import Dict, List, Literal, Optional
 
-from agno.knowledge.chunking.strategy import ChunkingStrategy
+from agno.knowledge.chunking.semantic import SemanticChunking
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, logger
 
 try:
@@ -26,7 +28,7 @@ class FirecrawlReader(Reader):
         mode: Literal["scrape", "crawl"] = "scrape",
         chunk: bool = True,
         chunk_size: int = 5000,
-        chunking_strategy: Optional[ChunkingStrategy] = None,
+        chunking_strategy: Optional[ChunkingStrategy] = SemanticChunking(),
         name: Optional[str] = None,
         description: Optional[str] = None,
     ) -> None:
@@ -39,6 +41,21 @@ class FirecrawlReader(Reader):
         self.api_key = api_key
         self.params = params
         self.mode = mode
+
+    @classmethod
+    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+        """Get the list of supported chunking strategies for Firecrawl readers."""
+        return [
+            ChunkingStrategyType.SEMANTIC_CHUNKING,
+            ChunkingStrategyType.FIXED_SIZE_CHUNKING,
+            ChunkingStrategyType.AGENTIC_CHUNKING,
+            ChunkingStrategyType.DOCUMENT_CHUNKING,
+            ChunkingStrategyType.RECURSIVE_CHUNKING,
+        ]
+
+    @classmethod
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.URL]
 
     def scrape(self, url: str, name: Optional[str] = None) -> List[Document]:
         """

@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from agno.knowledge.reader.base import Reader
 
@@ -142,7 +142,34 @@ class ReaderFactory:
         return GCSReader(**config)
 
     @classmethod
-    def _get_reader_method(cls, reader_key: str):
+    def _get_arxiv_reader(cls, **kwargs) -> Reader:
+        """Get Arxiv reader instance."""
+        from agno.knowledge.reader.arxiv_reader import ArxivReader
+
+        config: Dict[str, Any] = {"name": "Arxiv Reader", "description": "Reads Arxiv papers"}
+        config.update(kwargs)
+        return ArxivReader(**config)
+
+    @classmethod
+    def _get_wikipedia_reader(cls, **kwargs) -> Reader:
+        """Get Wikipedia reader instance."""
+        from agno.knowledge.reader.wikipedia_reader import WikipediaReader
+
+        config: Dict[str, Any] = {"name": "Wikipedia Reader", "description": "Reads Wikipedia articles"}
+        config.update(kwargs)
+        return WikipediaReader(**config)
+
+    @classmethod
+    def _get_web_search_reader(cls, **kwargs) -> Reader:
+        """Get Web Search reader instance."""
+        from agno.knowledge.reader.web_search_reader import WebSearchReader
+
+        config: Dict[str, Any] = {"name": "Web Search Reader", "description": "Performs web searches"}
+        config.update(kwargs)
+        return WebSearchReader(**config)
+
+    @classmethod
+    def _get_reader_method(cls, reader_key: str) -> Callable[[], Reader]:
         """Get the appropriate reader method for the given key."""
         method_name = f"_get_{reader_key}_reader"
         if not hasattr(cls, method_name):
@@ -171,7 +198,7 @@ class ReaderFactory:
 
         if extension in [".pdf", "application/pdf"]:
             return cls.create_reader("pdf")
-        elif extension == ".csv":
+        elif extension in [".csv", "text/csv"]:
             return cls.create_reader("csv")
         elif extension in [".docx", ".doc"]:
             return cls.create_reader("docx")
@@ -219,26 +246,6 @@ class ReaderFactory:
                 reader_key = attr_name[5:-7]  # Remove "_get_" prefix and "_reader" suffix
                 reader_keys.append(reader_key)
         return reader_keys
-
-    @classmethod
-    def get_reader_info(cls, reader_key: str) -> Dict:
-        """Get information about a reader without instantiating it."""
-        # Try to create the reader to get its info, but don't cache it
-        try:
-            reader_method = cls._get_reader_method(reader_key)
-            reader = reader_method()
-            return {
-                "key": reader_key,
-                "name": getattr(reader, "name", reader_key.title()),
-                "description": getattr(reader, "description", f"Reads {reader_key} files"),
-            }
-        except Exception:
-            raise ValueError(f"Unknown reader: {reader_key}")
-
-    @classmethod
-    def get_all_readers_info(cls) -> List[Dict]:
-        """Get information about all available readers."""
-        return [cls.get_reader_info(key) for key in cls.get_all_reader_keys()]
 
     @classmethod
     def create_all_readers(cls) -> Dict[str, Reader]:

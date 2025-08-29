@@ -607,7 +607,7 @@ class JsonDb(BaseDb):
     def calculate_metrics(self) -> Optional[list[dict]]:
         """Calculate metrics for all dates without complete metrics."""
         try:
-            metrics = self._read_json_file(self.metrics_table_name)
+            metrics = self._read_json_file(self.metrics_table_name, create_table_if_not_found=True)
 
             starting_date = self._get_metrics_calculation_starting_date(metrics)
             if starting_date is None:

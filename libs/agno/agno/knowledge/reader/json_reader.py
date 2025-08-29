@@ -5,8 +5,11 @@ from pathlib import Path
 from typing import IO, Any, List, Optional, Union
 from uuid import uuid4
 
+from agno.knowledge.chunking.fixed import FixedSizeChunking
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.types import ContentType
 from agno.utils.log import log_info
 
 
@@ -14,6 +17,24 @@ class JSONReader(Reader):
     """Reader for JSON files"""
 
     chunk: bool = False
+
+    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = FixedSizeChunking(), **kwargs):
+        super().__init__(chunking_strategy=chunking_strategy, **kwargs)
+
+    @classmethod
+    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+        """Get the list of supported chunking strategies for JSON readers."""
+        return [
+            ChunkingStrategyType.FIXED_SIZE_CHUNKING,
+            ChunkingStrategyType.AGENTIC_CHUNKING,
+            ChunkingStrategyType.DOCUMENT_CHUNKING,
+            ChunkingStrategyType.RECURSIVE_CHUNKING,
+            ChunkingStrategyType.SEMANTIC_CHUNKING,
+        ]
+
+    @classmethod
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.JSON]
 
     def read(self, path: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:
         try:

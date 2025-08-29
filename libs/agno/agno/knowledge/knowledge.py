@@ -598,7 +598,12 @@ class Knowledge:
                 else:
                     content_io = content.file_data.content  # type: ignore
 
-                reader = self._select_reader(content.file_data.type)
+                # Respect an explicitly provided reader; otherwise select based on file type
+                if content.reader:
+                    log_info(f"Using reader: {content.reader.__class__.__name__} to read content")
+                    reader = content.reader
+                else:
+                    reader = self._select_reader(content.file_data.type)
                 name = content.name if content.name else f"content_{content.file_data.type}"
                 read_documents = reader.read(content_io, name=name)
 

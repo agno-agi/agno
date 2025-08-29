@@ -26,7 +26,7 @@ team = Team(
     add_history_to_context=True,
     # Number of historical responses to add to the messages.
     num_history_runs=3,
-    session_id="test_session"
+    session_id="test_session",
 )
 
 # -*- Create a run

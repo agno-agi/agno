@@ -1442,7 +1442,7 @@ async def aprint_response_stream(
                                 border_style="yellow",
                             )
                             final_panels.append(member_tool_calls_panel)
-                            
+
                 # Add reasoning steps if any
                 reasoning_steps = []
                 if member_response.reasoning_steps is not None:

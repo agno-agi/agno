@@ -4,8 +4,11 @@ from pathlib import Path
 from typing import List, Optional
 from uuid import uuid4
 
+from agno.knowledge.chunking.fixed import FixedSizeChunking
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, log_info, logger
 
 try:
@@ -27,6 +30,24 @@ except ImportError:
 class S3Reader(Reader):
     """Reader for S3 files"""
 
+    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = FixedSizeChunking(), **kwargs):
+        super().__init__(chunking_strategy=chunking_strategy, **kwargs)
+
+    @classmethod
+    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+        """Get the list of supported chunking strategies for S3 readers."""
+        return [
+            ChunkingStrategyType.FIXED_SIZE_CHUNKING,
+            ChunkingStrategyType.AGENTIC_CHUNKING,
+            ChunkingStrategyType.DOCUMENT_CHUNKING,
+            ChunkingStrategyType.RECURSIVE_CHUNKING,
+            ChunkingStrategyType.SEMANTIC_CHUNKING,
+        ]
+
+    @classmethod
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.FILE, ContentType.URL, ContentType.TEXT]
+
     def read(self, name: Optional[str], s3_object: S3Object) -> List[Document]:
         try:
             log_info(f"Reading S3 file: {s3_object.uri}")
@@ -47,6 +68,17 @@ class S3Reader(Reader):
 
 class S3TextReader(Reader):
     """Reader for text files on S3"""
+
+    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+        """Get the list of supported chunking strategies for S3 text readers."""
+        return [
+            ChunkingStrategyType.AGENTIC_CHUNKING,
+            ChunkingStrategyType.DOCUMENT_CHUNKING,
+            ChunkingStrategyType.RECURSIVE_CHUNKING,
+        ]
+
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.TEXT]
 
     def read(self, name: Optional[str], s3_object: S3Object) -> List[Document]:
         try:
@@ -95,6 +127,9 @@ class S3TextReader(Reader):
 
 class S3PDFReader(Reader):
     """Reader for PDF files on S3"""
+
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.FILE]
 
     def read(self, name: Optional[str], s3_object: S3Object) -> List[Document]:
         try:

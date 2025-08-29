@@ -5,11 +5,6 @@ from agno.knowledge.document.base import Document
 from agno.knowledge.embedder.base import Embedder
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 
-try:
-    from chonkie import SemanticChunker
-except ImportError:
-    raise ImportError("`chonkie` is required for semantic chunking, please install using `pip install chonkie`")
-
 
 class SemanticChunking(ChunkingStrategy):
     """Chunking strategy that splits text into semantic chunks using chonkie"""
@@ -18,18 +13,37 @@ class SemanticChunking(ChunkingStrategy):
         self.embedder = embedder or OpenAIEmbedder(id="text-embedding-3-small")  # type: ignore
         self.chunk_size = chunk_size
         self.similarity_threshold = similarity_threshold
-        self.chunker = SemanticChunker(
-            embedding_model=self.embedder.id,  # type: ignore
-            chunk_size=self.chunk_size,
-            threshold=self.similarity_threshold,
-        )
+        self.chunker = None  # Will be initialized lazily when needed
+
+    def _initialize_chunker(self):
+        """Lazily initialize the chunker with chonkie dependency."""
+        if self.chunker is None:
+            try:
+                from chonkie import SemanticChunker
+            except ImportError:
+                raise ImportError(
+                    "`chonkie` is required for semantic chunking. "
+                    "Please install it using `pip install chonkie` to use SemanticChunking."
+                )
+
+            self.chunker = SemanticChunker(
+                embedding_model=self.embedder.id,  # type: ignore
+                chunk_size=self.chunk_size,
+                threshold=self.similarity_threshold,
+            )
 
     def chunk(self, document: Document) -> List[Document]:
-        """Split document into semantic chunks using chokie"""
+        """Split document into semantic chunks using chonkie"""
         if not document.content:
             return [document]
 
+        # Ensure chunker is initialized (will raise ImportError if chonkie is missing)
+        self._initialize_chunker()
+
         # Use chonkie to split into semantic chunks
+        if self.chunker is None:
+            raise RuntimeError("Chunker failed to initialize")
+
         chunks = self.chunker.chunk(self.clean_text(document.content))
 
         # Convert chunks to Documents

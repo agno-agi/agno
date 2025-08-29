@@ -307,6 +307,7 @@ def get_base_router(
             description=os.description,
             available_models=os.config.available_models if os.config else [],
             databases=[db.id for db in os.dbs.values()],
+            chat=os.config.chat if os.config else None,
             session=os._get_session_config(),
             memory=os._get_memory_config(),
             knowledge=os._get_knowledge_config(),
@@ -1118,7 +1119,7 @@ def get_base_router(
         response_model_exclude_none=True,
         tags=["Workflows"],
     )
-    async def get_workflow_session(workflow_id: str, session_id: str):
+    async def get_workflow_session_by_id(workflow_id: str, session_id: str):
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
@@ -1137,7 +1138,10 @@ def get_base_router(
         response_model_exclude_none=True,
         tags=["Workflows"],
     )
-    async def get_workflow_session_runs(workflow_id: str, session_id: str):
+    async def get_workflow_session_runs(
+        workflow_id: str,
+        session_id: str,
+    ) -> List[WorkflowRunSchema]:
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")

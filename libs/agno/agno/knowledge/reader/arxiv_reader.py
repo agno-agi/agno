@@ -1,8 +1,11 @@
 import asyncio
-from typing import List
+from typing import List, Optional
 
+from agno.knowledge.chunking.fixed import FixedSizeChunking
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.types import ContentType
 
 try:
     import arxiv  # noqa: F401
@@ -13,9 +16,28 @@ except ImportError:
 class ArxivReader(Reader):
     sort_by: arxiv.SortCriterion = arxiv.SortCriterion.Relevance
 
-    def __init__(self, sort_by: arxiv.SortCriterion = arxiv.SortCriterion.Relevance, **kwargs) -> None:
-        # Initialize base Reader class (handles max_results and other common parameters)
-        super().__init__(**kwargs)
+    @classmethod
+    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+        """Get the list of supported chunking strategies for Arxiv readers."""
+        return [
+            ChunkingStrategyType.FIXED_SIZE_CHUNKING,
+            ChunkingStrategyType.AGENTIC_CHUNKING,
+            ChunkingStrategyType.DOCUMENT_CHUNKING,
+            ChunkingStrategyType.RECURSIVE_CHUNKING,
+            ChunkingStrategyType.SEMANTIC_CHUNKING,
+        ]
+
+    @classmethod
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.TOPIC]
+
+    def __init__(
+        self,
+        chunking_strategy: Optional[ChunkingStrategy] = FixedSizeChunking(),
+        sort_by: arxiv.SortCriterion = arxiv.SortCriterion.Relevance,
+        **kwargs,
+    ) -> None:
+        super().__init__(chunking_strategy=chunking_strategy, **kwargs)
 
         # ArxivReader-specific attributes
         self.sort_by = sort_by

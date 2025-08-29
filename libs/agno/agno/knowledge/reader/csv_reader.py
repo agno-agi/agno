@@ -14,13 +14,34 @@ try:
 except ImportError:
     raise ImportError("`aiofiles` not installed. Please install it with `pip install aiofiles`")
 
+from agno.knowledge.chunking.row import RowChunking
+from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.types import ContentType
 from agno.utils.log import logger
 
 
 class CSVReader(Reader):
     """Reader for CSV files"""
+
+    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = RowChunking(), **kwargs):
+        super().__init__(chunking_strategy=chunking_strategy, **kwargs)
+
+    @classmethod
+    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+        """Get the list of supported chunking strategies for CSV readers."""
+        return [
+            ChunkingStrategyType.ROW_CHUNKING,
+            ChunkingStrategyType.FIXED_SIZE_CHUNKING,
+            ChunkingStrategyType.AGENTIC_CHUNKING,
+            ChunkingStrategyType.DOCUMENT_CHUNKING,
+            ChunkingStrategyType.RECURSIVE_CHUNKING,
+        ]
+
+    @classmethod
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.FILE, ContentType.URL, ContentType.CSV, ContentType.XLSX, ContentType.XLS]
 
     def read(
         self, file: Union[Path, IO[Any]], delimiter: str = ",", quotechar: str = '"', name: Optional[str] = None
@@ -152,9 +173,24 @@ class CSVReader(Reader):
 class CSVUrlReader(Reader):
     """Reader for CSV files"""
 
-    def __init__(self, proxy: Optional[str] = None, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(
+        self, chunking_strategy: Optional[ChunkingStrategy] = RowChunking(), proxy: Optional[str] = None, **kwargs
+    ):
+        super().__init__(chunking_strategy=chunking_strategy, **kwargs)
         self.proxy = proxy
+
+    def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
+        """Get the list of supported chunking strategies for CSV URL readers."""
+        return [
+            ChunkingStrategyType.ROW_CHUNKING,
+            ChunkingStrategyType.SEMANTIC_CHUNKING,
+            ChunkingStrategyType.FIXED_SIZE_CHUNKING,
+            ChunkingStrategyType.AGENTIC_CHUNKING,
+            ChunkingStrategyType.DOCUMENT_CHUNKING,
+        ]
+
+    def get_supported_content_types(self) -> List[ContentType]:
+        return [ContentType.URL]
 
     def read(self, url: str, name: Optional[str] = None) -> List[Document]:
         if not url:
