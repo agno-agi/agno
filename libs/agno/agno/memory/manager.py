@@ -801,8 +801,6 @@ class MemoryManager:
         existing_memories: List[Dict[str, Any]],
         user_id: str,
         db: BaseDb,
-        delete_memories: bool = True,
-        clear_memories: bool = True,
     ) -> str:
         if self.model is None:
             log_error("No model provided for memory manager")
