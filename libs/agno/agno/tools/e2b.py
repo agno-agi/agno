@@ -25,27 +25,14 @@ class E2BTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        run_code: bool = True,
-        upload_file: bool = True,
-        download_result: bool = True,
-        filesystem: bool = False,
-        internet_access: bool = False,
-        sandbox_management: bool = False,
         timeout: int = 300,  # 5 minutes default timeout
         sandbox_options: Optional[Dict[str, Any]] = None,
-        command_execution: bool = False,
         **kwargs,
     ):
         """Initialize E2B toolkit for code interpretation and running Python code in a sandbox.
 
         Args:
             api_key: E2B API key (defaults to E2B_API_KEY environment variable)
-            run_code: Whether to register the run_code function
-            upload_file: Whether to register the upload_file function
-            download_result: Whether to register the download_result function
-            filesystem: Whether to register filesystem operations
-            internet_access: Whether to register internet access functions
-            sandbox_management: Whether to register sandbox management functions
             timeout: Timeout in seconds for the sandbox (default: 5 minutes)
             sandbox_options: Additional options to pass to the Sandbox constructor
         """
@@ -68,26 +55,33 @@ class E2BTools(Toolkit):
         self.last_execution = None
         self.downloaded_files: Dict[int, str] = {}
 
-        tools: List[Any] = []
-
-        if run_code:
-            tools.append(self.run_python_code)
-        if upload_file:
-            tools.append(self.upload_file)
-        if download_result:
-            tools.extend([self.download_png_result, self.download_chart_data, self.download_file_from_sandbox])
-        if filesystem:
-            tools.extend([self.list_files, self.read_file_content, self.write_file_content, self.watch_directory])
-        if internet_access:
-            tools.extend([self.get_public_url, self.run_server])
-        if sandbox_management:
-            tools.extend(
-                [self.set_sandbox_timeout, self.get_sandbox_status, self.shutdown_sandbox, self.list_running_sandboxes]
-            )
-        if command_execution:
-            tools.extend(
-                [self.run_command, self.stream_command, self.run_background_command, self.kill_background_command]
-            )
+        tools = [
+            # Code execution
+            self.run_python_code,
+            # File operations
+            self.upload_file,
+            self.download_png_result,
+            self.download_chart_data,
+            self.download_file_from_sandbox,
+            # Filesystem operations
+            self.list_files,
+            self.read_file_content,
+            self.write_file_content,
+            self.watch_directory,
+            # Internet access
+            self.get_public_url,
+            self.run_server,
+            # Sandbox management
+            self.set_sandbox_timeout,
+            self.get_sandbox_status,
+            self.shutdown_sandbox,
+            self.list_running_sandboxes,
+            # Command execution
+            self.run_command,
+            self.stream_command,
+            self.run_background_command,
+            self.kill_background_command,
+        ]
 
         super().__init__(name="e2b_tools", tools=tools, **kwargs)
 

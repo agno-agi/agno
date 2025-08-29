@@ -17,45 +17,6 @@ class GithubTools(Toolkit):
         self,
         access_token: Optional[str] = None,
         base_url: Optional[str] = None,
-        search_repositories: bool = True,
-        list_repositories: bool = False,
-        get_repository: bool = False,
-        get_pull_request: bool = False,
-        get_pull_request_changes: bool = False,
-        create_issue: bool = False,
-        create_repository: bool = False,
-        delete_repository: bool = False,
-        get_repository_languages: bool = False,
-        list_branches: bool = False,
-        get_pull_request_count: bool = False,
-        get_repository_stars: bool = False,
-        get_pull_requests: bool = False,
-        get_pull_request_comments: bool = False,
-        create_pull_request_comment: bool = False,
-        edit_pull_request_comment: bool = False,
-        get_pull_request_with_details: bool = False,
-        get_repository_with_stats: bool = False,
-        list_issues: bool = False,
-        get_issue: bool = False,
-        comment_on_issue: bool = False,
-        close_issue: bool = False,
-        reopen_issue: bool = False,
-        assign_issue: bool = False,
-        label_issue: bool = False,
-        list_issue_comments: bool = False,
-        edit_issue: bool = False,
-        create_pull_request: bool = False,
-        create_file: bool = False,
-        get_file_content: bool = False,
-        update_file: bool = True,
-        delete_file: bool = False,
-        get_directory_content: bool = False,
-        get_branch_content: bool = False,
-        create_branch: bool = False,
-        set_default_branch: bool = False,
-        search_code: bool = False,
-        search_issues_and_prs: bool = False,
-        create_review_request: bool = False,
         **kwargs,
     ):
         self.access_token = access_token or getenv("GITHUB_ACCESS_TOKEN")
@@ -63,85 +24,47 @@ class GithubTools(Toolkit):
 
         self.g = self.authenticate()
 
-        tools: List[Any] = []
-        if search_repositories:
-            tools.append(self.search_repositories)
-        if list_repositories:
-            tools.append(self.list_repositories)
-        if get_repository:
-            tools.append(self.get_repository)
-        if get_pull_request:
-            tools.append(self.get_pull_request)
-        if get_pull_request_changes:
-            tools.append(self.get_pull_request_changes)
-        if create_issue:
-            tools.append(self.create_issue)
-        if create_repository:
-            tools.append(self.create_repository)
-        if delete_repository:
-            tools.append(self.delete_repository)
-        if list_branches:
-            tools.append(self.list_branches)
-        if get_repository_languages:
-            tools.append(self.get_repository_languages)
-        if get_pull_request_count:
-            tools.append(self.get_pull_request_count)
-        if get_repository_stars:
-            tools.append(self.get_repository_stars)
-        if get_pull_requests:
-            tools.append(self.get_pull_requests)
-        if get_pull_request_comments:
-            tools.append(self.get_pull_request_comments)
-        if create_pull_request_comment:
-            tools.append(self.create_pull_request_comment)
-        if edit_pull_request_comment:
-            tools.append(self.edit_pull_request_comment)
-        if get_pull_request_with_details:
-            tools.append(self.get_pull_request_with_details)
-        if get_repository_with_stats:
-            tools.append(self.get_repository_with_stats)
-        if list_issues:
-            tools.append(self.list_issues)
-        if get_issue:
-            tools.append(self.get_issue)
-        if comment_on_issue:
-            tools.append(self.comment_on_issue)
-        if close_issue:
-            tools.append(self.close_issue)
-        if reopen_issue:
-            tools.append(self.reopen_issue)
-        if assign_issue:
-            tools.append(self.assign_issue)
-        if label_issue:
-            tools.append(self.label_issue)
-        if list_issue_comments:
-            tools.append(self.list_issue_comments)
-        if edit_issue:
-            tools.append(self.edit_issue)
-        if create_pull_request:
-            tools.append(self.create_pull_request)
-        if create_file:
-            tools.append(self.create_file)
-        if get_file_content:
-            tools.append(self.get_file_content)
-        if update_file:
-            tools.append(self.update_file)
-        if delete_file:
-            tools.append(self.delete_file)
-        if get_directory_content:
-            tools.append(self.get_directory_content)
-        if get_branch_content:
-            tools.append(self.get_branch_content)
-        if create_branch:
-            tools.append(self.create_branch)
-        if set_default_branch:
-            tools.append(self.set_default_branch)
-        if search_code:
-            tools.append(self.search_code)
-        if search_issues_and_prs:
-            tools.append(self.search_issues_and_prs)
-        if create_review_request:
-            tools.append(self.create_review_request)
+        tools = [
+            self.search_repositories,
+            self.list_repositories,
+            self.get_repository,
+            self.get_pull_request,
+            self.get_pull_request_changes,
+            self.create_issue,
+            self.create_repository,
+            self.delete_repository,
+            self.list_branches,
+            self.get_repository_languages,
+            self.get_pull_request_count,
+            self.get_repository_stars,
+            self.get_pull_requests,
+            self.get_pull_request_comments,
+            self.create_pull_request_comment,
+            self.edit_pull_request_comment,
+            self.get_pull_request_with_details,
+            self.get_repository_with_stats,
+            self.list_issues,
+            self.get_issue,
+            self.comment_on_issue,
+            self.close_issue,
+            self.reopen_issue,
+            self.assign_issue,
+            self.label_issue,
+            self.list_issue_comments,
+            self.edit_issue,
+            self.create_pull_request,
+            self.create_file,
+            self.get_file_content,
+            self.update_file,
+            self.delete_file,
+            self.get_directory_content,
+            self.get_branch_content,
+            self.create_branch,
+            self.set_default_branch,
+            self.search_code,
+            self.search_issues_and_prs,
+            self.create_review_request,
+        ]
 
         super().__init__(name="github", tools=tools, **kwargs)
 

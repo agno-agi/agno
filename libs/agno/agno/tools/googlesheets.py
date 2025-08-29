@@ -94,26 +94,18 @@ class GoogleSheetsTools(Toolkit):
         creds: Optional[Credentials] = None,
         creds_path: Optional[str] = None,
         token_path: Optional[str] = None,
-        read: bool = True,
-        create: bool = False,
-        update: bool = False,
-        duplicate: bool = False,
         oauth_port: int = 0,
         **kwargs,
     ):
         """Initialize GoogleSheetsTools with the specified configuration.
 
         Args:
-            scopes (Optional[List[str]]): Custom OAuth scopes. If None, determined by operations.
+            scopes (Optional[List[str]]): Custom OAuth scopes. If None, uses write scope by default.
             spreadsheet_id (Optional[str]): ID of the target spreadsheet.
             spreadsheet_range (Optional[str]): Range within the spreadsheet.
             creds (Optional[Credentials]): Pre-existing credentials.
             creds_path (Optional[str]): Path to credentials file.
             token_path (Optional[str]): Path to token file.
-            read (bool): Enable read operations. Defaults to True.
-            create (bool): Enable create operations. Defaults to False.
-            update (bool): Enable update operations. Defaults to False.
-            duplicate (bool): Enable duplicate operations. Defaults to False.
             oauth_port (int): Port to use for OAuth authentication. Defaults to 0.
         """
 
@@ -127,36 +119,16 @@ class GoogleSheetsTools(Toolkit):
 
         # Determine required scopes based on operations if no custom scopes provided
         if scopes is None:
-            self.scopes = []
-            if read:
-                self.scopes.append(self.DEFAULT_SCOPES["read"])
-            if create or update or duplicate:
-                self.scopes.append(self.DEFAULT_SCOPES["write"])
-            # Remove duplicates while preserving order
-            self.scopes = list(dict.fromkeys(self.scopes))
+            self.scopes = [self.DEFAULT_SCOPES["write"]]  # Include write scope by default for all operations
         else:
             self.scopes = scopes
-            # Validate that required scopes are present for requested operations
-            if (create or update or duplicate) and self.DEFAULT_SCOPES["write"] not in self.scopes:
-                raise ValueError(f"The scope {self.DEFAULT_SCOPES['write']} is required for write operations")
-            if (
-                read
-                and self.DEFAULT_SCOPES["read"] not in self.scopes
-                and self.DEFAULT_SCOPES["write"] not in self.scopes
-            ):
-                raise ValueError(
-                    f"Either {self.DEFAULT_SCOPES['read']} or {self.DEFAULT_SCOPES['write']} is required for read operations"
-                )
 
-        tools: List[Any] = []
-        if read:
-            tools.append(self.read_sheet)
-        if create:
-            tools.append(self.create_sheet)
-        if update:
-            tools.append(self.update_sheet)
-        if duplicate:
-            tools.append(self.create_duplicate_sheet)
+        tools: List[Any] = [
+            self.read_sheet,
+            self.create_sheet,
+            self.update_sheet,
+            self.create_duplicate_sheet,
+        ]
 
         super().__init__(name="google_sheets_tools", tools=tools, **kwargs)
 

@@ -101,17 +101,6 @@ class GmailTools(Toolkit):
 
     def __init__(
         self,
-        get_latest_emails: bool = True,
-        get_emails_from_user: bool = True,
-        get_unread_emails: bool = True,
-        get_starred_emails: bool = True,
-        get_emails_by_context: bool = True,
-        get_emails_by_date: bool = True,
-        get_emails_by_thread: bool = True,
-        create_draft_email: bool = True,
-        send_email: bool = True,
-        send_email_reply: bool = True,
-        search_emails: bool = True,
         creds: Optional[Credentials] = None,
         credentials_path: Optional[str] = None,
         token_path: Optional[str] = None,
@@ -146,52 +135,21 @@ class GmailTools(Toolkit):
         self.scopes = scopes or self.DEFAULT_SCOPES
         self.port = port
 
-        # Validate that required scopes are present for requested operations
-        if (create_draft_email or send_email) and "https://www.googleapis.com/auth/gmail.compose" not in self.scopes:
-            raise ValueError(
-                "The scope https://www.googleapis.com/auth/gmail.compose is required for email composition operations"
-            )
-
-        read_operations = [
-            get_latest_emails,
-            get_emails_from_user,
-            get_unread_emails,
-            get_starred_emails,
-            get_emails_by_context,
-            get_emails_by_date,
-            get_emails_by_thread,
-            search_emails,
+        tools: List[Any] = [
+            # Reading emails
+            self.get_latest_emails,
+            self.get_emails_from_user,
+            self.get_unread_emails,
+            self.get_starred_emails,
+            self.get_emails_by_context,
+            self.get_emails_by_date,
+            self.get_emails_by_thread,
+            self.search_emails,
+            # Composing emails
+            self.create_draft_email,
+            self.send_email,
+            self.send_email_reply,
         ]
-
-        if any(read_operations):
-            read_scope = "https://www.googleapis.com/auth/gmail.readonly"
-            write_scope = "https://www.googleapis.com/auth/gmail.modify"
-            if read_scope not in self.scopes and write_scope not in self.scopes:
-                raise ValueError(f"The scope {read_scope} is required for email reading operations")
-
-        tools: List[Any] = []
-        if get_latest_emails:
-            tools.append(self.get_latest_emails)
-        if get_emails_from_user:
-            tools.append(self.get_emails_from_user)
-        if get_unread_emails:
-            tools.append(self.get_unread_emails)
-        if get_starred_emails:
-            tools.append(self.get_starred_emails)
-        if get_emails_by_context:
-            tools.append(self.get_emails_by_context)
-        if get_emails_by_date:
-            tools.append(self.get_emails_by_date)
-        if get_emails_by_thread:
-            tools.append(self.get_emails_by_thread)
-        if create_draft_email:
-            tools.append(self.create_draft_email)
-        if send_email:
-            tools.append(self.send_email)
-        if send_email_reply:
-            tools.append(self.send_email_reply)
-        if search_emails:
-            tools.append(self.search_emails)
 
         super().__init__(name="gmail_tools", tools=tools, **kwargs)
 

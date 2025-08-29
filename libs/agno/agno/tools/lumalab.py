@@ -31,6 +31,9 @@ class LumaLabTools(Toolkit):
         wait_for_completion: bool = True,
         poll_interval: int = 3,
         max_wait_time: int = 300,  # 5 minutes
+        enable_generate_video: bool = True,
+        enable_image_to_video: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.wait_for_completion = wait_for_completion
@@ -44,8 +47,10 @@ class LumaLabTools(Toolkit):
         self.client = LumaAI(auth_token=self.api_key)
 
         tools: List[Any] = []
-        tools.append(self.generate_video)
-        tools.append(self.image_to_video)
+        if all or enable_generate_video:
+            tools.append(self.generate_video)
+        if all or enable_image_to_video:
+            tools.append(self.image_to_video)
 
         super().__init__(name="luma_lab", tools=tools, **kwargs)
 

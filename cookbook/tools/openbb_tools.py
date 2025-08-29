@@ -1,16 +1,64 @@
 from agno.agent import Agent
 from agno.tools.openbb import OpenBBTools
 
-agent = Agent(tools=[OpenBBTools()])
-# Example usage showing stock analysis
+# Example 1: Enable all OpenBB functions
+agent_all = Agent(
+    tools=[
+        OpenBBTools(
+            all=True,  # Enable all OpenBB financial data functions
+        )
+    ],
+    markdown=True,
+)
+
+# Example 2: Enable specific OpenBB functions only
+agent_specific = Agent(
+    tools=[
+        OpenBBTools(
+            enable_get_company_info=True,
+            enable_get_historical_stock_data=True,
+            enable_get_current_stock_price=False,
+            enable_get_market_news=False,
+            enable_get_financial_ratios=False,
+        )
+    ],
+    markdown=True,
+)
+
+# Example 3: Default behavior with all functions enabled
+agent = Agent(
+    tools=[
+        OpenBBTools(
+            enable_get_company_info=True,
+            enable_get_historical_stock_data=True,
+            enable_get_current_stock_price=True,
+            enable_get_market_news=True,
+            enable_get_financial_ratios=True,
+        )
+    ],
+    markdown=True,
+)
+
+# Example usage with all functions enabled
+print("=== Example 1: Using all OpenBB functions ===")
+agent_all.print_response(
+    "Provide a comprehensive analysis of Apple (AAPL) including current price, historical data, news, and ratios"
+)
+
+# Example usage with specific functions only
+print("\n=== Example 2: Using specific OpenBB functions (company info + historical data) ===")
+agent_specific.print_response(
+    "Get company information and historical stock data for Tesla (TSLA)"
+)
+
+# Example usage with default configuration
+print("\n=== Example 3: Default OpenBB agent usage ===")
 agent.print_response(
     "Get me the current stock price and key information for Apple (AAPL)"
 )
 
-# Example showing market analysis
 agent.print_response("What are the top gainers in the market today?")
 
-# Example showing economic indicators
 agent.print_response(
     "Show me the latest GDP growth rate and inflation numbers for the US"
 )

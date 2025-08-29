@@ -26,11 +26,21 @@ class GroqTools(Toolkit):
         translation_model: str = "whisper-large-v3",
         tts_model: str = "playai-tts",
         tts_voice: str = "Chip-PlayAI",
+        enable_transcribe_audio: bool = True,
+        enable_translate_audio: bool = True,
+        enable_generate_speech: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        super().__init__(
-            name="groq_tools", tools=[self.transcribe_audio, self.translate_audio, self.generate_speech], **kwargs
-        )
+        tools = []
+        if all or enable_transcribe_audio:
+            tools.append(self.transcribe_audio)
+        if all or enable_translate_audio:
+            tools.append(self.translate_audio)
+        if all or enable_generate_speech:
+            tools.append(self.generate_speech)
+        
+        super().__init__(name="groq_tools", tools=tools, **kwargs)
 
         self.api_key = api_key or getenv("GROQ_API_KEY")
         if not self.api_key:

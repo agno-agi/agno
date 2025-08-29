@@ -22,18 +22,24 @@ class Mem0Tools(Toolkit):
         org_id: Optional[str] = None,
         project_id: Optional[str] = None,
         infer: bool = True,
+        enable_add_memory: bool = True,
+        enable_search_memory: bool = True,
+        enable_get_all_memories: bool = True,
+        enable_delete_all_memories: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        super().__init__(
-            name="mem0_tools",
-            tools=[
-                self.add_memory,
-                self.search_memory,
-                self.get_all_memories,
-                self.delete_all_memories,
-            ],
-            **kwargs,
-        )
+        tools: List[Any] = []
+        if enable_add_memory or all:
+            tools.append(self.add_memory)
+        if enable_search_memory or all:
+            tools.append(self.search_memory)
+        if enable_get_all_memories or all:
+            tools.append(self.get_all_memories)
+        if enable_delete_all_memories or all:
+            tools.append(self.delete_all_memories)
+
+        super().__init__(name="mem0_tools", tools=tools, **kwargs)
         self.api_key = api_key or getenv("MEM0_API_KEY")
         self.user_id = user_id
         self.org_id = org_id or getenv("MEM0_ORG_ID")

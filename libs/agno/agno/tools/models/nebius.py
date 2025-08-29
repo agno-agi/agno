@@ -22,6 +22,8 @@ class NebiusTools(Toolkit):
         image_quality: Optional[str] = "standard",
         image_size: Optional[str] = "1024x1024",
         image_style: Optional[str] = None,
+        enable_generate_image: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         """Initialize Nebius AI Studio text-to-image tools.
@@ -36,9 +38,15 @@ class NebiusTools(Toolkit):
             image_quality: Image quality. Options: "standard", "hd".
             image_size: Image size in format "WIDTHxHEIGHT". Max supported: 2000x2000.
             image_style: Optional style preset to apply.
+            enable_generate_image: Enable image generation functionality.
+            all: Enable all functions.
             **kwargs: Additional arguments to pass to Toolkit.
         """
-        super().__init__(name="nebius_tools", tools=[self.generate_image], **kwargs)
+        tools = []
+        if all or enable_generate_image:
+            tools.append(self.generate_image)
+        
+        super().__init__(name="nebius_tools", tools=tools, **kwargs)
 
         self.api_key = api_key or getenv("NEBIUS_API_KEY")
         if not self.api_key:

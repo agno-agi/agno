@@ -40,6 +40,10 @@ class ElevenLabsTools(Toolkit):
         target_directory: Optional[str] = None,
         model_id: str = "eleven_multilingual_v2",
         output_format: ElevenLabsAudioOutputFormat = "mp3_44100_64",
+        enable_get_voices: bool = True,
+        enable_generate_sound_effect: bool = True,
+        enable_text_to_speech: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.api_key = api_key or getenv("ELEVEN_LABS_API_KEY")
@@ -58,10 +62,12 @@ class ElevenLabsTools(Toolkit):
         self.eleven_labs_client = ElevenLabs(api_key=self.api_key)
 
         tools: List[Any] = []
-
-        tools.append(self.get_voices)
-        tools.append(self.generate_sound_effect)
-        tools.append(self.text_to_speech)
+        if all or enable_get_voices:
+            tools.append(self.get_voices)
+        if all or enable_generate_sound_effect:
+            tools.append(self.generate_sound_effect)
+        if all or enable_text_to_speech:
+            tools.append(self.text_to_speech)
 
         super().__init__(name="elevenlabs_tools", tools=tools, **kwargs)
 

@@ -28,9 +28,18 @@ class GeminiTools(Toolkit):
         location: Optional[str] = None,
         image_generation_model: str = "imagen-3.0-generate-002",
         video_generation_model: str = "veo-2.0-generate-001",
+        enable_generate_image: bool = True,
+        enable_generate_video: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        super().__init__(name="gemini_tools", tools=[self.generate_image, self.generate_video], **kwargs)
+        tools = []
+        if all or enable_generate_image:
+            tools.append(self.generate_image)
+        if all or enable_generate_video:
+            tools.append(self.generate_video)
+        
+        super().__init__(name="gemini_tools", tools=tools, **kwargs)
 
         # Set mode and credentials: use only provided vertexai parameter
         self.vertexai = vertexai or getenv("GOOGLE_GENAI_USE_VERTEXAI") == "true"

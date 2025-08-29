@@ -17,13 +17,6 @@ class ClickUpTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         master_space_id: Optional[str] = None,
-        list_tasks: bool = True,
-        create_task: bool = True,
-        get_task: bool = True,
-        update_task: bool = True,
-        delete_task: bool = True,
-        list_spaces: bool = True,
-        list_lists: bool = True,
         **kwargs,
     ):
         self.api_key = api_key or getenv("CLICKUP_API_KEY")
@@ -36,21 +29,15 @@ class ClickUpTools(Toolkit):
         if not self.master_space_id:
             raise ValueError("MASTER_SPACE_ID not set. Please set the MASTER_SPACE_ID environment variable.")
 
-        tools: List[Any] = []
-        if list_tasks:
-            tools.append(self.list_tasks)
-        if create_task:
-            tools.append(self.create_task)
-        if get_task:
-            tools.append(self.get_task)
-        if update_task:
-            tools.append(self.update_task)
-        if delete_task:
-            tools.append(self.delete_task)
-        if list_spaces:
-            tools.append(self.list_spaces)
-        if list_lists:
-            tools.append(self.list_lists)
+        tools: List[Any] = [
+            self.list_tasks,
+            self.create_task,
+            self.get_task,
+            self.update_task,
+            self.delete_task,
+            self.list_spaces,
+            self.list_lists,
+        ]
 
         super().__init__(name="clickup", tools=tools, **kwargs)
 

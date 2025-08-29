@@ -36,15 +36,41 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.e2b import E2BTools
 
-e2b_tools = E2BTools(
+# Example 1: Include specific E2B functions for basic code execution
+basic_e2b_tools = E2BTools(
+    timeout=600,  # 10 minutes timeout (in seconds)
+    include_tools=["run_python_code", "list_files", "read_file_content", "write_file_content"]
+)
+
+# Example 2: Exclude server-related functions for security
+safe_e2b_tools = E2BTools(
+    timeout=600,
+    exclude_tools=["run_server", "get_public_url", "run_command"]
+)
+
+# Example 3: Full E2B functionality (default)
+full_e2b_tools = E2BTools(
     timeout=600,  # 10 minutes timeout (in seconds)
 )
 
+# Create agents with different tool configurations
+basic_agent = Agent(
+    name="Basic Code Execution Sandbox",
+    id="e2b-basic-sandbox",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[basic_e2b_tools],
+    markdown=True,
+    instructions=[
+        "You are a Python code execution assistant with basic file operations.",
+        "You can run Python code and manage files in a secure sandbox.",
+    ],
+)
+
 agent = Agent(
-    name="Code Execution Sandbox",
+    name="Full Code Execution Sandbox",
     id="e2b-sandbox",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[e2b_tools],
+    tools=[full_e2b_tools],
     markdown=True,
     instructions=[
         "You are an expert at writing and validating Python code using a secure E2B sandbox environment.",

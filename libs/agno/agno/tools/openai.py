@@ -21,7 +21,23 @@ OpenAITTSFormat = Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
 
 
 class OpenAITools(Toolkit):
-    """Tools for interacting with OpenAIChat API"""
+    """Tools for interacting with OpenAI API.
+    
+    Args:
+        api_key (str, optional): OpenAI API key. Retrieved from OPENAI_API_KEY env variable if not provided.
+        enable_transcription (bool): Enable audio transcription functionality. Default is True.
+        enable_image_generation (bool): Enable image generation functionality. Default is True.
+        enable_speech_generation (bool): Enable speech generation functionality. Default is True.
+        all (bool): Enable all tools. Overrides individual flags when True. Default is False.
+        transcription_model (str): Model to use for transcription. Default is "whisper-1".
+        text_to_speech_voice (OpenAIVoice): Voice to use for TTS. Default is "alloy".
+        text_to_speech_model (OpenAITTSModel): Model to use for TTS. Default is "tts-1".
+        text_to_speech_format (OpenAITTSFormat): Audio format for TTS. Default is "mp3".
+        image_model (str, optional): Model to use for image generation. Default is "dall-e-3".
+        image_quality (str, optional): Quality setting for image generation.
+        image_size (str, optional): Size setting for image generation.
+        image_style (str, optional): Style setting for image generation.
+    """
 
     def __init__(
         self,
@@ -29,6 +45,7 @@ class OpenAITools(Toolkit):
         enable_transcription: bool = True,
         enable_image_generation: bool = True,
         enable_speech_generation: bool = True,
+        all: bool = False,
         transcription_model: str = "whisper-1",
         text_to_speech_voice: OpenAIVoice = "alloy",
         text_to_speech_model: OpenAITTSModel = "tts-1",
@@ -54,11 +71,11 @@ class OpenAITools(Toolkit):
         self.image_size = image_size
 
         tools: List[Any] = []
-        if enable_transcription:
+        if all or enable_transcription:
             tools.append(self.transcribe_audio)
-        if enable_image_generation:
+        if all or enable_image_generation:
             tools.append(self.generate_image)
-        if enable_speech_generation:
+        if all or enable_speech_generation:
             tools.append(self.generate_speech)
 
         super().__init__(name="openai_tools", tools=tools, **kwargs)

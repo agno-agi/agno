@@ -17,11 +17,49 @@ class FindEmailOutput(BaseModel):
     body: str = Field(..., description="The body of the email")
 
 
+# Example 1: Include specific Gmail functions for reading only
+read_only_agent = Agent(
+    name="Gmail Reader Agent",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[
+        GmailTools(
+            include_tools=["search_gmail", "read_email", "get_email_body"]
+        )
+    ],
+    description="You are a Gmail reading specialist that can search and read emails.",
+    instructions=[
+        "You can search and read Gmail messages but cannot send or draft emails.",
+        "Summarize email contents and extract key details and dates.",
+        "Show the email contents in a structured markdown format.",
+    ],
+    markdown=True,
+    output_schema=FindEmailOutput,
+)
+
+# Example 2: Exclude dangerous functions (sending emails)
+safe_gmail_agent = Agent(
+    name="Safe Gmail Agent",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[
+        GmailTools(
+            exclude_tools=["send_email", "reply_to_email"]
+        )
+    ],
+    description="You are a Gmail agent with safe operations only.",
+    instructions=[
+        "You can read and draft emails but cannot send them.",
+        "Show the email contents in a structured markdown format.",
+    ],
+    markdown=True,
+    output_schema=FindEmailOutput,
+)
+
+# Example 3: Full Gmail functionality (default)
 agent = Agent(
-    name="Gmail Agent",
+    name="Full Gmail Agent",
     model=OpenAIChat(id="gpt-4o"),
     tools=[GmailTools()],
-    description="You are an expert Gmail Agent that can read, draft and send emails using the Gmail.",
+    description="You are an expert Gmail Agent that can read, draft and send emails using Gmail.",
     instructions=[
         "Based on user query, you can read, draft and send emails using Gmail.",
         "While showing email contents, you can summarize the email contents, extract key details and dates.",

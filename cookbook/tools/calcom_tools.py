@@ -31,8 +31,37 @@ You can help users by:
 """
 
 
+# Example 1: Include specific Cal.com functions for booking management
+booking_agent = Agent(
+    name="Booking Assistant",
+    instructions=[INSTRUCTONS],
+    model=OpenAIChat(id="gpt-4"),
+    tools=[
+        CalComTools(
+            user_timezone="America/New_York",
+            include_tools=["create_booking", "get_available_slots", "get_upcoming_bookings"]
+        )
+    ],
+    markdown=True,
+)
+
+# Example 2: Exclude cancellation functions for safety
+safe_calendar_agent = Agent(
+    name="Safe Calendar Assistant", 
+    instructions=[INSTRUCTONS],
+    model=OpenAIChat(id="gpt-4"),
+    tools=[
+        CalComTools(
+            user_timezone="America/New_York",
+            exclude_tools=["cancel_booking", "delete_booking"]
+        )
+    ],
+    markdown=True,
+)
+
+# Example 3: Full Cal.com functionality (default)
 agent = Agent(
-    name="Calendar Assistant",
+    name="Full Calendar Assistant",
     instructions=[INSTRUCTONS],
     model=OpenAIChat(id="gpt-4"),
     tools=[CalComTools(user_timezone="America/New_York")],

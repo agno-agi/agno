@@ -2,13 +2,32 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.brightdata import BrightDataTools
 
-agent = Agent(
+# Example 1: Include specific BrightData functions for web scraping
+scraping_agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[
         BrightDataTools(
-            get_screenshot=True,
+            include_tools=["web_scraper", "serp_google", "serp_amazon"]
         )
     ],
+    markdown=True,
+)
+
+# Example 2: Exclude screenshot functions for performance
+no_screenshot_agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[
+        BrightDataTools(
+            exclude_tools=["screenshot_generator"]
+        )
+    ],
+    markdown=True,
+)
+
+# Example 3: Full BrightData functionality (default)
+agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[BrightDataTools()],
     markdown=True,
 )
 

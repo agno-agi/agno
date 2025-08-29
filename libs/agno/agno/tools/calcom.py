@@ -18,11 +18,6 @@ class CalComTools(Toolkit):
         api_key: Optional[str] = None,
         event_type_id: Optional[int] = None,
         user_timezone: Optional[str] = None,
-        get_available_slots: bool = True,
-        create_booking: bool = True,
-        get_upcoming_bookings: bool = True,
-        reschedule_booking: bool = True,
-        cancel_booking: bool = True,
         **kwargs,
     ):
         """Initialize the Cal.com toolkit.
@@ -48,17 +43,13 @@ class CalComTools(Toolkit):
 
         self.user_timezone = user_timezone or "America/New_York"
 
-        tools: List[Any] = []
-        if get_available_slots:
-            tools.append(self.get_available_slots)
-        if create_booking:
-            tools.append(self.create_booking)
-        if get_upcoming_bookings:
-            tools.append(self.get_upcoming_bookings)
-        if reschedule_booking:
-            tools.append(self.reschedule_booking)
-        if cancel_booking:
-            tools.append(self.cancel_booking)
+        tools: List[Any] = [
+            self.get_available_slots,
+            self.create_booking,
+            self.get_upcoming_bookings,
+            self.reschedule_booking,
+            self.cancel_booking,
+        ]
 
         super().__init__(name="calcom", tools=tools, **kwargs)
 

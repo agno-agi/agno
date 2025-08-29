@@ -23,6 +23,8 @@ class ReplicateTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         model: str = "minimax/video-01",
+        enable_generate_media: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.api_key = api_key or getenv("REPLICATE_API_KEY")
@@ -31,7 +33,8 @@ class ReplicateTools(Toolkit):
         self.model = model
 
         tools: List[Any] = []
-        tools.append(self.generate_media)
+        if all or enable_generate_media:
+            tools.append(self.generate_media)
 
         super().__init__(name="replicate_toolkit", tools=tools, **kwargs)
 

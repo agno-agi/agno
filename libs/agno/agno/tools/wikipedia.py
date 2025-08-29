@@ -10,14 +10,23 @@ from agno.utils.log import log_debug, log_info
 
 
 class WikipediaTools(Toolkit):
-    def __init__(self, knowledge: Optional[Knowledge] = None, **kwargs):
+    def __init__(
+        self,
+        knowledge: Optional[Knowledge] = None,
+        enable_search_wikipedia: bool = True,
+        enable_search_wikipedia_and_update_knowledge_base: bool = True,
+        all: bool = False,
+        **kwargs,
+    ):
         tools = []
 
         self.knowledge: Optional[Knowledge] = knowledge
         if self.knowledge is not None and isinstance(self.knowledge, Knowledge):
-            tools.append(self.search_wikipedia_and_update_knowledge_base)
+            if all or enable_search_wikipedia_and_update_knowledge_base:
+                tools.append(self.search_wikipedia_and_update_knowledge_base)
         else:
-            tools.append(self.search_wikipedia)  # type: ignore
+            if all or enable_search_wikipedia:
+                tools.append(self.search_wikipedia)  # type: ignore
 
         super().__init__(name="wikipedia_tools", tools=tools, **kwargs)
 

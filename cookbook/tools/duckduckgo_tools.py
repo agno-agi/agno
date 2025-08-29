@@ -2,9 +2,34 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 
+# Example 1: Enable specific DuckDuckGo functions
 agent = Agent(
-    model=OpenAIChat(id="gpt-4.1"),
-    tools=[DuckDuckGoTools()],
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[
+        DuckDuckGoTools(
+            enable_duckduckgo_search=True,
+            enable_duckduckgo_news=False
+        )
+    ]
 )
 
-agent.print_response("Whats the latest about gpt 5?", markdown=True)
+# Example 2: Enable all DuckDuckGo functions
+agent_all = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[DuckDuckGoTools(all=True)]
+)
+
+# Example 3: Enable only news search
+news_agent = Agent(
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[
+        DuckDuckGoTools(
+            enable_duckduckgo_search=False,
+            enable_duckduckgo_news=True
+        )
+    ]
+)
+
+# Test the agents
+agent.print_response("What's the latest about GPT-5?", markdown=True)
+news_agent.print_response("Find recent news about artificial intelligence", markdown=True)

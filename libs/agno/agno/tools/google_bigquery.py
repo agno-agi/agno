@@ -21,6 +21,10 @@ class GoogleBigQueryTools(Toolkit):
         describe_table: Optional[bool] = True,
         run_sql_query: Optional[bool] = True,
         credentials: Optional[Any] = None,
+        enable_list_tables: bool = True,
+        enable_describe_table: bool = True,
+        enable_run_sql_query: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.project = project or getenv("GOOGLE_CLOUD_PROJECT")
@@ -37,11 +41,11 @@ class GoogleBigQueryTools(Toolkit):
         self.client = bigquery.Client(project=self.project, credentials=credentials)
 
         tools: List[Any] = []
-        if list_tables:
+        if list_tables or all or enable_list_tables:
             tools.append(self.list_tables)
-        if describe_table:
+        if describe_table or all or enable_describe_table:
             tools.append(self.describe_table)
-        if run_sql_query:
+        if run_sql_query or all or enable_run_sql_query:
             tools.append(self.run_sql_query)
 
         super().__init__(name="google_bigquery_tools", tools=tools, **kwargs)
