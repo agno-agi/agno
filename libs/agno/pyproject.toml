@@ -150,6 +150,7 @@ docx = ["python-docx"]
 text = ["aiofiles"]
 csv = ["aiofiles"]
 markdown = ["unstructured", "markdown", "aiofiles"]
+universal = ["pypdf", "python-docx", "pytesseract", "Pillow", "striprtf"]
 
 # Dependencies for AG-UI integration
 agui = ["ag-ui-protocol"]
@@ -436,7 +437,7 @@ module = [
   "streamlit.*",
   "tantivy.*",
   "tavily.*",
-  "textract.*",
+
   "timeout_decorator.*",
   "tiktoken.*",
   "torch.*",
