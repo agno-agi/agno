@@ -537,7 +537,7 @@ class Claude(Model):
                                     )
                                 )
                 elif block.type == "thinking":
-                    model_response.thinking = block.thinking
+                    model_response.reasoning_content = block.thinking
                     model_response.provider_data = {
                         "signature": block.signature,
                     }
@@ -602,7 +602,7 @@ class Claude(Model):
                 model_response.content = response.delta.text
             # Handle thinking content
             elif response.delta.type == "thinking_delta":
-                model_response.thinking = response.delta.thinking
+                model_response.reasoning_content = response.delta.thinking
             elif response.delta.type == "signature_delta":
                 model_response.provider_data = {
                     "signature": response.delta.signature,

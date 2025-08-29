@@ -2931,13 +2931,13 @@ class Agent:
             run_response.content = model_response.content
 
         # Update the run_response thinking with the model response thinking
-        if model_response.thinking is not None:
-            run_response.thinking = model_response.thinking
+        if model_response.reasoning_content is not None:
+            run_response.reasoning_content = model_response.reasoning_content
         if model_response.redacted_thinking is not None:
-            if run_response.thinking is None:
-                run_response.thinking = model_response.redacted_thinking
+            if run_response.reasoning_content is None:
+                run_response.reasoning_content = model_response.redacted_thinking
             else:
-                run_response.thinking += model_response.redacted_thinking
+                run_response.reasoning_content += model_response.redacted_thinking
 
         # Update the run_response citations with the model response citations
         if model_response.citations is not None:
@@ -3187,9 +3187,11 @@ class Agent:
                         run_response.content = model_response.content
                         run_response.content_type = "str"
 
-                if model_response_event.thinking is not None:
-                    model_response.thinking = (model_response.thinking or "") + model_response_event.thinking
-                    run_response.thinking = model_response.thinking
+                if model_response_event.reasoning_content is not None:
+                    model_response.reasoning_content = (
+                        model_response.reasoning_content or ""
+                    ) + model_response_event.reasoning_content
+                    run_response.reasoning_content = model_response.reasoning_content
 
                 if model_response_event.reasoning_content is not None:
                     model_response.reasoning_content = (
@@ -3202,8 +3204,8 @@ class Agent:
                         model_response.redacted_thinking or ""
                     ) + model_response_event.redacted_thinking
 
-                    # We only have thinking on response
-                    run_response.thinking = model_response.redacted_thinking
+                    # We only have reasoning_content on response
+                    run_response.reasoning_content = model_response.redacted_thinking
 
                 if model_response_event.citations is not None:
                     # We get citations in one chunk
@@ -3222,7 +3224,6 @@ class Agent:
                     )
                 elif (
                     model_response_event.content is not None
-                    or model_response_event.thinking is not None
                     or model_response_event.reasoning_content is not None
                     or model_response_event.redacted_thinking is not None
                     or model_response_event.citations is not None
@@ -3231,7 +3232,6 @@ class Agent:
                         create_run_output_content_event(
                             from_run_response=run_response,
                             content=model_response_event.content,
-                            thinking=model_response_event.thinking,
                             reasoning_content=model_response_event.reasoning_content,
                             redacted_thinking=model_response_event.redacted_thinking,
                             citations=model_response_event.citations,

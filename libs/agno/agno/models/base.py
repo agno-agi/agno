@@ -38,7 +38,7 @@ from agno.utils.tools import get_function_call_for_tool_call, get_function_call_
 class MessageData:
     response_role: Optional[Literal["system", "user", "assistant", "tool"]] = None
     response_content: Any = ""
-    response_thinking: Any = ""
+    response_reasoning_content: Any = ""
     response_redacted_thinking: Any = ""
     response_citations: Optional[Citations] = None
     response_tool_calls: List[Dict[str, Any]] = field(default_factory=list)
@@ -495,8 +495,8 @@ class Model(ABC):
                 model_response.content = assistant_message.get_content_string()
             else:
                 model_response.content += assistant_message.get_content_string()
-        if assistant_message.thinking is not None:
-            model_response.thinking = assistant_message.thinking
+        if assistant_message.reasoning_content is not None:
+            model_response.reasoning_content = assistant_message.reasoning_content
         if assistant_message.redacted_thinking is not None:
             model_response.redacted_thinking = assistant_message.redacted_thinking
         if assistant_message.citations is not None:
@@ -550,8 +550,8 @@ class Model(ABC):
                 model_response.content = assistant_message.get_content_string()
             else:
                 model_response.content += assistant_message.get_content_string()
-        if assistant_message.thinking is not None:
-            model_response.thinking = assistant_message.thinking
+        if assistant_message.reasoning_content is not None:
+            model_response.reasoning_content = assistant_message.reasoning_content
         if assistant_message.redacted_thinking is not None:
             model_response.redacted_thinking = assistant_message.redacted_thinking
         if assistant_message.citations is not None:
@@ -614,10 +614,6 @@ class Model(ABC):
         if provider_response.audios is not None:
             if provider_response.audios:
                 assistant_message.audio_output = provider_response.audios[-1]  # Taking last (most recent) audio
-
-        # Add thinking content to assistant message
-        if provider_response.thinking is not None:
-            assistant_message.thinking = provider_response.thinking
 
         # Add redacted thinking content to assistant message
         if provider_response.redacted_thinking is not None:
@@ -712,8 +708,8 @@ class Model(ABC):
                 # Populate assistant message from stream data
                 if stream_data.response_content:
                     assistant_message.content = stream_data.response_content
-                if stream_data.response_thinking:
-                    assistant_message.thinking = stream_data.response_thinking
+                if stream_data.response_reasoning_content:
+                    assistant_message.reasoning_content = stream_data.response_reasoning_content
                 if stream_data.response_redacted_thinking:
                     assistant_message.redacted_thinking = stream_data.response_redacted_thinking
                 if stream_data.response_provider_data:
@@ -872,8 +868,8 @@ class Model(ABC):
                 # Populate assistant message from stream data
                 if stream_data.response_content:
                     assistant_message.content = stream_data.response_content
-                if stream_data.response_thinking:
-                    assistant_message.thinking = stream_data.response_thinking
+                if stream_data.response_reasoning_content:
+                    assistant_message.reasoning_content = stream_data.response_reasoning_content
                 if stream_data.response_redacted_thinking:
                     assistant_message.redacted_thinking = stream_data.response_redacted_thinking
                 if stream_data.response_provider_data:
@@ -973,12 +969,8 @@ class Model(ABC):
             stream_data.response_content += model_response_delta.content
             should_yield = True
 
-        if model_response_delta.thinking is not None:
-            stream_data.response_thinking += model_response_delta.thinking
-            should_yield = True
-
         if model_response_delta.reasoning_content is not None:
-            stream_data.response_thinking += model_response_delta.reasoning_content
+            stream_data.response_reasoning_content += model_response_delta.reasoning_content
             should_yield = True
 
         if model_response_delta.redacted_thinking is not None:
