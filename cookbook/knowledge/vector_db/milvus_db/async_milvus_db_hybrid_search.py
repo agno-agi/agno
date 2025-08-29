@@ -20,7 +20,7 @@ knowledge_base = PDFUrlKnowledgeBase(
 )
 
 # Create and use the agent
-agent = Agent(knowledge=knowledge_base, show_tool_calls=True)
+agent = Agent(knowledge=knowledge_base)
 
 
 if __name__ == "__main__":
