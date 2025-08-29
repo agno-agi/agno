@@ -220,6 +220,8 @@ class Agent:
     update_knowledge: bool = False
     # Add a tool that allows the Model to get the tool call history.
     read_tool_call_history: bool = False
+    # If True, media (images, videos, audio, files) is only available to tools and not sent to the LLM
+    media_for_tools_only: bool = False
 
     # --- System message settings ---
     # Provide the system message as a string or function
@@ -376,6 +378,7 @@ class Agent:
         search_knowledge: bool = True,
         update_knowledge: bool = False,
         read_tool_call_history: bool = False,
+        media_for_tools_only: bool = False,
         system_message: Optional[Union[str, Callable, Message]] = None,
         system_message_role: str = "system",
         build_context: bool = True,
@@ -469,7 +472,8 @@ class Agent:
         self.search_knowledge = search_knowledge
         self.update_knowledge = update_knowledge
         self.read_tool_call_history = read_tool_call_history
-
+        self.media_for_tools_only = media_for_tools_only
+        
         self.system_message = system_message
         self.system_message_role = system_message_role
         self.build_context = build_context
@@ -733,6 +737,7 @@ class Agent:
 
         # 2. Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
+        print('--> model input', run_messages.messages)
         model_response: ModelResponse = self.model.response(
             messages=run_messages.messages,
             tools=self._tools_for_model,
@@ -1129,6 +1134,10 @@ class Agent:
             run_response=run_response,
             session=agent_session,
             session_state=session_state,
+            images=images,
+            videos=videos,
+            audios=audio,
+            files=files,
             user_id=user_id,
             async_mode=False,
             knowledge_filters=effective_filters,
@@ -1670,6 +1679,10 @@ class Agent:
             run_response=run_response,
             session=agent_session,
             session_state=session_state,
+            images=images,
+            videos=videos,
+            audios=audio,
+            files=files,
             user_id=user_id,
             async_mode=True,
             knowledge_filters=effective_filters,
@@ -3685,6 +3698,10 @@ class Agent:
         run_response: RunOutput,
         session: AgentSession,
         session_state: Optional[Dict[str, Any]] = None,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        audios: Optional[Sequence[Audio]] = None,
+        files: Optional[Sequence[File]] = None,
         user_id: Optional[str] = None,
         async_mode: bool = False,
         knowledge_filters: Optional[Dict[str, Any]] = None,
@@ -3779,6 +3796,10 @@ class Agent:
         if self._functions_for_model:
             for func in self._functions_for_model.values():
                 func._session_state = session_state
+                func._images = images
+                func._videos = videos
+                func._audios = audios
+                func._files = files
 
     def _model_should_return_structured_output(self):
         self.model = cast(Model, self.model)
@@ -4623,10 +4644,10 @@ class Agent:
             return Message(
                 role=self.user_message_role,
                 content=input,
-                images=images,
-                audio=audio,
-                videos=videos,
-                files=files,
+                images=None if self.media_for_tools_only else images,
+                audio=None if self.media_for_tools_only else audio,
+                videos=None if self.media_for_tools_only else videos,
+                files=None if self.media_for_tools_only else files,
                 **kwargs,
             )
         # 2. Build the user message for the Agent
@@ -4636,10 +4657,10 @@ class Agent:
                 return Message(
                     role=self.user_message_role,
                     content="",
-                    images=images,
-                    audio=audio,
-                    videos=videos,
-                    files=files,
+                    images=None if self.media_for_tools_only else images,
+                    audio=None if self.media_for_tools_only else audio,
+                    videos=None if self.media_for_tools_only else videos,
+                    files=None if self.media_for_tools_only else files,
                     **kwargs,
                 )
             else:
@@ -4658,10 +4679,10 @@ class Agent:
                 return Message(
                     role=self.user_message_role,
                     content=message_content,
-                    images=images,
-                    audio=audio,
-                    videos=videos,
-                    files=files,
+                    images=None if self.media_for_tools_only else images,
+                    audio=None if self.media_for_tools_only else audio,
+                    videos=None if self.media_for_tools_only else videos,
+                    files=None if self.media_for_tools_only else files,
                     **kwargs,
                 )
 
@@ -4754,10 +4775,10 @@ class Agent:
                 return Message(
                     role=self.user_message_role,
                     content=user_msg_content,
-                    audio=audio,
-                    images=images,
-                    videos=videos,
-                    files=files,
+                    audio=None if self.media_for_tools_only else audio,
+                    images=None if self.media_for_tools_only else images,
+                    videos=None if self.media_for_tools_only else videos,
+                    files=None if self.media_for_tools_only else files,
                     **kwargs,
                 )
 
@@ -4804,7 +4825,7 @@ class Agent:
         """
 
         # Initialize the RunMessages object
-        run_messages = RunMessages()
+        run_messages = RunMessages(images=images, videos=videos, audios=audio, files=files)
 
         # 1. Add system message to run_messages
         system_message = self.get_system_message(session=session, user_id=user_id, dependencies=run_dependencies)

@@ -1,14 +1,14 @@
 from dataclasses import dataclass
 from functools import partial
 from importlib.metadata import version
-from typing import Any, Callable, Dict, List, Literal, Optional, Type, TypeVar, get_type_hints
+from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Type, TypeVar, get_type_hints
 
 from docstring_parser import parse
 from packaging.version import Version
 from pydantic import BaseModel, Field, validate_call
 
 from agno.exceptions import AgentRunException
-from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
+from agno.media import Audio, AudioArtifact, File, Image, ImageArtifact, Video, VideoArtifact
 from agno.utils.log import log_debug, log_error, log_exception, log_warning
 
 T = TypeVar("T")
@@ -125,6 +125,12 @@ class Function(BaseModel):
     # The session state that the function is associated with
     _session_state: Optional[Dict[str, Any]] = None
 
+    # Media context that the function is associated with
+    _images: Optional[Sequence[Image]] = None
+    _videos: Optional[Sequence[Video]] = None
+    _audios: Optional[Sequence[Audio]] = None
+    _files: Optional[Sequence[File]] = None
+
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump(
             exclude_none=True,
@@ -150,13 +156,22 @@ class Function(BaseModel):
                 del type_hints["team"]
             if "session_state" in sig.parameters and "session_state" in type_hints:
                 del type_hints["session_state"]
+            # Remove media parameters from type hints as they are injected automatically
+            if "images" in sig.parameters and "images" in type_hints:
+                del type_hints["images"]
+            if "videos" in sig.parameters and "videos" in type_hints:
+                del type_hints["videos"]
+            if "audios" in sig.parameters and "audios" in type_hints:
+                del type_hints["audios"]
+            if "files" in sig.parameters and "files" in type_hints:
+                del type_hints["files"]
             # log_info(f"Type hints for {function_name}: {type_hints}")
 
             # Filter out return type and only process parameters
             param_type_hints = {
                 name: type_hints.get(name)
                 for name in sig.parameters
-                if name != "return" and name not in ["agent", "team", "session_state", "self"]
+                if name != "return" and name not in ["agent", "team", "session_state", "self", "images", "videos", "audios", "files"]
             }
 
             # Parse docstring for parameters
@@ -183,14 +198,14 @@ class Function(BaseModel):
             # See: https://platform.openai.com/docs/guides/structured-outputs/supported-schemas#all-fields-must-be-required
             if strict:
                 parameters["required"] = [
-                    name for name in parameters["properties"] if name not in ["agent", "team", "session_state", "self"]
+                    name for name in parameters["properties"] if name not in ["agent", "team", "session_state", "self", "images", "videos", "audios", "files"]
                 ]
             else:
                 # Mark a field as required if it has no default value (this would include optional fields)
                 parameters["required"] = [
                     name
                     for name, param in sig.parameters.items()
-                    if param.default == param.empty and name not in ["agent", "team", "session_state", "self"]
+                    if param.default == param.empty and name not in ["agent", "team", "session_state", "self", "images", "videos", "audios", "files"]
                 ]
 
             # log_debug(f"JSON schema for {function_name}: {parameters}")
@@ -554,6 +569,17 @@ class FunctionCall(BaseModel):
         # Check if the entrypoint has an fc argument
         if "fc" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["fc"] = self
+
+        # Check if the entrypoint has media arguments
+        if "images" in signature(self.function.entrypoint).parameters:  # type: ignore
+            entrypoint_args["images"] = self.function._images
+        if "videos" in signature(self.function.entrypoint).parameters:  # type: ignore
+            entrypoint_args["videos"] = self.function._videos
+        if "audios" in signature(self.function.entrypoint).parameters:  # type: ignore
+            entrypoint_args["audios"] = self.function._audios
+        if "files" in signature(self.function.entrypoint).parameters:  # type: ignore
+            entrypoint_args["files"] = self.function._files
+            
         return entrypoint_args
 
     def _build_hook_args(self, hook: Callable, name: str, func: Callable, args: Dict[str, Any]) -> Dict[str, Any]:

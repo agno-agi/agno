@@ -1,7 +1,8 @@
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from agno.models.message import Message
+from agno.media import Audio, File, Image, Video
 
 
 @dataclass
@@ -19,6 +20,12 @@ class RunMessages:
     system_message: Optional[Message] = None
     user_message: Optional[Message] = None
     extra_messages: Optional[List[Message]] = None
+
+    # Media available to tools
+    images: Optional[Sequence[Image]] = None
+    videos: Optional[Sequence[Video]] = None
+    audios: Optional[Sequence[Audio]] = None
+    files: Optional[Sequence[File]] = None
 
     def get_input_messages(self) -> List[Message]:
         """Get the input messages for the model."""
