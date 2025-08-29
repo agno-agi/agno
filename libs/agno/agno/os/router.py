@@ -4,12 +4,10 @@ from uuid import uuid4
 
 from fastapi import (
     APIRouter,
-    Body,
     Depends,
     File,
     Form,
     HTTPException,
-    Query,
     UploadFile,
     WebSocket,
 )
@@ -17,29 +15,18 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from agno.agent.agent import Agent
-from agno.db.base import SessionType
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     AgentResponse,
-    AgentSessionDetailSchema,
     AgentSummaryResponse,
     ConfigResponse,
     InterfaceResponse,
     Model,
-    PaginatedResponse,
-    PaginationInfo,
-    RunSchema,
-    SessionSchema,
-    SortOrder,
     TeamResponse,
-    TeamRunSchema,
-    TeamSessionDetailSchema,
     TeamSummaryResponse,
     WorkflowResponse,
-    WorkflowRunSchema,
-    WorkflowSessionDetailSchema,
     WorkflowSummaryResponse,
 )
 from agno.os.settings import AgnoAPISettings
@@ -74,7 +61,7 @@ class WebSocketManager:
         active_connections: Optional[Dict[str, WebSocket]] = None,
     ):
         # Store active connections: {run_id: websocket}
-        self.active_connections: Dict[str, WebSocket] = active_connections or {}
+        self.active_connections = active_connections or {}
 
     async def connect(self, websocket: WebSocket):
         """Accept WebSocket connection"""
@@ -291,6 +278,7 @@ def get_base_router(
     router = APIRouter(dependencies=[Depends(get_authentication_dependency(settings))])
 
     # -- Main Routes ---
+
     @router.get("/health", tags=["Core"])
     async def health_check():
         return JSONResponse(content={"status": "ok"})
@@ -527,20 +515,6 @@ def get_base_router(
             )
             return run_response_obj.to_dict()
 
-    @router.delete(
-        "/agents/{agent_id}/sessions/{session_id}",
-        status_code=204,
-        tags=["Agents"],
-    )
-    async def delete_agent_session(agent_id: str, session_id: str) -> None:
-        agent = get_agent_by_id(agent_id, os.agents)
-        if agent is None:
-            raise HTTPException(status_code=404, detail="Agent not found")
-        if agent.db is None:
-            raise HTTPException(status_code=404, detail="Agent has no database. Sessions are unavailable.")
-
-        agent.db.delete_session(session_id=session_id)
-
     @router.get(
         "/agents",
         response_model=List[AgentResponse],
@@ -559,93 +533,6 @@ def get_base_router(
         return agents
 
     @router.get(
-        "/agents/{agent_id}/sessions",
-        response_model=PaginatedResponse[SessionSchema],
-        status_code=200,
-        tags=["Agents"],
-    )
-    async def get_agent_sessions(
-        agent_id: str,
-        user_id: Optional[str] = Query(default=None, description="Filter sessions by user ID"),
-        limit: Optional[int] = Query(default=20, description="Number of sessions to return"),
-        page: Optional[int] = Query(default=1, description="Page number"),
-        sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
-        sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
-    ) -> PaginatedResponse[SessionSchema]:
-        agent = get_agent_by_id(agent_id, os.agents)
-        if agent is None:
-            raise HTTPException(status_code=404, detail=f"Agent with id {agent_id} not found")
-        if agent.db is None:
-            raise HTTPException(status_code=404, detail="Agent has no database. Sessions are unavailable.")
-
-        sessions, total_count = agent.db.get_sessions(
-            session_type=SessionType.AGENT,
-            component_id=agent_id,
-            user_id=user_id,
-            limit=limit,
-            page=page,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            deserialize=False,
-        )
-
-        return PaginatedResponse(
-            data=[SessionSchema.from_dict(session) for session in sessions],  # type: ignore
-            meta=PaginationInfo(
-                page=page,
-                limit=limit,
-                total_count=total_count,  # type: ignore
-                total_pages=(total_count + limit - 1) // limit if limit is not None and limit > 0 else 0,  # type: ignore
-            ),
-        )
-
-    @router.get(
-        "/agents/{agent_id}/sessions/{session_id}",
-        response_model=AgentSessionDetailSchema,
-        status_code=200,
-        tags=["Agents"],
-    )
-    async def get_agent_session_by_id(
-        agent_id: str,
-        session_id: str,
-    ) -> AgentSessionDetailSchema:
-        agent = get_agent_by_id(agent_id, os.agents)
-        if agent is None:
-            raise HTTPException(status_code=404, detail=f"Agent with id {agent_id} not found")
-
-        if agent.db is None:
-            raise HTTPException(status_code=404, detail="Agent has no database. Sessions are unavailable.")
-
-        session = agent.db.get_session(session_type=SessionType.AGENT, session_id=session_id)  # type: ignore
-        if not session:
-            raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
-
-        return AgentSessionDetailSchema.from_session(session)  # type: ignore
-
-    @router.get(
-        "/agents/{agent_id}/sessions/{session_id}/runs",
-        response_model=List[RunSchema],
-        status_code=200,
-        tags=["Agents"],
-    )
-    async def get_agent_session_runs(
-        agent_id: str,
-        session_id: str,
-    ) -> List[RunSchema]:
-        agent = get_agent_by_id(agent_id, os.agents)
-        if agent is None:
-            raise HTTPException(status_code=404, detail=f"Agent with id {agent_id} not found")
-
-        if agent.db is None:
-            raise HTTPException(status_code=404, detail="Agent has no database. Runs are unavailable.")
-
-        session = agent.db.get_session(session_type=SessionType.AGENT, session_id=session_id, deserialize=False)
-        if not session:
-            raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
-
-        return [RunSchema.from_dict(run) for run in session["runs"]]  # type: ignore
-
-    @router.get(
         "/agents/{agent_id}",
         response_model=AgentResponse,
         response_model_exclude_none=True,
@@ -657,28 +544,6 @@ def get_base_router(
             raise HTTPException(status_code=404, detail="Agent not found")
 
         return AgentResponse.from_agent(agent)
-
-    @router.post(
-        "/agents/{agent_id}/sessions/{session_id}/rename",
-        response_model=AgentSessionDetailSchema,
-        tags=["Agents"],
-    )
-    async def rename_agent_session(
-        agent_id: str,
-        session_id: str,
-        session_name: str = Body(embed=True),
-    ):
-        agent = get_agent_by_id(agent_id, os.agents)
-        if agent is None:
-            raise HTTPException(status_code=404, detail="Agent not found")
-        if agent.db is None:
-            raise HTTPException(status_code=404, detail="Agent has no database. Sessions are unavailable.")
-
-        session = agent.set_session_name(session_id=session_id, session_name=session_name)
-        if session is None:
-            raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
-
-        return AgentSessionDetailSchema.from_session(session)  # type: ignore
 
     # -- Team routes ---
 
@@ -798,20 +663,6 @@ def get_base_router(
         team.cancel_run(run_id=run_id)
         return JSONResponse(content={}, status_code=200)
 
-    @router.delete(
-        "/teams/{team_id}/sessions/{session_id}",
-        status_code=204,
-        tags=["Teams"],
-    )
-    async def delete_team_session(team_id: str, session_id: str) -> None:
-        team = get_team_by_id(team_id, os.teams)
-        if team is None:
-            raise HTTPException(status_code=404, detail="Team not found")
-        if team.db is None:
-            raise HTTPException(status_code=404, detail="Team has no database. Sessions are unavailable.")
-
-        team.db.delete_session(session_id=session_id)
-
     @router.get(
         "/teams",
         response_model=List[TeamResponse],
@@ -830,100 +681,6 @@ def get_base_router(
         return teams
 
     @router.get(
-        "/teams/{team_id}/sessions",
-        response_model=PaginatedResponse[SessionSchema],
-        status_code=200,
-        tags=["Teams"],
-    )
-    async def get_team_sessions(
-        team_id: str,
-        user_id: Optional[str] = Query(default=None, description="Filter sessions by user ID"),
-        session_name: Optional[str] = Query(default=None, description="Filter sessions by name"),
-        limit: Optional[int] = Query(default=20, description="Number of sessions to return"),
-        page: Optional[int] = Query(default=1, description="Page number"),
-        sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
-        sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
-    ) -> PaginatedResponse[SessionSchema]:
-        team = get_team_by_id(team_id, os.teams)
-        if team is None:
-            raise HTTPException(status_code=404, detail="Team not found")
-
-        if team.db is None:
-            raise HTTPException(status_code=404, detail="Team has no associated database. Sessions are unavailable.")
-
-        sessions, total_count = team.db.get_sessions(
-            session_type=SessionType.TEAM,
-            component_id=team_id,
-            user_id=user_id,
-            session_name=session_name,
-            limit=limit,
-            page=page,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            deserialize=False,
-        )
-
-        return PaginatedResponse(
-            data=[SessionSchema.from_dict(session) for session in sessions],  # type: ignore
-            meta=PaginationInfo(
-                page=page,
-                limit=limit,
-                total_count=total_count,  # type: ignore
-                total_pages=(total_count + limit - 1) // limit if limit is not None and limit > 0 else 0,  # type: ignore
-            ),
-        )
-
-    @router.get(
-        "/teams/{team_id}/sessions/{session_id}",
-        response_model=TeamSessionDetailSchema,
-        status_code=200,
-        tags=["Teams"],
-    )
-    async def get_team_session_by_id(
-        team_id: str,
-        session_id: str,
-    ) -> TeamSessionDetailSchema:
-        team = get_team_by_id(team_id, os.teams)
-        if team is None:
-            raise HTTPException(status_code=404, detail="Team not found")
-
-        if team.db is None:
-            raise HTTPException(status_code=404, detail="Team has no associated database. Sessions are unavailable.")
-
-        session = team.db.get_session(session_type=SessionType.TEAM, session_id=session_id)
-        if not session:
-            raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
-
-        return TeamSessionDetailSchema.from_session(session)  # type: ignore
-
-    @router.get(
-        "/teams/{team_id}/sessions/{session_id}/runs",
-        response_model=List[TeamRunSchema],
-        status_code=200,
-        tags=["Teams"],
-    )
-    async def get_team_session_runs(
-        team_id: str,
-        session_id: str,
-    ) -> List[TeamRunSchema]:
-        team = get_team_by_id(team_id, os.teams)
-        if team is None:
-            raise HTTPException(status_code=404, detail="Team not found")
-
-        if team.db is None:
-            raise HTTPException(status_code=404, detail="Team has no associated database. Runs are unavailable.")
-
-        session = team.db.get_session(session_type=SessionType.TEAM, session_id=session_id, deserialize=False)
-        if not session:
-            raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
-
-        runs = session.get("runs")  # type: ignore
-        if not runs:
-            raise HTTPException(status_code=404, detail=f"Session with id {session_id} has no runs")
-
-        return [TeamRunSchema.from_dict(run) for run in runs]
-
-    @router.get(
         "/teams/{team_id}",
         response_model=TeamResponse,
         response_model_exclude_none=True,
@@ -935,28 +692,6 @@ def get_base_router(
             raise HTTPException(status_code=404, detail="Team not found")
 
         return TeamResponse.from_team(team)
-
-    @router.post(
-        "/teams/{team_id}/sessions/{session_id}/rename",
-        response_model=TeamSessionDetailSchema,
-        tags=["Teams"],
-    )
-    async def rename_team_session(
-        team_id: str,
-        session_id: str,
-        session_name: str = Body(embed=True),
-    ) -> TeamSessionDetailSchema:
-        team = get_team_by_id(team_id, os.teams)
-        if team is None:
-            raise HTTPException(status_code=404, detail="Team not found")
-        if team.db is None:
-            raise HTTPException(status_code=404, detail="Team has no database. Sessions are unavailable.")
-
-        session = team.set_session_name(session_id=session_id, session_name=session_name)
-        if not session:
-            raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
-
-        return TeamSessionDetailSchema.from_session(session)  # type: ignore
 
     # -- Workflow routes ---
 
@@ -1071,87 +806,5 @@ def get_base_router(
             raise HTTPException(status_code=404, detail="Workflow not found")
         workflow.cancel_run(run_id=run_id)
         return JSONResponse(content={}, status_code=200)
-
-    @router.get(
-        "/workflows/{workflow_id}/sessions",
-        response_model=PaginatedResponse[SessionSchema],
-        response_model_exclude_none=True,
-        tags=["Workflows"],
-    )
-    async def get_workflow_sessions(
-        workflow_id: str,
-        user_id: Optional[str] = Query(default=None, description="Filter sessions by user ID"),
-        limit: Optional[int] = Query(default=20, description="Number of sessions to return"),
-        page: Optional[int] = Query(default=1, description="Page number"),
-        sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
-        sort_order: Optional[SortOrder] = Query(default="desc", description="Sort order (asc or desc)"),
-    ):
-        workflow = get_workflow_by_id(workflow_id, os.workflows)
-        if workflow is None:
-            raise HTTPException(status_code=404, detail="Workflow not found")
-        if workflow.db is None:
-            raise HTTPException(status_code=404, detail="Workflow has no database. Sessions are unavailable.")
-
-        sessions, total_count = workflow.db.get_sessions(
-            session_type=SessionType.WORKFLOW,
-            component_id=workflow_id,
-            limit=limit,
-            page=page,
-            user_id=user_id,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            deserialize=False,
-        )
-
-        return PaginatedResponse(
-            data=[SessionSchema.from_dict(session) for session in sessions],  # type: ignore
-            meta=PaginationInfo(
-                page=page,
-                limit=limit,
-                total_count=total_count,  # type: ignore
-                total_pages=(total_count + limit - 1) // limit if limit is not None and limit > 0 else 0,  # type: ignore
-            ),
-        )
-
-    @router.get(
-        "/workflows/{workflow_id}/sessions/{session_id}",
-        response_model=WorkflowSessionDetailSchema,
-        response_model_exclude_none=True,
-        tags=["Workflows"],
-    )
-    async def get_workflow_session_by_id(workflow_id: str, session_id: str):
-        workflow = get_workflow_by_id(workflow_id, os.workflows)
-        if workflow is None:
-            raise HTTPException(status_code=404, detail="Workflow not found")
-        if workflow.db is None:
-            raise HTTPException(status_code=404, detail="Workflow has no database. Sessions are unavailable.")
-
-        session = workflow.db.get_session(session_type=SessionType.WORKFLOW, session_id=session_id)
-        if not session:
-            raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
-
-        return WorkflowSessionDetailSchema.from_session(session)  # type: ignore
-
-    @router.get(
-        "/workflows/{workflow_id}/sessions/{session_id}/runs",
-        response_model=List[WorkflowRunSchema],
-        response_model_exclude_none=True,
-        tags=["Workflows"],
-    )
-    async def get_workflow_session_runs(
-        workflow_id: str,
-        session_id: str,
-    ) -> List[WorkflowRunSchema]:
-        workflow = get_workflow_by_id(workflow_id, os.workflows)
-        if workflow is None:
-            raise HTTPException(status_code=404, detail="Workflow not found")
-        if workflow.db is None:
-            raise HTTPException(status_code=404, detail="Workflow has no database. Runs are unavailable.")
-
-        session = workflow.db.get_session(session_type=SessionType.WORKFLOW, session_id=session_id, deserialize=False)
-        if not session:
-            raise HTTPException(status_code=404, detail=f"Session with id {session_id} not found")
-
-        return [WorkflowRunSchema.from_dict(run) for run in session["runs"]]  # type: ignore
 
     return router
