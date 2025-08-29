@@ -25,26 +25,6 @@ docker run -d \
   agnohq/pgvector:16
 ```
 
-## Basic Integration
-
-Teams can maintain sessions with persistent state:
-
-```python
-from agno.team import Team
-from agno.db.postgres import PostgresDb
-
-db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
-
-team = Team(
-    members=[agent1, agent2],
-    db=db,
-    session_id="team_session_1",
-    cache_session=True,
-)
-
-# Session state persists across runs
-team.print_response("Remember my name is John")
-```
 
 ## Examples
 

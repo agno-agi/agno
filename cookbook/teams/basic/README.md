@@ -2,38 +2,6 @@
 
 Essential team functionality including input formats, response handling, and basic team coordination patterns.
 
-## Setup
-
-```bash
-pip install agno openai
-```
-
-Set your API key:
-```bash
-export OPENAI_API_KEY=xxx
-```
-
-## Basic Integration
-
-Teams coordinate multiple agents to handle tasks:
-
-```python
-from agno.agent import Agent
-from agno.team import Team
-from agno.models.openai import OpenAIChat
-
-team = Team(
-    members=[
-        Agent(name="Researcher", role="Research information"),
-        Agent(name="Writer", role="Write summaries")
-    ],
-    model=OpenAIChat(id="gpt-4o"),
-    stream=True,
-)
-
-team.print_response("Analyze the current AI market trends")
-```
-
 ## Examples
 
 - **[few_shot_learning.py](./few_shot_learning.py)** - Teams with few-shot learning examples

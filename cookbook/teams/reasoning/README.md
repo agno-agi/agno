@@ -15,23 +15,6 @@ export OPENAI_API_KEY=xxx
 export ANTHROPIC_API_KEY=xxx
 ```
 
-## Basic Integration
-
-Teams can employ reasoning tools for structured analysis:
-
-```python
-from agno.team import Team
-from agno.tools.reasoning import ReasoningTools
-
-team = Team(
-    members=[research_agent, analysis_agent],
-    tools=[ReasoningTools()],
-    reasoning=True,
-)
-
-team.print_response("Analyze the pros and cons of renewable energy")
-```
-
 ## Examples
 
 - **[01_reasoning_multi_purpose_team.py](./01_reasoning_multi_purpose_team.py)** - Multi-purpose reasoning team

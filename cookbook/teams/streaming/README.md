@@ -22,12 +22,10 @@ from agno.team import Team
 
 team = Team(
     members=[agent1, agent2],
-    stream=True,
-    stream_intermediate_steps=True,
 )
 
 # Stream response
-for delta in team.run("Analyze market trends"):
+for delta in team.run("Analyze market trends", stream=True, stream_intermediate_steps=True):
     print(delta.content, end="")
 ```
 

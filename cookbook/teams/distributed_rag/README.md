@@ -27,28 +27,6 @@ docker run -d \
   agnohq/pgvector:16
 ```
 
-## Basic Integration
-
-Distributed teams for RAG operations:
-
-```python
-from agno.agent import Agent
-from agno.team import Team
-from agno.knowledge.knowledge import Knowledge
-
-knowledge = Knowledge()
-
-# agents for different retrieval tasks
-vector_agent = Agent(name="Vector Searcher", knowledge=knowledge)
-hybrid_agent = Agent(name="Hybrid Searcher", knowledge=knowledge)
-validator_agent = Agent(name="Data Validator", knowledge=knowledge)
-
-team = Team(
-    members=[vector_agent, hybrid_agent, validator_agent],
-    mode="coordinate",
-)
-```
-
 ## Examples
 
 - **[01_distributed_rag_pgvector.py](./01_distributed_rag_pgvector.py)** - PgVector distributed RAG

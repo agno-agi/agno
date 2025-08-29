@@ -29,7 +29,6 @@ def custom_search(query: str) -> str:
 team = Team(
     members=[agent1, agent2],
     tools=[custom_search],
-    show_tool_calls=True,
 )
 ```
 

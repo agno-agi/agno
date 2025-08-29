@@ -15,23 +15,6 @@ export ANTHROPIC_API_KEY=xxx
 export CO_API_KEY=xxx
 ```
 
-## Basic Integration
-
-Teams can coordinate different search strategies for comprehensive results:
-
-```python
-from agno.team import Team
-from agno.agent import Agent
-
-knowledge_searcher = Agent(name="Knowledge Searcher")
-content_analyzer = Agent(name="Content Analyzer")
-response_synthesizer = Agent(name="Response Synthesizer")
-
-team = Team(
-    members=[knowledge_searcher, content_analyzer, response_synthesizer],
-    mode="coordinate",
-)
-```
 
 ## Examples
 
