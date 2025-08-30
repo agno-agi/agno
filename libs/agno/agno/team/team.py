@@ -1865,11 +1865,11 @@ class Team:
                 run_response.content += model_response.content
 
         # Update the run_response thinking with the model response thinking
-        if model_response.thinking is not None:
-            if not run_response.thinking:
-                run_response.thinking = model_response.thinking
+        if model_response.reasoning_content is not None:
+            if not run_response.reasoning_content:
+                run_response.reasoning_content = model_response.reasoning_content
             else:
-                run_response.thinking += model_response.thinking
+                run_response.reasoning_content += model_response.reasoning_content
 
         # Update citations
         if model_response.citations is not None:
@@ -1963,8 +1963,8 @@ class Team:
         run_response.created_at = full_model_response.created_at
         if full_model_response.content is not None:
             run_response.content = full_model_response.content
-        if full_model_response.thinking is not None:
-            run_response.thinking = full_model_response.thinking
+        if full_model_response.reasoning_content is not None:
+            run_response.reasoning_content = full_model_response.reasoning_content
         if full_model_response.audio is not None:
             run_response.response_audio = full_model_response.audio
         if full_model_response.citations is not None:
@@ -2050,8 +2050,8 @@ class Team:
         run_response.created_at = full_model_response.created_at
         if full_model_response.content is not None:
             run_response.content = full_model_response.content
-        if full_model_response.thinking is not None:
-            run_response.thinking = full_model_response.thinking
+        if full_model_response.reasoning_content is not None:
+            run_response.reasoning_content = full_model_response.reasoning_content
         if full_model_response.audio is not None:
             run_response.response_audio = full_model_response.audio
         if full_model_response.citations is not None:
@@ -2124,11 +2124,11 @@ class Team:
                     should_yield = True
 
                 # Process thinking
-                if model_response_event.thinking is not None:
-                    if not full_model_response.thinking:
-                        full_model_response.thinking = model_response_event.thinking
+                if model_response_event.reasoning_content is not None:
+                    if not full_model_response.reasoning_content:
+                        full_model_response.reasoning_content = model_response_event.reasoning_content
                     else:
-                        full_model_response.thinking += model_response_event.thinking
+                        full_model_response.reasoning_content += model_response_event.reasoning_content
                     should_yield = True
 
                 if model_response_event.citations is not None:
@@ -2172,8 +2172,8 @@ class Team:
                             create_team_run_output_content_event(
                                 from_run_response=run_response,
                                 content=model_response_event.content,
-                                thinking=model_response_event.thinking,
-                                redacted_thinking=model_response_event.redacted_thinking,
+                                reasoning_content=model_response_event.reasoning_content,
+                                redacted_reasoning_content=model_response_event.redacted_reasoning_content,
                                 response_audio=full_model_response.audio,
                                 citations=model_response_event.citations,
                                 image=model_response_event.images[-1] if model_response_event.images else None,

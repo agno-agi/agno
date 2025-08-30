@@ -246,21 +246,23 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
         elif message.role == "assistant":
             content = []
 
-            if message.thinking is not None and message.provider_data is not None:
+            if message.reasoning_content is not None and message.provider_data is not None:
                 from anthropic.types import RedactedThinkingBlock, ThinkingBlock
 
                 content.append(
                     ThinkingBlock(
-                        thinking=message.thinking,
+                        thinking=message.reasoning_content,
                         signature=message.provider_data.get("signature"),
                         type="thinking",
                     )
                 )
 
-            if message.redacted_thinking is not None:
+            if message.redacted_reasoning_content is not None:
                 from anthropic.types import RedactedThinkingBlock
 
-                content.append(RedactedThinkingBlock(data=message.redacted_thinking, type="redacted_thinking"))
+                content.append(
+                    RedactedThinkingBlock(data=message.redacted_reasoning_content, type="redacted_reasoning_content")
+                )
 
             if isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
                 content.append(TextBlock(text=message.content, type="text"))
