@@ -129,6 +129,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
     @router.delete("/sessions", status_code=204)
     async def delete_sessions(
         request: DeleteSessionRequest,
+        session_type: SessionType = Query(default=SessionType.AGENT, description="Session type filter", alias="type"),
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> None:
         if len(request.session_ids) != len(request.session_types):
