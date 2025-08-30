@@ -3752,7 +3752,7 @@ class Team:
 
         elif self.mode == "coordinate":
             _tools.append(
-                self._get_transfer_task_function(
+                self._get_delegate_task_function(
                     run_response=run_response,
                     session=session,
                     session_state=session_state,
@@ -4043,13 +4043,13 @@ class Team:
         if self.mode == "coordinate":
             system_message_content += (
                 "- Your role is to forward tasks to members in your team with the highest likelihood of completing the user's request.\n"
-                "- Carefully analyze the tools available to the members and their roles before transferring tasks.\n"
-                "- You cannot use a member tool directly. You can only transfer tasks to members.\n"
-                "- When you transfer a task to another member, make sure to include:\n"
-                "  - member_id (str): The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.\n"
+                "- Carefully analyze the tools available to the members and their roles before delegating tasks.\n"
+                "- You cannot use a member tool directly. You can only delegate tasks to members.\n"
+                "- When you delegate a task to another member, make sure to include:\n"
+                "  - member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.\n"
                 "  - task_description (str): A clear description of the task.\n"
                 "  - expected_output (str): The expected output.\n"
-                "- You can transfer tasks to multiple members at once.\n"
+                "- You can delegate tasks to multiple members at once.\n"
                 "- You must always analyze the responses from members before responding to the user.\n"
                 "- After analyzing the responses from the members, if you feel the task has been completed, you can stop and respond to the user.\n"
                 "- If you are not satisfied with the responses from the members, you should re-assign the task.\n"
@@ -5244,7 +5244,7 @@ class Team:
 
         return run_member_agents_func
 
-    def _get_transfer_task_function(
+    def _get_delegate_task_function(
         self,
         run_response: TeamRunOutput,
         session: TeamSession,
@@ -5274,14 +5274,14 @@ class Team:
         if not files:
             files = []
 
-        def transfer_task_to_member(
+        def delegate_task_to_member(
             member_id: str, task_description: str, expected_output: Optional[str] = None
         ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
-            """Use this function to transfer a task to the selected team member.
+            """Use this function to delegate a task to the selected team member.
             You must provide a clear and concise description of the task the member should achieve AND the expected output.
 
             Args:
-                member_id (str): The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
+                member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
                 task_description (str): A clear and concise description of the task the member should achieve.
                 expected_output (str, optional): The expected output from the member (optional).
             Returns:
@@ -5435,14 +5435,14 @@ class Team:
             if member_agent_run_response is not None:
                 self._update_team_media(member_agent_run_response)  # type: ignore
 
-        async def atransfer_task_to_member(
+        async def adelegate_task_to_member(
             member_id: str, task_description: str, expected_output: Optional[str] = None
         ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
-            """Use this function to transfer a task to the selected team member.
+            """Use this function to delegate a task to the selected team member.
             You must provide a clear and concise description of the task the member should achieve AND the expected output.
 
             Args:
-                member_id (str): The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
+                member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
                 task_description (str): A clear and concise description of the task the member should achieve.
                 expected_output (str, optional): The expected output from the member (optional).
             Returns:
@@ -5594,13 +5594,13 @@ class Team:
                 self._update_team_media(member_agent_run_response)  # type: ignore
 
         if async_mode:
-            transfer_function = atransfer_task_to_member  # type: ignore
+            delegate_function = adelegate_task_to_member  # type: ignore
         else:
-            transfer_function = transfer_task_to_member  # type: ignore
+            delegate_function = delegate_task_to_member  # type: ignore
 
-        transfer_func = Function.from_callable(transfer_function, name="transfer_task_to_member", strict=True)
+        delegate_func = Function.from_callable(delegate_function, name="delegate_task_to_member", strict=True)
 
-        return transfer_func
+        return delegate_func
 
     def _get_forward_task_function(
         self,
@@ -5638,7 +5638,7 @@ class Team:
         ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
             """Use this function to forward the request to the selected team member.
             Args:
-                member_id (str): The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
+                member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
                 expected_output (str, optional): The expected output from the member (optional).
             Returns:
                 str: The result of the delegated task.
@@ -5803,7 +5803,7 @@ class Team:
             """Use this function to forward a message to the selected team member.
 
             Args:
-                member_id (str): The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
+                member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
                 expected_output (str, optional): The expected output from the member (optional).
             Returns:
                 str: The result of the delegated task.

@@ -30,9 +30,9 @@ def logger_hook(function_name: str, function_call: Callable, arguments: Dict[str
     Returns:
         The result of the function call
     """
-    if function_name == "transfer_task_to_member":
+    if function_name == "delegate_task_to_member":
         member_id = arguments.get("member_id")
-        logger.info(f"Transferring task to member {member_id}")
+        logger.info(f"Delegating task to member {member_id}")
 
     # Start timer
     start_time = time.time()
