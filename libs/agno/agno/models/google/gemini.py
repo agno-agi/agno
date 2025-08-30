@@ -240,7 +240,8 @@ class Gemini(Model):
 
             # Convert single string to list for consistent processing
             datastore_list = (
-                [self.vertexai_search_datastore] if isinstance(self.vertexai_search_datastore, str)
+                [self.vertexai_search_datastore]
+                if isinstance(self.vertexai_search_datastore, str)
                 else self.vertexai_search_datastore
             )
 
@@ -252,9 +253,7 @@ class Gemini(Model):
 
                 datastore_id = datastore_id.strip()
                 log_info(f"Adding Vertex AI Search tool for datastore: {datastore_id}")
-                builtin_tools.append(
-                    Tool(retrieval=Retrieval(vertex_ai_search=VertexAISearch(datastore=datastore_id)))
-                )
+                builtin_tools.append(Tool(retrieval=Retrieval(vertex_ai_search=VertexAISearch(datastore=datastore_id))))
 
         # Set tools in config
         if builtin_tools:
