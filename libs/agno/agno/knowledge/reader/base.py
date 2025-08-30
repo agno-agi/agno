@@ -61,7 +61,7 @@ class Reader:
 
     @classmethod
     def get_supported_content_types(cls) -> List[ContentType]:
-         raise NotImplementedError
+        raise NotImplementedError
 
     def chunk_document(self, document: Document) -> List[Document]:
         if self.chunking_strategy is None:

@@ -255,7 +255,7 @@ def html_to_text_conversion():
             TrafilaturaTools(
                 include_tools=["html_to_text"],
             )
-        ],  
+        ],
         markdown=True,
     )
 
