@@ -19,7 +19,7 @@ tools = [get_weather]
 
 
 def instantiate_agent():
-    return Agent(model=OpenAIChat(id="gpt-4o"), tools=tools)
+    return Agent(model=OpenAIChat(id="gpt-4o"), tools=tools)  # type: ignore
 
 
 instantiation_perf = PerformanceEval(

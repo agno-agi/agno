@@ -6,8 +6,8 @@ from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
 
 
-def test_route_team_multiple_response_models():
-    """Test route team with different response models for each agent."""
+def test_route_team_multiple_output_schemas():
+    """Test route team with different output schemas for each agent."""
 
     class StockAnalysis(BaseModel):
         symbol: str
@@ -21,7 +21,7 @@ def test_route_team_multiple_response_models():
     stock_searcher = Agent(
         name="Stock Searcher",
         model=OpenAIChat("gpt-4o"),
-        response_model=StockAnalysis,
+        output_schema=StockAnalysis,
         role="Searches for information on stocks and provides price analysis.",
         tools=[
             YFinanceTools(
@@ -35,7 +35,7 @@ def test_route_team_multiple_response_models():
         name="Company Info Searcher",
         model=OpenAIChat("gpt-4o"),
         role="Searches for general information about companies and recent news.",
-        response_model=CompanyAnalysis,
+        output_schema=CompanyAnalysis,
         tools=[
             YFinanceTools(
                 stock_price=False,
@@ -51,6 +51,7 @@ def test_route_team_multiple_response_models():
         model=OpenAIChat("gpt-4o"),
         members=[stock_searcher, company_info_agent],
         markdown=True,
+        store_member_responses=True,
     )
 
     # This should route to the stock_searcher
@@ -62,7 +63,7 @@ def test_route_team_multiple_response_models():
     assert response.content.company_name is not None
     assert response.content.analysis is not None
     assert len(response.member_responses) == 1
-    assert response.member_responses[0].agent_id == stock_searcher.agent_id
+    assert response.member_responses[0].agent_id == stock_searcher.id  # type: ignore
 
     # This should route to the company_info_agent
     response = team.run("What is in the news about NVDA?")
@@ -72,7 +73,7 @@ def test_route_team_multiple_response_models():
     assert response.content.company_name is not None
     assert response.content.analysis is not None
     assert len(response.member_responses) == 1
-    assert response.member_responses[0].agent_id == company_info_agent.agent_id
+    assert response.member_responses[0].agent_id == company_info_agent.id  # type: ignore
 
 
 def test_route_team_mixed_structured_output():
@@ -86,7 +87,7 @@ def test_route_team_mixed_structured_output():
         name="Stock Agent",
         model=OpenAIChat("gpt-4o"),
         role="Get stock information",
-        response_model=StockInfo,
+        output_schema=StockInfo,
         tools=[YFinanceTools(stock_price=True)],
     )
 
@@ -102,6 +103,7 @@ def test_route_team_mixed_structured_output():
         mode="route",
         model=OpenAIChat("gpt-4o"),
         members=[stock_agent, news_agent],
+        store_member_responses=True,
     )
 
     # This should route to the stock_agent and return structured output
@@ -111,7 +113,7 @@ def test_route_team_mixed_structured_output():
     assert isinstance(response.content, StockInfo)
     assert response.content.symbol == "AAPL"
     assert len(response.member_responses) == 1
-    assert response.member_responses[0].agent_id == stock_agent.agent_id
+    assert response.member_responses[0].agent_id == stock_agent.id  # type: ignore
 
     # This should route to the news_agent and return unstructured output
     response = team.run("Tell me the latest news about AAPL")
@@ -120,4 +122,4 @@ def test_route_team_mixed_structured_output():
     assert isinstance(response.content, str)
     assert len(response.content) > 0
     assert len(response.member_responses) == 1
-    assert response.member_responses[0].agent_id == news_agent.agent_id
+    assert response.member_responses[0].agent_id == news_agent.id  # type: ignore

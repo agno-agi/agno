@@ -4,7 +4,6 @@ from agno.tools.linear import LinearTools
 agent = Agent(
     name="Linear Tool Agent",
     tools=[LinearTools()],
-    show_tool_calls=True,
     markdown=True,
 )
 

@@ -20,7 +20,6 @@ reasoning_agent = Agent(
     ],
     instructions="Use tables where possible",
     stream_intermediate_steps=True,
-    show_tool_calls=True,
     markdown=True,
 )
 reasoning_agent.print_response(

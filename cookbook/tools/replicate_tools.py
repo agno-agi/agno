@@ -15,7 +15,6 @@ image_agent = Agent(
         "Don't convert image URL to markdown or anything else.",
     ],
     markdown=True,
-    show_tool_calls=True,
 )
 
 image_agent.print_response("Generate an image of a horse in the dessert.")

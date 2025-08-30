@@ -1,6 +1,6 @@
 from typing import List
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.google import Gemini
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
@@ -28,7 +28,7 @@ class MovieScript(BaseModel):
 structured_output_agent = Agent(
     model=Gemini(id="gemini-2.0-flash-001"),
     description="You help people write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 structured_output_agent.print_response("New York")

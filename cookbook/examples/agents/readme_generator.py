@@ -8,7 +8,6 @@ readme_gen_agent = Agent(
     name="Readme Generator Agent",
     tools=[GithubTools(), LocalFileSystemTools()],
     markdown=True,
-    debug_mode=True,
     instructions=[
         "You are readme generator agent",
         "You'll be given repository url or repository name from user."

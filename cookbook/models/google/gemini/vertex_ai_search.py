@@ -27,7 +27,6 @@ agent = Agent(
         vertexai_search_datastore=datastore_id,
         vertexai=True,  # Use Vertex AI endpoint
     ),
-    show_tool_calls=True,
     markdown=True,
 )
 

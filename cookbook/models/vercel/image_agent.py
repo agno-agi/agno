@@ -1,10 +1,10 @@
 from agno.agent import Agent
 from agno.media import Image
-from agno.models.vercel import v0
+from agno.models.vercel import V0
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 agent = Agent(
-    model=v0(id="v0-1.0-md"),
+    model=V0(id="v0-1.0-md"),
     tools=[DuckDuckGoTools()],
     markdown=True,
 )

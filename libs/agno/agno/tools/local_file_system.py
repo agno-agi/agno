@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from typing import Optional
 from uuid import uuid4
@@ -21,7 +20,7 @@ class LocalFileSystemTools(Toolkit):
             default_extension (str): Default file extension to use if none specified.
         """
 
-        self.target_directory = target_directory or os.getcwd()
+        self.target_directory = target_directory or str(Path.cwd())
         self.default_extension = default_extension.lstrip(".")
 
         target_path = Path(self.target_directory)
@@ -53,8 +52,9 @@ class LocalFileSystemTools(Toolkit):
             filename = filename or str(uuid4())
             directory = directory or self.target_directory
             if filename and "." in filename:
-                filename, file_ext = os.path.splitext(filename)
-                extension = extension or file_ext.lstrip(".")
+                path_obj = Path(filename)
+                filename = path_obj.stem
+                extension = extension or path_obj.suffix.lstrip(".")
 
             log_debug(f"Writing file to local system: {filename}")
 

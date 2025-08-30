@@ -26,11 +26,10 @@ todoist_agent = Agent(
         "When given a task to delete, delete the todoist task.",
         "When given a task to get, get the todoist task.",
     ],
-    agent_id="todoist-agent",
+    id="todoist-agent",
     model=Gemini("gemini-2.0-flash-exp"),
     tools=[TodoistTools()],
     markdown=True,
-    show_tool_calls=True,
 )
 
 # Example 1: Create a task

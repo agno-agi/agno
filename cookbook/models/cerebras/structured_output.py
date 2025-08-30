@@ -1,6 +1,6 @@
 from typing import List
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.cerebras import Cerebras
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
@@ -29,9 +29,7 @@ class MovieScript(BaseModel):
 json_schema_output_agent = Agent(
     model=Cerebras(id="llama-4-scout-17b-16e-instruct"),
     description="You are a helpful assistant. Summarize the movie script based on the location in a JSON object.",
-    response_model=MovieScript,
-    show_tool_calls=True,
-    debug_mode=True,
+    output_schema=MovieScript,
 )
 
 json_schema_output_agent.print_response("New York")

@@ -1,7 +1,7 @@
 from typing import List
 
 from agno.agent import Agent
-from agno.models.vllm import vLLM
+from agno.models.vllm import VLLM
 from pydantic import BaseModel, Field
 
 
@@ -25,11 +25,9 @@ class MovieScript(BaseModel):
 
 
 agent = Agent(
-    model=vLLM(
-        id="NousResearch/Nous-Hermes-2-Mistral-7B-DPO", top_k=20, enable_thinking=False
-    ),
+    model=VLLM(id="Qwen/Qwen2.5-7B-Instruct", top_k=20, enable_thinking=False),
     description="You write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 agent.print_response("Llamas ruling the world")

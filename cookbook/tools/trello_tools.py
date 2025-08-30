@@ -33,7 +33,6 @@ agent = Agent(
         "When errors occur, provide clear explanations and suggest solutions",
     ],
     tools=[TrelloTools()],
-    show_tool_calls=True,
 )
 
 agent.print_response(

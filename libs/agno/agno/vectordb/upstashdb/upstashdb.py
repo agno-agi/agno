@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, Dict, List, Optional
 
 try:
@@ -8,9 +9,9 @@ except ImportError:
         "The `upstash-vector` package is not installed, please install using `pip install upstash-vector`"
     )
 
-from agno.document import Document
-from agno.embedder import Embedder
-from agno.reranker.base import Reranker
+from agno.knowledge.document import Document
+from agno.knowledge.embedder import Embedder
+from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_info, logger
 from agno.vectordb.base import VectorDb
 
@@ -139,19 +140,52 @@ class UpstashVectorDb(VectorDb):
         """
         return self.index.list_namespaces()
 
-    def doc_exists(self, document: Document) -> bool:
-        """Check if a document exists in the index.
+    def content_hash_exists(self, content_hash: str) -> bool:
+        """Check if documents with the given content hash exist in the index.
+
         Args:
-            document (Document): The document to check.
+            content_hash (str): The content hash to check.
+
         Returns:
-            bool: True if the document exists, False otherwise.
+            bool: True if documents with the content hash exist, False otherwise.
         """
-        if document.id is None:
-            logger.error("Document ID cannot be None")
+        try:
+            # Use query with a filter to check if any documents exist with this content_hash
+            # We only need to check existence, so limit to 1 result
+            filter_str = f'content_hash = "{content_hash}"'
+
+            if not self.use_upstash_embeddings and self.embedder is not None:
+                # For custom embeddings, we need a dummy vector for the query
+                # Use a zero vector as we only care about the filter match
+                info = self.index.info()
+                dimension = info.dimension
+                dummy_vector = [0.0] * dimension
+
+                response = self.index.query(
+                    vector=dummy_vector,
+                    namespace=self.namespace,
+                    top_k=1,
+                    filter=filter_str,
+                    include_data=False,
+                    include_metadata=False,
+                    include_vectors=False,
+                )
+            else:
+                # For hosted embeddings, use a minimal text query
+                response = self.index.query(
+                    data="",  # Empty query since we only care about the filter
+                    namespace=self.namespace,
+                    top_k=1,
+                    filter=filter_str,
+                    include_data=False,
+                    include_metadata=False,
+                    include_vectors=False,
+                )
+
+            return response is not None and len(response) > 0
+        except Exception as e:
+            logger.error(f"Error checking if content_hash {content_hash} exists: {e}")
             return False
-        documents_to_fetch = [document.id]
-        response = self.index.fetch(ids=documents_to_fetch)
-        return len(response) > 0
 
     def name_exists(self, name: str) -> bool:
         """You can check if an index exists in Upstash Console.
@@ -177,7 +211,11 @@ class UpstashVectorDb(VectorDb):
         return namespace in namespaces
 
     def upsert(
-        self, documents: List[Document], filters: Optional[Dict[str, Any]] = None, namespace: Optional[str] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        namespace: Optional[str] = None,
     ) -> None:
         """Upsert documents into the index.
 
@@ -189,12 +227,38 @@ class UpstashVectorDb(VectorDb):
         _namespace = self.namespace if namespace is None else namespace
         vectors = []
 
-        for document in documents:
+        for i, document in enumerate(documents):
             if document.id is None:
                 logger.error(f"Document ID must not be None. Skipping document: {document.content[:100]}...")
                 continue
 
-            document.meta_data["text"] = document.content
+            logger.debug(
+                f"Processing document {i + 1}: ID={document.id}, name={document.name}, "
+                f"content_id={getattr(document, 'content_id', 'N/A')}"
+            )
+
+            # Create a copy of metadata to avoid modifying the original document
+            meta_data = document.meta_data.copy() if document.meta_data else {}
+
+            # Add filters to document metadata if provided
+            if filters:
+                meta_data.update(filters)
+
+            meta_data["text"] = document.content
+
+            # Add content_id to metadata if it exists
+            if hasattr(document, "content_id") and document.content_id:
+                meta_data["content_id"] = document.content_id
+            else:
+                logger.warning(f"Document {document.id} has no content_id")
+
+            meta_data["content_hash"] = content_hash
+
+            # Add name to metadata if it exists
+            if document.name:
+                meta_data["name"] = document.name
+            else:
+                logger.warning(f"Document {document.id} has no name")
 
             if not self.use_upstash_embeddings:
                 if self.embedder is None:
@@ -206,17 +270,16 @@ class UpstashVectorDb(VectorDb):
                     logger.error(f"Failed to generate embedding for document: {document.id}")
                     continue
 
-                vector = Vector(
-                    id=document.id, vector=document.embedding, metadata=document.meta_data, data=document.content
-                )
+                vector = Vector(id=document.id, vector=document.embedding, metadata=meta_data, data=document.content)
             else:
-                vector = Vector(id=document.id, data=document.content, metadata=document.meta_data)
+                vector = Vector(id=document.id, data=document.content, metadata=meta_data)
             vectors.append(vector)
 
         if not vectors:
             logger.warning("No valid documents to upsert")
             return
 
+        logger.info(f"Upserting {len(vectors)} vectors to Upstash with IDs: {[v.id for v in vectors[:5]]}...")
         self.index.upsert(vectors, namespace=_namespace)
 
     def upsert_available(self) -> bool:
@@ -226,16 +289,15 @@ class UpstashVectorDb(VectorDb):
         """
         return True
 
-    def insert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
         """Insert documents into the index.
         This method is not supported by Upstash. Use `upsert` instead.
         Args:
             documents (List[Document]): The documents to insert.
             filters (Optional[Dict[str, Any]], optional): The filters for the insert. Defaults to None.
-        Raises:
-            NotImplementedError: This method is not supported by Upstash.
         """
-        raise NotImplementedError("Upstash does not support insert operations. Use upsert instead.")
+        logger.warning("Upstash does not support insert operations. Using upsert instead.")
+        self.upsert(content_hash=content_hash, documents=documents, filters=filters)
 
     def search(
         self,
@@ -255,7 +317,7 @@ class UpstashVectorDb(VectorDb):
         """
         _namespace = self.namespace if namespace is None else namespace
 
-        # filter_str = "" if filters is None else str(filters)
+        filter_str = "" if filters is None else str(filters)
 
         if not self.use_upstash_embeddings and self.embedder is not None:
             dense_embedding = self.embedder.get_embedding(query)
@@ -268,7 +330,7 @@ class UpstashVectorDb(VectorDb):
                 vector=dense_embedding,
                 namespace=_namespace,
                 top_k=limit,
-                # filter=filter_str,
+                filter=filter_str,
                 include_data=True,
                 include_metadata=True,
                 include_vectors=True,
@@ -278,7 +340,7 @@ class UpstashVectorDb(VectorDb):
                 data=query,
                 namespace=_namespace,
                 top_k=limit,
-                # filter=filter_str,
+                filter=filter_str,
                 include_data=True,
                 include_metadata=True,
                 include_vectors=True,
@@ -303,6 +365,7 @@ class UpstashVectorDb(VectorDb):
         if self.reranker:
             search_results = self.reranker.rerank(query=query, documents=search_results)
 
+        log_info(f"Found {len(search_results)} results")
         return search_results
 
     def delete(self, namespace: Optional[str] = None, delete_all: bool = False) -> bool:
@@ -330,5 +393,258 @@ class UpstashVectorDb(VectorDb):
         """
         pass
 
+    def delete_by_id(self, id: str) -> bool:
+        """Delete document by ID.
+
+        Args:
+            id (str): The document ID to delete
+
+        Returns:
+            bool: True if deletion was successful, False otherwise
+        """
+        try:
+            response = self.index.delete(ids=[id], namespace=self.namespace)
+            deleted_count = getattr(response, "deleted", 0)
+            logger.info(f"Deleted {deleted_count} document(s) with ID: {id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting document by ID {id}: {e}")
+            return False
+
+    def delete_by_name(self, name: str) -> bool:
+        """Delete documents by name using metadata filter.
+
+        Args:
+            name (str): The document name to delete
+
+        Returns:
+            bool: True if deletion was successful, False otherwise
+        """
+        try:
+            # Use Upstash's delete with metadata filter
+            response = self.index.delete(filter=f'name = "{name}"', namespace=self.namespace)
+            deleted_count = getattr(response, "deleted", 0)
+            logger.info(f"Deleted {deleted_count} document(s) with name: {name}")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting documents by name {name}: {e}")
+            return False
+
+    def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        """Delete documents by metadata filter.
+
+        Args:
+            metadata (Dict[str, Any]): Metadata criteria for deletion
+
+        Returns:
+            bool: True if deletion was successful, False otherwise
+        """
+        try:
+            # Build filter string for Upstash metadata filtering
+            filter_parts = []
+            for key, value in metadata.items():
+                if isinstance(value, str):
+                    filter_parts.append(f'{key} = "{value}"')
+                else:
+                    filter_parts.append(f"{key} = {value}")
+
+            filter_str = " AND ".join(filter_parts)
+
+            response = self.index.delete(filter=filter_str, namespace=self.namespace)
+            deleted_count = getattr(response, "deleted", 0)
+            logger.info(f"Deleted {deleted_count} document(s) matching metadata: {metadata}")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting documents by metadata {metadata}: {e}")
+            return False
+
+    def delete_by_content_id(self, content_id: str) -> bool:
+        """Delete documents by content_id.
+
+        Args:
+            content_id (str): The content ID to delete
+
+        Returns:
+            bool: True if deletion was successful, False otherwise
+        """
+        return self.delete_by_metadata({"content_id": content_id})
+
+    async def async_insert(
+        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    ) -> None:
+        logger.warning("Upstash does not support async insert operations. Using upsert instead.")
+        await self.async_upsert(content_hash=content_hash, documents=documents, filters=filters)
+
+    async def async_exists(self) -> bool:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
     async def async_name_exists(self, name: str) -> bool:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_create(self) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_drop(self) -> None:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    async def async_upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        namespace: Optional[str] = None,
+    ) -> None:
+        """Async Upsert documents into the index.
+
+        Args:
+            documents (List[Document]): The documents to upsert.
+            filters (Optional[Dict[str, Any]], optional): The filters for the upsert. Defaults to None.
+            namespace (Optional[str], optional): The namespace for the documents. Defaults to None, which uses the instance namespace.
+        """
+        _namespace = self.namespace if namespace is None else namespace
+        vectors = []
+
+        embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+        await asyncio.gather(*embed_tasks, return_exceptions=True)
+
+        for i, document in enumerate(documents):
+            if document.id is None:
+                logger.error(f"Document ID must not be None. Skipping document: {document.content[:100]}...")
+                continue
+
+            logger.debug(
+                f"Processing document {i + 1}: ID={document.id}, name={document.name}, "
+                f"content_id={getattr(document, 'content_id', 'N/A')}"
+            )
+
+            # Create a copy of metadata to avoid modifying the original document
+            meta_data = document.meta_data.copy() if document.meta_data else {}
+
+            # Add filters to document metadata if provided
+            if filters:
+                meta_data.update(filters)
+
+            meta_data["text"] = document.content
+
+            # Add content_id to metadata if it exists
+            if hasattr(document, "content_id") and document.content_id:
+                meta_data["content_id"] = document.content_id
+            else:
+                logger.warning(f"Document {document.id} has no content_id")
+
+            meta_data["content_hash"] = content_hash
+
+            # Add name to metadata if it exists
+            if document.name:
+                meta_data["name"] = document.name
+            else:
+                logger.warning(f"Document {document.id} has no name")
+
+            if not self.use_upstash_embeddings:
+                if self.embedder is None:
+                    logger.error("Embedder is None but use_upstash_embeddings is False")
+                    continue
+
+                if document.embedding is None:
+                    logger.error(f"Failed to generate embedding for document: {document.id}")
+                    continue
+
+                vector = Vector(id=document.id, vector=document.embedding, metadata=meta_data, data=document.content)
+            else:
+                vector = Vector(id=document.id, data=document.content, metadata=meta_data)
+            vectors.append(vector)
+
+        if not vectors:
+            logger.warning("No valid documents to upsert")
+            return
+
+        logger.info(f"Upserting {len(vectors)} vectors to Upstash with IDs: {[v.id for v in vectors[:5]]}...")
+        self.index.upsert(vectors, namespace=_namespace)
+
+    async def async_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
+        raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
+
+    def id_exists(self, id: str) -> bool:
+        """Check if a document with the given ID exists in the index.
+
+        Args:
+            id (str): The document ID to check.
+
+        Returns:
+            bool: True if the document exists, False otherwise.
+        """
+        try:
+            response = self.index.fetch(ids=[id], namespace=self.namespace)
+            return len(response) > 0
+        except Exception as e:
+            logger.error(f"Error checking if ID {id} exists: {e}")
+            return False
+
+    def _delete_by_content_hash(self, content_hash: str) -> bool:
+        """Delete documents by content hash using metadata filter.
+
+        Args:
+            content_hash (str): The content hash to delete.
+
+        Returns:
+            bool: True if deletion was successful, False otherwise.
+        """
+        try:
+            response = self.index.delete(filter=f'content_hash = "{content_hash}"', namespace=self.namespace)
+            deleted_count = getattr(response, "deleted", 0)
+            logger.info(f"Deleted {deleted_count} document(s) with content_hash: {content_hash}")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting documents by content_hash {content_hash}: {e}")
+            return False
+
+    def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
+        """
+        Update the metadata for documents with the given content_id.
+
+        Args:
+            content_id (str): The content ID to update
+            metadata (Dict[str, Any]): The metadata to update
+        """
+        try:
+            # Query for vectors with the given content_id
+            query_response = self.index.query(
+                filter=f'content_id = "{content_id}"',
+                top_k=1000,  # Get all matching vectors
+                include_metadata=True,
+                namespace=self.namespace,
+            )
+
+            if not query_response or not hasattr(query_response, "__iter__"):
+                logger.debug(f"No documents found with content_id: {content_id}")
+                return
+
+            # Update each matching vector
+            updated_count = 0
+            for result in query_response:
+                if hasattr(result, "id") and hasattr(result, "metadata"):
+                    vector_id = result.id
+                    current_metadata = result.metadata or {}
+
+                    # Merge existing metadata with new metadata
+                    updated_metadata = current_metadata.copy()
+                    updated_metadata.update(metadata)
+
+                    if "filters" not in updated_metadata:
+                        updated_metadata["filters"] = {}
+                    if isinstance(updated_metadata["filters"], dict):
+                        updated_metadata["filters"].update(metadata)
+                    else:
+                        updated_metadata["filters"] = metadata
+
+                    # Update the vector metadata
+                    self.index.update(id=vector_id, metadata=updated_metadata, namespace=self.namespace)
+                    updated_count += 1
+
+            logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
+
+        except Exception as e:
+            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+            raise

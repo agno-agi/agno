@@ -118,7 +118,7 @@ class ZepTools(Toolkit):
 
             # Create session associated with the user
             try:
-                self.zep_client.thread.create(thread_id=self.session_id, user_id=self.user_id)
+                self.zep_client.thread.create(thread_id=self.session_id, user_id=self.user_id)  # type: ignore
                 log_debug(f"Created session {self.session_id} for user {self.user_id}")
             except Exception as e:
                 log_debug(f"Session may already exist: {e}")
@@ -150,6 +150,7 @@ class ZepTools(Toolkit):
             zep_message = ZepMessage(
                 role=role,
                 content=content,
+                role_type=role,
             )
 
             # Prepare ignore_roles if needed
@@ -358,6 +359,7 @@ class ZepAsyncTools(Toolkit):
             zep_message = ZepMessage(
                 role=role,
                 content=content,
+                role_type=role,
             )
 
             # Prepare ignore_roles if needed

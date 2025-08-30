@@ -3,6 +3,7 @@ from pathlib import Path
 from agno.agent import Agent
 from agno.media import Audio
 from agno.models.google import Gemini
+from google.genai.types import UploadFileConfig
 
 model = Gemini(id="gemini-2.0-flash-exp")
 agent = Agent(
@@ -25,7 +26,7 @@ if not audio_file:
     try:
         audio_file = model.get_client().files.upload(
             file=audio_path,
-            config=dict(name=audio_path.stem, display_name=audio_path.stem),
+            config=UploadFileConfig(name=audio_path.stem, display_name=audio_path.stem),
         )
         print(f"Uploaded audio: {audio_file}")
     except Exception as e:

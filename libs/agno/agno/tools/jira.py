@@ -1,5 +1,5 @@
 import json
-import os
+from os import getenv
 from typing import Any, List, Optional, cast
 
 from agno.tools import Toolkit
@@ -20,10 +20,10 @@ class JiraTools(Toolkit):
         token: Optional[str] = None,
         **kwargs,
     ):
-        self.server_url = server_url or os.getenv("JIRA_SERVER_URL")
-        self.username = username or os.getenv("JIRA_USERNAME")
-        self.password = password or os.getenv("JIRA_PASSWORD")
-        self.token = token or os.getenv("JIRA_TOKEN")
+        self.server_url = server_url or getenv("JIRA_SERVER_URL")
+        self.username = username or getenv("JIRA_USERNAME")
+        self.password = password or getenv("JIRA_PASSWORD")
+        self.token = token or getenv("JIRA_TOKEN")
 
         if not self.server_url:
             raise ValueError("JIRA server URL not provided.")

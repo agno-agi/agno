@@ -9,7 +9,6 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
     tools=[DuckDuckGoTools(), YFinanceTools(enable_all=True)],
     instructions=["Use tables to display data"],
-    show_tool_calls=True,
     markdown=True,
 )
 agent.print_response(

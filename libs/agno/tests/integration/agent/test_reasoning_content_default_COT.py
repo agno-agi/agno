@@ -1,6 +1,6 @@
 """Test for reasoning_content generation in different Agent configurations.
 
-This test verifies that reasoning_content is properly populated in the RunResponse
+This test verifies that reasoning_content is properly populated in the RunOutput
 for various Agent configurations, including:
 - reasoning=True (with default model)
 - reasoning_model=specified model
@@ -57,12 +57,13 @@ def test_reasoning_true_non_streaming():
 
 
 @pytest.mark.integration
-def test_reasoning_true_streaming():
+def test_reasoning_true_streaming(shared_db):
     """Test that reasoning_content is populated with reasoning=True in streaming mode."""
     # Create an agent with reasoning=True
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         reasoning=True,
+        db=shared_db,
         instructions=dedent("""\
             You are an expert problem-solving assistant with strong analytical skills! 🧠
             Use step-by-step reasoning to solve the problem.
@@ -72,24 +73,18 @@ def test_reasoning_true_streaming():
 
     # Consume all streaming responses
     _ = list(agent.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True))
-
+    run_response = agent.get_last_run_output()
     # Print the reasoning_content when received
-    if (
-        hasattr(agent, "run_response")
-        and agent.run_response
-        and hasattr(agent.run_response, "reasoning_content")
-        and agent.run_response.reasoning_content
-    ):
+    if run_response and hasattr(run_response, "reasoning_content") and run_response.reasoning_content:
         print("\n=== Default reasoning model (streaming) reasoning_content ===")
-        print(agent.run_response.reasoning_content)
+        print(run_response.reasoning_content)
         print("====================================================\n")
 
     # Check the agent's run_response directly after streaming is complete
-    assert hasattr(agent, "run_response"), "Agent should have run_response after streaming"
-    assert agent.run_response is not None, "Agent's run_response should not be None"
-    assert hasattr(agent.run_response, "reasoning_content"), "Response should have reasoning_content attribute"
-    assert agent.run_response.reasoning_content is not None, "reasoning_content should not be None"
-    assert len(agent.run_response.reasoning_content) > 0, "reasoning_content should not be empty"
+    assert run_response is not None, "run_response should not be None"
+    assert hasattr(run_response, "reasoning_content"), "Response should have reasoning_content attribute"
+    assert run_response.reasoning_content is not None, "reasoning_content should not be None"
+    assert len(run_response.reasoning_content) > 0, "reasoning_content should not be empty"
 
 
 @pytest.mark.integration
@@ -122,12 +117,13 @@ def test_reasoning_model_non_streaming():
 
 
 @pytest.mark.integration
-def test_reasoning_model_streaming():
+def test_reasoning_model_streaming(shared_db):
     """Test that reasoning_content is populated with a specified reasoning_model in streaming mode."""
     # Create an agent with a specified reasoning_model
     agent = Agent(
         model=OpenAIChat(id="gpt-4o"),
         reasoning_model=OpenAIChat(id="gpt-4o"),
+        db=shared_db,
         instructions=dedent("""\
             You are an expert problem-solving assistant with strong analytical skills! 🧠
             Use step-by-step reasoning to solve the problem.
@@ -137,21 +133,15 @@ def test_reasoning_model_streaming():
 
     # Consume all streaming responses
     _ = list(agent.run("What is the value of 5! (factorial)?", stream=True, stream_intermediate_steps=True))
-
+    run_response = agent.get_last_run_output()
     # Print the reasoning_content when received
-    if (
-        hasattr(agent, "run_response")
-        and agent.run_response
-        and hasattr(agent.run_response, "reasoning_content")
-        and agent.run_response.reasoning_content
-    ):
+    if run_response and hasattr(run_response, "reasoning_content") and run_response.reasoning_content:
         print("\n=== Custom reasoning model (streaming) reasoning_content ===")
-        print(agent.run_response.reasoning_content)
+        print(run_response.reasoning_content)
         print("=====================================================\n")
 
     # Check the agent's run_response directly after streaming is complete
-    assert hasattr(agent, "run_response"), "Agent should have run_response after streaming"
-    assert agent.run_response is not None, "Agent's run_response should not be None"
-    assert hasattr(agent.run_response, "reasoning_content"), "Response should have reasoning_content attribute"
-    assert agent.run_response.reasoning_content is not None, "reasoning_content should not be None"
-    assert len(agent.run_response.reasoning_content) > 0, "reasoning_content should not be empty"
+    assert run_response is not None, "Agent's run_response should not be None"
+    assert hasattr(run_response, "reasoning_content"), "Response should have reasoning_content attribute"
+    assert run_response.reasoning_content is not None, "reasoning_content should not be None"
+    assert len(run_response.reasoning_content) > 0, "reasoning_content should not be empty"

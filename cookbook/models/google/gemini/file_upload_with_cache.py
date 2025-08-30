@@ -11,6 +11,7 @@ import requests
 from agno.agent import Agent
 from agno.models.google import Gemini
 from google import genai
+from google.genai.types import UploadFileConfig
 
 client = genai.Client()
 
@@ -32,17 +33,17 @@ txt_file = None
 try:
     txt_file = client.files.get(name=remote_file_name)
     print(f"Txt file exists: {txt_file.uri}")
-except Exception as e:
+except Exception:
     pass
 
 if not txt_file:
     print("Uploading txt file...")
     txt_file = client.files.upload(
-        file=path_to_txt_file, config=dict(name=remote_file_name)
+        file=path_to_txt_file, config=UploadFileConfig(name=remote_file_name)
     )
 
     # Wait for the file to finish processing
-    while txt_file.state.name == "PROCESSING":
+    while txt_file and txt_file.state and txt_file.state.name == "PROCESSING":
         print("Waiting for txt file to be processed.")
         sleep(2)
         txt_file = client.files.get(name=remote_file_name)
@@ -64,8 +65,7 @@ if __name__ == "__main__":
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-001", cached_content=cache.name),
     )
-    agent.print_response(
+    run_output = agent.run(
         "Find a lighthearted moment from this transcript",  # No need to pass the txt file
     )
-
-    print("Metrics: ", agent.run_response.metrics)
+    print("Metrics: ", run_output.metrics)

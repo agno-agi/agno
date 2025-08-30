@@ -11,7 +11,6 @@ from agno.tools.duckduckgo import DuckDuckGoTools
 agent = Agent(
     model=MistralChat(id="mistral-large-latest"),
     tools=[DuckDuckGoTools()],
-    show_tool_calls=True,
     markdown=True,
 )
 

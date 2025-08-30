@@ -17,7 +17,6 @@ from textwrap import dedent
 from agno.agent import Agent
 from agno.tools.mcp import MCPTools
 from agno.tools.yfinance import YFinanceTools
-from mcp import StdioServerParameters
 
 
 async def run_agent(message: str) -> None:
@@ -51,7 +50,6 @@ async def run_agent(message: str) -> None:
                 - Use tables where possible\
                 """),
             markdown=True,
-            show_tool_calls=True,
         )
 
         await agent.aprint_response(message, stream=True)

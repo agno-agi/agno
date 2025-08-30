@@ -28,7 +28,6 @@ agent = Agent(
         "Show your reasoning process and explain your calculations clearly.",
         "Use the calculator tool for all mathematical operations to ensure accuracy.",
     ],
-    show_tool_calls=True,
     markdown=True,
 )
 

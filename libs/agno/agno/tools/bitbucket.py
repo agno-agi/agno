@@ -1,6 +1,6 @@
 import base64
 import json
-import os
+from os import getenv
 from typing import Any, Dict, Optional, Union
 
 import requests
@@ -21,9 +21,9 @@ class BitbucketTools(Toolkit):
         api_version: str = "2.0",
         **kwargs,
     ):
-        self.username = username or os.getenv("BITBUCKET_USERNAME")
-        self.password = password or os.getenv("BITBUCKET_PASSWORD")
-        self.token = token or os.getenv("BITBUCKET_TOKEN")
+        self.username = username or getenv("BITBUCKET_USERNAME")
+        self.password = password or getenv("BITBUCKET_PASSWORD")
+        self.token = token or getenv("BITBUCKET_TOKEN")
         self.auth_password = self.token or self.password
         self.server_url = server_url or "api.bitbucket.org"
         self.api_version = api_version or "2.0"

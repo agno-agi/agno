@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.models.message import Citations, UrlCitation
+from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_warning
 
@@ -16,6 +17,7 @@ try:
         ChoiceDelta,
     )
     from openai.types.chat.parsed_chat_completion import ParsedChatCompletion
+    from openai.types.completion_usage import CompletionUsage
 except ModuleNotFoundError:
     raise ImportError("`openai` not installed. Please install using `pip install openai`")
 
@@ -124,7 +126,7 @@ class Perplexity(OpenAILike):
             )
 
         if response.usage is not None:
-            model_response.response_usage = response.usage
+            model_response.response_usage = self._get_metrics(response.usage)
 
         return model_response
 
@@ -159,6 +161,28 @@ class Perplexity(OpenAILike):
 
         # Add usage metrics if present
         if response_delta.usage is not None:
-            model_response.response_usage = response_delta.usage
+            model_response.response_usage = self._get_metrics(response_delta.usage)
 
         return model_response
+
+    def _get_metrics(self, response_usage: CompletionUsage) -> Metrics:
+        """
+        Parse the given Perplexity usage into an Agno Metrics object.
+        """
+        metrics = Metrics()
+
+        metrics.input_tokens = response_usage.prompt_tokens or 0
+        metrics.output_tokens = response_usage.completion_tokens or 0
+        metrics.total_tokens = response_usage.total_tokens or 0
+
+        # Add the prompt_tokens_details field
+        if prompt_token_details := response_usage.prompt_tokens_details:
+            metrics.audio_input_tokens = prompt_token_details.audio_tokens or 0
+            metrics.cache_read_tokens = prompt_token_details.cached_tokens or 0
+
+        # Add the completion_tokens_details field
+        if completion_tokens_details := response_usage.completion_tokens_details:
+            metrics.audio_output_tokens = completion_tokens_details.audio_tokens or 0
+            metrics.reasoning_tokens = completion_tokens_details.reasoning_tokens or 0
+
+        return metrics

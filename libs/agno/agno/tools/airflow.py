@@ -43,7 +43,7 @@ class AirflowTools(Toolkit):
                 file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(contents)
             log_info(f"Saved: {file_path}")
-            return str(str(file_path))
+            return str(file_path)
         except Exception as e:
             logger.error(f"Error saving to file: {e}")
             return f"Error saving to file: {e}"

@@ -81,7 +81,6 @@ agent = Agent(
         set_tool,
         tuple_tool,
     ],
-    show_tool_calls=True,
 )
 
 asyncio.run(

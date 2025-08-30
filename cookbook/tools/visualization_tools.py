@@ -22,7 +22,6 @@ viz_agent = Agent(
         "Suggest insights based on the data visualized.",
         "Format data appropriately for each chart type.",
     ],
-    show_tool_calls=True,
     markdown=True,
 )
 
@@ -127,7 +126,6 @@ bi_agent = Agent(
         "Use appropriate chart types for different data scenarios.",
         "Always explain what the data reveals about business performance.",
     ],
-    show_tool_calls=True,
     markdown=True,
 )
 

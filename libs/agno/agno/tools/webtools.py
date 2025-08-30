@@ -9,12 +9,12 @@ class WebTools(Toolkit):
     A toolkit for working with web-related tools.
     """
 
-    def __init__(self, retries: int = 3):
-        super().__init__(name="web_tools")
-
+    def __init__(self, retries: int = 3, **kwargs):
         self.retries = retries
 
-        self.register(self.expand_url)
+        tools = [self.expand_url]
+
+        super().__init__(name="web_tools", tools=tools, **kwargs)
 
     def expand_url(self, url: str) -> str:
         """

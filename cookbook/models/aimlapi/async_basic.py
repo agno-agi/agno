@@ -5,10 +5,10 @@ Basic async example using AIMlAPI.
 import asyncio
 
 from agno.agent import Agent
-from agno.models.aimlapi import AIMLApi
+from agno.models.aimlapi import AIMLAPI
 
 agent = Agent(
-    model=AIMLApi(id="gpt-4o-mini"),
+    model=AIMLAPI(id="gpt-4o-mini"),
     markdown=True,
 )
 

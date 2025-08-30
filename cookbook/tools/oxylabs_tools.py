@@ -4,7 +4,6 @@ from agno.tools.oxylabs import OxylabsTools
 agent = Agent(
     tools=[OxylabsTools()],
     markdown=True,
-    show_tool_calls=True,
 )
 
 # Example 1: Google Search

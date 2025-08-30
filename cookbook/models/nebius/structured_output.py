@@ -1,6 +1,6 @@
 from typing import List
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.nebius import Nebius
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
@@ -29,8 +29,7 @@ class MovieScript(BaseModel):
 structured_output_agent = Agent(
     model=Nebius(id="Qwen/Qwen3-30B-A3B"),
     description="You are a helpful assistant. Summarize the movie script based on the location in a JSON object.",
-    response_model=MovieScript,
-    debug_mode=True,
+    output_schema=MovieScript,
 )
 
 structured_output_agent.print_response("New York")

@@ -10,11 +10,24 @@ Run `pip install openai lancedb tantivy pypdf ddgs agno` to install dependencies
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.embedder.openai import OpenAIEmbedder
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.embedder.openai import OpenAIEmbedder
+from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.vectordb.lancedb import LanceDb, SearchType
+
+knowledge = Knowledge(
+    vector_db=LanceDb(
+        uri="tmp/lancedb",
+        table_name="recipe_knowledge",
+        search_type=SearchType.hybrid,
+        embedder=OpenAIEmbedder(id="text-embedding-3-small"),
+    ),
+)
+
+knowledge.add_content(
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+)
 
 # Create a Recipe Expert Agent with knowledge of Thai recipes
 agent = Agent(
@@ -63,23 +76,10 @@ agent = Agent(
         - Clearly indicate when information comes from web sources
         - Be encouraging and supportive of home cooks at all skill levels\
     """),
-    knowledge=PDFUrlKnowledgeBase(
-        urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
-        vector_db=LanceDb(
-            uri="tmp/lancedb",
-            table_name="recipe_knowledge",
-            search_type=SearchType.hybrid,
-            embedder=OpenAIEmbedder(id="text-embedding-3-small"),
-        ),
-    ),
+    knowledge=knowledge,
     tools=[DuckDuckGoTools()],
-    show_tool_calls=True,
     markdown=True,
 )
-
-# Comment out after the knowledge base is loaded
-if agent.knowledge is not None:
-    agent.knowledge.load()
 
 agent.print_response(
     "How do I make chicken and galangal in coconut milk soup", stream=True

@@ -45,7 +45,7 @@ class OpenBBTools(Toolkit):
         if price_targets:
             tools.append(self.get_price_targets)
 
-        super().__init__(name="yfinance_tools", tools=tools, **kwargs)
+        super().__init__(name="openbb_tools", tools=tools, **kwargs)
 
     def get_stock_price(self, symbol: str) -> str:
         """Use this function to get the current stock price for a stock symbol or list of symbols.

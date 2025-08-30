@@ -33,7 +33,6 @@ async def run_agent(message: str) -> None:
     agent = Agent(
         tools=[mcp_tools],
         markdown=True,
-        show_tool_calls=True,
     )
     await agent.aprint_response(message)
 

@@ -12,7 +12,7 @@ Configuration Instructions:
    pip install agno langchain-apify apify-client
 
 2. Set the APIFY_API_TOKEN environment variable:
-   Add a .env file with APIFY_API_TOKEN=your_apify_api_key
+   Add a .env file with APIFY_API_TOKEN=your_apify_api_token
 ---
 
 Tip: Check out the Apify Store (https://apify.com/store) to find tools for almost any web scraping or data extraction task.
@@ -34,7 +34,6 @@ agent = Agent(
             ]
         )
     ],
-    show_tool_calls=True,
     markdown=True,
 )
 

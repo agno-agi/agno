@@ -12,7 +12,6 @@ from agno.tools.serper import SerperTools
 
 agent = Agent(
     tools=[SerperTools()],
-    show_tool_calls=True,
 )
 
 agent.print_response(

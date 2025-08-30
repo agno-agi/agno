@@ -3,9 +3,7 @@ from agno.models.nebius import Nebius
 
 agent = Agent(
     model=Nebius(),
-    show_tool_calls=True,
     markdown=True,
-    debug_mode=True,
 )
 
 # Print the response in the terminal

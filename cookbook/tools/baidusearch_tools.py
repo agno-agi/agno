@@ -9,6 +9,5 @@ agent = Agent(
         "Search for 5 results and select the top 3 unique items.",
         "Search in both English and Chinese.",
     ],
-    show_tool_calls=True,
 )
 agent.print_response("What are the latest advancements in AI?", markdown=True)

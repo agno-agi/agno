@@ -42,11 +42,10 @@ e2b_tools = E2BTools(
 
 agent = Agent(
     name="Code Execution Sandbox",
-    agent_id="e2b-sandbox",
+    id="e2b-sandbox",
     model=OpenAIChat(id="gpt-4o"),
     tools=[e2b_tools],
     markdown=True,
-    show_tool_calls=True,
     instructions=[
         "You are an expert at writing and validating Python code using a secure E2B sandbox environment.",
         "Your primary purpose is to:",

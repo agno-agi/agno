@@ -1,6 +1,6 @@
 from typing import List
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.portkey import Portkey
 from pydantic import BaseModel, Field
 
@@ -25,13 +25,13 @@ class MovieScript(BaseModel):
 
 
 agent = Agent(
-    model=Portkey(id="gpt-4o-mini"),
-    response_model=MovieScript,
+    model=Portkey(id="@first-integrati-707071/gpt-5-nano"),
+    output_schema=MovieScript,
     markdown=True,
 )
 
 # Get the response in a variable
-# run: RunResponse = agent.run("New York")
+# run: RunOutput = agent.run("New York")
 # print(run.content)
 
 agent.print_response("New York")

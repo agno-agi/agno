@@ -1,8 +1,3 @@
-# aa
-import asyncio
-import json
-import os
-from pathlib import Path
 from textwrap import dedent
 
 from agno.agent import Agent
@@ -11,7 +6,7 @@ from agno.tools.cartesia import CartesiaTools
 from agno.utils.media import save_audio
 
 agent_instructions = dedent(
-    f"""Follow these steps SEQUENTIALLY to translate text and generate a localized voice note:
+    """Follow these steps SEQUENTIALLY to translate text and generate a localized voice note:
     1. Identify the text to translate and the target language from the user request.
     2. Translate the text accurately to the target language. Keep this translated text for the final audio generation step.
     3. Analyze the emotion conveyed by the *translated* text (e.g., neutral, happy, sad, angry, etc.).
@@ -41,13 +36,12 @@ agent = Agent(
     instructions=agent_instructions,
     model=OpenAIChat(id="gpt-4o"),
     tools=[CartesiaTools(voice_localize_enabled=True)],
-    show_tool_calls=True,
 )
 
 agent.print_response(
     "Convert this phrase 'hello! how are you? Tell me more about the weather in Paris?' to French and create a voice note"
 )
-response = agent.run_response
+response = agent.get_last_run_output()
 
 print("\nChecking for Audio Artifacts on Agent...")
 if response.audio:

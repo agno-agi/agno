@@ -19,7 +19,6 @@ agent = Agent(
             image_generation_model="imagen-4.0-generate-preview-05-20", vertexai=True
         )
     ],
-    show_tool_calls=True,
 )
 
 agent.print_response(
@@ -28,13 +27,13 @@ agent.print_response(
 
 
 response = agent.run_response
-if response.images:
-    save_base64_data(response.images[0].content, "tmp/baleen_whale.png")
+if response and response.images:
+    save_base64_data(str(response.images[0].content), "tmp/baleen_whale.png")
 
 """
 Example prompts to try:
 - A horizontally oriented rectangular stamp features the Mission District's vibrant culture, portrayed in shades of warm terracotta orange using an etching style. The scene might depict a sun-drenched street like Valencia or Mission Street, lined with a mix of Victorian buildings and newer structures.
-- Painterly landscape featuring a simple, isolated wooden cabin nestled amongst tall pine trees on the shore of a calm, reflective lake. 
+- Painterly landscape featuring a simple, isolated wooden cabin nestled amongst tall pine trees on the shore of a calm, reflective lake.
 - Filmed cinematically from the driver's seat, offering a clear profile view of the young passenger on the front seat with striking red hair.
 - A pile of books seen from above. The topmost book contains a watercolor illustration of a bird. VERTEX AI is written in bold letters on the book.
 """

@@ -6,6 +6,7 @@ from agno.agent import Agent
 from agno.media import AudioArtifact, ImageArtifact
 from agno.team.team import Team
 from agno.tools import Toolkit
+from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
@@ -87,12 +88,14 @@ class OpenAITools(Toolkit):
         self,
         agent: Union[Agent, Team],
         prompt: str,
-    ) -> str:
+    ) -> ToolResult:
         """Generate images based on a text prompt.
         Args:
             prompt (str): The text prompt to generate the image from.
         """
         try:
+            import base64
+
             extra_params = {
                 "size": self.image_size,
                 "quality": self.image_quality,
@@ -120,29 +123,38 @@ class OpenAITools(Toolkit):
                 data = response.data[0]
             if data is None:
                 log_warning("OpenAI API did not return any data.")
-                return "Failed to generate image: No data received from API."
+                return ToolResult(content="Failed to generate image: No data received from API.")
+
             if hasattr(data, "b64_json") and data.b64_json:
                 image_base64 = data.b64_json
                 media_id = str(uuid4())
-                # Store base64-encoded content as bytes for later saving
-                agent.add_image(
-                    ImageArtifact(
-                        id=media_id,
-                        content=image_base64.encode("utf-8"),
-                        mime_type="image/png",
-                    )
+
+                # Decode base64 to bytes for proper storage
+                image_bytes = base64.b64decode(image_base64)
+
+                # Create ImageArtifact and return in ToolResult
+                image_artifact = ImageArtifact(
+                    id=media_id,
+                    content=image_bytes,  # ← Store as bytes, not encoded string
+                    mime_type="image/png",
+                    original_prompt=prompt,
                 )
-                return "Image generated successfully."
-            return "Failed to generate image: No content received from API."
+
+                return ToolResult(
+                    content="Image generated successfully.",
+                    images=[image_artifact],
+                )
+
+            return ToolResult(content="Failed to generate image: No content received from API.")
         except Exception as e:
             log_error(f"Failed to generate image using {self.image_model}: {e}")
-            return f"Failed to generate image: {e}"
+            return ToolResult(content=f"Failed to generate image: {e}")
 
     def generate_speech(
         self,
         agent: Union[Agent, Team],
         text_input: str,
-    ) -> str:
+    ) -> ToolResult:  # Changed return type
         """Generate speech from text using OpenAI's Text-to-Speech API.
         Args:
             text_input (str): The text to synthesize into speech.
@@ -163,14 +175,17 @@ class OpenAITools(Toolkit):
             # Base64 encode the audio data
             base64_encoded_audio = base64.b64encode(audio_data).decode("utf-8")
 
-            # Create and add AudioArtifact using base64_audio field
+            # Create AudioArtifact and return in ToolResult
             media_id = str(uuid4())
-            agent.add_audio(
-                AudioArtifact(
-                    id=media_id,
-                    base64_audio=base64_encoded_audio,
-                )
+            audio_artifact = AudioArtifact(
+                id=media_id,
+                base64_audio=base64_encoded_audio,
+                mime_type=f"audio/{self.tts_format}",
             )
-            return f"Speech generated successfully with ID: {media_id}"
+
+            return ToolResult(
+                content=f"Speech generated successfully with ID: {media_id}",
+                audios=[audio_artifact],
+            )
         except Exception as e:
-            return f"Failed to generate speech: {str(e)}"
+            return ToolResult(content=f"Failed to generate speech: {str(e)}")

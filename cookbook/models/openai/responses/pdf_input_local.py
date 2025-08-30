@@ -16,7 +16,7 @@ agent = Agent(
     model=OpenAIResponses(id="gpt-4o-mini"),
     tools=[{"type": "file_search"}],
     markdown=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
 )
 
 agent.print_response(

@@ -52,12 +52,12 @@ class AgnoLogger(logging.Logger):
     def __init__(self, name: str, level: int = logging.NOTSET):
         super().__init__(name, level)
 
-    def debug(self, msg: str, center: bool = False, symbol: str = "*", *args, **kwargs):
+    def debug(self, msg: str, center: bool = False, symbol: str = "*", *args, **kwargs):  # type: ignore
         if center:
             msg = center_header(str(msg), symbol)
         super().debug(msg, *args, **kwargs)
 
-    def info(self, msg: str, center: bool = False, symbol: str = "*", *args, **kwargs):
+    def info(self, msg: str, center: bool = False, symbol: str = "*", *args, **kwargs):  # type: ignore
         if center:
             msg = center_header(str(msg), symbol)
         super().info(msg, *args, **kwargs)
