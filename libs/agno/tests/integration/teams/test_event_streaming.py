@@ -144,9 +144,9 @@ def test_intermediate_steps_with_tools():
     }
 
     assert len(events[TeamRunEvent.tool_call_started]) >= 1
-    # The team may first try to transfer the task to a member, then call the tool directly
+    # The team may first try to delegate the task to a member, then call the tool directly
     tool_names = [event.tool.tool_name for event in events[TeamRunEvent.tool_call_started]]
-    assert "get_current_stock_price" in tool_names or "transfer_task_to_member" in tool_names
+    assert "get_current_stock_price" in tool_names or "delegate_task_to_member" in tool_names
     assert len(events[TeamRunEvent.tool_call_completed]) >= 1
     # Check that at least one tool call completed successfully
     completed_tools = [event for event in events[TeamRunEvent.tool_call_completed] if event.content is not None]
@@ -522,14 +522,14 @@ def test_intermediate_steps_with_member_agents():
     assert len(events[TeamRunEvent.run_started]) == 1
     # Transfer twice, from team to member agents
     assert len(events[TeamRunEvent.tool_call_started]) == 2
-    assert events[TeamRunEvent.tool_call_started][0].tool.tool_name == "transfer_task_to_member"
+    assert events[TeamRunEvent.tool_call_started][0].tool.tool_name == "delegate_task_to_member"
     assert events[TeamRunEvent.tool_call_started][0].tool.tool_args["member_id"] == "analyst"
-    assert events[TeamRunEvent.tool_call_started][1].tool.tool_name == "transfer_task_to_member"
+    assert events[TeamRunEvent.tool_call_started][1].tool.tool_name == "delegate_task_to_member"
     assert events[TeamRunEvent.tool_call_started][1].tool.tool_args["member_id"] == "math-agent"
     assert len(events[TeamRunEvent.tool_call_completed]) == 2
-    assert events[TeamRunEvent.tool_call_completed][0].tool.tool_name == "transfer_task_to_member"
+    assert events[TeamRunEvent.tool_call_completed][0].tool.tool_name == "delegate_task_to_member"
     assert events[TeamRunEvent.tool_call_completed][0].tool.result is not None
-    assert events[TeamRunEvent.tool_call_completed][1].tool.tool_name == "transfer_task_to_member"
+    assert events[TeamRunEvent.tool_call_completed][1].tool.tool_name == "delegate_task_to_member"
     assert events[TeamRunEvent.tool_call_completed][1].tool.result is not None
     assert len(events[TeamRunEvent.run_content]) > 1
     assert len(events[TeamRunEvent.run_completed]) == 1
@@ -637,14 +637,14 @@ def test_intermediate_steps_with_member_agents_streaming_off():
     assert len(events[TeamRunEvent.run_started]) == 1
     # Transfer twice, from team to member agents
     assert len(events[TeamRunEvent.tool_call_started]) == 2
-    assert events[TeamRunEvent.tool_call_started][0].tool.tool_name == "transfer_task_to_member"
+    assert events[TeamRunEvent.tool_call_started][0].tool.tool_name == "delegate_task_to_member"
     assert events[TeamRunEvent.tool_call_started][0].tool.tool_args["member_id"] == "analyst"
-    assert events[TeamRunEvent.tool_call_started][1].tool.tool_name == "transfer_task_to_member"
+    assert events[TeamRunEvent.tool_call_started][1].tool.tool_name == "delegate_task_to_member"
     assert events[TeamRunEvent.tool_call_started][1].tool.tool_args["member_id"] == "math-agent"
     assert len(events[TeamRunEvent.tool_call_completed]) == 2
-    assert events[TeamRunEvent.tool_call_completed][0].tool.tool_name == "transfer_task_to_member"
+    assert events[TeamRunEvent.tool_call_completed][0].tool.tool_name == "delegate_task_to_member"
     assert events[TeamRunEvent.tool_call_completed][0].tool.result is not None
-    assert events[TeamRunEvent.tool_call_completed][1].tool.tool_name == "transfer_task_to_member"
+    assert events[TeamRunEvent.tool_call_completed][1].tool.tool_name == "delegate_task_to_member"
     assert events[TeamRunEvent.tool_call_completed][1].tool.result is not None
     assert len(events[TeamRunEvent.run_content]) > 1
     assert len(events[TeamRunEvent.run_completed]) == 1

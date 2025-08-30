@@ -173,7 +173,7 @@ autonomous_startup_team = Team(
     model=OpenAIChat("gpt-4o"),
     instructions=[
         "You are the CEO of a startup, responsible for overall leadership and success.",
-        " Always transfer task to product manager agent so it can search the knowledge base.",
+        " Always delegate task to product manager agent so it can search the knowledge base.",
         "Instruct all agents to use the knowledge base to answer questions.",
         "Key Responsibilities:",
         "1. Set and communicate company vision and strategy",

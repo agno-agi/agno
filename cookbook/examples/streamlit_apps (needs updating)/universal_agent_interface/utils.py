@@ -262,11 +262,11 @@ def display_tool_calls(tool_calls_container, tools: List[ToolExecution]):
                     logger.error(f"Error getting tool metrics time: {str(e)}")
                     pass  # Keep default "N/A"
 
-                # Check if this is a transfer task
-                is_task_transfer = "transfer_task_to_member" in tool_name
+                # Check if this is a delegate task
+                is_task_delegate = "delegate_task_to_member" in tool_name
                 is_memory_task = "user_memory" in tool_name
                 expander_title = "🛠️"
-                if is_task_transfer:
+                if is_task_delegate:
                     member_id = tool_args.get("member_id")
                     expander_title = f"🔄 {member_id.title()}"
                 elif is_memory_task:

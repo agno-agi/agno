@@ -38,7 +38,7 @@ agent_team = Team(
     instructions=[
         "You are a games master.",
         "Initialize the board state as an empty 3x3 grid with numbers 1-9.",
-        "Ask the players to make their moves one by one and wait for their responses. Transfer the turn to the other player after each move.",
+        "Ask the players to make their moves one by one and wait for their responses. Delegate the turn to the other player after each move.",
         "After each move, store the updated board state so that players have access to the board state.",
         "Don't confirm the results of the game afterwards, just report the final board state and the results.",
         "You have to stop the game when one of the players has won.",

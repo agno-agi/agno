@@ -23,7 +23,7 @@ team = Team(
 )
 
 expected_tool_calls = [
-    "transfer_task_to_member",  # Tool call used to transfer a task to a Team member
+    "delegate_task_to_member",  # Tool call used to delegate a task to a Team member
     "get_current_stock_price",  # Tool call used to get the current stock price of a stock
 ]
 

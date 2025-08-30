@@ -8,8 +8,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.reader.base import Reader
 from agno.knowledge.reader import ReaderFactory
+from agno.knowledge.reader.base import Reader
 from agno.knowledge.utils import get_all_chunkers_info, get_all_readers_info, get_content_types_to_readers_mapping
 from agno.os.auth import get_authentication_dependency
 from agno.os.routers.knowledge.schemas import (
@@ -306,7 +306,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> ConfigResponseSchema:
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
-        
+
         # Get factory readers info
         readers_info = get_all_readers_info()
         reader_schemas = {}
