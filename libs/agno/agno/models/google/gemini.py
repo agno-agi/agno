@@ -53,7 +53,10 @@ class Gemini(Model):
     - Set `vertexai` to `True` to use the Vertex AI API.
     - Set your `project_id` (or set `GOOGLE_CLOUD_PROJECT` environment variable) and `location` (optional).
     - Set `http_options` (optional) to configure the HTTP options.
-
+    - Set `vertexai_search_datastore` to one or more datastore IDs:
+        * Single datastore: `vertexai_search_datastore="projects/{project_id}/locations/{location}/collections/{collection_id}/dataStores/{datastore_id}"`
+        * Multiple datastores: `vertexai_search_datastore=["datastore1", "datastore2", "datastore3"]`
+        * Each datastore will be added as a separate tool, allowing the model to search across multiple knowledge bases.
     Based on https://googleapis.github.io/python-genai/
     """
 
@@ -73,7 +76,7 @@ class Gemini(Model):
     grounding_dynamic_threshold: Optional[float] = None
     url_context: bool = False
     vertexai_search: bool = False
-    vertexai_search_datastore: Optional[str] = None
+    vertexai_search_datastore: Optional[Union[str, List[str]]] = None
 
     temperature: Optional[float] = None
     top_p: Optional[float] = None
@@ -234,9 +237,24 @@ class Gemini(Model):
             if not self.vertexai_search_datastore:
                 log_error("vertexai_search_datastore must be provided when vertexai_search is enabled.")
                 raise ValueError("vertexai_search_datastore must be provided when vertexai_search is enabled.")
-            builtin_tools.append(
-                Tool(retrieval=Retrieval(vertex_ai_search=VertexAISearch(datastore=self.vertexai_search_datastore)))
+
+            # Convert single string to list for consistent processing
+            datastore_list = (
+                [self.vertexai_search_datastore] if isinstance(self.vertexai_search_datastore, str)
+                else self.vertexai_search_datastore
             )
+
+            # Validate and create tools for each datastore
+            for i, datastore_id in enumerate(datastore_list):
+                if not isinstance(datastore_id, str) or not datastore_id.strip():
+                    log_error(f"Invalid datastore at index {i}: must be a non-empty string")
+                    raise ValueError(f"vertexai_search_datastore[{i}] must be a non-empty string")
+
+                datastore_id = datastore_id.strip()
+                log_info(f"Adding Vertex AI Search tool for datastore: {datastore_id}")
+                builtin_tools.append(
+                    Tool(retrieval=Retrieval(vertex_ai_search=VertexAISearch(datastore=datastore_id)))
+                )
 
         # Set tools in config
         if builtin_tools:
