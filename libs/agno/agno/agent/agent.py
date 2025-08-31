@@ -1476,7 +1476,7 @@ class Agent:
 
         # Read existing session from storage
         if self.context is not None:
-            self.resolve_run_context()
+            await self.aresolve_run_context()
 
         # Prepare arguments for the model
         self.set_default_model()
@@ -2152,7 +2152,7 @@ class Agent:
 
         # Read existing session from storage
         if self.context is not None:
-            self.resolve_run_context()
+            await self.aresolve_run_context()
 
         # Prepare arguments for the model
         self.set_default_model()
