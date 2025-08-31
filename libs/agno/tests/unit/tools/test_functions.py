@@ -708,3 +708,87 @@ def test_tool_decorator_with_complex_types():
     assert complex_types_func.parameters["properties"]["param2"]["type"] == "object"
     assert complex_types_func.parameters["properties"]["param3"]["type"] == "boolean"
     assert "param3" not in complex_types_func.parameters["required"]
+
+
+def test_tool_cache_without_hooks(tmp_path):
+    """Test @tool decorator with cache_results=True and no tool_hooks - should cache properly."""
+    call_count = 0
+
+    @tool(cache_results=True, cache_dir=str(tmp_path))
+    def add_numbers(a: int, b: int) -> int:
+        """Adds two numbers."""
+        nonlocal call_count
+        call_count += 1
+        return a + b
+
+    add_numbers.process_entrypoint()
+
+    # First call should execute the function
+    call1 = FunctionCall(function=add_numbers, arguments={"a": 2, "b": 3})
+    result1 = call1.execute()
+    assert result1.status == "success"
+    assert result1.result == 5
+    assert call_count == 1
+
+    # Second call with identical params should hit cache
+    call2 = FunctionCall(function=add_numbers, arguments={"a": 2, "b": 3})
+    result2 = call2.execute()
+    assert result2.status == "success"
+    assert result2.result == 5
+    assert call_count == 1  # Function should not have been called again
+
+
+def test_tool_cache_with_empty_hooks(tmp_path):
+    """Test @tool decorator with cache_results=True and empty tool_hooks - should cache properly."""
+    call_count = 0
+
+    @tool(cache_results=True, cache_dir=str(tmp_path), tool_hooks=[])
+    def add_numbers(a: int, b: int) -> int:
+        """Adds two numbers."""
+        nonlocal call_count
+        call_count += 1
+        return a + b
+
+    add_numbers.process_entrypoint()
+
+    # First call should execute the function
+    call1 = FunctionCall(function=add_numbers, arguments={"a": 2, "b": 3})
+    result1 = call1.execute()
+    assert result1.status == "success"
+    assert result1.result == 5
+    assert call_count == 1
+
+    # Second call with identical params should hit cache
+    call2 = FunctionCall(function=add_numbers, arguments={"a": 2, "b": 3})
+    result2 = call2.execute()
+    assert result2.status == "success"
+    assert result2.result == 5
+    assert call_count == 1  # Function should not have been called again
+
+
+def test_tool_cache_kwargs_order_independence(tmp_path):
+    """Test that cache keys are normalized for argument order independence."""
+    call_count = 0
+
+    @tool(cache_results=True, cache_dir=str(tmp_path))
+    def add_numbers(a: int, b: int) -> int:
+        """Adds two numbers."""
+        nonlocal call_count
+        call_count += 1
+        return a + b
+
+    add_numbers.process_entrypoint()
+
+    # First call with a=2, b=3
+    call1 = FunctionCall(function=add_numbers, arguments={"a": 2, "b": 3})
+    result1 = call1.execute()
+    assert result1.status == "success"
+    assert result1.result == 5
+    assert call_count == 1
+
+    # Second call with b=3, a=2 (different order) should hit cache
+    call2 = FunctionCall(function=add_numbers, arguments={"b": 3, "a": 2})
+    result2 = call2.execute()
+    assert result2.status == "success"
+    assert result2.result == 5
+    assert call_count == 1  # Function should not have been called again
