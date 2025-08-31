@@ -210,7 +210,9 @@ agent_team = Team(
 
 if __name__ == "__main__":
     # Load the knowledge base
-    asyncio.run(agno_assist_knowledge.add_contents(url="https://docs.agno.com/llms-full.txt"))
+    asyncio.run(
+        agno_assist_knowledge.add_contents(url="https://docs.agno.com/llms-full.txt")
+    )
 
     # asyncio.run(agent_team.aprint_response("Hi! What are you capable of doing?"))
 

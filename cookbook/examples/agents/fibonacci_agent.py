@@ -23,7 +23,6 @@ agent = Agent(
         get_fibonacci_series,
         CalculatorTools(add=True, subtract=True, exponentiate=True, is_prime=True),
     ],
-    show_tool_calls=True,
     markdown=True,
 )
 

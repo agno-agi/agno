@@ -15,7 +15,7 @@ Setup:
 3. Run this script to see distributed PgVector RAG in action
 """
 
-import asyncio # noqa: F401
+import asyncio  # noqa: F401
 
 from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder

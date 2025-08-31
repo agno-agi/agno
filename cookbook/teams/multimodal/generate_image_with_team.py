@@ -19,7 +19,7 @@ image_generator = Agent(
 )
 
 prompt_engineer = Agent(
-    name="Prompt Engineer", 
+    name="Prompt Engineer",
     role="Optimize and enhance image generation prompts",
     model=OpenAIChat(id="gpt-4o"),
     instructions=[

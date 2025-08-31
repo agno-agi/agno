@@ -16,7 +16,7 @@ image_analyzer = Agent(
 )
 
 creative_writer = Agent(
-    name="Creative Writer", 
+    name="Creative Writer",
     role="Create engaging stories and narratives",
     model=OpenAIChat(id="gpt-4o"),
     instructions=[

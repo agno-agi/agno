@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Optional
 
-from agno.utilities.logging import logger
+from agno.utilities.logging import log_debug, log_error
 
 
 def get_infra_dir_from_env() -> Optional[Path]:
@@ -9,7 +9,7 @@ def get_infra_dir_from_env() -> Optional[Path]:
 
     from agno.constants import AGNO_INFRA_DIR
 
-    logger.debug(f"Reading {AGNO_INFRA_DIR} from environment variables")
+    log_debug(f"Reading {AGNO_INFRA_DIR} from environment variables")
     infra_dir = getenv(AGNO_INFRA_DIR, None)
     if infra_dir is not None:
         return Path(infra_dir)
@@ -25,11 +25,11 @@ def get_infra_dir_path(infra_root_path: Path) -> Path:
     """
     from agno.utilities.pyproject import read_pyproject_agno
 
-    logger.debug(f"Searching for a infra directory in {infra_root_path}")
+    log_debug(f"Searching for a infra directory in {infra_root_path}")
 
     # Case 1: Look for a subdirectory with name: infra
     infra_dir = infra_root_path.joinpath("infra")
-    logger.debug(f"Searching {infra_dir}")
+    log_debug(f"Searching {infra_dir}")
     if infra_dir.exists() and infra_dir.is_dir():
         return infra_dir
 
@@ -42,11 +42,11 @@ def get_infra_dir_path(infra_root_path: Path) -> Path:
             if agno_conf_infra_dir_str is not None:
                 agno_conf_infra_dir_path = infra_root_path.joinpath(agno_conf_infra_dir_str)
             else:
-                logger.error("Infra directory not specified in pyproject.toml")
+                log_error("Infra directory not specified in pyproject.toml")
                 exit(0)
-            logger.debug(f"Searching {agno_conf_infra_dir_path}")
+            log_debug(f"Searching {agno_conf_infra_dir_path}")
             if agno_conf_infra_dir_path.exists() and agno_conf_infra_dir_path.is_dir():
                 return agno_conf_infra_dir_path
 
-    logger.error(f"Could not find a infra directory at: {infra_root_path}")
+    log_error(f"Could not find a infra directory at: {infra_root_path}")
     exit(0)

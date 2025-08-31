@@ -9,6 +9,9 @@ LOGGER_NAME = "agno"
 
 # Define custom styles for different log sources
 LOG_STYLES = {
+    "warning": "magenta",
+    "error": "red",
+    "exception": "red",
     "debug": "green",
     "info": "blue",
 }

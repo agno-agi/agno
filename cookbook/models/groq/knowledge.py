@@ -18,6 +18,5 @@ knowledge.add_content_sync(
 agent = Agent(
     model=Groq(id="llama-3.3-70b-versatile"),
     knowledge=knowledge,
-    show_tool_calls=True,
 )
 agent.print_response("How to make Thai curry?", markdown=True)

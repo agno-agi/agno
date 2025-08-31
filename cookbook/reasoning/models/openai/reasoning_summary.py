@@ -13,7 +13,6 @@ agent = Agent(
     ),
     tools=[YFinanceTools(stock_price=True, analyst_recommendations=True)],
     instructions="Use tables to display the analysis",
-    show_tool_calls=True,
     markdown=True,
 )
 

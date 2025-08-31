@@ -20,7 +20,7 @@ video_processor = Agent(
 )
 
 caption_generator = Agent(
-    name="Caption Generator", 
+    name="Caption Generator",
     role="Generate and embed captions in videos",
     model=OpenAIChat(id="gpt-4o"),
     tools=[MoviePyVideoTools(embed_captions=True), OpenAITools()],
@@ -40,7 +40,7 @@ caption_team = Team(
     instructions=[
         "Process videos to generate captions in this sequence:",
         "1. Extract audio from the video using extract_audio",
-        "2. Transcribe the audio using transcribe_audio", 
+        "2. Transcribe the audio using transcribe_audio",
         "3. Generate SRT captions using create_srt",
         "4. Embed captions into the video using embed_captions",
     ],
