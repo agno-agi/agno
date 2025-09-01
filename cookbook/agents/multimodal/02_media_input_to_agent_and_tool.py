@@ -20,9 +20,11 @@ from agno.db.postgres import PostgresDb
 
 class ImageAnalysisTools(Toolkit):
     def __init__(self):
-        super().__init__(name="image_analysis_tools")
-        self.register(self.analyze_images)
-        self.register(self.count_images)
+        tools = [
+            self.analyze_images,
+            self.count_images,
+        ]
+        super().__init__(name="image_analysis_tools", tools=tools)
 
     def analyze_images(self, images: Optional[Sequence[Image]] = None) -> str:
         """

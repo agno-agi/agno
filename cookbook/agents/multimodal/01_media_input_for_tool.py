@@ -18,8 +18,11 @@ from agno.tools import Toolkit
 
 class DocumentProcessingTools(Toolkit):
     def __init__(self):
-        super().__init__(name="document_processing_tools")
-        self.register(self.extract_text_from_pdf)
+        tools = [
+            self.extract_text_from_pdf,
+        ]
+        
+        super().__init__(name="document_processing_tools", tools=tools)
 
     def extract_text_from_pdf(self, files: Optional[Sequence[File]] = None) -> str:
         """
