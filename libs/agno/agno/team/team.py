@@ -6548,7 +6548,9 @@ class Team:
         log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
         from agno.knowledge.reader.text_reader import TextReader
 
-        asyncio.run(self.knowledge.add_content_async(name=document_name, text_content=document_content, reader=TextReader()))
+        asyncio.run(
+            self.knowledge.add_content_async(name=document_name, text_content=document_content, reader=TextReader())
+        )
         return "Successfully added to knowledge base"
 
     def get_relevant_docs_from_knowledge(

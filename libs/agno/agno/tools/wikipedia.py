@@ -1,4 +1,3 @@
-import asyncio
 import json
 from typing import List, Optional
 
@@ -42,7 +41,7 @@ class WikipediaTools(Toolkit):
         self.knowledge.add_content(
             topics=[topic],
             reader=WikipediaReader(),
-        )        
+        )
         log_debug(f"Searching knowledge: {topic}")
         relevant_docs: List[Document] = self.knowledge.search(query=topic)
         return json.dumps([doc.to_dict() for doc in relevant_docs])
