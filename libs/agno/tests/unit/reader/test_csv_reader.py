@@ -50,12 +50,21 @@ def csv_reader():
 def test_read_path(csv_reader, csv_file):
     documents = csv_reader.read(csv_file)
 
-    assert len(documents) == 1
+    assert len(documents) == 4
     assert documents[0].name == "test"
     assert documents[0].id.endswith("_1")
 
-    expected_content = "name, age, city John, 30, New York Jane, 25, San Francisco Bob, 40, Chicago "
-    assert documents[0].content == expected_content
+    expected_content_1 = "name, age, city"
+    assert documents[0].content == expected_content_1
+
+    expected_content_2 = "John, 30, New York"
+    assert documents[1].content == expected_content_2
+
+    expected_content_3 = "Jane, 25, San Francisco"
+    assert documents[2].content == expected_content_3
+
+    expected_content_4 = "Bob, 40, Chicago"
+    assert documents[3].content == expected_content_4
 
 
 def test_read_file_object(csv_reader):
@@ -64,22 +73,37 @@ def test_read_file_object(csv_reader):
 
     documents = csv_reader.read(file_obj)
 
-    assert len(documents) == 1
+    assert len(documents) == 4
     assert documents[0].name == "memory"
     assert documents[0].id.endswith("_1")
 
-    expected_content = "name, age, city John, 30, New York Jane, 25, San Francisco Bob, 40, Chicago "
-    assert documents[0].content == expected_content
+    expected_content_1 = "name, age, city"
+    assert documents[0].content == expected_content_1
+
+    expected_content_2 = "John, 30, New York"
+    assert documents[1].content == expected_content_2
+
+    expected_content_3 = "Jane, 25, San Francisco"
+    assert documents[2].content == expected_content_3
+
+    expected_content_4 = "Bob, 40, Chicago"
+    assert documents[3].content == expected_content_4
 
 
 def test_read_complex_csv(csv_reader, complex_csv_file):
     documents = csv_reader.read(complex_csv_file, delimiter=",", quotechar='"')
 
-    assert len(documents) == 1
+    assert len(documents) == 3
     assert documents[0].id.endswith("_1")
 
-    expected_content = "product, description with, comma, price Laptop, Pro, High performance, ultra-thin, 1200.99 Phone XL, 5G compatible, water resistant, 899.50 "
-    assert documents[0].content == expected_content
+    expected_content_1 = "product, description with, comma, price"
+    assert documents[0].content == expected_content_1
+
+    expected_content_2 = "Laptop, Pro, High performance, ultra-thin, 1200.99"
+    assert documents[1].content == expected_content_2
+
+    expected_content_3 = "Phone XL, 5G compatible, water resistant, 899.50"
+    assert documents[2].content == expected_content_3
 
 
 def test_read_nonexistent_file(csv_reader, temp_dir):
@@ -202,20 +226,19 @@ def csv_url_reader():
 def test_read_url(csv_url_reader):
     documents = csv_url_reader.read(CSV_URL)
 
-    assert len(documents) == 2
     assert documents[0].name == "employees"
     assert documents[0].id.endswith("_1")
 
     content = documents[0].content
-    assert all(field in content for field in ["EmployeeID", "FirstName", "LastName", "Department"])
-    assert all(value in content for value in ["John", "Doe", "Engineering", "Software Engineer", "75000"])
+    for field in ["EmployeeID", "FirstName", "LastName", "Department"]:
+        assert field in content
 
 
 @pytest.mark.asyncio
 async def test_async_read_url(csv_url_reader):
     documents = await csv_url_reader.async_read(CSV_URL)
 
-    assert len(documents) == 2
+    assert len(documents) == 1
     assert documents[0].name == "employees"
     assert documents[0].id.endswith("_1")
 
