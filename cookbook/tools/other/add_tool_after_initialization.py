@@ -5,7 +5,7 @@ from agno.models.openai import OpenAIChat
 from agno.tools import tool
 
 
-@tool(show_result=True, stop_after_tool_call=True)
+@tool(stop_after_tool_call=True)
 def get_weather(city: str) -> str:
     """Get the weather for a city."""
     # In a real implementation, this would call a weather API

@@ -3,7 +3,7 @@ Useful for contexts where a long reasoning process is relevant and directly rele
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
-from agno.tools.yfinance import YFinanceTools
+from agno.tools.duckduckgo import DuckDuckGoTools
 
 # Setup the reasoning Agent
 agent = Agent(
@@ -11,7 +11,7 @@ agent = Agent(
         id="o4-mini",
         reasoning_summary="auto",  # Requesting a reasoning summary
     ),
-    tools=[YFinanceTools(stock_price=True, analyst_recommendations=True)],
+    tools=[DuckDuckGoTools(search=True)],
     instructions="Use tables to display the analysis",
     markdown=True,
 )

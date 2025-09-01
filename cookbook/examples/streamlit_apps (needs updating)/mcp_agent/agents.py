@@ -49,7 +49,7 @@ def get_mcp_agent(
     user_id: Optional[str] = None,
     model_str: str = "openai:gpt-4o",
     session_id: Optional[str] = None,
-    num_history_responses: int = 5,
+    num_history_runs: int = 5,
     mcp_tools: Optional[List[MCPTools]] = None,
     mcp_server_ids: Optional[List[str]] = None,
     debug_mode: bool = True,
@@ -132,7 +132,7 @@ def get_mcp_agent(
         read_tool_call_history=True,
         # Append previous conversation responses into the new messages for context.
         add_history_to_context=True,
-        num_history_runs=num_history_responses,
+        num_history_runs=num_history_runs,
         add_datetime_to_context=True,
         add_name_to_context=True,
         debug_mode=debug_mode,

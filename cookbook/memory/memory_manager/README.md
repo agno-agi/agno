@@ -10,3 +10,4 @@ See the following examples for more details:
 - [Memory Creation](02_memory_creation.py)
 - [Custom Memory Instructions](03_custom_memory_instructions.py)
 - [Memory Search](04_memory_search.py)
+- [DB Tools Control](05_db_tools_control.py)

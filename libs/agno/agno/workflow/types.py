@@ -415,6 +415,7 @@ class WebSocketHandler:
             SSE-formatted response with event type and data
         """
         import json
+
         try:
             # Parse the JSON to extract the event type
             data = json.loads(json_data)

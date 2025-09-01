@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - "main"
-      - "v2.0"
   pull_request:
     types:
       - opened
@@ -117,6 +116,8 @@ jobs:
 
   tests:
     runs-on: ubuntu-latest
+    # Skip push events if there's an open PR from the same branch
+    if: github.event_name != 'push' || !github.event.pull_request
     strategy:
       matrix:
         python-version: ["3.12"]

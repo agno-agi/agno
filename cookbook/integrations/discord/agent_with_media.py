@@ -12,6 +12,8 @@ media_agent = Agent(
     add_datetime_to_context=True,
     markdown=True,
 )
+
 discord_agent = DiscordClient(media_agent)
+
 if __name__ == "__main__":
     discord_agent.serve()

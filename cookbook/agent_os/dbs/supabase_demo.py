@@ -3,7 +3,6 @@ from os import getenv
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.eval.accuracy import AccuracyEval
-from agno.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team.team import Team
@@ -18,14 +17,10 @@ SUPABASE_DB_URL = (
 # Setup the Redis database
 db = PostgresDb(db_url=SUPABASE_DB_URL)
 
-# Setup the memory
-memory = Memory(db=db)
-
 # Setup a basic agent and a basic team
 agent = Agent(
     name="Basic Agent",
     id="basic-agent",
-    memory=memory,
     enable_user_memories=True,
     enable_session_summaries=True,
     add_history_to_context=True,
@@ -37,7 +32,7 @@ team = Team(
     id="basic-team",
     name="Team Agent",
     model=OpenAIChat(id="gpt-4o"),
-    memory=memory,
+    enable_user_memories=True,
     members=[agent],
     debug_mode=True,
 )

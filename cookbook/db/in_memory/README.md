@@ -86,7 +86,7 @@ new_agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     db=new_db,
     session_id=agent.session_id,  # Use same session ID
-    add_history_to_messages=True,
+    add_history_to_context=True,
 )
 
 # This agent now has access to the previous conversation

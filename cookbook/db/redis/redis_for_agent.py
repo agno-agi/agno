@@ -1,5 +1,6 @@
 """
-Test script for RedisStorage implementation.
+Example showing how to use Redis as the database for an agent.
+
 Run `pip install redis ddgs openai` to install dependencies.
 
 We can start Redis locally using docker:

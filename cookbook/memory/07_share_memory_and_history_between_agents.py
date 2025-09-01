@@ -13,7 +13,7 @@ agent_1 = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions="You are really friendly and helpful.",
     db=db,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     enable_user_memories=True,
 )
 
@@ -21,7 +21,7 @@ agent_2 = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions="You are really grumpy and mean.",
     db=db,
-    add_history_to_messages=True,
+    add_history_to_context=True,
     enable_user_memories=True,
 )
 
