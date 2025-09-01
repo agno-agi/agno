@@ -3789,6 +3789,26 @@ class Agent:
         
         log_debug(f"Joint Images Available: {len(joint_images)} images")
         return joint_images if joint_images else None
+    
+    def _collect_joint_files(
+        self, 
+        run_messages: RunMessages,
+        run_response: RunOutput
+    ) -> Optional[Sequence[File]]:
+        """Collect files from input and session history."""
+        from agno.utils.log import log_debug
+        
+        joint_files = []
+        
+        # 1. Add files from current input (from RunMessages)
+        if run_messages.files:
+            joint_files.extend(run_messages.files)
+            log_debug(f"Added {len(run_messages.files)} input files to joint list")
+        
+        # TODO: Files aren't stored in session history yet and dont have a FileArtifact
+        
+        log_debug(f"Joint Files Available: {len(joint_files)} files")
+        return joint_files if joint_files else None
 
     def _determine_tools_for_model(
         self,
@@ -3891,10 +3911,12 @@ class Agent:
         if self._functions_for_model:
             # Collect joint media from all sources using RunMessages
             joint_images = self._collect_joint_images(run_messages, run_response)
+            joint_files = self._collect_joint_files(run_messages, run_response)
             
             for func in self._functions_for_model.values():
                 func._session_state = session_state
                 func._images = joint_images
+                func._files = joint_files
 
     def _model_should_return_structured_output(self):
         self.model = cast(Model, self.model)

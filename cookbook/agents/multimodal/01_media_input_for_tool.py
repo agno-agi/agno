@@ -83,7 +83,8 @@ def main():
         name="Document Processing Agent",
         description="An agent that can process uploaded documents. Use the tool to extract text from the PDF.",
         debug_mode=True,
-        send_media_to_model=False
+        send_media_to_model=False,
+        store_media=True
     )
 
     print("=== Tool Media Access Example ===\n")
@@ -97,7 +98,8 @@ def main():
     
     response = agent.run(
         input="I've uploaded a PDF document. Please extract the text from it and summarize the key financial information.",
-        files=[sample_file]
+        files=[sample_file],
+        session_id="test_files"
     )
     
     print(f"Agent Response: {response.content}")
