@@ -19,7 +19,7 @@ def _assert_metrics(response: RunOutput):
 
 
 def test_basic():
-    agent = Agent(model=Groq(id="llama3-70b-8192"), markdown=True, telemetry=False)
+    agent = Agent(model=Groq(id="llama-3.3-70b-versatile"), markdown=True, telemetry=False)
 
     # Print the response in the terminal
     response: RunOutput = agent.run("Share a 2 sentence horror story")
@@ -32,7 +32,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(model=Groq(id="llama3-70b-8192"), markdown=True, telemetry=False)
+    agent = Agent(model=Groq(id="llama-3.3-70b-versatile"), markdown=True, telemetry=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -47,7 +47,7 @@ def test_basic_stream():
 
 @pytest.mark.asyncio
 async def test_async_basic():
-    agent = Agent(model=Groq(id="llama3-70b-8192"), markdown=True, telemetry=False)
+    agent = Agent(model=Groq(id="llama-3.3-70b-versatile"), markdown=True, telemetry=False)
 
     response = await agent.arun("Share a 2 sentence horror story")
 
@@ -59,7 +59,7 @@ async def test_async_basic():
 
 @pytest.mark.asyncio
 async def test_async_basic_stream():
-    agent = Agent(model=Groq(id="llama3-70b-8192"), markdown=True, telemetry=False)
+    agent = Agent(model=Groq(id="llama-3.3-70b-versatile"), markdown=True, telemetry=False)
 
     async for response in agent.arun("Share a 2 sentence horror story", stream=True):
         assert response.content is not None
@@ -68,7 +68,7 @@ async def test_async_basic_stream():
 def test_with_memory():
     agent = Agent(
         db=SqliteDb(db_file="tmp/test_with_memory.db"),
-        model=Groq(id="llama3-70b-8192"),
+        model=Groq(id="llama-3.3-70b-versatile"),
         add_history_to_context=True,
         markdown=True,
         telemetry=False,
@@ -99,7 +99,7 @@ def test_output_schema():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=Groq(id="llama3-70b-8192"),
+        model=Groq(id="llama-3.3-70b-versatile"),
         telemetry=False,
         output_schema=MovieScript,
     )
@@ -120,7 +120,7 @@ def test_json_response_mode():
         plot: str = Field(..., description="Brief plot summary")
 
     agent = Agent(
-        model=Groq(id="llama3-70b-8192"),
+        model=Groq(id="llama-3.3-70b-versatile"),
         use_json_mode=True,
         telemetry=False,
         output_schema=MovieScript,
@@ -137,7 +137,7 @@ def test_json_response_mode():
 
 def test_history():
     agent = Agent(
-        model=Groq(id="llama3-70b-8192"),
+        model=Groq(id="llama-3.3-70b-versatile"),
         db=SqliteDb(db_file="tmp/groq/test_basic.db"),
         add_history_to_context=True,
         telemetry=False,

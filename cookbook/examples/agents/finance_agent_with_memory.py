@@ -62,7 +62,7 @@ finance_agent_with_memory = Agent(
     """),
 )
 
-# Initialize the Playground with the workflows
+# Initialize the AgentOS with the workflows
 agent_os = AgentOS(
     description="Example OS setup",
     agents=[finance_agent_with_memory],

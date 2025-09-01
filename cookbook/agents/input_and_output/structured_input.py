@@ -21,25 +21,13 @@ hackernews_agent = Agent(
     model=OpenAIChat(id="gpt-4o-mini"),
     tools=[HackerNewsTools()],
     role="Extract key insights and content from Hackernews posts",
-    input_schema=ResearchTopic,
 )
 
-# Pass a dict that matches the input schema
 hackernews_agent.print_response(
-    input={
-        "topic": "AI",
-        "focus_areas": ["AI", "Machine Learning"],
-        "target_audience": "Developers",
-        "sources_required": "5",
-    }
+    input=ResearchTopic(
+        topic="AI",
+        focus_areas=["AI", "Machine Learning"],
+        target_audience="Developers",
+        sources_required=5,
+    )
 )
-
-# Pass a pydantic model that matches the input schema
-# hackernews_agent.print_response(
-#     input=ResearchTopic(
-#         topic="AI",
-#         focus_areas=["AI", "Machine Learning"],
-#         target_audience="Developers",
-#         sources_required=5,
-#     )
-# )

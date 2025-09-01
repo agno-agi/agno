@@ -118,7 +118,7 @@ content_creation_workflow = Workflow(
     steps=[research_step, content_planning_step],
 )
 
-# Initialize the Playground with the workflows
+# Initialize the AgentOS with the workflows
 agent_os = AgentOS(
     description="Example app for basic agent with playground capabilities",
     workflows=[content_creation_workflow],

@@ -49,52 +49,21 @@ team = Team(
     mode="coordinate",  # Use coordinate mode for simpler team behavior
     model=OpenAIChat(id="gpt-4o-mini"),
     members=[profile_agent, context_agent],
+    dependencies={
+        "user_profile": get_user_profile,
+        "current_context": get_current_context,
+    },
+    instructions=[
+        "You are a personalization team that provides personalized recommendations based on the user's profile and context.",
+        "Here is the user profile: {user_profile}",
+        "Here is the current context: {current_context}",
+    ],
+    debug_mode=True,
     markdown=True,
 )
 
 response = team.run(
     "Please provide me with a personalized summary of today's priorities based on my profile and interests.",
-    dependencies={
-        "user_profile": get_user_profile,
-        "current_context": get_current_context,
-    },
-    add_dependencies_to_context=True,
 )
 
 print(response.content)
-
-# ------------------------------------------------------------
-# ASYNC EXAMPLE
-# ------------------------------------------------------------
-# async def test_async():
-#     async_response = await team.arun(
-#         "Based on my profile, what should I focus on this week? Include specific recommendations.",
-#         dependencies={
-#             "user_profile": get_user_profile,
-#             "current_context": get_current_context,
-#         },
-#         add_dependencies_to_context=True,
-#         debug_mode=True,
-#     )
-#
-#     print("\n=== Async Run Response ===")
-#     print(async_response.content)
-
-# # Run the async test
-# import asyncio
-# asyncio.run(test_async())
-
-# ------------------------------------------------------------
-# PRINT RESPONSE
-# ------------------------------------------------------------
-# team.print_response(
-#     "Please provide me with a personalized summary of today's priorities based on my profile and interests.",
-#     dependencies={
-#         "user_profile": get_user_profile,
-#         "current_context": get_current_context,
-#     },
-#     add_dependencies_to_context=True,
-#     debug_mode=True,
-# )
-
-# print(response.content)

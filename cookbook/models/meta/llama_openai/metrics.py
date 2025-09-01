@@ -17,8 +17,10 @@ run_stream: Iterator[RunOutputEvent] = agent.run(
 )
 pprint_run_response(run_stream, markdown=True)
 
+run_response = agent.get_last_run_output()
+
 # Print metrics per message
-if agent.run_response.messages:
+if run_response.messages:
     for message in agent.run_response.messages:
         if message.role == "assistant":
             if message.content:
@@ -31,7 +33,7 @@ if agent.run_response.messages:
 
 # Print the metrics
 print("---" * 5, "Collected Metrics", "---" * 5)
-pprint(agent.run_response.metrics)
+pprint(run_response.metrics)
 # Print the session metrics
 print("---" * 5, "Session Metrics", "---" * 5)
-pprint(agent.session_metrics)
+pprint(agent.get_session_metrics())

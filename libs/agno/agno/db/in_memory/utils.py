@@ -5,33 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from agno.db.base import SessionType
-from agno.run.agent import RunOutput
-from agno.run.team import TeamRunOutput
-from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug
-
-
-def hydrate_session(session: dict) -> dict:
-    """Convert nested dictionaries to their corresponding object types.
-
-    Args:
-        session (dict): The session dictionary to hydrate.
-
-    Returns:
-        dict: The hydrated session dictionary.
-    """
-    if session.get("summary") is not None:
-        session["summary"] = SessionSummary.from_dict(session["summary"])
-    if session.get("runs") is not None:
-        if session["session_type"] == SessionType.AGENT:
-            session["runs"] = [RunOutput.from_dict(run) if isinstance(run, dict) else run for run in session["runs"]]
-        elif session["session_type"] == SessionType.TEAM:
-            session["runs"] = [
-                TeamRunOutput.from_dict(run) if isinstance(run, dict) else run for run in session["runs"]
-            ]
-
-    return session
 
 
 def apply_sorting(

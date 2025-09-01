@@ -4,13 +4,7 @@
 ## Overview
 The WhatsApp API module provides integration between WhatsApp Business API and AI agents, allowing for automated message handling and responses through WhatsApp. The module is built on FastAPI and supports various agent configurations.
 
-## Module Structure
-
-### Core Components
-- `WhatsappAPI`: Main class for creating WhatsApp API endpoints
-- `serve_whatsapp_app`: Function to serve the WhatsApp application
-
-### Example Implementations
+## Example Implementations
 1. **Basic WhatsApp Agent** (`basic.py`)
    - Simple implementation with basic agent configuration
    - Uses GPT-4 model

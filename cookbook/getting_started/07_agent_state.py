@@ -40,4 +40,4 @@ print("Testing counter functionality...")
 agent.print_response(
     "Let's increment the counter 3 times and observe the state changes!", stream=True
 )
-print(f"Final session state: {agent.session_state}")
+print(f"Final session state: {agent.get_session_state()}")

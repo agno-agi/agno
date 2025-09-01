@@ -394,7 +394,7 @@ async def test_team_memory_with_multiple_members(shared_db):
                     "content": f"Mock response for {messages[-1].content[:50]}...",
                     "run_id": f"mock_run_{hash(str(messages))}",
                     "model": self.name,
-                    "thinking": None,
+                    "reasoning_content": None,
                     "citations": None,
                     "tool_executions": None,
                     "tool_calls": [],

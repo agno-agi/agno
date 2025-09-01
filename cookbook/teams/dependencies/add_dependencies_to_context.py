@@ -4,13 +4,7 @@ from agno.team import Team
 
 
 def get_user_profile(user_id: str = "john_doe") -> dict:
-    """Get user profile information that can be referenced in responses.
-
-    Args:
-        user_id: The user ID to get profile for
-    Returns:
-        Dictionary containing user profile information
-    """
+    """Get user profile information that can be referenced in responses."""
     profiles = {
         "john_doe": {
             "name": "John Doe",

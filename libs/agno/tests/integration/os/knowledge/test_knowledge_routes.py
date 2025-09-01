@@ -43,7 +43,7 @@ def mock_content():
 def test_app(mock_knowledge):
     """Create a FastAPI test app with knowledge routes."""
     app = FastAPI()
-    router = attach_routes(APIRouter(), mock_knowledge)
+    router = attach_routes(APIRouter(), [mock_knowledge])
     app.include_router(router)
     return TestClient(app)
 
@@ -54,13 +54,13 @@ class TestKnowledgeContentEndpoints:
     def test_upload_content_success(self, test_app, mock_knowledge, mock_content):
         """Test successful content upload."""
         # Mock the background task processing
-        with patch("agno.os.apps.knowledge.router.process_content") as mock_process:  # Fixed import path
+        with patch("agno.os.routers.knowledge.knowledge.process_content") as mock_process:  # Fixed import path
             # Create test file
             test_file_content = b"test file content"
             test_file = BytesIO(test_file_content)
 
             response = test_app.post(
-                "/content",
+                "/knowledge/content",
                 files={"file": ("test.txt", test_file, "text/plain")},
                 data={
                     "name": "Test Content",
@@ -80,9 +80,9 @@ class TestKnowledgeContentEndpoints:
 
     def test_upload_content_with_url(self, test_app, mock_knowledge):
         """Test content upload with URL."""
-        with patch("agno.os.apps.knowledge.router.process_content"):
+        with patch("agno.os.routers.knowledge.knowledge.process_content"):
             response = test_app.post(
-                "/content",
+                "/knowledge/content",
                 data={
                     "name": "URL Content",
                     "description": "Content from URL",
@@ -98,9 +98,9 @@ class TestKnowledgeContentEndpoints:
 
     def test_upload_content_invalid_json(self, test_app):
         """Test content upload with invalid JSON metadata."""
-        with patch("agno.os.apps.knowledge.router.process_content"):
+        with patch("agno.os.routers.knowledge.knowledge.process_content"):
             response = test_app.post(
-                "/content",
+                "/knowledge/content",
                 data={
                     "name": "Test Content",
                     "description": "Test description",
@@ -134,7 +134,7 @@ class TestKnowledgeContentEndpoints:
         mock_knowledge.patch_content.return_value = mock_content_dict
 
         response = test_app.patch(
-            f"/content/{content_id}",
+            f"/knowledge/content/{content_id}",
             data={"name": "Updated Content", "description": "Updated description", "metadata": '{"updated": "true"}'},
         )
 
@@ -154,7 +154,7 @@ class TestKnowledgeContentEndpoints:
         mock_knowledge.readers = {"valid_reader": Mock()}
 
         response = test_app.patch(
-            f"/content/{content_id}", data={"name": "Updated Content", "reader_id": "invalid_reader"}
+            f"/knowledge/content/{content_id}", data={"name": "Updated Content", "reader_id": "invalid_reader"}
         )
 
         assert response.status_code == 400
@@ -165,7 +165,7 @@ class TestKnowledgeContentEndpoints:
         # Mock the knowledge.get_content method
         mock_knowledge.get_content.return_value = ([mock_content], 1)
 
-        response = test_app.get("/content?limit=10&page=1&sort_by=created_at&sort_order=desc")
+        response = test_app.get("/knowledge/content?limit=10&page=1&sort_by=created_at&sort_order=desc")
 
         assert response.status_code == 200
         data = response.json()
@@ -180,7 +180,7 @@ class TestKnowledgeContentEndpoints:
         """Test getting content by ID."""
         mock_knowledge.get_content_by_id.return_value = mock_content
 
-        response = test_app.get(f"/content/{mock_content.id}")
+        response = test_app.get(f"/knowledge/content/{mock_content.id}")
 
         assert response.status_code == 200
         data = response.json()
@@ -200,7 +200,7 @@ class TestKnowledgeContentEndpoints:
             mock_content_instance.name = "test"
             mock_content_class.return_value = mock_content_instance
 
-            response = test_app.get(f"/content/{content_id}")
+            response = test_app.get(f"/knowledge/content/{content_id}")
 
             # The response depends on how the Knowledge class handles None returns
             assert response.status_code in [200, 404]
@@ -209,7 +209,7 @@ class TestKnowledgeContentEndpoints:
         """Test deleting content by ID."""
         content_id = str(uuid4())
 
-        response = test_app.delete(f"/content/{content_id}")
+        response = test_app.delete(f"/knowledge/content/{content_id}")
 
         assert response.status_code == 200
         data = response.json()
@@ -220,7 +220,7 @@ class TestKnowledgeContentEndpoints:
 
     def test_delete_all_content(self, test_app, mock_knowledge):
         """Test deleting all content."""
-        response = test_app.delete("/content")
+        response = test_app.delete("/knowledge/content")
 
         assert response.status_code == 200
         assert response.text == '"success"'
@@ -234,7 +234,7 @@ class TestKnowledgeContentEndpoints:
         # Mock the method to return a tuple (status, status_message)
         mock_knowledge.get_content_status.return_value = (ContentStatus.FAILED, "Could not read content")
 
-        response = test_app.get(f"/content/{content_id}/status")
+        response = test_app.get(f"/knowledge/content/{content_id}/status")
 
         assert response.status_code == 200
         data = response.json()
@@ -254,16 +254,17 @@ class TestKnowledgeContentEndpoints:
         # Mock get_filters to return a list
         mock_knowledge.get_filters.return_value = ["filter_tag_1", "filter_tag2"]
 
-        response = test_app.get("/config")
+        response = test_app.get("/knowledge/config")
 
         assert response.status_code == 200
         data = response.json()
         assert "readers" in data
         assert "filters" in data
-        assert len(data["readers"]) == 1
-        assert data["readers"][0]["id"] == "text_reader"
-        assert data["readers"][0]["name"] == "Text Reader"
-        assert data["readers"][0]["description"] == "Test reader description"
+
+        latest_reader = next(reversed(data["readers"]))
+        assert data["readers"][latest_reader]["id"] == "text_reader"
+        assert data["readers"][latest_reader]["name"] == "Text Reader"
+        assert data["readers"][latest_reader]["description"] == "Test reader description"
         assert data["filters"] == ["filter_tag_1", "filter_tag2"]
 
 
@@ -312,13 +313,15 @@ class TestFileUploadScenarios:
 
     def test_upload_large_file(self, test_app):
         """Test uploading a large file."""
-        with patch("agno.os.apps.knowledge.router.process_content"):
+        with patch("agno.os.routers.knowledge.knowledge.process_content"):
             # Create a large file content
             large_content = b"x" * (10 * 1024 * 1024)  # 10MB
             test_file = BytesIO(large_content)
 
             response = test_app.post(
-                "/content", files={"file": ("large_file.txt", test_file, "text/plain")}, data={"name": "Large File"}
+                "/knowledge/content",
+                files={"file": ("large_file.txt", test_file, "text/plain")},
+                data={"name": "Large File"},
             )
 
             assert response.status_code == 202
@@ -327,9 +330,9 @@ class TestFileUploadScenarios:
 
     def test_upload_without_file(self, test_app):
         """Test uploading content without a file."""
-        with patch("agno.os.apps.knowledge.router.process_content"):
+        with patch("agno.os.routers.knowledge.knowledge.process_content"):
             response = test_app.post(
-                "/content",
+                "/knowledge/content",
                 data={"name": "Text Content", "description": "Content without file", "metadata": '{"type": "text"}'},
             )
 
@@ -339,11 +342,11 @@ class TestFileUploadScenarios:
 
     def test_upload_with_special_characters(self, test_app):
         """Test uploading content with special characters in metadata."""
-        with patch("agno.os.apps.knowledge.router.process_content"):
+        with patch("agno.os.routers.knowledge.knowledge.process_content"):
             special_metadata = {"special_chars": "!@#$%^&*()", "unicode": "测试内容", "quotes": '{"nested": "value"}'}
 
             response = test_app.post(
-                "/content", data={"name": "Special Content", "metadata": json.dumps(special_metadata)}
+                "/knowledge/content", data={"name": "Special Content", "metadata": json.dumps(special_metadata)}
             )
 
             assert response.status_code == 202
