@@ -222,6 +222,8 @@ class Agent:
     read_tool_call_history: bool = False
     # If False, media (images, videos, audio, files) is only available to tools and not sent to the LLM
     send_media_to_model: bool = True
+    # If True, store media in run output
+    store_media: bool = True
 
     # --- System message settings ---
     # Provide the system message as a string or function
@@ -358,6 +360,7 @@ class Agent:
         session_summary_manager: Optional[SessionSummaryManager] = None,
         add_history_to_context: bool = False,
         num_history_runs: int = 3,
+        store_media: bool = True,
         knowledge: Optional[Knowledge] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         enable_agentic_knowledge_filters: Optional[bool] = None,
@@ -448,6 +451,8 @@ class Agent:
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
 
+        self.store_media = store_media
+
         self.knowledge = knowledge
         self.knowledge_filters = knowledge_filters
         self.enable_agentic_knowledge_filters = enable_agentic_knowledge_filters
@@ -472,8 +477,7 @@ class Agent:
         self.search_knowledge = search_knowledge
         self.update_knowledge = update_knowledge
         self.read_tool_call_history = read_tool_call_history
-        self.send_media_to_model = send_media_to_model
-        
+        self.send_media_to_model = send_media_to_model        
         self.system_message = system_message
         self.system_message_role = system_message_role
         self.build_context = build_context
@@ -1128,20 +1132,6 @@ class Agent:
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-        self._determine_tools_for_model(
-            model=self.model,
-            run_response=run_response,
-            session=agent_session,
-            session_state=session_state,
-            images=images,
-            videos=videos,
-            audios=audio,
-            files=files,
-            user_id=user_id,
-            async_mode=False,
-            knowledge_filters=effective_filters,
-        )
-
         # If no retries are set, use the agent's default retries
         retries = retries if retries is not None else self.retries
 
@@ -1168,6 +1158,17 @@ class Agent:
                 )
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
+
+                self._determine_tools_for_model(
+                    model=self.model,
+                    run_response=run_response,
+                    session=agent_session,
+                    session_state=session_state,
+                    run_messages=run_messages,
+                    user_id=user_id,
+                    async_mode=False,
+                    knowledge_filters=effective_filters,
+                )
 
                 if stream:
                     response_iterator = self._run_stream(
@@ -1673,20 +1674,6 @@ class Agent:
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-        self._determine_tools_for_model(
-            model=self.model,
-            run_response=run_response,
-            session=agent_session,
-            session_state=session_state,
-            images=images,
-            videos=videos,
-            audios=audio,
-            files=files,
-            user_id=user_id,
-            async_mode=True,
-            knowledge_filters=effective_filters,
-        )
-
         # If no retries are set, use the agent's default retries
         retries = retries if retries is not None else self.retries
 
@@ -1716,6 +1703,17 @@ class Agent:
                     log_error("No messages to be sent to the model.")
 
                 run_messages = run_messages
+
+                self._determine_tools_for_model(
+                    model=self.model,
+                    run_response=run_response,
+                    session=agent_session,
+                    session_state=session_state,
+                    run_messages=run_messages,
+                    user_id=user_id,
+                    async_mode=False,
+                    knowledge_filters=effective_filters,
+                )
 
                 # Pass the new run_response to _arun
                 if stream:
@@ -2929,6 +2927,71 @@ class Agent:
                 _t.requires_user_input = False
                 _t.answered = True
 
+    def _store_media(self, run_messages: RunMessages, run_response: RunOutput, model_response: ModelResponse):
+        """Store media from run_messages in run_response for persistence"""
+        from agno.utils.log import log_debug
+        
+        # Store input media from run_messages in run_response for persistence
+        if run_messages.images:
+            for image in run_messages.images:
+                try:
+                    if image.url:
+                        image_id = str(uuid4())
+                        image_artifact = ImageArtifact(id=image_id, url=image.url)
+                    elif image.content:
+                        image_id = str(uuid4())
+                        image_artifact = ImageArtifact(id=image_id, content=image.content)
+                    else:
+                        continue
+                    
+                    self._add_image(image_artifact, run_response)
+                except Exception as e:
+                    log_warning(f"Error creating ImageArtifact: {e}")
+                    continue
+
+        if run_messages.videos:
+            for video in run_messages.videos:
+                # Convert Video to VideoArtifact for storage
+                try:
+                    if video.url:
+                        video_artifact = VideoArtifact(id=str(uuid4()), url=video.url)
+                    elif video.content:
+                        video_artifact = VideoArtifact(id=str(uuid4()), content=video.content)
+                    else:
+                        continue
+                    self._add_video(video_artifact, run_response)
+                except Exception as e:
+                    log_warning(f"Error creating VideoArtifact: {e}")
+                    continue
+
+        if run_messages.audios:
+            for audio in run_messages.audios:
+                # Convert Audio to AudioArtifact for storage
+                try:
+                    if audio.url:
+                        audio_artifact = AudioArtifact(id=str(uuid4()), url=audio.url)
+                    elif audio.content:
+                        audio_artifact = AudioArtifact(id=str(uuid4()), content=audio.content)
+                    else:
+                        continue
+                    self._add_audio(audio_artifact, run_response)
+                except Exception as e:
+                    log_warning(f"Error creating AudioArtifact: {e}")
+                    continue
+
+        # Handle unified media fields from ModelResponse (generated media)
+        if model_response.images is not None:
+            for image in model_response.images:
+                self._add_image(image, run_response)
+
+        if model_response.videos is not None:
+            for video in model_response.videos:
+                self._add_video(video, run_response)
+
+        if model_response.audios is not None:
+            for audio in model_response.audios:
+                self._add_audio(audio, run_response)
+
     def _update_run_response(self, model_response: ModelResponse, run_response: RunOutput, run_messages: RunMessages):
         # Handle structured outputs
         if self.output_schema is not None and model_response.parsed is not None:
@@ -2971,18 +3034,8 @@ class Agent:
                         run_response=run_response, tool_name=tool_name, tool_args=tool_args
                     )
 
-        # Handle unified media fields from ModelResponse
-        if model_response.images is not None:
-            for image in model_response.images:
-                self._add_image(image, run_response)
-
-        if model_response.videos is not None:
-            for video in model_response.videos:
-                self._add_video(video, run_response)
-
-        if model_response.audios is not None:
-            for audio in model_response.audios:
-                self._add_audio(audio, run_response)
+        if self.store_media:
+            self._store_media(run_messages, run_response, model_response)
 
         # Update the run_response audio with the model response audio
         if model_response.audio is not None:
@@ -3691,16 +3744,59 @@ class Agent:
 
         return agent_tools
 
+    def _collect_joint_images(
+        self, 
+        run_messages: RunMessages,  # Pass the whole RunMessages instead of individual fields
+        run_response: RunOutput
+    ) -> Optional[Sequence[Image]]:
+        """Collect images from input, session history, and current run response."""
+        from agno.utils.log import log_debug
+        
+        joint_images = []
+        
+        # 1. Add images from current input (from RunMessages)
+        if run_messages.images:
+            joint_images.extend(run_messages.images)
+            log_debug(f"Added {len(run_messages.images)} input images to joint list")
+        
+        # 2. Add images from session history
+        try:
+            session = self.get_session()
+            if session and session.runs:
+                for historical_run in session.runs:
+                    if historical_run.run_id != run_response.run_id and historical_run.images:
+                        for artifact in historical_run.images:
+                            # Convert ImageArtifact back to Image for tool use
+                            from agno.media import Image
+                            if artifact.url:
+                                joint_images.append(Image(url=artifact.url))
+                            elif artifact.content:
+                                joint_images.append(Image(content=artifact.content))
+                        log_debug(f"Added {len(historical_run.images)} images from historical run {historical_run.run_id}")
+        except Exception as e:
+            log_warning(f"Could not access session history for images: {e}")
+        
+        # 3. Add images from current run response (tool-generated)
+        if run_response.images:
+            for artifact in run_response.images:
+                # Convert ImageArtifact back to Image for tool use
+                from agno.media import Image
+                if artifact.url:
+                    joint_images.append(Image(url=artifact.url))
+                elif artifact.content:
+                    joint_images.append(Image(content=artifact.content))
+            log_debug(f"Added {len(run_response.images)} images from current run response")
+        
+        log_debug(f"Joint Images Available: {len(joint_images)} images")
+        return joint_images if joint_images else None
+
     def _determine_tools_for_model(
         self,
         model: Model,
         run_response: RunOutput,
         session: AgentSession,
+        run_messages: RunMessages,
         session_state: Optional[Dict[str, Any]] = None,
-        images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None,
-        audios: Optional[Sequence[Audio]] = None,
-        files: Optional[Sequence[File]] = None,
         user_id: Optional[str] = None,
         async_mode: bool = False,
         knowledge_filters: Optional[Dict[str, Any]] = None,
@@ -3793,12 +3889,12 @@ class Agent:
 
         # Update the session state for the functions
         if self._functions_for_model:
+            # Collect joint media from all sources using RunMessages
+            joint_images = self._collect_joint_images(run_messages, run_response)
+            
             for func in self._functions_for_model.values():
                 func._session_state = session_state
-                func._images = images
-                func._videos = videos
-                func._audios = audios
-                func._files = files
+                func._images = joint_images
 
     def _model_should_return_structured_output(self):
         self.model = cast(Model, self.model)
@@ -4910,8 +5006,6 @@ class Agent:
                 metadata=metadata,
                 **kwargs,
             )
-
-            print('--> user message', user_message)
 
         # 4.2 If input is provided as a Message, use it directly
         elif isinstance(input, Message):
