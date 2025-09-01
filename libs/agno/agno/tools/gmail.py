@@ -53,6 +53,7 @@ from pathlib import Path
 from typing import Any, List, Optional, Union
 
 from agno.tools import Toolkit
+from agno.tools.gmail_models import EmailInfo, EmailSearchResponse, MarkAsReadResponse, SendEmailResponse
 
 try:
     from email.mime.application import MIMEApplication
@@ -112,6 +113,7 @@ class GmailTools(Toolkit):
         send_email: bool = True,
         send_email_reply: bool = True,
         search_emails: bool = True,
+        mark_email_as_read: bool = True,
         creds: Optional[Credentials] = None,
         credentials_path: Optional[str] = None,
         token_path: Optional[str] = None,
@@ -133,6 +135,7 @@ class GmailTools(Toolkit):
             send_email (bool): Enable sending emails. Defaults to True.
             search_emails (bool): Enable searching emails. Defaults to True.
             send_email_reply (bool): Enable sending email replies. Defaults to True.
+            mark_email_as_read (bool): Enable marking emails as read. Defaults to True.
             creds (Optional[Credentials]): Pre-fetched OAuth credentials. Use this to skip a new auth flow. Defaults to None.
             credentials_path (Optional[str]): Path to credentials file. Defaults to None.
             token_path (Optional[str]): Path to token file. Defaults to None.
@@ -150,6 +153,13 @@ class GmailTools(Toolkit):
         if (create_draft_email or send_email) and "https://www.googleapis.com/auth/gmail.compose" not in self.scopes:
             raise ValueError(
                 "The scope https://www.googleapis.com/auth/gmail.compose is required for email composition operations"
+            )
+
+        # Check for modify operations (marking as read requires modify scope)
+        modify_operations = [mark_email_as_read]
+        if any(modify_operations) and "https://www.googleapis.com/auth/gmail.modify" not in self.scopes:
+            raise ValueError(
+                "The scope https://www.googleapis.com/auth/gmail.modify is required for email modification operations"
             )
 
         read_operations = [
@@ -192,6 +202,8 @@ class GmailTools(Toolkit):
             tools.append(self.send_email_reply)
         if search_emails:
             tools.append(self.search_emails)
+        if mark_email_as_read:
+            tools.append(self.mark_email_as_read)
 
         super().__init__(name="gmail_tools", tools=tools, **kwargs)
 
@@ -271,7 +283,7 @@ class GmailTools(Toolkit):
             return f"Unexpected error retrieving latest emails: {type(error).__name__}: {error}"
 
     @authenticate
-    def get_emails_from_user(self, user: str, count: int) -> str:
+    def get_emails_from_user(self, user: str, count: int) -> EmailSearchResponse:
         """
         Get X number of emails from a specific user (name or email).
 
@@ -280,20 +292,34 @@ class GmailTools(Toolkit):
             count (int): Maximum number of emails to retrieve
 
         Returns:
-            str: Formatted string containing email details
+            EmailSearchResponse: Structured response containing emails from the specified user
         """
         try:
             query = f"from:{user}" if "@" in user else f"from:{user}*"
             results = self.service.users().messages().list(userId="me", q=query, maxResults=count).execute()  # type: ignore
-            emails = self._get_message_details(results.get("messages", []))
-            return self._format_emails(emails)
+            messages = results.get("messages", [])
+
+            # Get full message details
+            email_infos = []
+            for msg in messages:
+                try:
+                    msg_data = self.service.users().messages().get(userId="me", id=msg["id"], format="full").execute()  # type: ignore
+                    email_info = EmailInfo.from_gmail_message(msg_data)
+                    # Extract body content
+                    email_info.body = self._get_message_body(msg_data)
+                    email_infos.append(email_info)
+                except Exception as e:
+                    # Skip this email if we can't process it, but continue with others
+                    continue
+
+            return EmailSearchResponse.success_response(email_infos)
         except HttpError as error:
-            return f"Error retrieving emails from {user}: {error}"
+            return EmailSearchResponse.error_response(f"HTTP Error: {error}")
         except Exception as error:
-            return f"Unexpected error retrieving emails from {user}: {type(error).__name__}: {error}"
+            return EmailSearchResponse.error_response(f"{type(error).__name__}: {error}")
 
     @authenticate
-    def get_unread_emails(self, count: int) -> str:
+    def get_unread_emails(self, count: int) -> EmailSearchResponse:
         """
         Get the X number of latest unread emails from the user's inbox.
 
@@ -301,16 +327,30 @@ class GmailTools(Toolkit):
             count (int): Maximum number of unread emails to retrieve
 
         Returns:
-            str: Formatted string containing email details
+            EmailSearchResponse: Structured response containing unread emails
         """
         try:
             results = self.service.users().messages().list(userId="me", q="is:unread", maxResults=count).execute()  # type: ignore
-            emails = self._get_message_details(results.get("messages", []))
-            return self._format_emails(emails)
+            messages = results.get("messages", [])
+
+            # Get full message details
+            email_infos = []
+            for msg in messages:
+                try:
+                    msg_data = self.service.users().messages().get(userId="me", id=msg["id"], format="full").execute()  # type: ignore
+                    email_info = EmailInfo.from_gmail_message(msg_data)
+                    # Extract body content
+                    email_info.body = self._get_message_body(msg_data)
+                    email_infos.append(email_info)
+                except Exception as e:
+                    # Skip this email if we can't process it, but continue with others
+                    continue
+
+            return EmailSearchResponse.success_response(email_infos)
         except HttpError as error:
-            return f"Error retrieving unread emails: {error}"
+            return EmailSearchResponse.error_response(f"HTTP Error: {error}")
         except Exception as error:
-            return f"Unexpected error retrieving unread emails: {type(error).__name__}: {error}"
+            return EmailSearchResponse.error_response(f"{type(error).__name__}: {error}")
 
     @authenticate
     def get_emails_by_thread(self, thread_id: str) -> str:
@@ -406,6 +446,31 @@ class GmailTools(Toolkit):
             return f"Unexpected error retrieving emails by date: {type(error).__name__}: {error}"
 
     @authenticate
+    def mark_email_as_read(self, message_id: str) -> MarkAsReadResponse:
+        """
+        Mark a specific email as read by removing the 'UNREAD' label.
+        This is crucial for long polling scenarios to prevent processing the same email multiple times.
+
+        Args:
+            message_id (str): The ID of the message to mark as read
+
+        Returns:
+            MarkAsReadResponse: Structured response with success status and updated message info
+        """
+        try:
+            # Remove the UNREAD label to mark the email as read
+            modify_request = {"removeLabelIds": ["UNREAD"]}
+
+            result = self.service.users().messages().modify(userId="me", id=message_id, body=modify_request).execute()  # type: ignore
+
+            return MarkAsReadResponse.success_response(message_id, result)
+
+        except HttpError as error:
+            return MarkAsReadResponse.error_response(message_id, f"HTTP Error: {error}")
+        except Exception as error:
+            return MarkAsReadResponse.error_response(message_id, f"{type(error).__name__}: {error}")
+
+    @authenticate
     def create_draft_email(
         self,
         to: str,
@@ -456,7 +521,7 @@ class GmailTools(Toolkit):
         body: str,
         cc: Optional[str] = None,
         attachments: Optional[Union[str, List[str]]] = None,
-    ) -> str:
+    ) -> SendEmailResponse:
         """
         Send an email immediately. to and cc are comma separated string of email ids
         Args:
@@ -467,29 +532,36 @@ class GmailTools(Toolkit):
             attachments (Optional[Union[str, List[str]]]): File path(s) for attachments (optional)
 
         Returns:
-            str: Stringified dictionary containing sent email details including id
+            SendEmailResponse: Structured response with success status and message details
         """
-        self._validate_email_params(to, subject, body)
+        try:
+            self._validate_email_params(to, subject, body)
 
-        # Process attachments
-        attachment_files = []
-        if attachments:
-            if isinstance(attachments, str):
-                attachment_files = [attachments]
-            else:
-                attachment_files = attachments
+            # Process attachments
+            attachment_files = []
+            if attachments:
+                if isinstance(attachments, str):
+                    attachment_files = [attachments]
+                else:
+                    attachment_files = attachments
 
-            # Validate attachment files
-            for file_path in attachment_files:
-                if not Path(file_path).exists():
-                    raise ValueError(f"Attachment file not found: {file_path}")
+                # Validate attachment files
+                for file_path in attachment_files:
+                    if not Path(file_path).exists():
+                        return SendEmailResponse.error_response(f"Attachment file not found: {file_path}")
 
-        body = body.replace("\n", "<br>")
-        message = self._create_message(
-            to.split(","), subject, body, cc.split(",") if cc else None, attachments=attachment_files
-        )
-        message = self.service.users().messages().send(userId="me", body=message).execute()  # type: ignore
-        return str(message)
+            body = body.replace("\n", "<br>")
+            message = self._create_message(
+                to.split(","), subject, body, cc.split(",") if cc else None, attachments=attachment_files
+            )
+            result = self.service.users().messages().send(userId="me", body=message).execute()  # type: ignore
+            return SendEmailResponse.success_response(result)
+        except ValueError as error:
+            return SendEmailResponse.error_response(f"Validation Error: {error}")
+        except HttpError as error:
+            return SendEmailResponse.error_response(f"HTTP Error: {error}")
+        except Exception as error:
+            return SendEmailResponse.error_response(f"{type(error).__name__}: {error}")
 
     @authenticate
     def send_email_reply(
