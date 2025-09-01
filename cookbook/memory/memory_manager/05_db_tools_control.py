@@ -4,7 +4,7 @@ Control Memory Database Tools - Add, Update, Delete, and Clear Operations
 This cookbook demonstrates how to control which memory database operations
 are available to the AI model using the four DB tools parameters:
 - add_memories: Controls whether the AI can add new memories
-- update_memories: Controls whether the AI can update existing memories  
+- update_memories: Controls whether the AI can update existing memories
 - delete_memories: Controls whether the AI can delete individual memories
 - clear_memories: Controls whether the AI can clear all memories
 
@@ -26,7 +26,7 @@ memory_manager_full = MemoryManager(
     model=OpenAIChat(id="gpt-4o"),
     db=memory_db,
     add_memories=True,
-    update_memories=True, 
+    update_memories=True,
 )
 
 agent_full = Agent(

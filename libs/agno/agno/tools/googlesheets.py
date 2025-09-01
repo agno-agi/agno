@@ -139,7 +139,9 @@ class GoogleSheetsTools(Toolkit):
         else:
             self.scopes = scopes
             # Validate that required scopes are present for requested operations
-            if (enable_create_sheet or enable_update_sheet or enable_create_duplicate_sheet) and self.DEFAULT_SCOPES["write"] not in self.scopes:
+            if (enable_create_sheet or enable_update_sheet or enable_create_duplicate_sheet) and self.DEFAULT_SCOPES[
+                "write"
+            ] not in self.scopes:
                 raise ValueError(f"The scope {self.DEFAULT_SCOPES['write']} is required for write operations")
             if (
                 enable_read_sheet

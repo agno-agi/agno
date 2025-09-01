@@ -88,7 +88,7 @@ def test_init_with_invalid_scopes_include_tools():
             scopes=custom_scopes,
             include_tools=["create_draft_email", "send_email"],
         )
-    
+
     # Check that it doesn't raise an error if different tools are included
     GmailTools(
         scopes=custom_scopes,

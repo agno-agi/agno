@@ -155,9 +155,11 @@ class GmailTools(Toolkit):
         ]
 
         super().__init__(name="gmail_tools", tools=tools, **kwargs)
-        
+
         # Validate that required scopes are present for requested operations (only check registered functions)
-        if ("create_draft_email" in self.functions or "send_email" in self.functions) and "https://www.googleapis.com/auth/gmail.compose" not in self.scopes:
+        if (
+            "create_draft_email" in self.functions or "send_email" in self.functions
+        ) and "https://www.googleapis.com/auth/gmail.compose" not in self.scopes:
             raise ValueError(
                 "The scope https://www.googleapis.com/auth/gmail.compose is required for email composition operations"
             )
