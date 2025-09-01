@@ -133,7 +133,7 @@ redis = ["redis"]
 # Dependencies for Vector databases
 pgvector = ["pgvector"]
 chromadb = ["chromadb"]
-lancedb = ["lancedb>=0.20.0", "tantivy"]
+lancedb = ["lancedb>=0.24.0", "tantivy"]
 qdrant = ["qdrant-client"]
 couchbase = ["couchbase"]
 cassandra = ["cassio"]
