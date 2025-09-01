@@ -41,6 +41,9 @@ VIRTUAL_ENV=${VENV_DIR} uv pip install crawl4ai==0.6.3
 VIRTUAL_ENV=${VENV_DIR} uv pip install firecrawl-py==3.4.0
 VIRTUAL_ENV=${VENV_DIR} uv pip install chonkie[st]
 VIRTUAL_ENV=${VENV_DIR} uv pip install chonkie
+VIRTUAL_ENV=${VENV_DIR} uv pip install pylance
+
+
 
 print_heading "Installing agno-os"
 print_info "VIRTUAL_ENV=${VENV_DIR} uv pip install -r ${AGNO_INFRA_DIR}/requirements.txt"
