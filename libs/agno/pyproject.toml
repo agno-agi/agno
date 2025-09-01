@@ -291,6 +291,7 @@ tests = [
     "types-aiofiles",
     "fastapi",
     "uvicorn",
+    "agno[dev]",
     "agno[models]",
     "agno[tools]",
     "agno[storage]",
