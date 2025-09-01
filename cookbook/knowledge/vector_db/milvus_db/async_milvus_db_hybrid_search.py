@@ -1,7 +1,7 @@
 import asyncio
 
 from agno.agent import Agent
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.milvus import Milvus, SearchType
 
 # Initialize Milvus
@@ -14,9 +14,12 @@ vector_db = Milvus(
     collection="recipes", uri="tmp/milvus.db", search_type=SearchType.hybrid
 )
 # Create knowledge base
-knowledge_base = PDFUrlKnowledgeBase(
-    urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
+knowledge_base = Knowledge(
     vector_db=vector_db,
+)
+
+knowledge_base.add_content(
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
 )
 
 # Create and use the agent

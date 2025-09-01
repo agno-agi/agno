@@ -2,8 +2,7 @@
 # docker run --rm --pull always -p 8000:8000 surrealdb/surrealdb:latest start --user root --pass root
 
 from agno.agent import Agent
-from agno.embedder.openai import OpenAIEmbedder
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.surrealdb import SurrealDb
 from surrealdb import Surreal
 
@@ -30,14 +29,14 @@ surrealdb = SurrealDb(
 
 def sync_demo():
     """Demonstrate synchronous usage of SurrealDb"""
-    knowledge_base = PDFUrlKnowledgeBase(
-        urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
+    knowledge_base = Knowledge(
         vector_db=surrealdb,
-        embedder=OpenAIEmbedder(),
     )
 
     # Load data synchronously
-    knowledge_base.load(recreate=True)
+    knowledge_base.add_content(
+        url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+    )
 
     # Create agent and query synchronously
     agent = Agent(knowledge=knowledge_base)

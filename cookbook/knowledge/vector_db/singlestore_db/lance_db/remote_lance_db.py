@@ -8,7 +8,7 @@ This example shows how to use a remote LanceDB database.
 # install lancedb - `pip install lancedb`
 
 from agno.agent import Agent
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.lancedb import LanceDb
 
 # Initialize Remote LanceDB
@@ -19,12 +19,13 @@ vector_db = LanceDb(
 )
 
 # Create knowledge base
-knowledge_base = PDFUrlKnowledgeBase(
-    urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
+knowledge_base = Knowledge(
     vector_db=vector_db,
 )
 
-knowledge_base.load(recreate=False)  # Comment out after first run
+knowledge_base.add_content(
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+)
 
 # Create and use the agent
 agent = Agent(knowledge=knowledge_base)
