@@ -763,6 +763,9 @@ class Agent:
         # 3. Update the RunOutput with the model response
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
+        if self.store_media:
+            self._store_media(run_messages, run_response, model_response)
+
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
             return self._handle_agent_run_paused(
@@ -1298,6 +1301,9 @@ class Agent:
 
         # 3. Update the RunOutput with the model response
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
+
+        if self.store_media:
+            self._store_media(run_messages, run_response, model_response)
 
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
@@ -3033,9 +3039,6 @@ class Agent:
                     self._update_reasoning_content_from_tool_call(
                         run_response=run_response, tool_name=tool_name, tool_args=tool_args
                     )
-
-        if self.store_media:
-            self._store_media(run_messages, run_response, model_response)
 
         # Update the run_response audio with the model response audio
         if model_response.audio is not None:
