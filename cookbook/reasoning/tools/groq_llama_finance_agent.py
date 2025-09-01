@@ -2,19 +2,14 @@ from textwrap import dedent
 
 from agno.agent import Agent
 from agno.models.groq import Groq
+from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.reasoning import ReasoningTools
-from agno.tools.yfinance import YFinanceTools
 
 thinking_llama = Agent(
     model=Groq(id="meta-llama/llama-4-scout-17b-16e-instruct"),
     tools=[
         ReasoningTools(),
-        YFinanceTools(
-            stock_price=True,
-            analyst_recommendations=True,
-            company_info=True,
-            company_news=True,
-        ),
+        DuckDuckGoTools(),
     ],
     instructions=dedent("""\
     ## General Instructions

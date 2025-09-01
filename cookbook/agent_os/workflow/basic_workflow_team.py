@@ -59,7 +59,7 @@ content_creation_workflow = Workflow(
     steps=[research_step, content_planning_step],
 )
 
-# Initialize the Playground with the workflows
+# Initialize the AgentOS with the workflows
 agent_os = AgentOS(
     description="Example OS setup",
     workflows=[content_creation_workflow],

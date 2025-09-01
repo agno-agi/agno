@@ -71,7 +71,7 @@ hn_team = Team(
         "Finally, provide a thoughtful and engaging summary.",
     ],
     output_schema=Article,
-    add_member_tools_to_system_message=False,
+    add_member_tools_to_context=False,
     markdown=True,
     show_members_responses=True,
     enable_agentic_context=True,

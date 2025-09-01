@@ -269,7 +269,8 @@ knowledge = [
   "agno[docx]",
   "agno[text]",
   "agno[csv]",
-  "agno[markdown]"
+  "agno[markdown]",
+  "agno[chonkie]"
 ]
 
 # All embedders

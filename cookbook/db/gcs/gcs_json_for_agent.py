@@ -15,7 +15,7 @@ base_bucket_name = "example-gcs-bucket"
 unique_bucket_name = f"{base_bucket_name}-{uuid.uuid4().hex[:12]}"
 print(f"Using bucket: {unique_bucket_name}")
 
-# Initialize GCSJsonStorage with explicit credentials, unique bucket name, and project.
+# Initialize GCSJsonDb with explicit credentials, unique bucket name, and project.
 db = GcsJsonDb(
     bucket_name=unique_bucket_name,
     prefix="agent/",
