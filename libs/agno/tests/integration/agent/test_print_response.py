@@ -28,7 +28,6 @@ def test_print_response_with_message_panel():
             with patch.object(agent, "run") as mock_run:
                 mock_response = Mock()
                 mock_response.content = "It is currently 70 degrees and cloudy in Tokyo"
-                mock_response.thinking = None
                 mock_response.formatted_tool_calls = []
                 mock_response.citations = None
                 mock_response.is_paused = False
@@ -82,7 +81,7 @@ def test_panel_creation_and_structure():
             with patch.object(agent, "run") as mock_run:
                 mock_response = Mock()
                 mock_response.content = "Test response content"
-                mock_response.thinking = None
+
                 mock_response.formatted_tool_calls = []
                 mock_response.citations = None
                 mock_response.is_paused = False
@@ -129,7 +128,7 @@ def test_print_response_content_verification():
             with patch.object(agent, "run") as mock_run:
                 mock_response = Mock()
                 mock_response.content = expected_response
-                mock_response.thinking = None
+
                 mock_response.formatted_tool_calls = []
                 mock_response.citations = None
                 mock_response.is_paused = False
@@ -177,7 +176,7 @@ def test_markdown_content_type():
             with patch.object(agent, "run") as mock_run:
                 mock_response = Mock()
                 mock_response.content = markdown_content
-                mock_response.thinking = None
+
                 mock_response.formatted_tool_calls = []
                 mock_response.citations = None
                 mock_response.is_paused = False
@@ -217,7 +216,7 @@ def test_tool_calls_panel_creation():
             with patch.object(agent, "run") as mock_run:
                 mock_response = Mock()
                 mock_response.content = "Response with tool calls"
-                mock_response.thinking = None
+
                 mock_response.formatted_tool_calls = ["get_weather(location='Tokyo')", "get_temperature()"]
                 mock_response.citations = None
                 mock_response.is_paused = False
@@ -265,7 +264,7 @@ def test_live_update_calls():
             with patch.object(agent, "run") as mock_run:
                 mock_response = Mock()
                 mock_response.content = "Simple response"
-                mock_response.thinking = None
+
                 mock_response.formatted_tool_calls = []
                 mock_response.citations = None
                 mock_response.is_paused = False
@@ -297,7 +296,7 @@ def test_simple_functionality():
             with patch.object(agent, "run") as mock_run:
                 mock_response = Mock()
                 mock_response.content = "Simple test response"
-                mock_response.thinking = None
+
                 mock_response.formatted_tool_calls = []
                 mock_response.citations = None
                 mock_response.is_paused = False
@@ -372,7 +371,7 @@ def test_stream_vs_non_stream_behavior():
             with patch.object(agent, "run") as mock_run:
                 mock_response = Mock()
                 mock_response.content = "Non-streaming response"
-                mock_response.thinking = None
+
                 mock_response.formatted_tool_calls = []
                 mock_response.citations = None
                 mock_response.is_paused = False
