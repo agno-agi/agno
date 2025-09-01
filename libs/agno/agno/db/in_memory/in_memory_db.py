@@ -105,7 +105,7 @@ class InMemoryDb(BaseDb):
                     session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
                     if session_data.get("session_type") != session_type_value:
                         continue
-                    
+
                     if not deserialize:
                         return session_data
 
@@ -120,6 +120,7 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             import traceback
+
             traceback.print_exc()
             log_error(f"Exception reading session: {e}")
             return None

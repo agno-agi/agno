@@ -1,9 +1,9 @@
-from pydantic import BaseModel
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.utils.pprint import pprint_run_response
+from pydantic import BaseModel
 
 
 class StockAnalysis(BaseModel):
@@ -11,18 +11,18 @@ class StockAnalysis(BaseModel):
     company_name: str
     analysis: str
 
+
 class CompanyAnalysis(BaseModel):
     company_name: str
     analysis: str
+
 
 stock_searcher = Agent(
     name="Stock Searcher",
     model=OpenAIChat("gpt-4o"),
     output_schema=StockAnalysis,
     role="Searches for information on stocks and provides price analysis.",
-    tools=[
-        DuckDuckGoTools()
-    ],
+    tools=[DuckDuckGoTools()],
 )
 
 company_info_agent = Agent(
@@ -30,15 +30,15 @@ company_info_agent = Agent(
     model=OpenAIChat("gpt-4o"),
     role="Searches for information about companies and recent news.",
     output_schema=CompanyAnalysis,
-    tools=[
-        DuckDuckGoTools()
-    ],
+    tools=[DuckDuckGoTools()],
 )
+
 
 class StockReport(BaseModel):
     symbol: str
     company_name: str
     analysis: str
+
 
 team = Team(
     name="Stock Research Team",

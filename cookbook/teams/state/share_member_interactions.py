@@ -1,8 +1,7 @@
 from agno.agent.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
-
-from agno.db.sqlite import SqliteDb
 from agno.tools.duckduckgo import DuckDuckGoTools
 
 db = SqliteDb(db_file="tmp/agents.db")
