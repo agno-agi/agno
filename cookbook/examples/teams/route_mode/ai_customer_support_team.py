@@ -15,7 +15,7 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_content_sync(
+knowledge.add_content(
     url="https://docs.agno.com/introduction",
     reader=WebsiteReader(
         # Number of links to follow from the seed URLs

@@ -26,7 +26,7 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_content_sync(
+knowledge.add_content(
     name="Agno Docs", url="https://docs.agno.com/introduction.md"
 )
 

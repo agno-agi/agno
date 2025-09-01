@@ -30,7 +30,8 @@ knowledge = Knowledge(
     vector_db=vector_db,
 )
 
-knowledge.add_contents(
+asyncio.run(
+knowledge.add_contents_async(
     [
         {
             "path": downloaded_cv_paths[0],
@@ -72,7 +73,8 @@ knowledge.add_contents(
                 "year": 2025,
             },
         },
-    ],
+        ],
+    )
 )
 
 

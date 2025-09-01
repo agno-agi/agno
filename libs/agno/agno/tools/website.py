@@ -37,7 +37,7 @@ class WebsiteTools(Toolkit):
             return "Knowledge base not provided"
 
         log_debug(f"Adding to knowledge base: {url}")
-        asyncio.run(self.knowledge.add_content(url=url))
+        self.knowledge.add_content(url=url)
         return "Success"
 
     def read_url(self, url: str) -> str:

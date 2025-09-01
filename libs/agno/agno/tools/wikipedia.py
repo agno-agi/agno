@@ -39,12 +39,10 @@ class WikipediaTools(Toolkit):
             return "Knowledge not provided"
 
         log_debug(f"Adding to knowledge: {topic}")
-        asyncio.run(
-            self.knowledge.add_content(
-                topics=[topic],
-                reader=WikipediaReader(),
-            )
-        )
+        self.knowledge.add_content(
+            topics=[topic],
+            reader=WikipediaReader(),
+        )        
         log_debug(f"Searching knowledge: {topic}")
         relevant_docs: List[Document] = self.knowledge.search(query=topic)
         return json.dumps([doc.to_dict() for doc in relevant_docs])

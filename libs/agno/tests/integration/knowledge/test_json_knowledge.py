@@ -27,12 +27,12 @@ def prepare_knowledge_base(setup_vector_db):
     kb = Knowledge(vector_db=setup_vector_db)
 
     # Load documents with different user IDs and metadata
-    kb.add_content_sync(
+    kb.add_content(
         path=get_filtered_data_dir() / "cv_1.json",
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    kb.add_content_sync(
+    kb.add_content(
         path=get_filtered_data_dir() / "cv_2.json",
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -47,7 +47,7 @@ def test_json_knowledge_base():
         vector_db=vector_db,
     )
 
-    knowledge_base.add_content_sync(
+    knowledge_base.add_content(
         path=str(Path(__file__).parent / "data/json"),
     )
 
@@ -80,7 +80,7 @@ def test_json_knowledge_base_single_file():
     knowledge_base = Knowledge(
         vector_db=vector_db,
     )
-    knowledge_base.add_content_sync(
+    knowledge_base.add_content(
         path=str(Path(__file__).parent / "data/json/recipes.json"),
     )
 
@@ -103,7 +103,7 @@ async def test_json_knowledge_base_async():
         vector_db=vector_db,
     )
 
-    await knowledge_base.add_content(
+    await knowledge_base.add_content_async(
         path=str(Path(__file__).parent / "data/json"),
     )
 
@@ -137,12 +137,12 @@ def test_text_knowledge_base_with_metadata_path(setup_vector_db):
     kb = Knowledge(
         vector_db=setup_vector_db,
     )
-    kb.add_content_sync(
+    kb.add_content(
         path=str(get_filtered_data_dir() / "cv_1.json"),
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    kb.add_content_sync(
+    kb.add_content(
         path=str(get_filtered_data_dir() / "cv_2.json"),
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -166,11 +166,11 @@ def test_knowledge_base_with_metadata_path_invalid_filter(setup_vector_db):
     kb = Knowledge(
         vector_db=setup_vector_db,
     )
-    kb.add_content_sync(
+    kb.add_content(
         path=str(get_filtered_data_dir() / "cv_1.json"),
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
-    kb.add_content_sync(
+    kb.add_content(
         path=str(get_filtered_data_dir() / "cv_2.json"),
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )

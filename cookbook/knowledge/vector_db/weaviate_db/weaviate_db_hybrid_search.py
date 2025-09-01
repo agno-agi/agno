@@ -21,7 +21,7 @@ knowledge_base = Knowledge(
     vector_db=vector_db,
 )
 
-knowledge_base.add_content_sync(
+knowledge_base.add_content(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
 )
 

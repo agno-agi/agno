@@ -10,7 +10,7 @@ knowledge_base = Knowledge(
     vector_db=PgVector(table_name="imdb_movies_row_chunking", db_url=db_url),
 )
 
-knowledge_base.add_content_sync(
+knowledge_base.add_content(
     url="https://agno-public.s3.amazonaws.com/demo_data/IMDB-Movie-Data.csv",
     reader=CSVReader(
         chunking_strategy=RowChunking(),

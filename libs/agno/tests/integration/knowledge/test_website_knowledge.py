@@ -25,7 +25,7 @@ def test_website_knowledge_base_directory(setup_vector_db):
 
     kb = Knowledge(vector_db=setup_vector_db)
 
-    kb.add_contents_sync(
+    kb.add_contents(
         urls=urls,
         reader=WebsiteReader(max_links=1),
     )
@@ -47,7 +47,7 @@ def test_website_knowledge_base_directory(setup_vector_db):
 def test_website_knowledge_base_single_url(setup_vector_db):
     """Test loading a single website into the knowledge base."""
     kb = Knowledge(vector_db=setup_vector_db)
-    kb.add_contents_sync(
+    kb.add_contents(
         urls=["https://docs.agno.com/introduction/agents"],
         reader=WebsiteReader(max_links=1),
     )
@@ -73,7 +73,7 @@ async def test_website_knowledge_base_async_directory(setup_vector_db):
     urls = ["https://docs.agno.com/introduction/agents", "https://fastapi.tiangolo.com/"]
 
     kb = Knowledge(vector_db=setup_vector_db)
-    await kb.add_contents(
+    await kb.add_contents_async(
         urls=urls,
         reader=WebsiteReader(max_links=1),
     )
@@ -100,7 +100,7 @@ async def test_website_knowledge_base_async_directory(setup_vector_db):
 async def test_website_knowledge_base_async_single_url(setup_vector_db):
     """Test asynchronously loading a single website into the knowledge base."""
     kb = Knowledge(vector_db=setup_vector_db)
-    await kb.add_contents(
+    await kb.add_contents_async(
         urls=["https://docs.agno.com/introduction/agents"],
         reader=WebsiteReader(max_links=1),
     )

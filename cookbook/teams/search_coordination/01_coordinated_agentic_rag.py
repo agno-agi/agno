@@ -34,7 +34,7 @@ knowledge = Knowledge(
 )
 
 # Add documentation content
-knowledge.add_contents_sync(urls=["https://docs.agno.com/introduction/agents.md"])
+knowledge.add_contents(urls=["https://docs.agno.com/introduction/agents.md"])
 
 # Knowledge Searcher Agent - Specialized in finding relevant information
 knowledge_searcher = Agent(

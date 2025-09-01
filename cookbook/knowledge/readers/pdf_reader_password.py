@@ -18,7 +18,7 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_content_sync(
+knowledge.add_content(
     path="ThaiRecipes_protected.pdf",
     auth=ContentAuth(password="ThaiRecipes"),
 )

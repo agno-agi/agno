@@ -24,7 +24,7 @@ knowledge = Knowledge(
 
 # Add topics from Wikipedia
 asyncio.run(
-    knowledge.add_content(
+    knowledge.add_content_async(
         metadata={"user_tag": "Wikipedia content"},
         topics=["Manchester United"],
         reader=WikipediaReader(),
@@ -33,7 +33,7 @@ asyncio.run(
 
 # Add topics from Arxiv
 asyncio.run(
-    knowledge.add_content(
+    knowledge.add_content_async(
         metadata={"user_tag": "Arxiv content"},
         topics=["Carbon Dioxide"],
         reader=ArxivReader(),

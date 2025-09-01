@@ -137,10 +137,10 @@ async def async_distributed_rag_demo():
     query = "How do I make chicken and galangal in coconut milk soup? Include cooking tips and variations."
 
     # Add content to knowledge bases
-    await primary_knowledge.add_contents(
+    await primary_knowledge.add_contents_async(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
-    await context_knowledge.add_contents(
+    await context_knowledge.add_contents_async(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
 
@@ -159,10 +159,10 @@ def sync_distributed_rag_demo():
     query = "How do I make chicken and galangal in coconut milk soup? Include cooking tips and variations."
 
     # Add content to knowledge bases
-    primary_knowledge.add_contents_sync(
+    primary_knowledge.add_contents(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
-    context_knowledge.add_contents_sync(
+    context_knowledge.add_contents(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
 
@@ -180,10 +180,10 @@ def multi_course_meal_demo():
     Please include cooking techniques and any special tips."""
 
     # Add content to knowledge bases
-    primary_knowledge.add_contents_sync(
+    primary_knowledge.add_contents(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
-    context_knowledge.add_contents_sync(
+    context_knowledge.add_contents(
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
     )
 

@@ -23,7 +23,7 @@ agent = Agent(
 if __name__ == "__main__":
     # Comment out after first run
     asyncio.run(
-        agent.knowledge.add_content(url="https://docs.agno.com/introduction/agents.md")
+        agent.knowledge.add_content_async(url="https://docs.agno.com/introduction/agents.md")
     )
 
     # Create and use the agent
