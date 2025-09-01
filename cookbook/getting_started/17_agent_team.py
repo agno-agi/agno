@@ -53,6 +53,7 @@ finance_agent = Agent(
             include_domains=["trendlyne.com"],
             text=False,
             highlights=False,
+            show_results=True,
         )
     ],
     instructions=dedent("""\
