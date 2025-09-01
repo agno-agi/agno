@@ -2935,8 +2935,6 @@ class Agent:
 
     def _store_media(self, run_messages: RunMessages, run_response: RunOutput, model_response: ModelResponse):
         """Store media from run_messages in run_response for persistence"""
-        from agno.utils.log import log_debug
-        
         # Store input media from run_messages in run_response for persistence
         if run_messages.images:
             for image in run_messages.images:
@@ -3749,7 +3747,7 @@ class Agent:
 
     def _collect_joint_images(
         self, 
-        run_messages: RunMessages,  # Pass the whole RunMessages instead of individual fields
+        run_messages: RunMessages,
         run_response: RunOutput
     ) -> Optional[Sequence[Image]]:
         """Collect images from input, session history, and current run response."""
@@ -3762,7 +3760,7 @@ class Agent:
             joint_images.extend(run_messages.images)
             log_debug(f"Added {len(run_messages.images)} input images to joint list")
         
-        # 2. Add images from session history
+        # 2. Add images from session history (should include tool generated images from previous runs as well)
         try:
             session = self.get_session()
             if session and session.runs:
@@ -3778,17 +3776,6 @@ class Agent:
                         log_debug(f"Added {len(historical_run.images)} images from historical run {historical_run.run_id}")
         except Exception as e:
             log_warning(f"Could not access session history for images: {e}")
-        
-        # 3. Add images from current run response (tool-generated)
-        if run_response.images:
-            for artifact in run_response.images:
-                # Convert ImageArtifact back to Image for tool use
-                from agno.media import Image
-                if artifact.url:
-                    joint_images.append(Image(url=artifact.url))
-                elif artifact.content:
-                    joint_images.append(Image(content=artifact.content))
-            log_debug(f"Added {len(run_response.images)} images from current run response")
         
         log_debug(f"Joint Images Available: {len(joint_images)} images")
         return joint_images if joint_images else None
