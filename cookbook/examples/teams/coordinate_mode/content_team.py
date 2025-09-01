@@ -1,5 +1,5 @@
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.google.gemini import Gemini
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 
@@ -8,22 +8,23 @@ researcher = Agent(
     name="Researcher",
     role="Expert at finding information",
     tools=[DuckDuckGoTools()],
-    model=OpenAIChat("gpt-4o"),
+    model=Gemini("gemini-2.0-flash-001"),
 )
 
 writer = Agent(
     name="Writer",
     role="Expert at writing clear, engaging content",
-    model=OpenAIChat("gpt-4o"),
+    model=Gemini("gemini-2.0-flash-001"),
 )
 
 # Create a team with these agents
 content_team = Team(
     name="Content Team",
     mode="coordinate",
+    model=Gemini("gemini-2.5-flash"),
+    # model=Gemini("gemini-2.0-flash-lite"),  # Try a small model for faster response
     members=[researcher, writer],
     instructions="You are a team of researchers and writers that work together to create high-quality content.",
-    model=OpenAIChat("gpt-4o"),
     show_members_responses=True,
 )
 

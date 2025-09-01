@@ -146,6 +146,8 @@ class Team:
     # Session state (stored in the database to persist across runs)
     session_state: Optional[Dict[str, Any]] = None
     # If True, the team can update the session state
+    add_session_state_to_context: bool = False
+    # If True, the team can update the session state
     enable_agentic_state: bool = False
     # If True, cache the current Team session in memory for faster access
     cache_session: bool = False
@@ -348,6 +350,8 @@ class Team:
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        add_session_state_to_context: bool = False,
+        enable_agentic_state: bool = False,
         resolve_in_context: bool = True,
         cache_session: bool = False,
         description: Optional[str] = None,
@@ -431,6 +435,8 @@ class Team:
         self.user_id = user_id
         self.session_id = session_id
         self.session_state = session_state
+        self.add_session_state_to_context = add_session_state_to_context
+        self.enable_agentic_state = enable_agentic_state
         self.resolve_in_context = resolve_in_context
         self.cache_session = cache_session
 
@@ -1007,6 +1013,7 @@ class Team:
         store_member_responses: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -1032,6 +1039,7 @@ class Team:
         store_member_responses: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -1057,6 +1065,7 @@ class Team:
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -1086,7 +1095,7 @@ class Team:
         self._update_metadata(session=team_session)
 
         # Update session state from DB
-        session_state = self.update_session_state(session=team_session, session_state=session_state)
+        session_state = self._update_session_state(session=team_session, session_state=session_state)
 
         # Determine runtime dependencies
         run_dependencies = dependencies if dependencies is not None else self.dependencies
@@ -1098,6 +1107,11 @@ class Team:
         # Determine runtime context parameters
         add_dependencies = (
             add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+        )
+        add_session_state = (
+            add_session_state_to_context
+            if add_session_state_to_context is not None
+            else self.add_session_state_to_context
         )
         add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
@@ -1193,39 +1207,23 @@ class Team:
 
             # Run the team
             try:
-                # Prepare run messages
-                if self.mode == "route":
-                    run_messages: RunMessages = self._get_run_messages(
-                        run_response=run_response,
-                        session=team_session,
-                        user_id=user_id,
-                        input_message=validated_input,
-                        audio=audio,
-                        images=images,
-                        videos=videos,
-                        files=files,
-                        knowledge_filters=effective_filters,
-                        add_history_to_context=add_history,
-                        dependencies=run_dependencies,
-                        add_dependencies_to_context=add_dependencies,
-                        **kwargs,
-                    )
-                else:
-                    run_messages = self._get_run_messages(
-                        run_response=run_response,
-                        session=team_session,
-                        user_id=user_id,
-                        input_message=validated_input,
-                        audio=audio,
-                        images=images,
-                        videos=videos,
-                        files=files,
-                        knowledge_filters=effective_filters,
-                        add_history_to_context=add_history,
-                        dependencies=run_dependencies,
-                        add_dependencies_to_context=add_dependencies,
-                        **kwargs,
-                    )
+                run_messages = self._get_run_messages(
+                    run_response=run_response,
+                    session=team_session,
+                    session_state=session_state,
+                    user_id=user_id,
+                    input_message=validated_input,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    knowledge_filters=effective_filters,
+                    add_history_to_context=add_history,
+                    dependencies=run_dependencies,
+                    add_dependencies_to_context=add_dependencies,
+                    add_session_state_to_context=add_session_state,
+                    **kwargs,
+                )
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
 
@@ -1559,6 +1557,7 @@ class Team:
         store_member_responses: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -1584,6 +1583,7 @@ class Team:
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -1609,6 +1609,7 @@ class Team:
         store_member_responses: Optional[bool] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -1637,7 +1638,7 @@ class Team:
         self._update_metadata(session=team_session)
 
         # Update session state from DB
-        session_state = self.update_session_state(session=team_session, session_state=session_state)
+        session_state = self._update_session_state(session=team_session, session_state=session_state)
 
         # Determine run dependencies (runtime override takes priority)
         run_dependencies = dependencies if dependencies is not None else self.dependencies
@@ -1649,6 +1650,11 @@ class Team:
         # Determine runtime context parameters
         add_dependencies = (
             add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+        )
+        add_session_state = (
+            add_session_state_to_context
+            if add_session_state_to_context is not None
+            else self.add_session_state_to_context
         )
         add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
@@ -1742,40 +1748,23 @@ class Team:
 
             # Run the team
             try:
-                # Prepare run messages
-                if self.mode == "route":
-                    # In route mode the model shouldn't get images/audio/video
-                    run_messages: RunMessages = self._get_run_messages(
-                        session=team_session,  # type: ignore
-                        run_response=run_response,
-                        user_id=user_id,
-                        input_message=validated_input,
-                        audio=audio,
-                        images=images,
-                        videos=videos,
-                        files=files,
-                        knowledge_filters=effective_filters,
-                        add_history_to_context=add_history,
-                        dependencies=run_dependencies,
-                        add_dependencies_to_context=add_dependencies,
-                        **kwargs,
-                    )
-                else:
-                    run_messages = self._get_run_messages(
-                        session=team_session,  # type: ignore
-                        run_response=run_response,
-                        user_id=user_id,
-                        input_message=validated_input,
-                        audio=audio,
-                        images=images,
-                        videos=videos,
-                        files=files,
-                        knowledge_filters=effective_filters,
-                        add_history_to_context=add_history,
-                        dependencies=run_dependencies,
-                        add_dependencies_to_context=add_dependencies,
-                        **kwargs,
-                    )
+                run_messages = self._get_run_messages(
+                    run_response=run_response,
+                    session=team_session,  # type: ignore
+                    session_state=session_state,
+                    user_id=user_id,
+                    input_message=validated_input,
+                    audio=audio,
+                    images=images,
+                    videos=videos,
+                    files=files,
+                    knowledge_filters=effective_filters,
+                    add_history_to_context=add_history,
+                    dependencies=run_dependencies,
+                    add_dependencies_to_context=add_dependencies,
+                    add_session_state_to_context=add_session_state,
+                    **kwargs,
+                )
 
                 if stream:
                     response_iterator = self._arun_stream(
@@ -1865,11 +1854,11 @@ class Team:
                 run_response.content += model_response.content
 
         # Update the run_response thinking with the model response thinking
-        if model_response.thinking is not None:
-            if not run_response.thinking:
-                run_response.thinking = model_response.thinking
+        if model_response.reasoning_content is not None:
+            if not run_response.reasoning_content:
+                run_response.reasoning_content = model_response.reasoning_content
             else:
-                run_response.thinking += model_response.thinking
+                run_response.reasoning_content += model_response.reasoning_content
 
         # Update citations
         if model_response.citations is not None:
@@ -1963,8 +1952,8 @@ class Team:
         run_response.created_at = full_model_response.created_at
         if full_model_response.content is not None:
             run_response.content = full_model_response.content
-        if full_model_response.thinking is not None:
-            run_response.thinking = full_model_response.thinking
+        if full_model_response.reasoning_content is not None:
+            run_response.reasoning_content = full_model_response.reasoning_content
         if full_model_response.audio is not None:
             run_response.response_audio = full_model_response.audio
         if full_model_response.citations is not None:
@@ -2050,8 +2039,8 @@ class Team:
         run_response.created_at = full_model_response.created_at
         if full_model_response.content is not None:
             run_response.content = full_model_response.content
-        if full_model_response.thinking is not None:
-            run_response.thinking = full_model_response.thinking
+        if full_model_response.reasoning_content is not None:
+            run_response.reasoning_content = full_model_response.reasoning_content
         if full_model_response.audio is not None:
             run_response.response_audio = full_model_response.audio
         if full_model_response.citations is not None:
@@ -2124,11 +2113,11 @@ class Team:
                     should_yield = True
 
                 # Process thinking
-                if model_response_event.thinking is not None:
-                    if not full_model_response.thinking:
-                        full_model_response.thinking = model_response_event.thinking
+                if model_response_event.reasoning_content is not None:
+                    if not full_model_response.reasoning_content:
+                        full_model_response.reasoning_content = model_response_event.reasoning_content
                     else:
-                        full_model_response.thinking += model_response_event.thinking
+                        full_model_response.reasoning_content += model_response_event.reasoning_content
                     should_yield = True
 
                 if model_response_event.citations is not None:
@@ -2172,8 +2161,8 @@ class Team:
                             create_team_run_output_content_event(
                                 from_run_response=run_response,
                                 content=model_response_event.content,
-                                thinking=model_response_event.thinking,
-                                redacted_thinking=model_response_event.redacted_thinking,
+                                reasoning_content=model_response_event.reasoning_content,
+                                redacted_reasoning_content=model_response_event.redacted_reasoning_content,
                                 response_audio=full_model_response.audio,
                                 citations=model_response_event.citations,
                                 image=model_response_event.images[-1] if model_response_event.images else None,
@@ -3301,7 +3290,7 @@ class Team:
                 try:
                     # Run the reasoning agent
                     reasoning_agent_response: RunOutput = reasoning_agent.run(  # type: ignore
-                        messages=run_messages.get_input_messages()
+                        input=run_messages.get_input_messages()
                     )
                     if reasoning_agent_response.content is None or reasoning_agent_response.messages is None:
                         log_warning("Reasoning error. Reasoning response is empty, continuing regular session...")
@@ -3527,7 +3516,7 @@ class Team:
                 try:
                     # Run the reasoning agent
                     reasoning_agent_response: RunOutput = await reasoning_agent.arun(  # type: ignore
-                        messages=run_messages.get_input_messages()
+                        input=run_messages.get_input_messages()
                     )
                     if reasoning_agent_response.content is None or reasoning_agent_response.messages is None:
                         log_warning("Reasoning error. Reasoning response is empty, continuing regular session...")
@@ -3681,7 +3670,7 @@ class Team:
             _tools.append(self._get_update_user_memory_function(user_id=user_id, async_mode=async_mode))
 
         if self.enable_agentic_state:
-            _tools.append(self.update_session_state_tool)
+            _tools.append(self.update_session_state)
 
         if self.knowledge is not None or self.knowledge_retriever is not None:
             # Check if knowledge retriever is an async function but used in sync mode
@@ -3714,7 +3703,7 @@ class Team:
         if self.mode == "route":
             user_message = self._get_user_message(
                 run_response=run_response,
-                session=session,
+                session_state=session_state,
                 input_message=input_message,
                 audio=audio,
                 images=images,
@@ -3752,7 +3741,7 @@ class Team:
 
         elif self.mode == "coordinate":
             _tools.append(
-                self._get_transfer_task_function(
+                self._get_delegate_task_function(
                     run_response=run_response,
                     session=session,
                     session_state=session_state,
@@ -3912,11 +3901,15 @@ class Team:
     def get_system_message(
         self,
         session: TeamSession,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         files: Optional[Sequence[File]] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> Optional[Message]:
         """Get the system message for the team."""
 
@@ -3935,7 +3928,13 @@ class Team:
 
             # Format the system message with the session state variables
             if self.resolve_in_context:
-                sys_message_content = self._format_message_with_state_variables(sys_message_content, user_id=user_id)
+                sys_message_content = self._format_message_with_state_variables(
+                    sys_message_content,
+                    user_id=user_id,
+                    session_state=session_state,
+                    dependencies=dependencies,
+                    metadata=metadata,
+                )
 
             # type: ignore
             return Message(role=self.system_message_role, content=sys_message_content)
@@ -4043,13 +4042,13 @@ class Team:
         if self.mode == "coordinate":
             system_message_content += (
                 "- Your role is to forward tasks to members in your team with the highest likelihood of completing the user's request.\n"
-                "- Carefully analyze the tools available to the members and their roles before transferring tasks.\n"
-                "- You cannot use a member tool directly. You can only transfer tasks to members.\n"
-                "- When you transfer a task to another member, make sure to include:\n"
-                "  - member_id (str): The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.\n"
+                "- Carefully analyze the tools available to the members and their roles before delegating tasks.\n"
+                "- You cannot use a member tool directly. You can only delegate tasks to members.\n"
+                "- When you delegate a task to another member, make sure to include:\n"
+                "  - member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.\n"
                 "  - task_description (str): A clear description of the task.\n"
                 "  - expected_output (str): The expected output.\n"
-                "- You can transfer tasks to multiple members at once.\n"
+                "- You can delegate tasks to multiple members at once.\n"
                 "- You must always analyze the responses from members before responding to the user.\n"
                 "- After analyzing the responses from the members, if you feel the task has been completed, you can stop and respond to the user.\n"
                 "- If you are not satisfied with the responses from the members, you should re-assign the task.\n"
@@ -4170,7 +4169,13 @@ class Team:
 
         # Format the system message with the session state variables
         if self.resolve_in_context:
-            system_message_content = self._format_message_with_state_variables(system_message_content, user_id=user_id)
+            system_message_content = self._format_message_with_state_variables(
+                system_message_content,
+                user_id=user_id,
+                session_state=session_state,
+                dependencies=dependencies,
+                metadata=metadata,
+            )
 
         system_message_from_model = self.model.get_system_message_for_model(self._tools_for_model)
         if system_message_from_model is not None:
@@ -4183,6 +4188,9 @@ class Team:
             system_message_content += (
                 f"<additional_context>\n{self.additional_context.strip()}\n</additional_context>\n\n"
             )
+
+        if self.add_session_state_to_context:
+            system_message_content += f"<session_state>\n{session_state}\n</session_state>\n\n"
 
         # Add the JSON output prompt if output_schema is provided and structured_outputs is False
         if (
@@ -4200,6 +4208,7 @@ class Team:
         *,
         run_response: TeamRunOutput,
         session: TeamSession,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         input_message: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -4210,6 +4219,7 @@ class Team:
         add_history_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> RunMessages:
@@ -4231,7 +4241,16 @@ class Team:
 
         # 1. Add system message to run_messages
         system_message = self.get_system_message(
-            session=session, user_id=user_id, images=images, audio=audio, videos=videos, files=files
+            session=session,
+            session_state=session_state,
+            user_id=user_id,
+            images=images,
+            audio=audio,
+            videos=videos,
+            files=files,
+            dependencies=dependencies,
+            metadata=metadata,
+            add_session_state_to_context=add_session_state_to_context,
         )
         if system_message is not None:
             run_messages.system_message = system_message
@@ -4292,7 +4311,7 @@ class Team:
         # 5.1 Build user message if message is None, str or list
         user_message = self._get_user_message(
             run_response=run_response,
-            session=session,
+            session_state=session_state,
             input_message=input_message,
             user_id=user_id,
             audio=audio,
@@ -4316,7 +4335,7 @@ class Team:
         self,
         *,
         run_response: TeamRunOutput,
-        session: TeamSession,
+        session_state: Optional[Dict[str, Any]] = None,
         input_message: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
         user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -4422,9 +4441,7 @@ class Team:
                     user_msg_content = self._format_message_with_state_variables(
                         user_msg_content,
                         user_id=user_id,
-                        session_state=session.session_data.get("session_state")
-                        if session.session_data is not None
-                        else None,
+                        session_state=session_state,
                         dependencies=dependencies,
                         metadata=metadata,
                     )
@@ -4766,15 +4783,18 @@ class Team:
 
         return get_team_history
 
-    def update_session_state_tool(self, session_state: Dict[str, Any], updates: Dict[str, Any]) -> str:
+    def update_session_state(self, session_state, session_state_updates: dict) -> str:
         """
-        Update the shared session state.
+        Update the shared session state.  Provide any updates as a dictionary of key-value pairs.
+        Example:
+            "session_state_updates": {"shopping_list": ["milk", "eggs", "bread"]}
 
         Args:
-            updates (dict): The updates to apply to the shared session state. Should be a dictionary of key-value pairs.
+            session_state_updates (dict): The updates to apply to the shared session state. Should be a dictionary of key-value pairs.
         """
-        for key, value in updates.items():
+        for key, value in session_state_updates.items():
             session_state[key] = value
+
         return f"Updated session state: {session_state}"
 
     def _get_history_for_member_agent(self, session: TeamSession, member_agent: Union[Agent, "Team"]) -> List[Message]:
@@ -5244,7 +5264,7 @@ class Team:
 
         return run_member_agents_func
 
-    def _get_transfer_task_function(
+    def _get_delegate_task_function(
         self,
         run_response: TeamRunOutput,
         session: TeamSession,
@@ -5274,14 +5294,14 @@ class Team:
         if not files:
             files = []
 
-        def transfer_task_to_member(
+        def delegate_task_to_member(
             member_id: str, task_description: str, expected_output: Optional[str] = None
         ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
-            """Use this function to transfer a task to the selected team member.
+            """Use this function to delegate a task to the selected team member.
             You must provide a clear and concise description of the task the member should achieve AND the expected output.
 
             Args:
-                member_id (str): The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
+                member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
                 task_description (str): A clear and concise description of the task the member should achieve.
                 expected_output (str, optional): The expected output from the member (optional).
             Returns:
@@ -5435,14 +5455,14 @@ class Team:
             if member_agent_run_response is not None:
                 self._update_team_media(member_agent_run_response)  # type: ignore
 
-        async def atransfer_task_to_member(
+        async def adelegate_task_to_member(
             member_id: str, task_description: str, expected_output: Optional[str] = None
         ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
-            """Use this function to transfer a task to the selected team member.
+            """Use this function to delegate a task to the selected team member.
             You must provide a clear and concise description of the task the member should achieve AND the expected output.
 
             Args:
-                member_id (str): The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
+                member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
                 task_description (str): A clear and concise description of the task the member should achieve.
                 expected_output (str, optional): The expected output from the member (optional).
             Returns:
@@ -5594,13 +5614,13 @@ class Team:
                 self._update_team_media(member_agent_run_response)  # type: ignore
 
         if async_mode:
-            transfer_function = atransfer_task_to_member  # type: ignore
+            delegate_function = adelegate_task_to_member  # type: ignore
         else:
-            transfer_function = transfer_task_to_member  # type: ignore
+            delegate_function = delegate_task_to_member  # type: ignore
 
-        transfer_func = Function.from_callable(transfer_function, name="transfer_task_to_member", strict=True)
+        delegate_func = Function.from_callable(delegate_function, name="delegate_task_to_member", strict=True)
 
-        return transfer_func
+        return delegate_func
 
     def _get_forward_task_function(
         self,
@@ -5638,7 +5658,7 @@ class Team:
         ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
             """Use this function to forward the request to the selected team member.
             Args:
-                member_id (str): The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
+                member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
                 expected_output (str, optional): The expected output from the member (optional).
             Returns:
                 str: The result of the delegated task.
@@ -5803,7 +5823,7 @@ class Team:
             """Use this function to forward a message to the selected team member.
 
             Args:
-                member_id (str): The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
+                member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
                 expected_output (str, optional): The expected output from the member (optional).
             Returns:
                 str: The result of the delegated task.
@@ -6121,7 +6141,7 @@ class Team:
             self._upsert_session(session=session)
             log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
-    def update_session_state(self, session: TeamSession, session_state: Dict[str, Any]) -> Dict[str, Any]:
+    def _update_session_state(self, session: TeamSession, session_state: Dict[str, Any]) -> Dict[str, Any]:
         """Load the existing Agent from an AgentSession (from the database)"""
 
         from agno.utils.merge_dict import merge_dictionaries

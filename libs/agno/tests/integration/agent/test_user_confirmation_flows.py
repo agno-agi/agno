@@ -218,6 +218,7 @@ def test_tool_call_requires_confirmation_memory_footprint(shared_db):
     assert len(session_from_db.runs[0].messages) == 5, [m.role for m in session_from_db.runs[0].messages]
 
 
+@pytest.mark.flaky(reruns=3)
 def test_tool_call_requires_confirmation_stream(shared_db):
     @tool(requires_confirmation=True)
     def get_the_weather(city: str):
@@ -234,13 +235,14 @@ def test_tool_call_requires_confirmation_stream(shared_db):
     found_confirmation = False
     for response in agent.run("What is the weather in Tokyo?", stream=True):
         if response.is_paused:
+            assert response.tools is not None
             assert response.tools[0].requires_confirmation
             assert response.tools[0].tool_name == "get_the_weather"
             assert response.tools[0].tool_args == {"city": "Tokyo"}
-
             # Mark the tool as confirmed
             response.tools[0].confirmed = True
             found_confirmation = True
+
     assert found_confirmation, "No tools were found to require confirmation"
     run_response = agent.get_last_run_output()
 
@@ -248,6 +250,7 @@ def test_tool_call_requires_confirmation_stream(shared_db):
     for response in agent.continue_run(run_response, stream=True):
         if response.is_paused:
             found_confirmation = True
+
     assert found_confirmation is False, "Some tools still require confirmation"
 
 

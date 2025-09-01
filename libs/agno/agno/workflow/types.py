@@ -405,6 +405,27 @@ class WebSocketHandler:
 
     websocket: Optional[WebSocket] = None
 
+    def format_sse_event(self, json_data: str) -> str:
+        """Parse JSON data into SSE-compliant format.
+
+        Args:
+            json_data: JSON string containing the event data
+
+        Returns:
+            SSE-formatted response with event type and data
+        """
+        import json
+        try:
+            # Parse the JSON to extract the event type
+            data = json.loads(json_data)
+            event_type = data.get("event", "message")
+
+            # Format as SSE: event: <event_type>\ndata: <json_data>\n\n
+            return f"event: {event_type}\ndata: {json_data}\n\n"
+        except (json.JSONDecodeError, KeyError):
+            # Fallback to generic message event if parsing fails
+            return f"event: message\ndata: {json_data}\n\n"
+
     async def handle_event(self, event: Any) -> None:
         """Handle an event object - serializes and sends via WebSocket"""
         if not self.websocket:
@@ -422,7 +443,7 @@ class WebSocketHandler:
 
             import json
 
-            await self.websocket.send_text(json.dumps(data))
+            await self.websocket.send_text(self.format_sse_event(json.dumps(data)))
 
         except Exception as e:
             log_warning(f"Failed to handle WebSocket event: {e}")
@@ -433,7 +454,7 @@ class WebSocketHandler:
             return
 
         try:
-            await self.websocket.send_text(message)
+            await self.websocket.send_text(self.format_sse_event(message))
         except Exception as e:
             log_warning(f"Failed to send WebSocket text: {e}")
 
@@ -445,7 +466,7 @@ class WebSocketHandler:
         try:
             import json
 
-            await self.websocket.send_text(json.dumps(data))
+            await self.websocket.send_text(self.format_sse_event(json.dumps(data)))
         except Exception as e:
             log_warning(f"Failed to send WebSocket dict: {e}")
 

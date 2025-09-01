@@ -9,7 +9,6 @@ from agno.db.in_memory.utils import (
     calculate_date_metrics,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
-    hydrate_session,
 )
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -107,21 +106,22 @@ class InMemoryDb(BaseDb):
                     if session_data.get("session_type") != session_type_value:
                         continue
 
-                    session = hydrate_session(session_data)
-
                     if not deserialize:
-                        return session
+                        return session_data
 
                     if session_type == SessionType.AGENT:
-                        return AgentSession.from_dict(session)
+                        return AgentSession.from_dict(session_data)
                     elif session_type == SessionType.TEAM:
-                        return TeamSession.from_dict(session)
+                        return TeamSession.from_dict(session_data)
                     else:
-                        return WorkflowSession.from_dict(session)
+                        return WorkflowSession.from_dict(session_data)
 
             return None
 
         except Exception as e:
+            import traceback
+
+            traceback.print_exc()
             log_error(f"Exception reading session: {e}")
             return None
 

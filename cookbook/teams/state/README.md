@@ -37,3 +37,5 @@ team.print_response("Add item to our shared list")
 ## Examples
 
 - **[team_with_nested_shared_state.py](./team_with_nested_shared_state.py)** - Nested teams with shared state management
+- **[agentic_session_state.py](./agentic_session_state.py)** - Agentic session state management
+- **[session_state_in_instructions.py](./session_state_in_instructions.py)** - Using session state in instructions
