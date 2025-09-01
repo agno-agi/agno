@@ -96,9 +96,9 @@ class GoogleSheetsTools(Toolkit):
         token_path: Optional[str] = None,
         oauth_port: int = 0,
         enable_read_sheet: bool = True,
-        enable_create_sheet: bool = True,
-        enable_update_sheet: bool = True,
-        enable_create_duplicate_sheet: bool = True,
+        enable_create_sheet: bool = False,
+        enable_update_sheet: bool = False,
+        enable_create_duplicate_sheet: bool = False,
         all: bool = False,
         **kwargs,
     ):
@@ -129,9 +129,26 @@ class GoogleSheetsTools(Toolkit):
 
         # Determine required scopes based on operations if no custom scopes provided
         if scopes is None:
-            self.scopes = [self.DEFAULT_SCOPES["write"]]  # Include write scope by default for all operations
+            self.scopes = []
+            if enable_read_sheet:
+                self.scopes.append(self.DEFAULT_SCOPES["read"])
+            if enable_create_sheet or enable_update_sheet or enable_create_duplicate_sheet:
+                self.scopes.append(self.DEFAULT_SCOPES["write"])
+            # Remove duplicates while preserving order
+            self.scopes = list(dict.fromkeys(self.scopes))
         else:
             self.scopes = scopes
+            # Validate that required scopes are present for requested operations
+            if (enable_create_sheet or enable_update_sheet or enable_create_duplicate_sheet) and self.DEFAULT_SCOPES["write"] not in self.scopes:
+                raise ValueError(f"The scope {self.DEFAULT_SCOPES['write']} is required for write operations")
+            if (
+                enable_read_sheet
+                and self.DEFAULT_SCOPES["read"] not in self.scopes
+                and self.DEFAULT_SCOPES["write"] not in self.scopes
+            ):
+                raise ValueError(
+                    f"Either {self.DEFAULT_SCOPES['read']} or {self.DEFAULT_SCOPES['write']} is required for read operations"
+                )
 
         tools: List[Any] = []
         if all or enable_read_sheet:

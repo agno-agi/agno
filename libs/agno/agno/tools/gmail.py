@@ -155,6 +155,27 @@ class GmailTools(Toolkit):
         ]
 
         super().__init__(name="gmail_tools", tools=tools, **kwargs)
+        
+        # Validate that required scopes are present for requested operations (only check registered functions)
+        if ("create_draft_email" in self.functions or "send_email" in self.functions) and "https://www.googleapis.com/auth/gmail.compose" not in self.scopes:
+            raise ValueError(
+                "The scope https://www.googleapis.com/auth/gmail.compose is required for email composition operations"
+            )
+        read_operations = [
+            "get_latest_emails",
+            "get_emails_from_user",
+            "get_unread_emails",
+            "get_starred_emails",
+            "get_emails_by_context",
+            "get_emails_by_date",
+            "get_emails_by_thread",
+            "search_emails",
+        ]
+        if any(read_operation in self.functions for read_operation in read_operations):
+            read_scope = "https://www.googleapis.com/auth/gmail.readonly"
+            write_scope = "https://www.googleapis.com/auth/gmail.modify"
+            if read_scope not in self.scopes and write_scope not in self.scopes:
+                raise ValueError(f"The scope {read_scope} is required for email reading operations")
 
     def _auth(self) -> None:
         """Authenticate with Gmail API"""
