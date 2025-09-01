@@ -484,6 +484,9 @@ def get_base_router(
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
+        if not agent.cancel_run(run_id=run_id):
+            raise HTTPException(status_code=500, detail="Failed to cancel run")
+
         return JSONResponse(content={}, status_code=200)
 
     @router.post(
@@ -692,7 +695,9 @@ def get_base_router(
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
-        team.cancel_run(run_id=run_id)
+        if not team.cancel_run(run_id=run_id):
+            raise HTTPException(status_code=500, detail="Failed to cancel run")
+
         return JSONResponse(content={}, status_code=200)
 
     @router.get(
@@ -826,9 +831,13 @@ def get_base_router(
     @router.post("/workflows/{workflow_id}/runs/{run_id}/cancel", tags=["Workflows"])
     async def cancel_workflow_run(workflow_id: str, run_id: str):
         workflow = get_workflow_by_id(workflow_id, os.workflows)
+
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
-        workflow.cancel_run(run_id=run_id)
+
+        if not workflow.cancel_run(run_id=run_id):
+            raise HTTPException(status_code=500, detail="Failed to cancel run")
+
         return JSONResponse(content={}, status_code=200)
 
     return router
