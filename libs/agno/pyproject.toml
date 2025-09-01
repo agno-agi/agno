@@ -280,17 +280,6 @@ embedders = [
 
 # All libraries for testing
 tests = [
-    "mypy",
-    "pytest", 
-    "pytest-asyncio",
-    "pytest-cov",
-    "pytest-mock",
-    "ruff",
-    "timeout-decorator",
-    "types-pyyaml",
-    "types-aiofiles",
-    "fastapi",
-    "uvicorn",
     "agno[dev]",
     "agno[models]",
     "agno[tools]",
