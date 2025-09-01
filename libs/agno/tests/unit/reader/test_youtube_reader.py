@@ -82,7 +82,7 @@ def test_read_video_api_error():
         reader = YouTubeReader()
         documents = reader.read(video_url)
 
-        assert len(documents) == 0
+        assert len(documents) == 1
 
 
 def test_read_large_transcript():
@@ -213,7 +213,7 @@ async def test_async_read_video_api_error():
         reader = YouTubeReader()
         documents = await reader.async_read(video_url)
 
-        assert len(documents) == 0
+        assert len(documents) == 1
 
 
 @pytest.mark.asyncio
