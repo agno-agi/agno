@@ -3788,6 +3788,126 @@ class Agent:
         log_debug(f"Joint Images Available: {len(joint_images)} images")
         return joint_images if joint_images else None
 
+    def _collect_joint_videos(
+        self,
+        run_input: Optional[RunInput] = None,
+    ) -> Optional[Sequence[Video]]:
+        """Collect videos from input, session history, and current run response."""
+        joint_videos = []
+
+        # 1. Add videos from current input
+        if run_input and run_input.videos:
+            for artifact in run_input.videos:
+                try:
+                    if artifact.url:
+                        joint_videos.append(Video(url=artifact.url))
+                    elif artifact.content:
+                        joint_videos.append(Video(content=artifact.content))
+                except Exception as e:
+                    log_warning(f"Error converting VideoArtifact to Video: {e}")
+                    continue
+            log_debug(f"Added {len(run_input.videos)} input videos to joint list")
+
+        # 2. Add videos from session history (from both input and generated sources)
+        try:
+            session = self.get_session()
+            if session and session.runs:
+                for historical_run in session.runs:
+                    # Add generated videos from previous runs
+                    if historical_run.videos:
+                        for artifact in historical_run.videos:
+                            try:
+                                if artifact.url:
+                                    joint_videos.append(Video(url=artifact.url))
+                                elif artifact.content:
+                                    joint_videos.append(Video(content=artifact.content))
+                            except Exception as e:
+                                log_warning(f"Error converting historical VideoArtifact to Video: {e}")
+                                continue
+                        log_debug(
+                            f"Added {len(historical_run.videos)} generated videos from historical run {historical_run.run_id}"
+                        )
+
+                    # Add input videos from previous runs
+                    if historical_run.input and historical_run.input.videos:
+                        for artifact in historical_run.input.videos:
+                            try:
+                                if artifact.url:
+                                    joint_videos.append(Video(url=artifact.url))
+                                elif artifact.content:
+                                    joint_videos.append(Video(content=artifact.content))
+                            except Exception as e:
+                                log_warning(f"Error converting input VideoArtifact to Video: {e}")
+                                continue
+                        log_debug(
+                            f"Added {len(historical_run.input.videos)} input videos from historical run {historical_run.run_id}"
+                        )
+        except Exception as e:
+            log_debug(f"Could not access session history for videos: {e}")
+
+        log_debug(f"Joint Videos Available: {len(joint_videos)} videos")
+        return joint_videos if joint_videos else None
+
+    def _collect_joint_audios(
+        self,
+        run_input: Optional[RunInput] = None,
+    ) -> Optional[Sequence[Audio]]:
+        """Collect audios from input, session history, and current run response."""
+        joint_audios = []
+
+        # 1. Add audios from current input
+        if run_input and run_input.audios:
+            for artifact in run_input.audios:
+                try:
+                    if artifact.url:
+                        joint_audios.append(Audio(url=artifact.url))
+                    elif artifact.content:
+                        joint_audios.append(Audio(content=artifact.base64_audio))
+                except Exception as e:
+                    log_warning(f"Error converting AudioArtifact to Audio: {e}")
+                    continue
+            log_debug(f"Added {len(run_input.audios)} input audios to joint list")
+
+        # 2. Add audios from session history (from both input and generated sources)
+        try:
+            session = self.get_session()
+            if session and session.runs:
+                for historical_run in session.runs:
+                    # Add generated audios from previous runs
+                    if historical_run.audio:
+                        for artifact in historical_run.audio:
+                            try:
+                                if artifact.url:
+                                    joint_audios.append(Audio(url=artifact.url))
+                                elif artifact.content:
+                                    joint_audios.append(Audio(content=artifact.base64_audio))
+                            except Exception as e:
+                                log_warning(f"Error converting historical AudioArtifact to Audio: {e}")
+                                continue
+                        log_debug(
+                            f"Added {len(historical_run.audio)} generated audios from historical run {historical_run.run_id}"
+                        )
+
+                    # Add input audios from previous runs
+                    if historical_run.input and historical_run.input.audios:
+                        for artifact in historical_run.input.audios:
+                            try:
+                                if artifact.url:
+                                    joint_audios.append(Audio(url=artifact.url))
+                                elif artifact.content:
+                                    joint_audios.append(Audio(content=artifact.base64_audio))
+                            except Exception as e:
+                                log_warning(f"Error converting input AudioArtifact to Audio: {e}")
+                                continue
+                        log_debug(
+                            f"Added {len(historical_run.input.audios)} input audios from historical run {historical_run.run_id}"
+                        )
+        except Exception as e:
+            log_debug(f"Could not access session history for audios: {e}")
+
+        log_debug(f"Joint Audios Available: {len(joint_audios)} audios")
+        return joint_audios if joint_audios else None
+
     def _collect_joint_files(
         self,
         run_input: Optional[RunInput] = None,
@@ -3908,11 +4028,15 @@ class Agent:
             # Collect joint media from all sources using RunInput
             joint_images = self._collect_joint_images(run_response.input)
             joint_files = self._collect_joint_files(run_response.input)
+            joint_audios = self._collect_joint_audios(run_response.input)
+            joint_videos = self._collect_joint_videos(run_response.input)
 
             for func in self._functions_for_model.values():
                 func._session_state = session_state
                 func._images = joint_images
                 func._files = joint_files
+                func._audios = joint_audios
+                func._videos = joint_videos
 
     def _model_should_return_structured_output(self):
         self.model = cast(Model, self.model)
