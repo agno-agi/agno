@@ -5,11 +5,12 @@ from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel
 
-from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
+from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact, File
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
+from agno.run.messages import RunMessages
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
 from agno.utils.log import logger
 
@@ -317,6 +318,9 @@ class RunOutput:
     audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
     response_audio: Optional[AudioResponse] = None  # Model audio response
 
+    # Input media and messages from user
+    input: Optional[RunMessages] = None
+
     citations: Optional[Citations] = None
     references: Optional[List[MessageReferences]] = None
 
@@ -367,6 +371,7 @@ class RunOutput:
                 "videos",
                 "audio",
                 "response_audio",
+                "input",
                 "citations",
                 "events",
                 "additional_input",
@@ -450,6 +455,20 @@ class RunOutput:
                 else:
                     _dict["tools"].append(tool)
 
+        if self.input is not None:
+            input_dict = {}
+            if self.input.images:
+                input_dict["images"] = [img.to_dict() for img in self.input.images]
+                        
+            if self.input.videos:
+                input_dict["videos"] = [vid.to_dict() for vid in self.input.videos]
+                        
+            if self.input.audios:
+                input_dict["audios"] = [aud.to_dict() for aud in self.input.audios]
+                        
+            if input_dict:  
+                _dict["input"] = input_dict
+
         return _dict
 
     def to_json(self) -> str:
@@ -492,6 +511,28 @@ class RunOutput:
         response_audio = data.pop("response_audio", None)
         response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
 
+        input_data = data.pop("input", None)
+        input_obj = None
+        if input_data:
+            input_images = None
+            if input_data.get("images"):
+                input_images = [ImageArtifact.model_validate(img_data) for img_data in input_data["images"]]
+                        
+            input_videos = None
+            if input_data.get("videos"):
+                input_videos = [VideoArtifact.model_validate(vid_data) for vid_data in input_data["videos"]]
+                        
+            input_audios = None
+            if input_data.get("audios"):
+                input_audios = [AudioArtifact.model_validate(aud_data) for aud_data in input_data["audios"]]
+            
+            # Create RunMessages with artifacts
+            input_obj = RunMessages(
+                images=input_images,
+                videos=input_videos,
+                audios=input_audios,
+            )
+
         metrics = data.pop("metrics", None)
         if metrics:
             metrics = Metrics(**metrics)
@@ -522,6 +563,7 @@ class RunOutput:
             audio=audio,
             videos=videos,
             response_audio=response_audio,
+            input=input_obj,
             events=events,
             additional_input=additional_input,
             reasoning_steps=reasoning_steps,

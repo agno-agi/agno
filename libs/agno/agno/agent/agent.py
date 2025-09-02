@@ -2935,66 +2935,28 @@ class Agent:
 
     def _store_media(self, run_messages: RunMessages, run_response: RunOutput, model_response: ModelResponse):
         """Store media from run_messages in run_response for persistence"""
-        # Store input media from run_messages in run_response for persistence
-        if run_messages.images:
-            for image in run_messages.images:
-                try:
-                    if image.url:
-                        image_id = str(uuid4())
-                        image_artifact = ImageArtifact(id=image_id, url=image.url)
-                    elif image.content:
-                        image_id = str(uuid4())
-                        image_artifact = ImageArtifact(id=image_id, content=image.content)
-                    else:
-                        continue
-                    
-                    self._add_image(image_artifact, run_response)
-                except Exception as e:
-                    log_warning(f"Error creating ImageArtifact: {e}")
-                    continue
-
-        if run_messages.videos:
-            for video in run_messages.videos:
-                # Convert Video to VideoArtifact for storage
-                try:
-                    if video.url:
-                        video_artifact = VideoArtifact(id=str(uuid4()), url=video.url)
-                    elif video.content:
-                        video_artifact = VideoArtifact(id=str(uuid4()), content=video.content)
-                    else:
-                        continue
-                    self._add_video(video_artifact, run_response)
-                except Exception as e:
-                    log_warning(f"Error creating VideoArtifact: {e}")
-                    continue
-
-        if run_messages.audios:
-            for audio in run_messages.audios:
-                # Convert Audio to AudioArtifact for storage
-                try:
-                    if audio.url:
-                        audio_artifact = AudioArtifact(id=str(uuid4()), url=audio.url)
-                    elif audio.content:
-                        audio_artifact = AudioArtifact(id=str(uuid4()), content=audio.content)
-                    else:
-                        continue
-                    self._add_audio(audio_artifact, run_response)
-                except Exception as e:
-                    log_warning(f"Error creating AudioArtifact: {e}")
-                    continue
+        
+        # Store input media from run_messages in run_response.input, we don't add them to the main output response fields (images, videos, audio)
+        if run_messages.images or run_messages.videos or run_messages.audios or run_messages.files:
+            run_response.input = RunMessages(
+                images=run_messages.images,  
+                videos=run_messages.videos, 
+                audios=run_messages.audios,  
+                files=run_messages.files     
+            )
 
         # Handle unified media fields from ModelResponse (generated media)
         if model_response.images is not None:
             for image in model_response.images:
-                self._add_image(image, run_response)
+                self._add_image(image, run_response)  # Generated images go to run_response.images
 
         if model_response.videos is not None:
             for video in model_response.videos:
-                self._add_video(video, run_response)
+                self._add_video(video, run_response)  # Generated videos go to run_response.videos
 
         if model_response.audios is not None:
             for audio in model_response.audios:
-                self._add_audio(audio, run_response)
+                self._add_audio(audio, run_response)  # Generated audio go to run_response.audio
 
     def _update_run_response(self, model_response: ModelResponse, run_response: RunOutput, run_messages: RunMessages):
         # Handle structured outputs
@@ -3748,32 +3710,53 @@ class Agent:
     def _collect_joint_images(
         self, 
         run_messages: RunMessages,
-        run_response: RunOutput
     ) -> Optional[Sequence[Image]]:
         """Collect images from input, session history, and current run response."""
-        from agno.utils.log import log_debug
-        
         joint_images = []
         
-        # 1. Add images from current input (from RunMessages)
+        # 1. Add images from current input
         if run_messages.images:
-            joint_images.extend(run_messages.images)
+            for artifact in run_messages.images:
+                try:
+                    if artifact.url:
+                        joint_images.append(Image(url=artifact.url))
+                    elif artifact.content:
+                        joint_images.append(Image(content=artifact.content))
+                except Exception as e:
+                    log_warning(f"Error converting ImageArtifact to Image: {e}")
+                    continue
             log_debug(f"Added {len(run_messages.images)} input images to joint list")
         
-        # 2. Add images from session history (should include tool generated images from previous runs as well)
+        # 2. Add images from session history (from both input and generated sources)
         try:
             session = self.get_session()
             if session and session.runs:
                 for historical_run in session.runs:
-                    if historical_run.run_id != run_response.run_id and historical_run.images:
+                    # Add generated images from previous runs
+                    if historical_run.images:
                         for artifact in historical_run.images:
-                            # Convert ImageArtifact back to Image for tool use
-                            from agno.media import Image
-                            if artifact.url:
-                                joint_images.append(Image(url=artifact.url))
-                            elif artifact.content:
-                                joint_images.append(Image(content=artifact.content))
-                        log_debug(f"Added {len(historical_run.images)} images from historical run {historical_run.run_id}")
+                            try:
+                                if artifact.url:
+                                    joint_images.append(Image(url=artifact.url))
+                                elif artifact.content:
+                                    joint_images.append(Image(content=artifact.content))
+                            except Exception as e:
+                                log_warning(f"Error converting historical ImageArtifact to Image: {e}")
+                                continue
+                        log_debug(f"Added {len(historical_run.images)} generated images from historical run {historical_run.run_id}")
+                    
+                    # Add input images from previous runs
+                    if historical_run.input and historical_run.input.images:
+                        for artifact in historical_run.input.images:
+                            try:
+                                if artifact.url:
+                                    joint_images.append(Image(url=artifact.url))
+                                elif artifact.content:
+                                    joint_images.append(Image(content=artifact.content))
+                            except Exception as e:
+                                log_warning(f"Error converting input ImageArtifact to Image: {e}")
+                                continue
+                        log_debug(f"Added {len(historical_run.input.images)} input images from historical run {historical_run.run_id}")
         except Exception as e:
             log_warning(f"Could not access session history for images: {e}")
         
@@ -3783,7 +3766,6 @@ class Agent:
     def _collect_joint_files(
         self, 
         run_messages: RunMessages,
-        run_response: RunOutput
     ) -> Optional[Sequence[File]]:
         """Collect files from input and session history."""
         from agno.utils.log import log_debug
@@ -3900,8 +3882,8 @@ class Agent:
         # Update the session state for the functions
         if self._functions_for_model:
             # Collect joint media from all sources using RunMessages
-            joint_images = self._collect_joint_images(run_messages, run_response)
-            joint_files = self._collect_joint_files(run_messages, run_response)
+            joint_images = self._collect_joint_images(run_messages)
+            joint_files = self._collect_joint_files(run_messages)
             
             for func in self._functions_for_model.values():
                 func._session_state = session_state
@@ -4932,7 +4914,16 @@ class Agent:
         """
 
         # Initialize the RunMessages object
-        run_messages = RunMessages(images=images, videos=videos, audios=audio, files=files)
+        image_artifacts, video_artifacts, audio_artifacts = self._convert_media_to_artifacts(
+            images=images, videos=videos, audios=audio
+        )
+
+        run_messages = RunMessages(
+            images=image_artifacts, 
+            videos=video_artifacts, 
+            audios=audio_artifacts, 
+            files=files
+        )
 
         # 1. Add system message to run_messages
         system_message = self.get_system_message(session=session, user_id=user_id, dependencies=run_dependencies)
@@ -6933,6 +6924,57 @@ class Agent:
             log_debug(f"Using knowledge filters: {effective_filters}")
 
         return effective_filters
+
+    def _convert_media_to_artifacts(
+        self,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None, 
+        audios: Optional[Sequence[Audio]] = None,
+    ) -> tuple:
+        """Convert raw Image/Video/Audio objects to ImageArtifact/VideoArtifact/AudioArtifact objects."""
+        from uuid import uuid4
+        from agno.media import ImageArtifact, VideoArtifact, AudioArtifact
+        
+        image_artifacts = None
+        if images:
+            image_artifacts = []
+            for img in images:
+                try:
+                    if img.url:
+                        image_artifacts.append(ImageArtifact(id=str(uuid4()), url=img.url))
+                    elif img.content:
+                        image_artifacts.append(ImageArtifact(id=str(uuid4()), content=img.content))
+                except Exception as e:
+                    log_warning(f"Error creating ImageArtifact: {e}")
+                    continue
+                    
+        video_artifacts = None
+        if videos:
+            video_artifacts = []
+            for vid in videos:
+                try:
+                    if vid.url:
+                        video_artifacts.append(VideoArtifact(id=str(uuid4()), url=vid.url))
+                    elif vid.content:
+                        video_artifacts.append(VideoArtifact(id=str(uuid4()), content=vid.content))
+                except Exception as e:
+                    log_warning(f"Error creating VideoArtifact: {e}")
+                    continue
+                    
+        audio_artifacts = None
+        if audios:
+            audio_artifacts = []
+            for aud in audios:
+                try:
+                    if aud.url:
+                        audio_artifacts.append(AudioArtifact(id=str(uuid4()), url=aud.url))
+                    elif aud.content:
+                        audio_artifacts.append(AudioArtifact(id=str(uuid4()), content=aud.content))
+                except Exception as e:
+                    log_warning(f"Error creating AudioArtifact: {e}")
+                    continue
+        
+        return image_artifacts, video_artifacts, audio_artifacts
 
     def cli_app(
         self,

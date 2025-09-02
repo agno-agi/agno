@@ -104,7 +104,7 @@ def main():
     )
     
     print(f"Run 1 Response: {response1.content}")
-    print(f"--> Run 1 Images in response: {len(response1.images or [])}")
+    print(f"--> Run 1 Images in response: {len(response1.input.images or [])}")
     print("\n" + "="*50 + "\n")
 
     # Test 2: DALL-E generation + analysis in same run
