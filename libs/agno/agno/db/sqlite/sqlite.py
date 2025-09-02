@@ -439,8 +439,7 @@ class SqliteDb(BaseDb):
                         )
                     )
                 if session_type is not None:
-                    session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
-                    stmt = stmt.where(table.c.session_type == session_type_value)
+                    stmt = stmt.where(table.c.session_type == session_type.value)
 
                 # Getting total count
                 count_stmt = select(func.count()).select_from(stmt.alias())
