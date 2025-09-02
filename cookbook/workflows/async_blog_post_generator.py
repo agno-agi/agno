@@ -206,6 +206,56 @@ class BlogPostGenerator(Workflow):
         markdown=True,
     )
 
+    def run(
+        self,
+        topic: str,
+        use_search_cache: bool = True,
+        use_scrape_cache: bool = True,
+        use_cached_report: bool = True,
+    ) -> RunResponse:
+        logger.info(f"Generating a blog post on: {topic}")
+
+        # Use the cached blog post if use_cache is True
+        if use_cached_report:
+            cached_blog_post = self.get_cached_blog_post(topic)
+            if cached_blog_post:
+                return RunResponse(
+                    run_id=self.run_id,
+                    content=cached_blog_post,
+                )
+
+        # Search the web for articles on the topic
+        search_results: Optional[SearchResults] = self.get_search_results(
+            topic, use_search_cache
+        )
+        # If no search_results are found for the topic, end the workflow
+        if search_results is None or len(search_results.articles) == 0:
+            return RunResponse(
+                run_id=self.run_id,
+                content=f"Sorry, could not find any articles on the topic: {topic}",
+            )
+
+        # Scrape the search results
+        scraped_articles: Dict[str, ScrapedArticle] = self.scrape_articles(
+            topic, search_results, use_scrape_cache
+        )
+
+        # Prepare the input for the writer
+        writer_input = {
+            "topic": topic,
+            "articles": [v.model_dump() for v in scraped_articles.values()],
+        }
+
+        # Run the writer response
+        writer_response: RunResponse = self.writer.run(
+            json.dumps(writer_input, indent=4)
+        )
+
+        # Save the blog post in the cache
+        self.add_blog_post_to_cache(topic, writer_response.content)
+
+        return writer_response
+
     async def arun(
         self,
         topic: str,
@@ -425,7 +475,7 @@ if __name__ == "__main__":
     )
 
     # Execute the workflow with caching enabled
-    # Returns an iterator of RunResponse objects containing the generated content
+    # Run it asynchronously
     blog_post: RunResponse = asyncio.run(
         generate_blog_post.arun(
             topic=topic,
@@ -434,6 +484,13 @@ if __name__ == "__main__":
             use_cached_report=True,
         )
     )
-
-    # Print the response
     pprint_run_response(blog_post, markdown=True)
+
+    # or run it synchronously
+    # blog_post: RunResponse = generate_blog_post.run(
+    #     topic=topic,
+    #     use_search_cache=True,
+    #     use_scrape_cache=True,
+    #     use_cached_report=True,
+    # )
+    # pprint_run_response(blog_post, markdown=True)

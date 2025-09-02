@@ -1,4 +1,4 @@
-"""Run `pip install duckduckgo-search sqlalchemy groq` to install dependencies."""
+"""Run `pip install ddgs sqlalchemy groq` to install dependencies."""
 
 from agno.agent import Agent
 from agno.models.groq import Groq

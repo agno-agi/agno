@@ -149,7 +149,7 @@ def main() -> None:
 
                         # Display response if available and event is RunResponse
                         if (
-                            _resp_chunk.event == "RunResponse"
+                            _resp_chunk.event == "RunResponseContent"
                             and _resp_chunk.content is not None
                         ):
                             response += _resp_chunk.content

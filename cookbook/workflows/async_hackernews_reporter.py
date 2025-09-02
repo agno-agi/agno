@@ -2,7 +2,6 @@
 pip install openai newspaper4k lxml_html_clean agno httpx
 """
 
-import asyncio
 import json
 from typing import AsyncIterator
 
@@ -12,7 +11,7 @@ from agno.run.workflow import WorkflowCompletedEvent
 from agno.tools.newspaper4k import Newspaper4kTools
 from agno.utils.log import logger
 from agno.utils.pprint import pprint_run_response
-from agno.workflow import RunEvent, Workflow
+from agno.workflow import Workflow
 
 
 class AsyncHackerNewsReporter(Workflow):
@@ -109,8 +108,7 @@ if __name__ == "__main__":
         # Run the workflow and collect the final response
         final_content = []
         try:
-            response = await workflow.arun(num_stories=5)
-            async for response in response:
+            async for response in workflow.arun(num_stories=5):
                 if response.content:
                     final_content.append(response.content)
         except Exception as e:

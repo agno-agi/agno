@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 from urllib.parse import quote
 from uuid import uuid4
 
@@ -87,6 +87,7 @@ class Playground:
                     workflow.app_id = self.app_id
                 if not workflow.workflow_id:
                     workflow.workflow_id = generate_id(workflow.name)
+                workflow.initialize_workflow()
 
     def set_app_id(self) -> str:
         # If app_id is already set, keep it instead of overriding with UUID
@@ -110,13 +111,14 @@ class Playground:
     def get_async_router(self) -> APIRouter:
         return get_async_playground_router(self.agents, self.workflows, self.teams, self.app_id)
 
-    def get_app(self, use_async: bool = True, prefix: str = "/v1") -> FastAPI:
+    def get_app(self, use_async: bool = True, prefix: str = "/v1", lifespan: Optional[Callable] = None) -> FastAPI:
         if not self.api_app:
             self.api_app = FastAPI(
                 title=self.settings.title,
                 docs_url="/docs" if self.settings.docs_enabled else None,
                 redoc_url="/redoc" if self.settings.docs_enabled else None,
                 openapi_url="/openapi.json" if self.settings.docs_enabled else None,
+                lifespan=lifespan,
             )
 
         if not self.api_app:
