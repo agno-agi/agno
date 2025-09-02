@@ -11,11 +11,11 @@ This demonstrates:
 from typing import Optional, Sequence
 
 from agno.agent import Agent
+from agno.db.postgres import PostgresDb
 from agno.media import Image
 from agno.models.openai import OpenAIChat
 from agno.tools import Toolkit
 from agno.tools.dalle import DalleTools
-from agno.db.postgres import PostgresDb
 
 
 class ImageAnalysisTools(Toolkit):
@@ -29,10 +29,10 @@ class ImageAnalysisTools(Toolkit):
     def analyze_images(self, images: Optional[Sequence[Image]] = None) -> str:
         """
         Analyze all available images and provide detailed descriptions.
-        
+
         Args:
             images: Images available to the tool (automatically injected)
-            
+
         Returns:
             Analysis of all available images
         """
@@ -41,32 +41,36 @@ class ImageAnalysisTools(Toolkit):
 
         print(f"--> analyze_images received {len(images)} images")
 
-        print('--> IMAGES', images)
-        
+        print("--> IMAGES", images)
+
         analysis_results = []
         for i, image in enumerate(images):
             if image.url:
-                analysis_results.append(f"Image {i+1}: URL-based image at {image.url}")
+                analysis_results.append(
+                    f"Image {i + 1}: URL-based image at {image.url}"
+                )
             elif image.content:
-                analysis_results.append(f"Image {i+1}: Content-based image ({len(image.content)} bytes)")
+                analysis_results.append(
+                    f"Image {i + 1}: Content-based image ({len(image.content)} bytes)"
+                )
             else:
-                analysis_results.append(f"Image {i+1}: Unknown image format")
-        
+                analysis_results.append(f"Image {i + 1}: Unknown image format")
+
         return f"Found {len(images)} images:\n" + "\n".join(analysis_results)
 
     def count_images(self, images: Optional[Sequence[Image]] = None) -> str:
         """
         Count the number of available images.
-        
+
         Args:
             images: Images available to the tool (automatically injected)
-            
+
         Returns:
             Count of available images
         """
         if not images:
             return "0 images available"
-        
+
         print(f"--> count_images received {len(images)} images")
         return f"{len(images)} images available"
 
@@ -87,46 +91,44 @@ def main():
         debug_mode=True,
         add_history_to_context=True,
         send_media_to_model=False,
-        db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
+        db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai"),
     )
 
     print("=== Joint Media Access Test ===\n")
 
     # Test 1: Initial image upload and analysis
     print("1. Testing initial image upload and analysis...")
-    
+
     # Create sample image
     sample_image = Image(content=create_sample_image_content())
-    
+
     response1 = agent.run(
         input="I've uploaded an image. Please count how many images are available and analyze them.",
-        images=[sample_image]
+        images=[sample_image],
     )
-    
+
     print(f"Run 1 Response: {response1.content}")
     print(f"--> Run 1 Images in response: {len(response1.input.images or [])}")
-    print("\n" + "="*50 + "\n")
+    print("\n" + "=" * 50 + "\n")
 
     # Test 2: DALL-E generation + analysis in same run
     print("2. Testing DALL-E generation and immediate analysis...")
-    
-    response2 = agent.run(
-        input="Generate an image of a cute cat."
-    )
-    
+
+    response2 = agent.run(input="Generate an image of a cute cat.")
+
     print(f"Run 2 Response: {response2.content}")
     print(f"--> Run 2 Images in response: {len(response2.images or [])}")
-    print("\n" + "="*50 + "\n")
+    print("\n" + "=" * 50 + "\n")
 
     # Test 3: Cross-run media persistence
     print("3. Testing cross-run media persistence...")
-    
+
     response3 = agent.run(
         input="Count how many images are available from all previous runs and analyze them."
     )
-    
+
     print(f"Run 3 Response: {response3.content}")
-    print("\n" + "="*50 + "\n")
+    print("\n" + "=" * 50 + "\n")
 
 
 if __name__ == "__main__":

@@ -171,7 +171,8 @@ class Function(BaseModel):
             param_type_hints = {
                 name: type_hints.get(name)
                 for name in sig.parameters
-                if name != "return" and name not in ["agent", "team", "session_state", "self", "images", "videos", "audios", "files"]
+                if name != "return"
+                and name not in ["agent", "team", "session_state", "self", "images", "videos", "audios", "files"]
             }
 
             # Parse docstring for parameters
@@ -198,14 +199,17 @@ class Function(BaseModel):
             # See: https://platform.openai.com/docs/guides/structured-outputs/supported-schemas#all-fields-must-be-required
             if strict:
                 parameters["required"] = [
-                    name for name in parameters["properties"] if name not in ["agent", "team", "session_state", "self", "images", "videos", "audios", "files"]
+                    name
+                    for name in parameters["properties"]
+                    if name not in ["agent", "team", "session_state", "self", "images", "videos", "audios", "files"]
                 ]
             else:
                 # Mark a field as required if it has no default value (this would include optional fields)
                 parameters["required"] = [
                     name
                     for name, param in sig.parameters.items()
-                    if param.default == param.empty and name not in ["agent", "team", "session_state", "self", "images", "videos", "audios", "files"]
+                    if param.default == param.empty
+                    and name not in ["agent", "team", "session_state", "self", "images", "videos", "audios", "files"]
                 ]
 
             # log_debug(f"JSON schema for {function_name}: {parameters}")
@@ -579,7 +583,7 @@ class FunctionCall(BaseModel):
             entrypoint_args["audios"] = self.function._audios
         if "files" in signature(self.function.entrypoint).parameters:  # type: ignore
             entrypoint_args["files"] = self.function._files
-            
+
         return entrypoint_args
 
     def _build_hook_args(self, hook: Callable, name: str, func: Callable, args: Dict[str, Any]) -> Dict[str, Any]:

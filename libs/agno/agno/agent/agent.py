@@ -39,6 +39,7 @@ from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecutio
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.agent import (
     RunEvent,
+    RunInput,
     RunOutput,
     RunOutputEvent,
 )
@@ -477,7 +478,7 @@ class Agent:
         self.search_knowledge = search_knowledge
         self.update_knowledge = update_knowledge
         self.read_tool_call_history = read_tool_call_history
-        self.send_media_to_model = send_media_to_model        
+        self.send_media_to_model = send_media_to_model
         self.system_message = system_message
         self.system_message_role = system_message_role
         self.build_context = build_context
@@ -764,7 +765,7 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         if self.store_media:
-            self._store_media(run_messages, run_response, model_response)
+            self._store_media(run_response, model_response)
 
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
@@ -1062,6 +1063,21 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent(debug_mode=debug_mode)
 
+        image_artifacts, video_artifacts, audio_artifacts = self._convert_media_to_artifacts(
+            images=images, videos=videos, audios=audio
+        )
+
+        if self.store_media:
+            # Create RunInput to capture the original user input
+            run_input = RunInput(
+                input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
+            )
+        else:
+            # Clear the RunInput which contains the input media if media is not stored
+            run_input = RunInput(
+                input_content=input,
+            )
+
         # Read existing session from database
         agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=agent_session)
@@ -1126,6 +1142,7 @@ class Agent:
             agent_id=self.id,
             agent_name=self.name,
             metadata=metadata,
+            input=run_input,
         )
 
         run_response.model = self.model.id if self.model is not None else None
@@ -1140,6 +1157,16 @@ class Agent:
 
         last_exception = None
         num_attempts = retries + 1
+
+        self._determine_tools_for_model(
+            model=self.model,
+            run_response=run_response,
+            session=agent_session,
+            session_state=session_state,
+            user_id=user_id,
+            async_mode=False,
+            knowledge_filters=effective_filters,
+        )
 
         for attempt in range(num_attempts):
             try:
@@ -1161,17 +1188,6 @@ class Agent:
                 )
                 if len(run_messages.messages) == 0:
                     log_error("No messages to be sent to the model.")
-
-                self._determine_tools_for_model(
-                    model=self.model,
-                    run_response=run_response,
-                    session=agent_session,
-                    session_state=session_state,
-                    run_messages=run_messages,
-                    user_id=user_id,
-                    async_mode=False,
-                    knowledge_filters=effective_filters,
-                )
 
                 if stream:
                     response_iterator = self._run_stream(
@@ -1303,7 +1319,7 @@ class Agent:
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
         if self.store_media:
-            self._store_media(run_messages, run_response, model_response)
+            self._store_media(run_response, model_response)
 
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
@@ -1610,6 +1626,21 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent(debug_mode=debug_mode)
 
+        image_artifacts, video_artifacts, audio_artifacts = self._convert_media_to_artifacts(
+            images=images, videos=videos, audios=audio
+        )
+
+        if self.store_media:
+            # Create RunInput to capture the original user input
+            run_input = RunInput(
+                input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
+            )
+        else:
+            # Clear the RunInput which contains the input media if media is not stored
+            run_input = RunInput(
+                input_content=input,
+            )
+
         # Read existing session from storage
         agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=agent_session)
@@ -1671,6 +1702,7 @@ class Agent:
             agent_id=self.id,
             agent_name=self.name,
             metadata=metadata,
+            input=run_input,
         )
 
         run_response.model = self.model.id if self.model is not None else None
@@ -1685,6 +1717,16 @@ class Agent:
 
         last_exception = None
         num_attempts = retries + 1
+
+        self._determine_tools_for_model(
+            model=self.model,
+            run_response=run_response,
+            session=agent_session,
+            session_state=session_state,
+            user_id=user_id,
+            async_mode=False,
+            knowledge_filters=effective_filters,
+        )
 
         for attempt in range(num_attempts):
             try:
@@ -1709,17 +1751,6 @@ class Agent:
                     log_error("No messages to be sent to the model.")
 
                 run_messages = run_messages
-
-                self._determine_tools_for_model(
-                    model=self.model,
-                    run_response=run_response,
-                    session=agent_session,
-                    session_state=session_state,
-                    run_messages=run_messages,
-                    user_id=user_id,
-                    async_mode=False,
-                    knowledge_filters=effective_filters,
-                )
 
                 # Pass the new run_response to _arun
                 if stream:
@@ -2933,19 +2964,9 @@ class Agent:
                 _t.requires_user_input = False
                 _t.answered = True
 
-    def _store_media(self, run_messages: RunMessages, run_response: RunOutput, model_response: ModelResponse):
-        """Store media from run_messages in run_response for persistence"""
-        
-        # Store input media from run_messages in run_response.input, we don't add them to the main output response fields (images, videos, audio)
-        if run_messages.images or run_messages.videos or run_messages.audios or run_messages.files:
-            run_response.input = RunMessages(
-                images=run_messages.images,  
-                videos=run_messages.videos, 
-                audios=run_messages.audios,  
-                files=run_messages.files     
-            )
-
-        # Handle unified media fields from ModelResponse (generated media)
+    def _store_media(self, run_response: RunOutput, model_response: ModelResponse):
+        """Store media from model response in run_response for persistence"""
+        # Handle generated media fields from ModelResponse (generated media)
         if model_response.images is not None:
             for image in model_response.images:
                 self._add_image(image, run_response)  # Generated images go to run_response.images
@@ -3708,15 +3729,15 @@ class Agent:
         return agent_tools
 
     def _collect_joint_images(
-        self, 
-        run_messages: RunMessages,
+        self,
+        run_input: Optional[RunInput] = None,
     ) -> Optional[Sequence[Image]]:
         """Collect images from input, session history, and current run response."""
         joint_images = []
-        
+
         # 1. Add images from current input
-        if run_messages.images:
-            for artifact in run_messages.images:
+        if run_input and run_input.images:
+            for artifact in run_input.images:
                 try:
                     if artifact.url:
                         joint_images.append(Image(url=artifact.url))
@@ -3725,8 +3746,8 @@ class Agent:
                 except Exception as e:
                     log_warning(f"Error converting ImageArtifact to Image: {e}")
                     continue
-            log_debug(f"Added {len(run_messages.images)} input images to joint list")
-        
+            log_debug(f"Added {len(run_input.images)} input images to joint list")
+
         # 2. Add images from session history (from both input and generated sources)
         try:
             session = self.get_session()
@@ -3743,8 +3764,10 @@ class Agent:
                             except Exception as e:
                                 log_warning(f"Error converting historical ImageArtifact to Image: {e}")
                                 continue
-                        log_debug(f"Added {len(historical_run.images)} generated images from historical run {historical_run.run_id}")
-                    
+                        log_debug(
+                            f"Added {len(historical_run.images)} generated images from historical run {historical_run.run_id}"
+                        )
+
                     # Add input images from previous runs
                     if historical_run.input and historical_run.input.images:
                         for artifact in historical_run.input.images:
@@ -3756,29 +3779,31 @@ class Agent:
                             except Exception as e:
                                 log_warning(f"Error converting input ImageArtifact to Image: {e}")
                                 continue
-                        log_debug(f"Added {len(historical_run.input.images)} input images from historical run {historical_run.run_id}")
+                        log_debug(
+                            f"Added {len(historical_run.input.images)} input images from historical run {historical_run.run_id}"
+                        )
         except Exception as e:
-            log_warning(f"Could not access session history for images: {e}")
-        
+            log_debug(f"Could not access session history for images: {e}")
+
         log_debug(f"Joint Images Available: {len(joint_images)} images")
         return joint_images if joint_images else None
-    
+
     def _collect_joint_files(
-        self, 
-        run_messages: RunMessages,
+        self,
+        run_input: Optional[RunInput] = None,
     ) -> Optional[Sequence[File]]:
         """Collect files from input and session history."""
         from agno.utils.log import log_debug
-        
+
         joint_files = []
-        
-        # 1. Add files from current input (from RunMessages)
-        if run_messages.files:
-            joint_files.extend(run_messages.files)
-            log_debug(f"Added {len(run_messages.files)} input files to joint list")
-        
+
+        # 1. Add files from current input
+        if run_input and run_input.files:
+            joint_files.extend(run_input.files)
+            log_debug(f"Added {len(run_input.files)} input files to joint list")
+
         # TODO: Files aren't stored in session history yet and dont have a FileArtifact
-        
+
         log_debug(f"Joint Files Available: {len(joint_files)} files")
         return joint_files if joint_files else None
 
@@ -3787,7 +3812,6 @@ class Agent:
         model: Model,
         run_response: RunOutput,
         session: AgentSession,
-        run_messages: RunMessages,
         session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         async_mode: bool = False,
@@ -3881,10 +3905,10 @@ class Agent:
 
         # Update the session state for the functions
         if self._functions_for_model:
-            # Collect joint media from all sources using RunMessages
-            joint_images = self._collect_joint_images(run_messages)
-            joint_files = self._collect_joint_files(run_messages)
-            
+            # Collect joint media from all sources using RunInput
+            joint_images = self._collect_joint_images(run_response.input)
+            joint_files = self._collect_joint_files(run_response.input)
+
             for func in self._functions_for_model.values():
                 func._session_state = session_state
                 func._images = joint_images
@@ -4913,17 +4937,8 @@ class Agent:
         )
         """
 
-        # Initialize the RunMessages object
-        image_artifacts, video_artifacts, audio_artifacts = self._convert_media_to_artifacts(
-            images=images, videos=videos, audios=audio
-        )
-
-        run_messages = RunMessages(
-            images=image_artifacts, 
-            videos=video_artifacts, 
-            audios=audio_artifacts, 
-            files=files
-        )
+        # Initialize the RunMessages object (no media here - that's in RunInput now)
+        run_messages = RunMessages()
 
         # 1. Add system message to run_messages
         system_message = self.get_system_message(session=session, user_id=user_id, dependencies=run_dependencies)
@@ -6928,13 +6943,14 @@ class Agent:
     def _convert_media_to_artifacts(
         self,
         images: Optional[Sequence[Image]] = None,
-        videos: Optional[Sequence[Video]] = None, 
+        videos: Optional[Sequence[Video]] = None,
         audios: Optional[Sequence[Audio]] = None,
     ) -> tuple:
         """Convert raw Image/Video/Audio objects to ImageArtifact/VideoArtifact/AudioArtifact objects."""
         from uuid import uuid4
-        from agno.media import ImageArtifact, VideoArtifact, AudioArtifact
-        
+
+        from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
+
         image_artifacts = None
         if images:
             image_artifacts = []
@@ -6947,7 +6963,7 @@ class Agent:
                 except Exception as e:
                     log_warning(f"Error creating ImageArtifact: {e}")
                     continue
-                    
+
         video_artifacts = None
         if videos:
             video_artifacts = []
@@ -6960,7 +6976,7 @@ class Agent:
                 except Exception as e:
                     log_warning(f"Error creating VideoArtifact: {e}")
                     continue
-                    
+
         audio_artifacts = None
         if audios:
             audio_artifacts = []
@@ -6973,7 +6989,7 @@ class Agent:
                 except Exception as e:
                     log_warning(f"Error creating AudioArtifact: {e}")
                     continue
-        
+
         return image_artifacts, video_artifacts, audio_artifacts
 
     def cli_app(
