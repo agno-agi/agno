@@ -4,6 +4,7 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
 from pydantic import model_validator
 
 from agno.document import Document
+from agno.document.chunking.fixed import FixedSizeChunking
 from agno.document.reader.website_reader import WebsiteReader
 from agno.knowledge.agent import AgentKnowledge
 from agno.utils.log import log_debug, log_info, logger
@@ -21,7 +22,9 @@ class WebsiteKnowledgeBase(AgentKnowledge):
     def set_reader(self) -> "WebsiteKnowledgeBase":
         if self.reader is None:
             self.reader = WebsiteReader(
-                max_depth=self.max_depth, max_links=self.max_links, chunking_strategy=self.chunking_strategy
+                max_depth=self.max_depth,
+                max_links=self.max_links,
+                chunking_strategy=self.chunking_strategy or FixedSizeChunking(),
             )
         return self
 

@@ -472,7 +472,7 @@ class GithubTools(Toolkit):
         log_debug(f"Listing issues for repository: {repo_name} with state: {state}, page: {page}, per_page: {per_page}")
         try:
             repo = self.g.get_repo(repo_name)
-            
+
             issues = repo.get_issues(state=state)
 
             # Filter out pull requests after fetching issues
@@ -482,21 +482,21 @@ class GithubTools(Toolkit):
                 if not issue.pull_request:
                     all_issues.append(issue)
                     total_issues += 1
-            
+
             # Calculate pagination metadata
             total_pages = (total_issues + per_page - 1) // per_page
-            
+
             # Validate page number
             if page < 1:
                 page = 1
             elif page > total_pages and total_pages > 0:
                 page = total_pages
-            
+
             # Get the specified page of results
             issue_list = []
             page_start = (page - 1) * per_page
             page_end = page_start + per_page
-            
+
             for i in range(page_start, min(page_end, total_issues)):
                 if i < len(all_issues):
                     issue = all_issues[i]
@@ -509,19 +509,11 @@ class GithubTools(Toolkit):
                         "url": issue.html_url,
                     }
                     issue_list.append(issue_info)
-            
-            meta = {
-                "current_page": page,
-                "per_page": per_page,
-                "total_items": total_issues,
-                "total_pages": total_pages
-            }
-            
-            response = {
-                "data": issue_list,
-                "meta": meta
-            }
-            
+
+            meta = {"current_page": page, "per_page": per_page, "total_items": total_issues, "total_pages": total_pages}
+
+            response = {"data": issue_list, "meta": meta}
+
             return json.dumps(response, indent=2)
         except GithubException as e:
             logger.error(f"Error listing issues: {e}")
@@ -1706,20 +1698,32 @@ class GithubTools(Toolkit):
             log_debug(f"Final search query: {search_query}")
             code_results = self.g.search_code(search_query)
 
-            # Process results
-            results = []
-            # Limit to 50 results to prevent timeouts
-            for code in code_results[:50]:
-                code_info = {
-                    "repository": code.repository.full_name,
-                    "path": code.path,
-                    "name": code.name,
-                    "sha": code.sha,
-                    "html_url": code.html_url,
-                    "git_url": code.git_url,
-                    "score": code.score,
-                }
-                results.append(code_info)
+            results: list[dict] = []
+            limit = 60
+            max_pages = 2  # GitHub returns 30 items per page, so 2 pages covers our limit
+            page_index = 0
+
+            while len(results) < limit and page_index < max_pages:
+                # Fetch one page of results from GitHub API
+                page_items = code_results.get_page(page_index)
+
+                # Stop if no more results available
+                if not page_items:
+                    break
+
+                # Process each code result in the current page
+                for code in page_items:
+                    code_info = {
+                        "repository": code.repository.full_name,
+                        "path": code.path,
+                        "name": code.name,
+                        "sha": code.sha,
+                        "html_url": code.html_url,
+                        "git_url": code.git_url,
+                        "score": code.score,
+                    }
+                    results.append(code_info)
+                page_index += 1
 
             # Return search results
             return json.dumps(

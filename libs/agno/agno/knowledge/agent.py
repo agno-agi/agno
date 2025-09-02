@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Set, Tuple
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from agno.document import Document
 from agno.document.chunking.fixed import FixedSizeChunking
@@ -24,8 +24,7 @@ class AgentKnowledge(BaseModel):
     # Number of documents to optimize the vector db on
     optimize_on: Optional[int] = 1000
 
-    chunking_strategy: ChunkingStrategy = Field(default_factory=FixedSizeChunking)
-
+    chunking_strategy: Optional[ChunkingStrategy] = None
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     valid_metadata_filters: Set[str] = None  # type: ignore
@@ -33,7 +32,7 @@ class AgentKnowledge(BaseModel):
     @model_validator(mode="after")
     def update_reader(self) -> "AgentKnowledge":
         if self.reader is not None and self.reader.chunking_strategy is None:
-            self.reader.chunking_strategy = self.chunking_strategy
+            self.reader.chunking_strategy = self.chunking_strategy or FixedSizeChunking()
         return self
 
     @property
@@ -162,7 +161,8 @@ class AgentKnowledge(BaseModel):
 
             # Upsert documents if upsert is True and vector db supports upsert
             if upsert and self.vector_db.upsert_available():
-                self.vector_db.upsert(documents=documents_to_load, filters=doc.meta_data)
+                for doc in documents_to_load:
+                    self.vector_db.upsert(documents=[doc], filters=doc.meta_data)
             # Insert documents
             else:
                 # Filter out documents which already exist in the vector db
@@ -171,7 +171,8 @@ class AgentKnowledge(BaseModel):
                     documents_to_load = self.filter_existing_documents(document_list)
 
                 if documents_to_load:
-                    self.vector_db.insert(documents=documents_to_load, filters=doc.meta_data)
+                    for doc in documents_to_load:
+                        self.vector_db.insert(documents=[doc], filters=doc.meta_data)
 
             num_documents += len(documents_to_load)
         log_info(f"Added {num_documents} documents to knowledge base")
@@ -205,7 +206,8 @@ class AgentKnowledge(BaseModel):
 
             # Upsert documents if upsert is True and vector db supports upsert
             if upsert and self.vector_db.upsert_available():
-                await self.vector_db.async_upsert(documents=documents_to_load, filters=doc.meta_data)
+                for doc in documents_to_load:
+                    await self.vector_db.async_upsert(documents=[doc], filters=doc.meta_data)
             # Insert documents
             else:
                 # Filter out documents which already exist in the vector db
@@ -214,7 +216,8 @@ class AgentKnowledge(BaseModel):
                     documents_to_load = await self.async_filter_existing_documents(document_list)
 
                 if documents_to_load:
-                    await self.vector_db.async_insert(documents=documents_to_load, filters=doc.meta_data)
+                    for doc in documents_to_load:
+                        await self.vector_db.async_insert(documents=[doc], filters=doc.meta_data)
 
             num_documents += len(documents_to_load)
         log_info(f"Added {num_documents} documents to knowledge base")
@@ -237,7 +240,7 @@ class AgentKnowledge(BaseModel):
         self._load_init(recreate=False, upsert=upsert)
         if self.vector_db is None:
             return
-        
+
         log_info("Loading knowledge base")
         # Upsert documents if upsert is True
         if upsert and self.vector_db.upsert_available():

@@ -81,6 +81,7 @@ class FastAPIApp(BaseAPIApp):
                     workflow.app_id = self.app_id
                 if not workflow.workflow_id:
                     workflow.workflow_id = generate_id(workflow.name)
+                workflow.initialize_workflow()
 
     def get_router(self) -> APIRouter:
         return get_sync_router(agents=self.agents, teams=self.teams, workflows=self.workflows)
@@ -95,6 +96,7 @@ class FastAPIApp(BaseAPIApp):
         host: str = "localhost",
         port: int = 7777,
         reload: bool = False,
+        workers: Optional[int] = None,
         **kwargs,
     ):
         self.set_app_id()
@@ -102,4 +104,4 @@ class FastAPIApp(BaseAPIApp):
 
         log_info(f"Starting API on {host}:{port}")
 
-        uvicorn.run(app=app, host=host, port=port, reload=reload, **kwargs)
+        uvicorn.run(app=app, host=host, port=port, reload=reload, workers=workers, **kwargs)
