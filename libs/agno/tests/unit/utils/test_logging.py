@@ -41,7 +41,6 @@ def test_configure_agno_logging_sets_specialized_loggers():
             custom_team_logger=mock_team_logger,
             custom_workflow_logger=mock_workflow_logger,
         )
-
         assert log_module.agent_logger is mock_agent_logger
         assert log_module.team_logger is mock_team_logger
         assert log_module.workflow_logger is mock_workflow_logger
