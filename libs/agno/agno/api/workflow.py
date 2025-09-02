@@ -9,7 +9,7 @@ def create_workflow_run(workflow: WorkflowRunCreate) -> None:
     with api.Client() as api_client:
         try:
             api_client.post(
-                ApiRoutes.WORKFLOW_RUN_CREATE,
+                ApiRoutes.RUN_CREATE,
                 json=workflow.model_dump(exclude_none=True),
             )
         except Exception as e:
@@ -21,7 +21,7 @@ async def acreate_workflow_run(workflow: WorkflowRunCreate) -> None:
     async with api.AsyncClient() as api_client:
         try:
             await api_client.post(
-                ApiRoutes.WORKFLOW_RUN_CREATE,
+                ApiRoutes.RUN_CREATE,
                 json=workflow.model_dump(exclude_none=True),
             )
         except Exception as e:

@@ -25,8 +25,10 @@ def test_route_team_multiple_output_schemas():
         role="Searches for information on stocks and provides price analysis.",
         tools=[
             YFinanceTools(
-                stock_price=True,
-                analyst_recommendations=True,
+                include_tools=[
+                    "get_current_stock_price",
+                    "get_analyst_recommendations"
+                ]
             )
         ],
     )
@@ -38,9 +40,10 @@ def test_route_team_multiple_output_schemas():
         output_schema=CompanyAnalysis,
         tools=[
             YFinanceTools(
-                stock_price=False,
-                company_info=True,
-                company_news=True,
+                include_tools=[
+                    "get_company_info",
+                    "get_company_news",
+                ]
             )
         ],
     )
@@ -88,14 +91,14 @@ def test_route_team_mixed_structured_output():
         model=OpenAIChat("gpt-4o"),
         role="Get stock information",
         output_schema=StockInfo,
-        tools=[YFinanceTools(stock_price=True)],
+        tools=[YFinanceTools()],
     )
 
     news_agent = Agent(
         name="News Agent",
         model=OpenAIChat("gpt-4o"),
         role="Get company news",
-        tools=[YFinanceTools(company_news=True)],
+        tools=[YFinanceTools()],
     )
 
     team = Team(

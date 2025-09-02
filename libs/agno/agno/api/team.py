@@ -9,7 +9,7 @@ def create_team_run(run: TeamRunCreate) -> None:
     with api.Client() as api_client:
         try:
             response = api_client.post(
-                ApiRoutes.TEAM_RUN_CREATE,
+                ApiRoutes.RUN_CREATE,
                 json={"run": run.model_dump(exclude_none=True)},
             )
             response.raise_for_status()
@@ -22,7 +22,7 @@ async def acreate_team_run(run: TeamRunCreate) -> None:
     async with api.AsyncClient() as api_client:
         try:
             response = await api_client.post(
-                ApiRoutes.TEAM_RUN_CREATE,
+                ApiRoutes.RUN_CREATE,
                 json={"run": run.model_dump(exclude_none=True)},
             )
             response.raise_for_status()

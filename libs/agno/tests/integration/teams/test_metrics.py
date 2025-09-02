@@ -13,7 +13,7 @@ def test_team_metrics_basic(shared_db):
         name="Stock Agent",
         model=OpenAIChat("gpt-4o"),
         role="Get stock information",
-        tools=[YFinanceTools(stock_price=True)],
+        tools=[YFinanceTools()],
     )
 
     team = Team(
@@ -58,7 +58,7 @@ def test_team_metrics_streaming(shared_db):
         name="Stock Agent",
         model=OpenAIChat("gpt-4o"),
         role="Get stock information",
-        tools=[YFinanceTools(stock_price=True)],
+        tools=[YFinanceTools()],
     )
 
     team = Team(
@@ -97,7 +97,7 @@ def test_team_metrics_multiple_runs(shared_db):
         name="Stock Agent",
         model=OpenAIChat("gpt-4o"),
         role="Get stock information",
-        tools=[YFinanceTools(stock_price=True)],
+        tools=[YFinanceTools()],
     )
 
     team = Team(

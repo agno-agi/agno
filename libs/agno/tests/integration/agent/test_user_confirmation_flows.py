@@ -218,7 +218,7 @@ def test_tool_call_requires_confirmation_memory_footprint(shared_db):
     assert len(session_from_db.runs[0].messages) == 5, [m.role for m in session_from_db.runs[0].messages]
 
 
-@pytest.mark.flaky(reruns=3)
+@pytest.mark.flaky(reruns=2, reason="Asserting against a generated response makes this flaky")
 def test_tool_call_requires_confirmation_stream(shared_db):
     @tool(requires_confirmation=True)
     def get_the_weather(city: str):
@@ -283,7 +283,7 @@ async def test_tool_call_requires_confirmation_async(shared_db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="Async makes this test flaky")
+@pytest.mark.flaky(reruns=2, reason="Async makes this test flaky")
 async def test_tool_call_requires_confirmation_stream_async(shared_db):
     @tool(requires_confirmation=True)
     async def get_the_weather(city: str):
