@@ -8,6 +8,7 @@ Required Environment Variables:
     AWS_SECRET_ACCESS_KEY: AWS secret key for Bedrock service
     AWS_REGION: AWS region for Bedrock service
 """
+
 from agno.agent import Agent
 from agno.embedder.openai import OpenAIEmbedder
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
