@@ -45,6 +45,7 @@ def test_scrape_basic(mock_scrape_response):
 
         # Create reader and call scrape
         reader = FirecrawlReader()
+        reader.chunking_strategy = FixedSizeChunking(chunk_size=100)
         documents = reader.scrape("https://example.com")
 
         # Verify results
@@ -71,6 +72,7 @@ def test_scrape_with_api_key_and_params():
         api_key = "test_api_key"
         params = {"waitUntil": "networkidle2"}
         reader = FirecrawlReader(api_key=api_key, params=params)
+        reader.chunking_strategy = FixedSizeChunking(chunk_size=100)
         reader.scrape("https://example.com")
 
         # Verify FirecrawlApp was called with correct parameters
@@ -92,6 +94,7 @@ def test_scrape_with_api_key_and_formats_params():
             "formats": ["markdown"],
         }
         reader = FirecrawlReader(api_key=api_key, params=params)
+        reader.chunking_strategy = FixedSizeChunking(chunk_size=10)
         reader.scrape("https://example.com")
 
         # Verify FirecrawlApp was called with correct parameters
@@ -176,6 +179,7 @@ def test_crawl_basic(mock_crawl_response):
 
         # Create reader and call crawl
         reader = FirecrawlReader(mode="crawl")
+        reader.chunking_strategy = FixedSizeChunking(chunk_size=100)
         documents = reader.crawl("https://example.com")
 
         # Verify results
@@ -253,6 +257,7 @@ def test_read_scrape_mode(mock_scrape_response):
         mock_app.scrape_url.return_value = mock_scrape_response
 
         reader = FirecrawlReader()
+        reader.chunking_strategy = FixedSizeChunking(chunk_size=100)
         documents = reader.read("https://example.com")
 
         assert len(documents) == 1
@@ -272,6 +277,7 @@ def test_read_crawl_mode(mock_crawl_response):
 
         # Create reader in crawl mode
         reader = FirecrawlReader(mode="crawl")
+        reader.chunking_strategy = FixedSizeChunking(chunk_size=100)
         documents = reader.read("https://example.com")
 
         assert len(documents) == 2
