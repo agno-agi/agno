@@ -1622,13 +1622,14 @@ class Model(ABC):
                             if function_call.function.show_result:
                                 yield ModelResponse(content=item.content)
                                 continue
-
                         # Yield the event itself to bubble it up
                         yield item
+
+                    # Yield custom events emitted by the tool
                     else:
                         function_call_output += str(item)
                         if function_call.function.show_result:
-                            yield ModelResponse(content=str(item))
+                            yield item
             else:
                 function_call_output = str(function_call.result)
                 if function_call.function.show_result:
