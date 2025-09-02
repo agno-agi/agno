@@ -74,7 +74,7 @@ def main():
         )
     
     with col2:
-        query_type = st.selectbox(
+        st.selectbox(
             "Query Type", 
             ["Issues", "Pull Requests", "Repository Activity", "Custom"],
             key="query_type"
