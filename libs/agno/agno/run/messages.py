@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
-from typing import List, Optional, Sequence
+from typing import List, Optional
 
-from agno.media import AudioArtifact, File, ImageArtifact, VideoArtifact
 from agno.models.message import Message
 
 
