@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.models.anthropic import Claude as AnthropicClaude
 from agno.models.message import Message
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.models.aws_claude import format_messages
 
 try:
@@ -139,8 +139,7 @@ class Claude(AnthropicClaude):
         )
         return self.async_client
 
-    @property
-    def request_kwargs(self) -> Dict[str, Any]:
+    def get_request_params(self) -> Dict[str, Any]:
         """
         Generate keyword arguments for API requests.
 
@@ -160,6 +159,9 @@ class Claude(AnthropicClaude):
             _request_params["top_k"] = self.top_k
         if self.request_params:
             _request_params.update(self.request_params)
+
+        if _request_params:
+            log_debug(f"Calling {self.provider} with request parameters: {_request_params}", log_level=2)
         return _request_params
 
     def invoke(

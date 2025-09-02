@@ -610,6 +610,12 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 model_id = self.team.model.id if self.team.model is not None else None
                 model_provider = self.team.model.provider if self.team.model is not None else None
                 evaluated_entity_name = self.team.name
+            else:
+                agent_id = None
+                team_id = None
+                model_id = None
+                model_provider = None
+                evaluated_entity_name = None
 
             log_eval_run(
                 run_id=self.eval_id,  # type: ignore

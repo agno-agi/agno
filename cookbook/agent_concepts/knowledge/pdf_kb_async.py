@@ -10,7 +10,7 @@ vector_db = Qdrant(collection=COLLECTION_NAME, url="http://localhost:6333")
 
 # Create a knowledge base with the PDFs from the data/pdfs directory
 knowledge_base = PDFKnowledgeBase(
-    path="data/pdf",
+    path="data/pdf",  # for password-protected PDFs, use path=[{"path": "tmp/ThaiRecipes_protected.pdf", "password": "ThaiRecipes"}],
     vector_db=vector_db,
     reader=PDFReader(chunk=True),
 )

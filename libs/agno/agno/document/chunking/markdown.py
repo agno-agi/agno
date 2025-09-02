@@ -42,7 +42,7 @@ class MarkdownChunking(ChunkingStrategy):
                     elements=elements,
                     max_characters=self.chunk_size,
                     new_after_n_chars=int(self.chunk_size * 0.8),
-                    combine_text_under_n_chars=500,
+                    combine_text_under_n_chars=self.chunk_size,
                     overlap=0,
                 )
 

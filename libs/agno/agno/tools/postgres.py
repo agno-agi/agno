@@ -1,22 +1,22 @@
+import csv
 from typing import Any, Dict, List, Optional
 
 try:
-    import psycopg2
+    import psycopg
+    from psycopg import sql
+    from psycopg.connection import Connection as PgConnection
+    from psycopg.rows import DictRow, dict_row
 except ImportError:
-    raise ImportError(
-        "`psycopg2` not installed. Please install using `pip install psycopg2`. If you face issues, try `pip install psycopg2-binary`."
-    )
+    raise ImportError("`psycopg` not installed. Please install using `pip install 'psycopg-binary'`.")
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_info
+from agno.utils.log import log_debug, log_error
 
 
 class PostgresTools(Toolkit):
-    """A basic tool to connect to a PostgreSQL database and perform read-only operations on it."""
-
     def __init__(
         self,
-        connection: Optional[psycopg2.extensions.connection] = None,
+        connection: Optional[PgConnection[DictRow]] = None,
         db_name: Optional[str] = None,
         user: Optional[str] = None,
         password: Optional[str] = None,
@@ -29,7 +29,7 @@ class PostgresTools(Toolkit):
         table_schema: str = "public",
         **kwargs,
     ):
-        self._connection: Optional[psycopg2.extensions.connection] = connection
+        self._connection: Optional[PgConnection[DictRow]] = connection
         self.db_name: Optional[str] = db_name
         self.user: Optional[str] = user
         self.password: Optional[str] = password
@@ -37,9 +37,10 @@ class PostgresTools(Toolkit):
         self.port: Optional[int] = port
         self.table_schema: str = table_schema
 
-        tools: List[Any] = []
-        tools.append(self.show_tables)
-        tools.append(self.describe_table)
+        tools: List[Any] = [
+            self.show_tables,
+            self.describe_table,
+        ]
         if inspect_queries:
             tools.append(self.inspect_query)
         if run_queries:
@@ -52,196 +53,213 @@ class PostgresTools(Toolkit):
         super().__init__(name="postgres_tools", tools=tools, **kwargs)
 
     @property
-    def connection(self) -> psycopg2.extensions.connection:
+    def connection(self) -> PgConnection[DictRow]:
         """
-        Returns the Postgres psycopg2 connection.
-
-        :return psycopg2.extensions.connection: psycopg2 connection
+        Returns the Postgres psycopg connection.
+        :return psycopg.connection.Connection: psycopg connection
         """
-        if self._connection is None:
-            connection_kwargs: Dict[str, Any] = {}
-            if self.db_name is not None:
-                connection_kwargs["database"] = self.db_name
-            if self.user is not None:
+        if self._connection is None or self._connection.closed:
+            log_debug("Establishing new PostgreSQL connection.")
+            connection_kwargs: Dict[str, Any] = {"row_factory": dict_row}
+            if self.db_name:
+                connection_kwargs["dbname"] = self.db_name
+            if self.user:
                 connection_kwargs["user"] = self.user
-            if self.password is not None:
+            if self.password:
                 connection_kwargs["password"] = self.password
-            if self.host is not None:
+            if self.host:
                 connection_kwargs["host"] = self.host
-            if self.port is not None:
+            if self.port:
                 connection_kwargs["port"] = self.port
-            if self.table_schema is not None:
-                connection_kwargs["options"] = f"-c search_path={self.table_schema}"
 
-            self._connection = psycopg2.connect(**connection_kwargs)
-            self._connection.set_session(readonly=True)
+            connection_kwargs["options"] = f"-c search_path={self.table_schema}"
+
+            self._connection = psycopg.connect(**connection_kwargs)
+            self._connection.read_only = True
 
         return self._connection
 
-    def show_tables(self) -> str:
-        """Function to show tables in the database
+    def __enter__(self):
+        return self
 
-        :return: List of tables in the database
-        """
-        stmt = f"SELECT table_name FROM information_schema.tables WHERE table_schema = '{self.table_schema}';"
-        tables = self.run_query(stmt)
-        log_debug(f"Tables: {tables}")
-        return tables
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def close(self):
+        """Closes the database connection if it's open."""
+        if self._connection and not self._connection.closed:
+            log_debug("Closing PostgreSQL connection.")
+            self._connection.close()
+            self._connection = None
+
+    def _execute_query(self, query: str, params: Optional[tuple] = None) -> str:
+        try:
+            with self.connection.cursor() as cursor:
+                log_debug(f"Running PostgreSQL Query: {query} with Params: {params}")
+                cursor.execute(query, params)
+
+                if cursor.description is None:
+                    return cursor.statusmessage or "Query executed successfully with no output."
+
+                columns = [desc[0] for desc in cursor.description]
+                rows = cursor.fetchall()
+
+                if not rows:
+                    return f"Query returned no results.\nColumns: {', '.join(columns)}"
+
+                header = ",".join(columns)
+                data_rows = [",".join(map(str, row.values())) for row in rows]
+                return f"{header}\n" + "\n".join(data_rows)
+
+        except psycopg.Error as e:
+            log_error(f"Database error: {e}")
+            if self.connection and not self.connection.closed:
+                self.connection.rollback()
+            return f"Error executing query: {e}"
+        except Exception as e:
+            log_error(f"An unexpected error occurred: {e}")
+            return f"An unexpected error occurred: {e}"
+
+    def show_tables(self) -> str:
+        """Lists all tables in the configured schema."""
+
+        stmt = "SELECT table_name FROM information_schema.tables WHERE table_schema = %s;"
+        return self._execute_query(stmt, (self.table_schema,))
 
     def describe_table(self, table: str) -> str:
-        """Function to describe a table
-
-        :param table: Table to describe
-        :return: Description of the table
         """
-        stmt = f"SELECT column_name, data_type, character_maximum_length FROM information_schema.columns WHERE table_name = '{table}' AND table_schema = '{self.table_schema}';"
-        table_description = self.run_query(stmt)
+        Provides the schema (column name, data type, is nullable) for a given table.
 
-        log_debug(f"Table description: {table_description}")
-        return f"{table}\n{table_description}"
+        Args:
+            table: The name of the table to describe.
+
+        Returns:
+            A string describing the table's columns and data types.
+        """
+        stmt = """
+            SELECT column_name, data_type, is_nullable
+            FROM information_schema.columns
+            WHERE table_schema = %s AND table_name = %s;
+        """
+        return self._execute_query(stmt, (self.table_schema, table))
 
     def summarize_table(self, table: str) -> str:
-        """Function to compute a number of aggregates over a table.
-        The function launches a query that computes a number of aggregates over all columns,
-        including min, max, avg, std and approx_unique.
-
-        :param table: Table to summarize
-        :return: Summary of the table
         """
-        stmt = f"""WITH column_stats AS (
-                SELECT
-                    column_name,
-                    data_type
-                FROM
-                    information_schema.columns
-                WHERE
-                    table_name = '{table}'
-                    AND table_schema = '{self.table_schema}'
-            )
-            SELECT
-                column_name,
-                data_type,
-                COUNT(COALESCE(column_name::text, '')) AS non_null_count,
-                COUNT(*) - COUNT(COALESCE(column_name::text, '')) AS null_count,
-                SUM(COALESCE(column_name::numeric, 0)) AS sum,
-                AVG(COALESCE(column_name::numeric, 0)) AS mean,
-                MIN(column_name::numeric) AS min,
-                MAX(column_name::numeric) AS max,
-                STDDEV(COALESCE(column_name::numeric, 0)) AS stddev
-            FROM
-                column_stats,
-                LATERAL (
-                    SELECT
-                        *
-                    FROM
-                        {table}
-                ) AS tbl
-            WHERE
-                data_type IN ('integer', 'numeric', 'real', 'double precision')
-            GROUP BY
-                column_name, data_type
-            UNION ALL
-            SELECT
-                column_name,
-                data_type,
-                COUNT(COALESCE(column_name::text, '')) AS non_null_count,
-                COUNT(*) - COUNT(COALESCE(column_name::text, '')) AS null_count,
-                NULL AS sum,
-                NULL AS mean,
-                NULL AS min,
-                NULL AS max,
-                NULL AS stddev
-            FROM
-                column_stats,
-                LATERAL (
-                    SELECT
-                        *
-                    FROM
-                        {table}
-                ) AS tbl
-            WHERE
-                data_type NOT IN ('integer', 'numeric', 'real', 'double precision')
-            GROUP BY
-                column_name, data_type;
-        """
-        table_summary = self.run_query(stmt)
+        Computes and returns key summary statistics for a table's columns.
 
-        log_debug(f"Table summary: {table_summary}")
-        return table_summary
+        Args:
+            table: The name of the table to summarize.
+
+        Returns:
+            A string containing a summary of the table.
+        """
+        try:
+            with self.connection.cursor() as cursor:
+                # First, get column information using a parameterized query
+                schema_query = """
+                    SELECT column_name, data_type
+                    FROM information_schema.columns
+                    WHERE table_schema = %s AND table_name = %s;
+                """
+                cursor.execute(schema_query, (self.table_schema, table))
+                columns = cursor.fetchall()
+                if not columns:
+                    return f"Error: Table '{table}' not found in schema '{self.table_schema}'."
+
+                summary_parts = [f"Summary for table: {table}\n"]
+                table_identifier = sql.Identifier(self.table_schema, table)
+
+                for col in columns:
+                    col_name, data_type = col["column_name"], col["data_type"]
+                    col_identifier = sql.Identifier(col_name)
+
+                    query = None
+                    if any(
+                        t in data_type for t in ["integer", "numeric", "real", "double precision", "bigint", "smallint"]
+                    ):
+                        query = sql.SQL("""
+                            SELECT
+                                COUNT(*) AS total_rows,
+                                COUNT({col}) AS non_null_rows,
+                                MIN({col}) AS min,
+                                MAX({col}) AS max,
+                                AVG({col}) AS average,
+                                STDDEV({col}) AS std_deviation
+                            FROM {tbl};
+                        """).format(col=col_identifier, tbl=table_identifier)
+                    elif any(t in data_type for t in ["char", "text", "uuid"]):
+                        query = sql.SQL("""
+                            SELECT
+                                COUNT(*) AS total_rows,
+                                COUNT({col}) AS non_null_rows,
+                                COUNT(DISTINCT {col}) AS unique_values,
+                                AVG(LENGTH({col}::text)) as avg_length
+                            FROM {tbl};
+                        """).format(col=col_identifier, tbl=table_identifier)
+
+                    if query:
+                        cursor.execute(query)
+                        stats = cursor.fetchone()
+                        summary_parts.append(f"\n--- Column: {col_name} (Type: {data_type}) ---")
+                        if stats is not None:
+                            for key, value in stats.items():
+                                val_str = (
+                                    f"{value:.2f}" if isinstance(value, float) and value is not None else str(value)
+                                )
+                                summary_parts.append(f"  {key}: {val_str}")
+                        else:
+                            summary_parts.append("  No statistics available")
+
+                return "\n".join(summary_parts)
+
+        except psycopg.Error as e:
+            return f"Error summarizing table: {e}"
 
     def inspect_query(self, query: str) -> str:
-        """Function to inspect a query and return the query plan. Always inspect your query before running them.
-
-        :param query: Query to inspect
-        :return: Query plan
         """
-        stmt = f"EXPLAIN {query};"
-        explain_plan = self.run_query(stmt)
+        Shows the execution plan for a SQL query (using EXPLAIN).
 
-        log_debug(f"Explain plan: {explain_plan}")
-        return explain_plan
-
-    def export_table_to_path(self, table: str, path: Optional[str] = None) -> str:
-        """Save a table in CSV format.
-        If the path is provided, the table will be saved under that path.
-            Eg: If path is /tmp, the table will be saved as /tmp/table.csv
-        Otherwise it will be saved in the current directory
-
-        :param table: Table to export
-        :param path: Path to export to
-        :return: None
+        :param query: The SQL query to inspect.
+        :return: The query's execution plan.
         """
+        return self._execute_query(f"EXPLAIN {query}")
 
-        log_debug(f"Exporting Table {table} as CSV to path {path}")
-        if path is None:
-            path = f"{table}.csv"
-        else:
-            path = f"{path}/{table}.csv"
-
-        export_statement = f"COPY {self.table_schema}.{table} TO '{path}' DELIMITER ',' CSV HEADER;"
-        result = self.run_query(export_statement)
-        log_debug(f"Exported {table} to {path}/{table}")
-
-        return result
-
-    def run_query(self, query: str) -> str:
-        """Function that runs a query and returns the result.
-
-        :param query: SQL query to run
-        :return: Result of the query
+    def export_table_to_path(self, table: str, path: str) -> str:
         """
+        Exports a table's data to a local CSV file.
 
-        # -*- Format the SQL Query
-        # Remove backticks
-        formatted_sql = query.replace("`", "")
-        # If there are multiple statements, only run the first one
-        formatted_sql = formatted_sql.split(";")[0]
+        :param table: The name of the table to export.
+        :param path: The local file path to save the file.
+        :return: A confirmation message with the file path.
+        """
+        log_debug(f"Exporting Table {table} as CSV to local path {path}")
+
+        table_identifier = sql.Identifier(self.table_schema, table)
+        stmt = sql.SQL("SELECT * FROM {tbl};").format(tbl=table_identifier)
 
         try:
-            log_info(f"Running: {formatted_sql}")
+            with self.connection.cursor() as cursor:
+                cursor.execute(stmt)
 
-            cursor = self.connection.cursor()
-            cursor.execute(query)
-            query_result = cursor.fetchall()
+                if cursor.description is None:
+                    return f"Error: Query returned no description for table '{table}'."
 
-            result_output = "No output"
-            if query_result is not None:
-                try:
-                    results_as_python_objects = query_result
-                    result_rows = []
-                    for row in results_as_python_objects:
-                        if len(row) == 1:
-                            result_rows.append(str(row[0]))
-                        else:
-                            result_rows.append(",".join(str(x) for x in row))
+                columns = [desc[0] for desc in cursor.description]
 
-                    result_data = "\n".join(result_rows)
-                    result_output = ",".join(query_result.columns) + "\n" + result_data
-                except AttributeError:
-                    result_output = str(query_result)
+                with open(path, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(columns)
+                    writer.writerows(row.values() for row in cursor)
 
-            log_debug(f"Query result: {result_output}")
+            return f"Successfully exported table '{table}' to '{path}'."
+        except (psycopg.Error, IOError) as e:
+            return f"Error exporting table: {e}"
 
-            return result_output
-        except Exception as e:
-            return str(e)
+    def run_query(self, query: str) -> str:
+        """
+        Runs a read-only SQL query and returns the result.
+
+        :param query: The SQL query to run.
+        :return: The query result as a formatted string.
+        """
+        return self._execute_query(query)

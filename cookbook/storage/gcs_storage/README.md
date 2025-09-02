@@ -34,7 +34,7 @@ Install the required Python packages:
 
 
 ```bash
-pip install google-auth google-cloud-storage openai duckduckgo-search
+pip install google-auth google-cloud-storage openai ddgs
 ```
 
 

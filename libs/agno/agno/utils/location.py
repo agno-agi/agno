@@ -10,10 +10,10 @@ def get_location() -> Dict[str, Any]:
     try:
         response = requests.get("https://api.ipify.org?format=json", timeout=5)
         ip = response.json()["ip"]
-        response = requests.get(f"https://ipapi.co/{ip}/json/", timeout=5)
+        response = requests.get(f"http://ip-api.com/json/{ip}", timeout=5)
         if response.status_code == 200:
             data = response.json()
-            return {"city": data.get("city"), "region": data.get("region"), "country": data.get("country_name")}
+            return {"city": data.get("city"), "region": data.get("region"), "country": data.get("country")}
     except Exception as e:
         log_warning(f"Failed to get location: {e}")
     return {}

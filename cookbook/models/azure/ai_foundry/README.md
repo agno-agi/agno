@@ -21,12 +21,12 @@ export AZURE_ENDPOINT="https://<your-host-name>.services.ai.azure.com/models"
 export AZURE_API_VERSION="2024-05-01-preview"
 ```
 
-You can get the endpoint from the Azure AI Foundry portal. Click on the deployed model and copy the "Target URI"
+You can get the endpoint from the [Azure AI Foundry portal](https://ai.azure.com/). Click on the deployed model and copy the "Target URI"
 
 ### 3. Install libraries
 
 ```shell
-pip install -U openai duckduckgo-search duckdb yfinance agno
+pip install -U openai ddgs duckdb yfinance agno
 ```
 
 ### 4. Run basic Agent

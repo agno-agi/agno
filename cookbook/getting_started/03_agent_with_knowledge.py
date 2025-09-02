@@ -4,7 +4,7 @@ This example shows how to create an AI cooking assistant that combines knowledge
 curated recipe database with web searching capabilities. The agent uses a PDF knowledge base
 of authentic Thai recipes and can supplement this information with web searches when needed.
 
-Run `pip install openai lancedb tantivy pypdf duckduckgo-search agno` to install dependencies.
+Run `pip install openai lancedb tantivy pypdf ddgs agno` to install dependencies.
 """
 
 from textwrap import dedent

@@ -4,6 +4,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.yfinance import YFinanceTools
+from agno.utils.pprint import pprint_run_response
 
 
 class StockAnalysis(BaseModel):
@@ -57,8 +58,8 @@ team = Team(
 
 response = team.run("What is the current stock price of NVDA?")
 assert isinstance(response.content, StockAnalysis)
-print(response.content)
+pprint_run_response(response)
 
 response = team.run("What is in the news about NVDA?")
 assert isinstance(response.content, CompanyAnalysis)
-print(response.content)
+pprint_run_response(response)

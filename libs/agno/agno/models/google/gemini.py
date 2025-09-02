@@ -14,7 +14,7 @@ from agno.models.base import Model
 from agno.models.message import Citations, Message, MessageMetrics, UrlCitation
 from agno.models.response import ModelResponse
 from agno.utils.gemini import convert_schema, format_function_definitions, format_image_for_message
-from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.models.schema_utils import get_response_schema_for_provider
 
 try:
@@ -30,7 +30,11 @@ try:
         GoogleSearch,
         GoogleSearchRetrieval,
         Part,
+        Retrieval,
+        ThinkingConfig,
         Tool,
+        UrlContext,
+        VertexAISearch,
     )
     from google.genai.types import (
         File as GeminiFile,
@@ -67,6 +71,9 @@ class Gemini(Model):
     search: bool = False
     grounding: bool = False
     grounding_dynamic_threshold: Optional[float] = None
+    url_context: bool = False
+    vertexai_search: bool = False
+    vertexai_search_datastore: Optional[str] = None
 
     temperature: Optional[float] = None
     top_p: Optional[float] = None
@@ -80,6 +87,8 @@ class Gemini(Model):
     response_modalities: Optional[list[str]] = None  # "Text" and/or "Image"
     speech_config: Optional[dict[str, Any]] = None
     cached_content: Optional[Any] = None
+    thinking_budget: Optional[int] = None  # Thinking budget for Gemini 2.5 models
+    include_thoughts: Optional[bool] = None  # Include thought summaries in response
     request_params: Optional[Dict[str, Any]] = None
 
     # Client parameters
@@ -112,7 +121,6 @@ class Gemini(Model):
         """
         if self.client:
             return self.client
-
         client_params: Dict[str, Any] = {}
         vertexai = self.vertexai or getenv("GOOGLE_GENAI_USE_VERTEXAI", "false").lower() == "true"
 
@@ -135,7 +143,7 @@ class Gemini(Model):
         self.client = genai.Client(**client_params)
         return self.client
 
-    def _get_request_kwargs(
+    def get_request_params(
         self,
         system_message: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -187,26 +195,54 @@ class Gemini(Model):
             gemini_schema = convert_schema(normalized_schema)
             config["response_schema"] = gemini_schema
 
-        if self.grounding and self.search:
-            log_info("Both grounding and search are enabled. Grounding will take precedence.")
-            self.search = False
+        # Add thinking configuration
+        thinking_config_params = {}
+        if self.thinking_budget is not None:
+            thinking_config_params["thinking_budget"] = self.thinking_budget
+        if self.include_thoughts is not None:
+            thinking_config_params["include_thoughts"] = self.include_thoughts
+        if thinking_config_params:
+            config["thinking_config"] = ThinkingConfig(**thinking_config_params)
+
+        # Build tools array based on enabled built-in tools
+        builtin_tools = []
 
         if self.grounding:
-            log_info("Grounding enabled. External tools will be disabled.")
-            config["tools"] = [
+            log_info(
+                "Grounding enabled. This is a legacy tool. For Gemini 2.0+ Please use enable `search` flag instead."
+            )
+            builtin_tools.append(
                 Tool(
                     google_search=GoogleSearchRetrieval(
                         dynamic_retrieval_config=DynamicRetrievalConfig(
                             dynamic_threshold=self.grounding_dynamic_threshold
                         )
                     )
-                ),
-            ]
+                )
+            )
 
-        elif self.search:
-            log_info("Search enabled. External tools will be disabled.")
-            config["tools"] = [Tool(google_search=GoogleSearch())]
+        if self.search:
+            log_info("Google Search enabled.")
+            builtin_tools.append(Tool(google_search=GoogleSearch()))
 
+        if self.url_context:
+            log_info("URL context enabled.")
+            builtin_tools.append(Tool(url_context=UrlContext()))
+
+        if self.vertexai_search:
+            log_info("Vertex AI Search enabled.")
+            if not self.vertexai_search_datastore:
+                log_error("vertexai_search_datastore must be provided when vertexai_search is enabled.")
+                raise ValueError("vertexai_search_datastore must be provided when vertexai_search is enabled.")
+            builtin_tools.append(
+                Tool(retrieval=Retrieval(vertex_ai_search=VertexAISearch(datastore=self.vertexai_search_datastore)))
+            )
+
+        # Set tools in config
+        if builtin_tools:
+            if tools:
+                log_info("Built-in tools enabled. External tools will be disabled.")
+            config["tools"] = builtin_tools
         elif tools:
             config["tools"] = [format_function_definitions(tools)]
 
@@ -219,6 +255,8 @@ class Gemini(Model):
         if self.request_params:
             request_params.update(self.request_params)
 
+        if request_params:
+            log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
 
     def invoke(
@@ -232,7 +270,7 @@ class Gemini(Model):
         Invokes the model with a list of messages and returns the response.
         """
         formatted_messages, system_message = self._format_messages(messages)
-        request_kwargs = self._get_request_kwargs(system_message, response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(system_message, response_format=response_format, tools=tools)
         try:
             return self.get_client().models.generate_content(
                 model=self.id,
@@ -264,7 +302,7 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        request_kwargs = self._get_request_kwargs(system_message, response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(system_message, response_format=response_format, tools=tools)
         try:
             yield from self.get_client().models.generate_content_stream(
                 model=self.id,
@@ -295,7 +333,7 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        request_kwargs = self._get_request_kwargs(system_message, response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(system_message, response_format=response_format, tools=tools)
 
         try:
             return await self.get_client().aio.models.generate_content(
@@ -327,7 +365,7 @@ class Gemini(Model):
         """
         formatted_messages, system_message = self._format_messages(messages)
 
-        request_kwargs = self._get_request_kwargs(system_message, response_format=response_format, tools=tools)
+        request_kwargs = self.get_request_params(system_message, response_format=response_format, tools=tools)
 
         try:
             async_stream = await self.get_client().aio.models.generate_content_stream(
@@ -374,7 +412,10 @@ class Gemini(Model):
             message_parts: List[Any] = []
 
             # Function calls
-            if (not content or role == "model") and message.tool_calls is not None and len(message.tool_calls) > 0:
+            if role == "model" and message.tool_calls is not None and len(message.tool_calls) > 0:
+                if content is not None:
+                    content_str = content if isinstance(content, str) else str(content)
+                    message_parts.append(Part.from_text(text=content_str))
                 for tool_call in message.tool_calls:
                     message_parts.append(
                         Part.from_function_call(
@@ -382,7 +423,7 @@ class Gemini(Model):
                             args=json.loads(tool_call["function"]["arguments"]),
                         )
                     )
-            # Function results
+            # Function call results
             elif message.tool_calls is not None and len(message.tool_calls) > 0:
                 for tool_call in message.tool_calls:
                     message_parts.append(
@@ -697,9 +738,31 @@ class Gemini(Model):
                 if hasattr(part, "text") and part.text is not None:
                     text_content: Optional[str] = getattr(part, "text")
                     if isinstance(text_content, str):
-                        model_response.content = text_content
+                        # Check if this is a thought summary
+                        if hasattr(part, "thought") and part.thought:
+                            # Add all parts as single message
+                            if model_response.reasoning_content is None:
+                                model_response.reasoning_content = text_content
+                            else:
+                                model_response.reasoning_content += text_content
+                        else:
+                            if model_response.content is None:
+                                model_response.content = text_content
+                            else:
+                                model_response.content += text_content
                     else:
-                        model_response.content = str(text_content) if text_content is not None else ""
+                        content_str = str(text_content) if text_content is not None else ""
+                        if hasattr(part, "thought") and part.thought:
+                            # Add all parts as single message
+                            if model_response.reasoning_content is None:
+                                model_response.reasoning_content = content_str
+                            else:
+                                model_response.reasoning_content += content_str
+                        else:
+                            if model_response.content is None:
+                                model_response.content = content_str
+                            else:
+                                model_response.content += content_str
 
                 if hasattr(part, "inline_data") and part.inline_data is not None:
                     model_response.image = ImageArtifact(
@@ -722,30 +785,66 @@ class Gemini(Model):
 
                     model_response.tool_calls.append(tool_call)
 
-            if response.candidates and response.candidates[0].grounding_metadata is not None:
-                citations = Citations()
-                grounding_metadata = response.candidates[0].grounding_metadata.model_dump()
-                citations.raw = grounding_metadata
+            citations = Citations()
+            citations_raw = {}
+            citations_urls = []
 
-                # Extract url and title
-                chunks = grounding_metadata.pop("grounding_chunks", None) or []
-                citation_pairs = [
-                    (chunk.get("web", {}).get("uri"), chunk.get("web", {}).get("title"))
-                    for chunk in chunks
-                    if chunk.get("web", {}).get("uri")
-                ]
+            if response.candidates and response.candidates[0].grounding_metadata is not None:
+                grounding_metadata = response.candidates[0].grounding_metadata.model_dump()
+                citations_raw["grounding_metadata"] = grounding_metadata
+
+                chunks = grounding_metadata.get("grounding_chunks", []) or []
+                citation_pairs = []
+                for chunk in chunks:
+                    if not isinstance(chunk, dict):
+                        continue
+                    web = chunk.get("web")
+                    if not isinstance(web, dict):
+                        continue
+                    uri = web.get("uri")
+                    title = web.get("title")
+                    if uri:
+                        citation_pairs.append((uri, title))
 
                 # Create citation objects from filtered pairs
-                citations.urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
+                grounding_urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
+                citations_urls.extend(grounding_urls)
 
+            # Handle URLs from URL context tool
+            if (
+                response.candidates
+                and hasattr(response.candidates[0], "url_context_metadata")
+                and response.candidates[0].url_context_metadata is not None
+            ):
+                url_context_metadata = response.candidates[0].url_context_metadata.model_dump()
+                citations_raw["url_context_metadata"] = url_context_metadata
+
+                url_metadata_list = url_context_metadata.get("url_metadata", [])
+                for url_meta in url_metadata_list:
+                    retrieved_url = url_meta.get("retrieved_url")
+                    status = url_meta.get("url_retrieval_status", "UNKNOWN")
+                    if retrieved_url and status == "URL_RETRIEVAL_STATUS_SUCCESS":
+                        # Avoid duplicate URLs
+                        existing_urls = [citation.url for citation in citations_urls]
+                        if retrieved_url not in existing_urls:
+                            citations_urls.append(UrlCitation(url=retrieved_url, title=retrieved_url))
+
+            if citations_raw or citations_urls:
+                citations.raw = citations_raw if citations_raw else None
+                citations.urls = citations_urls if citations_urls else None
                 model_response.citations = citations
 
         # Extract usage metadata if present
         if hasattr(response, "usage_metadata") and response.usage_metadata is not None:
             usage: GenerateContentResponseUsageMetadata = response.usage_metadata
+
+            output_tokens = usage.candidates_token_count or 0
+            if hasattr(usage, "thoughts_token_count") and usage.thoughts_token_count is not None:
+                output_tokens += usage.thoughts_token_count or 0
+
             model_response.response_usage = {
                 "input_tokens": usage.prompt_token_count or 0,
-                "output_tokens": usage.candidates_token_count or 0,
+                "output_tokens": output_tokens,
                 "total_tokens": usage.total_token_count or 0,
                 "cached_tokens": usage.cached_content_token_count or 0,
             }
@@ -773,7 +872,18 @@ class Gemini(Model):
                 for part in response_message.parts:
                     # Extract text if present
                     if hasattr(part, "text") and part.text is not None:
-                        model_response.content = str(part.text) if part.text is not None else ""
+                        text_content = str(part.text) if part.text is not None else ""
+                        # Check if this is a thought summary
+                        if hasattr(part, "thought") and part.thought:
+                            if model_response.reasoning_content is None:
+                                model_response.reasoning_content = text_content
+                            else:
+                                model_response.reasoning_content += text_content
+                        else:
+                            if model_response.content is None:
+                                model_response.content = text_content
+                            else:
+                                model_response.content += text_content
 
                     if hasattr(part, "inline_data") and part.inline_data is not None:
                         model_response.image = ImageArtifact(
@@ -803,11 +913,17 @@ class Gemini(Model):
 
                 # Extract url and title
                 chunks = grounding_metadata.pop("grounding_chunks", None) or []
-                citation_pairs = [
-                    (chunk.get("web", {}).get("uri"), chunk.get("web", {}).get("title"))
-                    for chunk in chunks
-                    if chunk.get("web", {}).get("uri")
-                ]
+                citation_pairs = []
+                for chunk in chunks:
+                    if not isinstance(chunk, dict):
+                        continue
+                    web = chunk.get("web")
+                    if not isinstance(web, dict):
+                        continue
+                    uri = web.get("uri")
+                    title = web.get("title")
+                    if uri:
+                        citation_pairs.append((uri, title))
 
                 # Create citation objects from filtered pairs
                 citations.urls = [UrlCitation(url=url, title=title) for url, title in citation_pairs]
@@ -817,9 +933,14 @@ class Gemini(Model):
             # Extract usage metadata if present
             if hasattr(response_delta, "usage_metadata") and response_delta.usage_metadata is not None:
                 usage: GenerateContentResponseUsageMetadata = response_delta.usage_metadata
+
+                output_tokens = usage.candidates_token_count or 0
+                if hasattr(usage, "thoughts_token_count") and usage.thoughts_token_count is not None:
+                    output_tokens += usage.thoughts_token_count or 0
+
                 model_response.response_usage = {
                     "input_tokens": usage.prompt_token_count or 0,
-                    "output_tokens": usage.candidates_token_count or 0,
+                    "output_tokens": output_tokens,
                     "total_tokens": usage.total_token_count or 0,
                     "cached_tokens": usage.cached_content_token_count or 0,
                 }
