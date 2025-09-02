@@ -239,6 +239,7 @@ class Step:
                             images=images,
                             videos=videos,
                             audio=audios,
+                            files=step_input.files,
                             session_id=session_id,
                             user_id=user_id,
                         )
@@ -363,6 +364,7 @@ class Step:
                             images=images,
                             videos=videos,
                             audio=audios,
+                            files=step_input.files,
                             session_id=session_id,
                             user_id=user_id,
                             stream=True,
@@ -514,6 +516,7 @@ class Step:
                             images=images,
                             videos=videos,
                             audio=audios,
+                            files=step_input.files,
                             session_id=session_id,
                             user_id=user_id,
                         )
@@ -656,6 +659,7 @@ class Step:
                             images=images,
                             videos=videos,
                             audio=audios,
+                            files=step_input.files,
                             session_id=session_id,
                             user_id=user_id,
                             stream=True,

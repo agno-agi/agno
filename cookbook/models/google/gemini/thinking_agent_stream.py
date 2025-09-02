@@ -8,5 +8,12 @@ task = (
     "How can all six people get across the river safely? Provide a step-by-step solution and show the solutions as an ascii diagram"
 )
 
-agent = Agent(model=Gemini(id="gemini-2.0-flash-thinking-exp-1219"), markdown=True)
+agent = Agent(
+    model=Gemini(
+        id="gemini-2.5-pro",
+        thinking_budget=1280,  # Enable thinking with token budget
+        include_thoughts=True,  # Include thought summaries in response
+    ),
+    markdown=True,
+)
 agent.print_response(task, stream=True)

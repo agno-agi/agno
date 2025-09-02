@@ -369,6 +369,9 @@ class Workflow:
         if self.storage is not None:
             self.storage.mode = "workflow"
 
+    def initialize_workflow(self):
+        self.set_storage_mode()
+
     def set_workflow_id(self) -> str:
         if self.workflow_id is None:
             self.workflow_id = str(uuid4())

@@ -1,4 +1,4 @@
-from typing import List, Literal
+from typing import Any, Dict, List, Literal, Optional
 
 from agno.models.base import Model
 from agno.models.message import Message
@@ -13,6 +13,9 @@ def get_reasoning_agent(
     telemetry: bool = False,
     debug_mode: bool = False,
     debug_level: Literal[1, 2] = 1,
+    session_state: Optional[Dict[str, Any]] = None,
+    context: Optional[Dict[str, Any]] = None,
+    extra_data: Optional[Dict[str, Any]] = None,
 ) -> "Agent":  # type: ignore  # noqa: F821
     from agno.agent import Agent
 
@@ -22,6 +25,9 @@ def get_reasoning_agent(
         telemetry=telemetry,
         debug_mode=debug_mode,
         debug_level=debug_level,
+        session_state=session_state,
+        context=context,
+        extra_data=extra_data,
     )
 
 
