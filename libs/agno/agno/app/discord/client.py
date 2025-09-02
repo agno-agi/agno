@@ -3,6 +3,7 @@ from textwrap import dedent
 from typing import Optional, Union
 
 import requests
+from pydantic import BaseModel
 
 from agno.agent.agent import Agent, RunResponse
 from agno.media import Audio, File, Image, Video
@@ -167,7 +168,17 @@ class DiscordClient:
                 thread=thread, message=f"Reasoning: \n{response.reasoning_content}", italics=True
             )
 
-        await self._send_discord_messages(thread=thread, message=str(response.content))
+        # Handle structured outputs properly
+        if isinstance(response.content, BaseModel):
+            try:
+                content_message = response.content.model_dump_json(exclude_none=True)
+            except Exception as e:
+                log_warning(f"Failed to serialize structured output for Discord: {e}")
+                content_message = str(response.content)
+        else:
+            content_message = str(response.content) if response.content else ""
+
+        await self._send_discord_messages(thread=thread, message=content_message)
 
     async def _send_discord_messages(self, thread: discord.channel, message: str, italics: bool = False):  # type: ignore
         if len(message) < 1500:
