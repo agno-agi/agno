@@ -11,13 +11,12 @@ knowledge = Knowledge(
     vector_db=PgVector(table_name="recipes", db_url=db_url),
 )
 # Add content to the knowledge
-knowledge.add_content_sync(
+knowledge.add_content(
     url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
 )
 
 agent = Agent(
     model=Groq(id="llama-3.3-70b-versatile"),
     knowledge=knowledge,
-    show_tool_calls=True,
 )
 agent.print_response("How to make Thai curry?", markdown=True)

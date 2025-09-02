@@ -25,7 +25,7 @@ knowledge = Knowledge(
 )
 # Add from URL to the knowledge base
 asyncio.run(
-    knowledge.add_content(
+    knowledge.add_content_async(
         name="Recipes",
         url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
         metadata={"user_tag": "Recipes from website"},

@@ -1,5 +1,6 @@
 import time
 from pathlib import Path
+from typing import Callable, List
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -17,17 +18,27 @@ except ImportError:
 class OpenCVTools(Toolkit):
     """Tools for capturing images and videos from the webcam using OpenCV"""
 
-    def __init__(self, show_preview=False, **kwargs):
+    def __init__(
+        self,
+        show_preview=False,
+        enable_capture_image: bool = True,
+        enable_capture_video: bool = True,
+        all: bool = False,
+        **kwargs,
+    ):
+        self.show_preview = show_preview
+
+        tools: List[Callable] = []
+        if all or enable_capture_image:
+            tools.append(self.capture_image)
+        if all or enable_capture_video:
+            tools.append(self.capture_video)
+
         super().__init__(
             name="opencv_tools",
-            tools=[
-                self.capture_image,
-                self.capture_video,
-            ],
+            tools=tools,
             **kwargs,
         )
-
-        self.show_preview = show_preview
 
     def capture_image(
         self,

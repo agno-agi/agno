@@ -11,14 +11,6 @@ class LinearTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        get_user_details: bool = True,
-        get_teams_details: bool = True,
-        get_issue_details: bool = True,
-        create_issue: bool = True,
-        update_issue: bool = True,
-        get_user_assigned_issues: bool = True,
-        get_workflow_issues: bool = True,
-        get_high_priority_issues: bool = True,
         **kwargs,
     ):
         self.api_key = api_key or getenv("LINEAR_API_KEY")
@@ -29,23 +21,16 @@ class LinearTools(Toolkit):
         self.endpoint = "https://api.linear.app/graphql"
         self.headers = {"Authorization": f"{self.api_key}"}
 
-        tools: List[Any] = []
-        if get_user_details:
-            tools.append(self.get_user_details)
-        if get_teams_details:
-            tools.append(self.get_teams_details)
-        if get_issue_details:
-            tools.append(self.get_issue_details)
-        if create_issue:
-            tools.append(self.create_issue)
-        if update_issue:
-            tools.append(self.update_issue)
-        if get_user_assigned_issues:
-            tools.append(self.get_user_assigned_issues)
-        if get_workflow_issues:
-            tools.append(self.get_workflow_issues)
-        if get_high_priority_issues:
-            tools.append(self.get_high_priority_issues)
+        tools: List[Any] = [
+            self.get_user_details,
+            self.get_teams_details,
+            self.get_issue_details,
+            self.create_issue,
+            self.update_issue,
+            self.get_user_assigned_issues,
+            self.get_workflow_issues,
+            self.get_high_priority_issues,
+        ]
 
         super().__init__(name="linear_tools", tools=tools, **kwargs)
 

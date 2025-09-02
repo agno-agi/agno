@@ -133,7 +133,7 @@ def test_feature_registration(mock_cartesia_client):
         assert "list_voices" in tools.functions
 
         # Test with localize enabled as well
-        tools = CartesiaTools(voice_localize_enabled=True)
+        tools = CartesiaTools(enable_localize_voice=True)
         assert len(tools.functions) == 3
         assert "text_to_speech" in tools.functions
         assert "list_voices" in tools.functions
@@ -141,9 +141,9 @@ def test_feature_registration(mock_cartesia_client):
 
         # Test with all disabled
         tools = CartesiaTools(
-            text_to_speech_enabled=False,
-            list_voices_enabled=False,
-            voice_localize_enabled=False,
+            enable_text_to_speech=False,
+            enable_list_voices=False,
+            enable_localize_voice=False,
         )
         assert len(tools.functions) == 0
 

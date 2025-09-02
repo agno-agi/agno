@@ -146,10 +146,10 @@ async def async_distributed_search():
     query = "How do Agents work with tools and what are the performance considerations?"
 
     # Add content to both knowledge bases
-    await knowledge_primary.add_contents(
+    await knowledge_primary.add_contents_async(
         urls=["https://docs.agno.com/introduction/agents.md"]
     )
-    await knowledge_secondary.add_contents(
+    await knowledge_secondary.add_contents_async(
         urls=["https://docs.agno.com/introduction/agents.md"]
     )
 
@@ -167,10 +167,10 @@ def sync_distributed_search():
     query = "How do Agents work with tools and what are the performance considerations?"
 
     # Add content to both knowledge bases
-    knowledge_primary.add_contents_sync(
+    knowledge_primary.add_contents(
         urls=["https://docs.agno.com/introduction/agents.md"]
     )
-    knowledge_secondary.add_contents_sync(
+    knowledge_secondary.add_contents(
         urls=["https://docs.agno.com/introduction/agents.md"]
     )
 

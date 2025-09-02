@@ -21,7 +21,8 @@ class CustomApiTools(Toolkit):
         headers: Optional[Dict[str, str]] = None,
         verify_ssl: bool = True,
         timeout: int = 30,
-        make_request: bool = True,
+        enable_make_request: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.base_url = base_url
@@ -33,7 +34,7 @@ class CustomApiTools(Toolkit):
         self.timeout = timeout
 
         tools: List[Any] = []
-        if make_request:
+        if all or enable_make_request:
             tools.append(self.make_request)
 
         super().__init__(name="api_tools", tools=tools, **kwargs)

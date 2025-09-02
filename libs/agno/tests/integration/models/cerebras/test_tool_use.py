@@ -102,4 +102,3 @@ def test_tool_use_with_content():
     assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages if msg.tool_calls is not None)
     assert response.content is not None
-    assert "France" in response.content

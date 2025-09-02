@@ -5,7 +5,12 @@ from agno.tools.fal import FalTools
 fal_agent = Agent(
     name="Fal Video Generator Agent",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[FalTools("fal-ai/hunyuan-video")],
+    tools=[
+        FalTools(
+            model="fal-ai/hunyuan-video",
+            enable_generate_media=True,
+        )
+    ],
     description="You are an AI agent that can generate videos using the Fal API.",
     instructions=[
         "When the user asks you to create a video, use the `generate_media` tool to create the video.",

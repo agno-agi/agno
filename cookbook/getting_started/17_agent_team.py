@@ -15,7 +15,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.yfinance import YFinanceTools
+from agno.tools.exa import ExaTools
 
 web_agent = Agent(
     name="Web Agent",
@@ -49,7 +49,12 @@ finance_agent = Agent(
     role="Get financial data",
     model=OpenAIChat(id="gpt-4o"),
     tools=[
-        YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)
+        ExaTools(
+            include_domains=["trendlyne.com"],
+            text=False,
+            highlights=False,
+            show_results=True,
+        )
     ],
     instructions=dedent("""\
         You are a skilled financial analyst with expertise in market data! 📊

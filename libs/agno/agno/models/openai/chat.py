@@ -218,6 +218,15 @@ class OpenAIChat(Model):
 
         # Add tools
         if tools is not None and len(tools) > 0:
+            # Remove unsupported fields for OpenAILike models
+            if self.provider in ["AIMLAPI", "Fireworks", "Nvidia"]:
+                for tool in tools:
+                    if tool.get("type") == "function":
+                        if tool["function"].get("requires_confirmation") is not None:
+                            del tool["function"]["requires_confirmation"]
+                        if tool["function"].get("external_execution") is not None:
+                            del tool["function"]["external_execution"]
+
             request_params["tools"] = tools
 
             if tool_choice is not None:
@@ -357,6 +366,7 @@ class OpenAIChat(Model):
                 run_response.metrics.set_time_to_first_token()
 
             assistant_message.metrics.start_timer()
+
             provider_response = self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore

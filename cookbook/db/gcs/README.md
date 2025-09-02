@@ -12,12 +12,10 @@ pip install google-cloud-storage
 
 ```python
 from agno.agent import Agent
-from agno.storage.gcs_json import GCSJsonStorage
+from agno.storage.gcs_json import GCSJsonDb
 
-db = GCSJsonStorage(
+db = GCSJsonDb(
     bucket_name="your-bucket-name",
-    project="your_project",
-    credentials="your_cred's",
 )
 
 agent = Agent(
@@ -116,7 +114,7 @@ Set the environment variable so the GCS client directs API calls to the emulator
 
 ```bash
 export STORAGE_EMULATOR_HOST="http://localhost:4443"
-python gcs_json_storage_for_agent.py
+python gcs_json_for_agent.py
 ```
 
 

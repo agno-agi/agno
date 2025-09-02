@@ -104,7 +104,7 @@ knowledge = Knowledge(
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),
     ),
 )
-knowledge.add_content_sync(name="Agno Docs", url="https://docs.agno.com/llms-full.txt")
+knowledge.add_content(name="Agno Docs", url="https://docs.agno.com/llms-full.txt")
 
 # Setup our Agno Agent
 agno_assist = Agent(

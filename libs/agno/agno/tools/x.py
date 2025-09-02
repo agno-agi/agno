@@ -51,13 +51,14 @@ class XTools(Toolkit):
         )
         self.include_post_metrics = include_post_metrics
 
-        tools: List[Any] = []
-        tools.append(self.create_post)
-        tools.append(self.reply_to_post)
-        tools.append(self.send_dm)
-        tools.append(self.get_user_info)
-        tools.append(self.get_home_timeline)
-        tools.append(self.search_posts)
+        tools: List[Any] = [
+            self.create_post,
+            self.reply_to_post,
+            self.send_dm,
+            self.get_user_info,
+            self.get_home_timeline,
+            self.search_posts,
+        ]
 
         super().__init__(name="x", tools=tools, **kwargs)
 

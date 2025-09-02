@@ -131,7 +131,7 @@ class Toolkit:
                 requires_confirmation=tool_name in self.requires_confirmation_tools,
                 external_execution=tool_name in self.external_execution_required_tools,
                 stop_after_tool_call=tool_name in self.stop_after_tool_call_tools,
-                show_result=tool_name in self.show_result_tools,
+                show_result=tool_name in self.show_result_tools or tool_name in self.stop_after_tool_call_tools,
             )
             self.functions[f.name] = f
             log_debug(f"Function: {f.name} registered with {self.name}")

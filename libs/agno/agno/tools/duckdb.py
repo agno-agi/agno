@@ -18,11 +18,6 @@ class DuckDbTools(Toolkit):
         init_commands: Optional[List] = None,
         read_only: bool = False,
         config: Optional[dict] = None,
-        run_queries: bool = True,
-        inspect_queries: bool = False,
-        create_tables: bool = True,
-        summarize_tables: bool = True,
-        export_tables: bool = False,
         **kwargs,
     ):
         self.db_path: Optional[str] = db_path
@@ -31,26 +26,21 @@ class DuckDbTools(Toolkit):
         self._connection: Optional[duckdb.DuckDBPyConnection] = connection
         self.init_commands: Optional[List] = init_commands
 
-        tools: List[Any] = []
-        tools.append(self.show_tables)
-        tools.append(self.describe_table)
-        if inspect_queries:
-            tools.append(self.inspect_query)
-        if run_queries:
-            tools.append(self.run_query)
-        if create_tables:
-            tools.append(self.create_table_from_path)
-        if summarize_tables:
-            tools.append(self.summarize_table)
-        if export_tables:
-            tools.append(self.export_table_to_path)
-
-        tools.append(self.load_local_path_to_table)
-        tools.append(self.load_local_csv_to_table)
-        tools.append(self.load_s3_path_to_table)
-        tools.append(self.load_s3_csv_to_table)
-        tools.append(self.create_fts_index)
-        tools.append(self.full_text_search)
+        tools: List[Any] = [
+            self.show_tables,
+            self.describe_table,
+            self.inspect_query,
+            self.run_query,
+            self.create_table_from_path,
+            self.summarize_table,
+            self.export_table_to_path,
+            self.load_local_path_to_table,
+            self.load_local_csv_to_table,
+            self.load_s3_path_to_table,
+            self.load_s3_csv_to_table,
+            self.create_fts_index,
+            self.full_text_search,
+        ]
 
         super().__init__(name="duckdb_tools", tools=tools, **kwargs)
 

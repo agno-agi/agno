@@ -20,7 +20,7 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_content_sync(
+knowledge.add_content(
     name="CV",
     path="cookbook/knowledge/testing_resources/cv_1.pdf",
     metadata={"user_tag": "Engineering Candidates"},

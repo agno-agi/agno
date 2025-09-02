@@ -131,6 +131,8 @@ class Agent:
     session_state: Optional[Dict[str, Any]] = None
     # If True, the agent can update the session state
     enable_agentic_state: bool = False
+    # If True, add the session state to the user prompt
+    add_session_state_to_context: bool = False
     # If True, cache the current Agent session in memory for faster access
     cache_session: bool = False
 
@@ -346,6 +348,8 @@ class Agent:
         app_id: Optional[str] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
+        add_session_state_to_context: bool = False,
+        enable_agentic_state: bool = False,
         cache_session: bool = False,
         search_session_history: Optional[bool] = False,
         num_history_sessions: Optional[int] = None,
@@ -397,7 +401,6 @@ class Agent:
         timezone_identifier: Optional[str] = None,
         resolve_in_context: bool = True,
         additional_input: Optional[List[Union[str, Dict, BaseModel, Message]]] = None,
-        user_message_role: str = "user",
         build_user_context: bool = True,
         retries: int = 0,
         delay_between_retries: int = 1,
@@ -430,6 +433,7 @@ class Agent:
 
         self.session_id = session_id
         self.session_state = session_state
+        self.enable_agentic_state = enable_agentic_state
         self.cache_session = cache_session
 
         self.search_session_history = search_session_history
@@ -437,6 +441,7 @@ class Agent:
 
         self.dependencies = dependencies
         self.add_dependencies_to_context = add_dependencies_to_context
+        self.add_session_state_to_context = add_session_state_to_context
 
         self.db = db
 
@@ -994,6 +999,7 @@ class Agent:
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -1018,6 +1024,7 @@ class Agent:
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         yield_run_response: bool = False,
@@ -1042,6 +1049,7 @@ class Agent:
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         yield_run_response: bool = False,
@@ -1094,6 +1102,11 @@ class Agent:
 
         add_dependencies = (
             add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+        )
+        add_session_state = (
+            add_session_state_to_context
+            if add_session_state_to_context is not None
+            else self.add_session_state_to_context
         )
         add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
@@ -1175,6 +1188,7 @@ class Agent:
                     run_response=run_response,
                     input=validated_input,
                     session=agent_session,
+                    session_state=session_state,
                     user_id=user_id,
                     audio=audio,
                     images=images,
@@ -1184,6 +1198,7 @@ class Agent:
                     add_history_to_context=add_history,
                     dependencies=dependencies,
                     add_dependencies_to_context=add_dependencies,
+                    add_session_state_to_context=add_session_state,
                     **kwargs,
                 )
                 if len(run_messages.messages) == 0:
@@ -1558,6 +1573,7 @@ class Agent:
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         debug_mode: Optional[bool] = None,
@@ -1581,6 +1597,7 @@ class Agent:
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         yield_run_response: Optional[bool] = None,
@@ -1605,6 +1622,7 @@ class Agent:
         knowledge_filters: Optional[Dict[str, Any]] = None,
         add_history_to_context: Optional[bool] = None,
         add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         yield_run_response: Optional[bool] = None,
@@ -1657,6 +1675,11 @@ class Agent:
 
         add_dependencies = (
             add_dependencies_to_context if add_dependencies_to_context is not None else self.add_dependencies_to_context
+        )
+        add_session_state = (
+            add_session_state_to_context
+            if add_session_state_to_context is not None
+            else self.add_session_state_to_context
         )
         add_history = add_history_to_context if add_history_to_context is not None else self.add_history_to_context
 
@@ -1735,6 +1758,7 @@ class Agent:
                     run_response=run_response,
                     input=validated_input,
                     session=agent_session,
+                    session_state=session_state,
                     user_id=user_id,
                     audio=audio,
                     images=images,
@@ -1744,6 +1768,7 @@ class Agent:
                     add_history_to_context=add_history,
                     dependencies=dependencies,
                     add_dependencies_to_context=add_dependencies,
+                    add_session_state_to_context=add_session_state,
                     metadata=metadata,
                     **kwargs,
                 )
@@ -2992,14 +3017,14 @@ class Agent:
             # Update the run_response content with the model response content
             run_response.content = model_response.content
 
-        # Update the run_response thinking with the model response thinking
-        if model_response.thinking is not None:
-            run_response.thinking = model_response.thinking
-        if model_response.redacted_thinking is not None:
-            if run_response.thinking is None:
-                run_response.thinking = model_response.redacted_thinking
+        # Update the run_response reasoning content with the model response reasoning content
+        if model_response.reasoning_content is not None:
+            run_response.reasoning_content = model_response.reasoning_content
+        if model_response.redacted_reasoning_content is not None:
+            if run_response.reasoning_content is None:
+                run_response.reasoning_content = model_response.redacted_reasoning_content
             else:
-                run_response.thinking += model_response.redacted_thinking
+                run_response.reasoning_content += model_response.redacted_reasoning_content
 
         # Update the run_response citations with the model response citations
         if model_response.citations is not None:
@@ -3236,23 +3261,25 @@ class Agent:
                         run_response.content = model_response.content
                         run_response.content_type = "str"
 
-                if model_response_event.thinking is not None:
-                    model_response.thinking = (model_response.thinking or "") + model_response_event.thinking
-                    run_response.thinking = model_response.thinking
-
                 if model_response_event.reasoning_content is not None:
                     model_response.reasoning_content = (
                         model_response.reasoning_content or ""
                     ) + model_response_event.reasoning_content
                     run_response.reasoning_content = model_response.reasoning_content
 
-                if model_response_event.redacted_thinking is not None:
-                    model_response.redacted_thinking = (
-                        model_response.redacted_thinking or ""
-                    ) + model_response_event.redacted_thinking
+                if model_response_event.reasoning_content is not None:
+                    if not model_response.reasoning_content:
+                        model_response.reasoning_content = model_response_event.reasoning_content
+                    else:
+                        model_response.reasoning_content += model_response_event.reasoning_content
+                    run_response.reasoning_content = model_response.reasoning_content
 
-                    # We only have thinking on response
-                    run_response.thinking = model_response.redacted_thinking
+                if model_response_event.redacted_reasoning_content is not None:
+                    if not model_response.reasoning_content:
+                        model_response.reasoning_content = model_response_event.redacted_reasoning_content
+                    else:
+                        model_response.reasoning_content += model_response_event.redacted_reasoning_content
+                    run_response.reasoning_content = model_response.reasoning_content
 
                 if model_response_event.citations is not None:
                     # We get citations in one chunk
@@ -3271,18 +3298,16 @@ class Agent:
                     )
                 elif (
                     model_response_event.content is not None
-                    or model_response_event.thinking is not None
                     or model_response_event.reasoning_content is not None
-                    or model_response_event.redacted_thinking is not None
+                    or model_response_event.redacted_reasoning_content is not None
                     or model_response_event.citations is not None
                 ):
                     yield self._handle_event(
                         create_run_output_content_event(
                             from_run_response=run_response,
                             content=model_response_event.content,
-                            thinking=model_response_event.thinking,
                             reasoning_content=model_response_event.reasoning_content,
-                            redacted_thinking=model_response_event.redacted_thinking,
+                            redacted_reasoning_content=model_response_event.redacted_reasoning_content,
                             citations=model_response_event.citations,
                         ),
                         run_response,
@@ -3694,7 +3719,7 @@ class Agent:
             self._rebuild_tools = True
 
         if self.enable_agentic_state:
-            agent_tools.append(self.update_session_state_tool)
+            agent_tools.append(self.update_session_state)
 
         # Add tools for accessing knowledge
         if self.knowledge is not None or self.knowledge_retriever is not None:
@@ -4587,7 +4612,13 @@ class Agent:
             return message
 
     def get_system_message(
-        self, session: AgentSession, user_id: Optional[str] = None, dependencies: Optional[Dict[str, Any]] = None
+        self,
+        session: AgentSession,
+        session_state: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+        dependencies: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        add_session_state_to_context: Optional[bool] = None,
     ) -> Optional[Message]:
         """Return the system message for the Agent.
 
@@ -4614,9 +4645,9 @@ class Agent:
                 sys_message_content = self._format_message_with_state_variables(
                     sys_message_content,
                     user_id=user_id,
-                    session_state=session.session_data.get("session_state")
-                    if session.session_data is not None
-                    else None,
+                    dependencies=dependencies,
+                    metadata=metadata,
+                    session_state=session_state,
                 )
 
             # type: ignore
@@ -4646,10 +4677,7 @@ class Agent:
 
                 # Check for session_state parameter
                 if "session_state" in signature.parameters:
-                    session_state: Dict[str, Any] = {}
-                    if session.session_data and "session_state" in session.session_data:
-                        session_state = session.session_data["session_state"] or {}
-                    instruction_args["session_state"] = session_state
+                    instruction_args["session_state"] = session_state or {}
 
                 _instructions = self.instructions(**instruction_args)
 
@@ -4760,8 +4788,9 @@ class Agent:
             system_message_content = self._format_message_with_state_variables(
                 system_message_content,
                 user_id=user_id,
-                session_state=session.session_data.get("session_state") if session.session_data is not None else None,
+                session_state=session_state,
                 dependencies=dependencies,
+                metadata=metadata,
             )
 
         # 3.3.7 Then add the expected output
@@ -4843,6 +4872,10 @@ class Agent:
         if self.output_schema is not None and self.parser_model is not None:
             system_message_content += f"{get_response_model_format_prompt(self.output_schema)}"
 
+        # 3.3.15 Add the session state to the system message
+        if self.add_session_state_to_context and session_state is not None:
+            system_message_content += f"\n<session_state>\n{session_state}\n</session_state>\n\n"
+
         # Return the system message
         return (
             Message(role=self.system_message_role, content=system_message_content.strip())  # type: ignore
@@ -4854,7 +4887,7 @@ class Agent:
         self,
         *,
         run_response: RunOutput,
-        session: AgentSession,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
         audio: Optional[Sequence[Audio]] = None,
@@ -4978,9 +5011,7 @@ class Agent:
                     user_msg_content = self._format_message_with_state_variables(
                         user_msg_content,
                         user_id=user_id,
-                        session_state=session.session_data.get("session_state")
-                        if session.session_data is not None
-                        else None,
+                        session_state=session_state,
                         dependencies=dependencies,
                         metadata=metadata,
                     )
@@ -5023,8 +5054,9 @@ class Agent:
         self,
         *,
         run_response: RunOutput,
-        input: Optional[Union[str, List, Dict, Message, BaseModel, List[Message]]] = None,
+        input: Union[str, List, Dict, Message, BaseModel, List[Message]],
         session: AgentSession,
+        session_state: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
         audio: Optional[Sequence[Audio]] = None,
         images: Optional[Sequence[Image]] = None,
@@ -5034,6 +5066,7 @@ class Agent:
         add_history_to_context: Optional[bool] = None,
         run_dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
+        add_session_state_to_context: Optional[bool] = None,
         metadata: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> RunMessages:
@@ -5065,7 +5098,14 @@ class Agent:
         run_messages = RunMessages()
 
         # 1. Add system message to run_messages
-        system_message = self.get_system_message(session=session, user_id=user_id, dependencies=run_dependencies)
+        system_message = self.get_system_message(
+            session=session,
+            session_state=session_state,
+            user_id=user_id,
+            dependencies=run_dependencies,
+            metadata=metadata,
+            add_session_state_to_context=add_session_state_to_context,
+        )
         if system_message is not None:
             run_messages.system_message = system_message
             run_messages.messages.append(system_message)
@@ -5136,7 +5176,7 @@ class Agent:
         ):
             user_message = self._get_user_message(
                 run_response=run_response,
-                session=session,
+                session_state=session_state,
                 input=input,
                 audio=audio,
                 images=images,
@@ -6516,15 +6556,18 @@ class Agent:
 
         return get_tool_call_history
 
-    def update_session_state_tool(self, session_state: Dict[str, Any], updates: Dict[str, Any]) -> str:
+    def update_session_state(self, session_state, session_state_updates: dict) -> str:
         """
-        Update the shared session state.
+        Update the shared session state.  Provide any updates as a dictionary of key-value pairs.
+        Example:
+            "session_state_updates": {"shopping_list": ["milk", "eggs", "bread"]}
 
         Args:
-            updates (dict): The updates to apply to the shared session state. Should be a dictionary of key-value pairs.
+            session_state_updates (dict): The updates to apply to the shared session state. Should be a dictionary of key-value pairs.
         """
-        for key, value in updates.items():
+        for key, value in session_state_updates.items():
             session_state[key] = value
+
         return f"Updated session state: {session_state}"
 
     def _get_search_knowledge_base_function(
@@ -6689,7 +6732,9 @@ class Agent:
         log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
         from agno.knowledge.reader.text_reader import TextReader
 
-        asyncio.run(self.knowledge.add_content(name=document_name, text_content=document_content, reader=TextReader()))
+        asyncio.run(
+            self.knowledge.add_content_async(name=document_name, text_content=document_content, reader=TextReader())
+        )
         return "Successfully added to knowledge base"
 
     def _get_previous_sessions_messages_function(self, num_history_sessions: Optional[int] = 2) -> Callable:

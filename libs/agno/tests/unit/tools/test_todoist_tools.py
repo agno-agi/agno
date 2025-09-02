@@ -57,13 +57,7 @@ def test_init_with_selective_tools():
     """Test initialization with only selected tools."""
     with patch.dict("os.environ", {"TODOIST_API_TOKEN": "test_token"}):
         tools = TodoistTools(
-            create_task=True,
-            get_task=False,
-            update_task=True,
-            close_task=False,
-            delete_task=False,
-            get_active_tasks=True,
-            get_projects=False,
+            include_tools=["create_task", "update_task", "get_active_tasks"],
         )
 
         assert "create_task" in [func.name for func in tools.functions.values()]

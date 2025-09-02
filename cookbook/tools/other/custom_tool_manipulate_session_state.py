@@ -52,9 +52,9 @@ q_and_a_agent = Agent(
 
 q_and_a_agent.print_response("What is the capital of France?", stream=True)
 
-
-if q_and_a_agent.session_state and "last_answer" in q_and_a_agent.session_state:
-    pprint(q_and_a_agent.session_state["last_answer"])
+session_state = q_and_a_agent.get_session_state()
+if session_state and "last_answer" in session_state:
+    pprint(session_state["last_answer"])
 
 
 q_and_a_agent.print_response("What is the capital of South Africa?", stream=True)

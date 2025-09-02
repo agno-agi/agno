@@ -17,9 +17,10 @@ except ImportError:
 class YouTubeTools(Toolkit):
     def __init__(
         self,
-        get_video_captions: bool = True,
-        get_video_data: bool = True,
-        get_video_timestamps: bool = True,
+        enable_get_video_captions: bool = True,
+        enable_get_video_data: bool = True,
+        enable_get_video_timestamps: bool = True,
+        all: bool = False,
         languages: Optional[List[str]] = None,
         proxies: Optional[Dict[str, Any]] = None,
         **kwargs,
@@ -28,11 +29,11 @@ class YouTubeTools(Toolkit):
         self.proxies: Optional[Dict[str, Any]] = proxies
 
         tools: List[Any] = []
-        if get_video_captions:
+        if all or enable_get_video_captions:
             tools.append(self.get_youtube_video_captions)
-        if get_video_data:
+        if all or enable_get_video_data:
             tools.append(self.get_youtube_video_data)
-        if get_video_timestamps:
+        if all or enable_get_video_timestamps:
             tools.append(self.get_video_timestamps)
 
         super().__init__(name="youtube_tools", tools=tools, **kwargs)

@@ -9,7 +9,7 @@ def create_agent_run(run: AgentRunCreate) -> None:
     with api.Client() as api_client:
         try:
             api_client.post(
-                ApiRoutes.AGENT_RUN_CREATE,
+                ApiRoutes.RUN_CREATE,
                 json={"run": run.model_dump(exclude_none=True)},
             )
         except Exception as e:
@@ -21,7 +21,7 @@ async def acreate_agent_run(run: AgentRunCreate) -> None:
     async with api.AsyncClient() as api_client:
         try:
             await api_client.post(
-                ApiRoutes.AGENT_RUN_CREATE,
+                ApiRoutes.RUN_CREATE,
                 json={"run": run.model_dump(exclude_none=True)},
             )
         except Exception as e:

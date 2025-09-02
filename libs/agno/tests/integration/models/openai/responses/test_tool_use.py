@@ -196,7 +196,7 @@ def test_tool_call_list_parameters():
     """Test tool with list parameters with the responses API."""
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[ExaTools(answer=False, find_similar=False)],
+        tools=[ExaTools(enable_answer=False, enable_find_similar=False)],
         instructions="Use a single tool call if possible",
         markdown=True,
         telemetry=False,

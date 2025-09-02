@@ -42,7 +42,7 @@ agent_knowledge = Knowledge(
     # 5 references are added to the prompt
     max_results=5,
 )
-agent_knowledge.add_content_sync(path=str(knowledge_dir))
+agent_knowledge.add_content(path=str(knowledge_dir))
 # *******************************
 
 

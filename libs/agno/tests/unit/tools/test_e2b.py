@@ -119,13 +119,8 @@ def test_init_with_selective_tools():
     with patch("agno.tools.e2b.Sandbox"):
         with patch.dict("os.environ", {"E2B_API_KEY": TEST_API_KEY}):
             tools = E2BTools(
-                run_code=True,
-                upload_file=False,
-                download_result=False,
-                filesystem=True,
-                internet_access=False,
-                sandbox_management=False,
-                command_execution=True,
+                include_tools=["run_python_code", "list_files", "run_command"],
+                exclude_tools=["upload_file", "download_png_result", "get_public_url"],
             )
 
             # Check enabled functions

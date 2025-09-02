@@ -99,7 +99,6 @@ if __name__ == "__main__":
             "Follow established patterns for proper issue resolution.",
             "Always prioritize customer satisfaction and clear communication.",
         ],
-        debug_mode=True,
         markdown=True,
     )
 

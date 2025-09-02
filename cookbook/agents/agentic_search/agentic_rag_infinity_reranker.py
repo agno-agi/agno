@@ -72,7 +72,7 @@ knowledge = Knowledge(
 )
 
 asyncio.run(
-    knowledge.add_contents(
+    knowledge.add_contents_async(
         urls=[
             "https://docs.agno.com/introduction/agents.md",
             "https://docs.agno.com/agents/tools.md",

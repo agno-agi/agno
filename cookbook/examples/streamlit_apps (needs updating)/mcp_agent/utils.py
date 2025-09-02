@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 import streamlit as st
 from agents import get_mcp_agent
 from agno.agent import Agent
+from agno.db.base import SessionType
 from agno.models.response import ToolExecution
 from agno.tools.mcp import MCPTools
 from agno.utils.log import logger
@@ -39,7 +40,7 @@ def get_selected_model() -> str:
     return model_options[selected_model]
 
 
-def get_num_history_responses() -> int:
+def get_num_history_runs() -> int:
     """Return the number of messages from history to send to the LLM.
 
     Returns:
@@ -230,18 +231,18 @@ def example_inputs(server_id: str) -> None:
 def session_selector_widget(
     agent: Agent,
     model_str: str,
-    num_history_responses: int,
+    num_history_runs: int,
     mcp_tools: List[MCPTools],
     mcp_server_ids: List[str],
 ) -> None:
     """Display a session selector in the sidebar, if a new session is selected, the agent is restarted with the new session."""
 
-    if not agent.storage:
+    if not agent.db:
         return
 
     try:
         # -*- Get all agent sessions.
-        agent_sessions = agent.storage.get_all_sessions()
+        agent_sessions = agent.db.get_sessions(session_type=SessionType.AGENT)
 
         if not agent_sessions:
             st.sidebar.info("No saved sessions found.")
@@ -279,7 +280,7 @@ def session_selector_widget(
             st.session_state["mcp_agent"] = get_mcp_agent(
                 model_str=model_str,
                 session_id=selected_session_id,
-                num_history_runs=num_history_responses,
+                num_history_runs=num_history_runs,
                 mcp_tools=mcp_tools,
                 mcp_server_ids=mcp_server_ids,
             )

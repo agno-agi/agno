@@ -5,7 +5,7 @@ from agno.agent import Agent
 from agno.tools import tool
 
 
-@tool(show_result=True, stop_after_tool_call=True, cache_results=True)
+@tool(stop_after_tool_call=True, cache_results=True)
 def get_top_hackernews_stories(num_stories: int = 5) -> str:
     # Fetch top story IDs
     response = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json")

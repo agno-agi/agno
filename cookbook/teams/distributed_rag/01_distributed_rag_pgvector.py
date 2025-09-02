@@ -138,10 +138,10 @@ async def async_pgvector_rag_demo():
 
     try:
         # Add content to knowledge bases
-        await vector_knowledge.add_contents(
+        await vector_knowledge.add_contents_async(
             url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
         )
-        await hybrid_knowledge.add_contents(
+        await hybrid_knowledge.add_contents_async(
             url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
         )
         # Run async distributed PgVector RAG
@@ -161,10 +161,10 @@ def sync_pgvector_rag_demo():
 
     try:
         # Add content to knowledge bases
-        vector_knowledge.add_contents_sync(
+        vector_knowledge.add_contents(
             url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
         )
-        hybrid_knowledge.add_contents_sync(
+        hybrid_knowledge.add_contents(
             url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
         )
         # Run distributed PgVector RAG
@@ -189,10 +189,10 @@ def complex_query_demo():
 
     try:
         # Add content to knowledge bases
-        vector_knowledge.add_contents_sync(
+        vector_knowledge.add_contents(
             url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
         )
-        hybrid_knowledge.add_contents_sync(
+        hybrid_knowledge.add_contents(
             url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"
         )
 

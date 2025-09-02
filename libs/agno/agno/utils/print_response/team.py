@@ -121,10 +121,10 @@ def print_response(
                 panels.append(reasoning_panel)
             live_console.update(Group(*panels))
 
-        if isinstance(run_response, TeamRunOutput) and run_response.thinking is not None:
+        if isinstance(run_response, TeamRunOutput) and run_response.reasoning_content is not None:
             # Create panel for thinking
             thinking_panel = create_panel(
-                content=Text(run_response.thinking),
+                content=Text(run_response.reasoning_content),
                 title=f"Thinking ({response_timer.elapsed:.1f}s)",
                 border_style="green",
             )
@@ -338,7 +338,7 @@ def print_response_stream(
     stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
 
     _response_content: str = ""
-    _response_thinking: str = ""
+    _response_reasoning_content: str = ""
     reasoning_steps: List[ReasoningStep] = []
 
     # Track tool calls by member and team
@@ -418,10 +418,10 @@ def print_response_stream(
                             _response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
                         except Exception as e:
                             log_warning(f"Failed to convert response to JSON: {e}")
-                    if hasattr(resp, "thinking") and resp.thinking is not None:
-                        _response_thinking += resp.thinking
-                if hasattr(resp, "reasoning_steps") and resp.reasoning_steps is not None:
-                    reasoning_steps = resp.reasoning_steps
+                    if hasattr(resp, "reasoning_content") and resp.reasoning_content is not None:  # type: ignore
+                        _response_reasoning_content += resp.reasoning_content  # type: ignore
+                if hasattr(resp, "reasoning_steps") and resp.reasoning_steps is not None:  # type: ignore
+                    reasoning_steps = resp.reasoning_steps  # type: ignore
 
                 # Collect team tool calls, avoiding duplicates
                 if isinstance(resp, ToolCallCompletedEvent) and resp.tool:
@@ -485,11 +485,11 @@ def print_response_stream(
                     reasoning_panel = build_reasoning_step_panel(i, step, show_full_reasoning)
                     panels.append(reasoning_panel)
 
-            if len(_response_thinking) > 0:
+            if len(_response_reasoning_content) > 0:
                 render = True
                 # Create panel for thinking
                 thinking_panel = create_panel(
-                    content=Text(_response_thinking),
+                    content=Text(_response_reasoning_content),
                     title=f"Thinking ({response_timer.elapsed:.1f}s)",
                     border_style="green",
                 )
@@ -667,9 +667,9 @@ def print_response_stream(
                 final_panels.append(reasoning_panel)
 
         # Add thinking panel if available
-        if _response_thinking:
+        if _response_reasoning_content:
             thinking_panel = create_panel(
-                content=Text(_response_thinking),
+                content=Text(_response_reasoning_content),
                 title=f"Thinking ({response_timer.elapsed:.1f}s)",
                 border_style="green",
             )
@@ -922,10 +922,10 @@ async def aprint_response(
                 panels.append(reasoning_panel)
             live_console.update(Group(*panels))
 
-        if isinstance(run_response, TeamRunOutput) and run_response.thinking is not None:
+        if isinstance(run_response, TeamRunOutput) and run_response.reasoning_content is not None:
             # Create panel for thinking
             thinking_panel = create_panel(
-                content=Text(run_response.thinking),
+                content=Text(run_response.reasoning_content),
                 title=f"Thinking ({response_timer.elapsed:.1f}s)",
                 border_style="green",
             )
@@ -1135,7 +1135,7 @@ async def aprint_response_stream(
     stream_intermediate_steps = True  # With streaming print response, we need to stream intermediate steps
 
     _response_content: str = ""
-    _response_thinking: str = ""
+    _response_reasoning_content: str = ""
     reasoning_steps: List[ReasoningStep] = []
 
     # Track tool calls by member and team
@@ -1213,10 +1213,10 @@ async def aprint_response_stream(
                             _response_content = JSON(resp.content.model_dump_json(exclude_none=True), indent=2)  # type: ignore
                         except Exception as e:
                             log_warning(f"Failed to convert response to JSON: {e}")
-                    if resp.thinking is not None:  # type: ignore
-                        _response_thinking += resp.thinking  # type: ignore
-                if hasattr(resp, "reasoning_steps") and resp.reasoning_steps is not None:
-                    reasoning_steps = resp.reasoning_steps
+                    if hasattr(resp, "reasoning_content") and resp.reasoning_content is not None:  # type: ignore
+                        _response_reasoning_content += resp.reasoning_content  # type: ignore
+                if hasattr(resp, "reasoning_steps") and resp.reasoning_steps is not None:  # type: ignore
+                    reasoning_steps = resp.reasoning_steps  # type: ignore
 
                 # Collect team tool calls, avoiding duplicates
                 if isinstance(resp, ToolCallCompletedEvent) and resp.tool:
@@ -1283,11 +1283,11 @@ async def aprint_response_stream(
             if render:
                 live_console.update(Group(*panels))
 
-            if len(_response_thinking) > 0:
+            if len(_response_reasoning_content) > 0:
                 render = True
                 # Create panel for thinking
                 thinking_panel = create_panel(
-                    content=Text(_response_thinking),
+                    content=Text(_response_reasoning_content),
                     title=f"Thinking ({response_timer.elapsed:.1f}s)",
                     border_style="green",
                 )
@@ -1398,9 +1398,9 @@ async def aprint_response_stream(
                 final_panels.append(reasoning_panel)
 
         # Add thinking panel if available
-        if _response_thinking:
+        if _response_reasoning_content:
             thinking_panel = create_panel(
-                content=Text(_response_thinking),
+                content=Text(_response_reasoning_content),
                 title=f"Thinking ({response_timer.elapsed:.1f}s)",
                 border_style="green",
             )

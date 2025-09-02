@@ -1,4 +1,3 @@
-import asyncio
 import json
 from typing import Any, List, Optional
 
@@ -9,7 +8,11 @@ from agno.utils.log import log_debug
 
 
 class WebsiteTools(Toolkit):
-    def __init__(self, knowledge: Optional[Knowledge] = None, **kwargs):
+    def __init__(
+        self,
+        knowledge: Optional[Knowledge] = None,
+        **kwargs,
+    ):
         self.knowledge: Optional[Knowledge] = knowledge
 
         tools: List[Any] = []
@@ -33,7 +36,7 @@ class WebsiteTools(Toolkit):
             return "Knowledge base not provided"
 
         log_debug(f"Adding to knowledge base: {url}")
-        asyncio.run(self.knowledge.add_content(url=url))
+        self.knowledge.add_content(url=url)
         return "Success"
 
     def read_url(self, url: str) -> str:

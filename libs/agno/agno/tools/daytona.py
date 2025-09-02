@@ -2,7 +2,7 @@ import json
 from os import getenv
 from pathlib import Path
 from textwrap import dedent
-from typing import Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from agno.agent import Agent
 from agno.team import Team
@@ -107,18 +107,18 @@ class DaytonaTools(Toolkit):
         )
 
         self.daytona = Daytona(self.config)
-
+        tools: List[Any] = [
+            self.run_code,
+            self.run_shell_command,
+            self.create_file,
+            self.read_file,
+            self.list_files,
+            self.delete_file,
+            self.change_directory,
+        ]
         super().__init__(
             name="daytona_tools",
-            tools=[
-                self.run_code,
-                self.run_shell_command,
-                self.create_file,
-                self.read_file,
-                self.list_files,
-                self.delete_file,
-                self.change_directory,
-            ],
+            tools=tools,
             instructions=self.instructions,
             add_instructions=add_instructions,
             **kwargs,

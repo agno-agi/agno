@@ -23,7 +23,7 @@ def team():
         name="Finance Agent",
         model=OpenAIChat("gpt-4o"),
         role="Get financial data",
-        tools=[YFinanceTools(stock_price=True)],
+        tools=[YFinanceTools(include_tools=["get_current_stock_price"])],
     )
 
     team = Team(name="Router Team", mode="route", model=OpenAIChat("gpt-4o"), members=[web_agent, finance_agent])
@@ -50,8 +50,8 @@ def test_team_system_message_content(team):
     assert "get_current_stock_price" in members_content
 
 
-def test_transfer_to_wrong_member(team):
-    function = team._get_transfer_task_function(
+def test_delegate_to_wrong_member(team):
+    function = team._get_delegate_task_function(
         session=TeamSession(session_id="test-session"),
         run_response=TeamRunOutput(content="Hello, world!"),
         session_state={},

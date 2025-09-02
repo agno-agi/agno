@@ -6,10 +6,8 @@ class ApiRoutes:
     """API routes for telemetry recordings"""
 
     # Runs
-    AGENT_RUN_CREATE: str = "/v1/telemetry/agent/run/create"
-    EVAL_RUN_CREATE: str = "/v1/telemetry/eval/run/create"
-    TEAM_RUN_CREATE: str = "/v1/telemetry/team/run/create"
-    WORKFLOW_RUN_CREATE: str = "/v1/telemetry/workflow/run/create"
+    RUN_CREATE: str = "/telemetry/runs"
+    EVAL_RUN_CREATE: str = "/telemetry/evals"
 
     # OS launch
-    AGENT_OS_LAUNCH: str = "/v1/telemetry/os/launch"
+    AGENT_OS_LAUNCH: str = "/telemetry/os"

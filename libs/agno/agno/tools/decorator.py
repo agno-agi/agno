@@ -245,6 +245,12 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
                 and v is not None
             },
         }
+
+        # Automatically set show_result=True if stop_after_tool_call=True (unless explicitly set to False)
+        if kwargs.get("stop_after_tool_call") is True:
+            if "show_result" not in kwargs or kwargs.get("show_result") is None:
+                tool_config["show_result"] = True
+
         return Function(**tool_config)
 
     # Handle both @tool and @tool() cases

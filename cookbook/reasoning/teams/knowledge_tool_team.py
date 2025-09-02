@@ -4,7 +4,6 @@ from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.knowledge import KnowledgeTools
-from agno.tools.yfinance import YFinanceTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 
 agno_docs = Knowledge(
@@ -39,9 +38,7 @@ finance_agent = Agent(
     name="Finance Agent",
     role="Handle financial data requests",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[
-        YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)
-    ],
+    tools=[DuckDuckGoTools(search=True)],
     add_datetime_to_context=True,
 )
 

@@ -52,7 +52,7 @@ def tutor_agent(
     user_id: Optional[str] = None,
     model_id: str = "groq:llama-3.3-70b-versatile",
     session_id: Optional[str] = None,
-    num_history_responses: int = 5,
+    num_history_runs: int = 5,
     debug_mode: bool = True,
     education_level: str = "High School",
 ) -> Agent:
@@ -76,7 +76,7 @@ def tutor_agent(
         model_id: Model identifier in the format 'groq:model_name' (e.g., "groq:llama-3.3-70b-versatile").
                  Will always use Groq with a Llama model regardless of provider specified.
         session_id: Optional session identifier for tracking conversation history.
-        num_history_responses: Number of previous responses to include for context.
+        num_history_runs: Number of previous responses to include for context.
         debug_mode: Enable logging and debug features.
         education_level: Education level for tailoring responses (e.g., "Elementary School", "High School", "College").
 
@@ -178,7 +178,7 @@ def tutor_agent(
         read_tool_call_history=True,
         # Append previous conversation responses into the new messages for context.
         add_history_to_context=True,
-        num_history_runs=num_history_responses,
+        num_history_runs=num_history_runs,
         add_datetime_to_context=True,
         add_name_to_context=True,
         description=tutor_description,

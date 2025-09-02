@@ -1,35 +1,12 @@
 from textwrap import dedent
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.integrations.discord import DiscordClient
-from agno.memory.v2.db.sqlite import SqliteMemoryDb
-from agno.memory.v2.manager import MemoryManager
-from agno.memory.v2.memory import Memory
 from agno.models.google import Gemini
-from agno.storage.sqlite import SqliteStorage
 from agno.tools.googlesearch import GoogleSearchTools
 
-agent_storage = SqliteStorage(
-    table_name="agent_sessions", db_file="tmp/persistent_memory.db"
-)
-memory_db = SqliteMemoryDb(table_name="memory", db_file="tmp/memory.db")
-
-memory = Memory(
-    db=memory_db,
-    memory_manager=MemoryManager(
-        memory_capture_instructions="""\
-                        Collect User's name,
-                        Collect Information about user's passion and hobbies,
-                        Collect Information about the users likes and dislikes,
-                        Collect information about what the user is doing with their life right now
-                    """,
-        model=Gemini(id="gemini-2.0-flash"),
-    ),
-)
-
-
-# Reset the memory for this example
-memory.clear()
+db = SqliteDb(db_file="tmp/discord_client_cookbook.db")
 
 personal_agent = Agent(
     name="Basic Agent",
@@ -39,7 +16,7 @@ personal_agent = Agent(
     num_history_runs=3,
     add_datetime_to_context=True,
     markdown=True,
-    memory=memory,
+    db=db,
     enable_agentic_memory=True,
     instructions=dedent("""
         You are a personal AI friend of the user, your purpose is to chat with the user about things and make them feel good.
@@ -48,6 +25,8 @@ personal_agent = Agent(
                         """),
     debug_mode=True,
 )
+
 discord_agent = DiscordClient(personal_agent)
+
 if __name__ == "__main__":
     discord_agent.serve()

@@ -11,6 +11,8 @@ class LocalFileSystemTools(Toolkit):
         self,
         target_directory: Optional[str] = None,
         default_extension: str = "txt",
+        enable_write_file: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         """
@@ -27,7 +29,8 @@ class LocalFileSystemTools(Toolkit):
         target_path.mkdir(parents=True, exist_ok=True)
 
         tools = []
-        tools.append(self.write_file)
+        if all or enable_write_file:
+            tools.append(self.write_file)
 
         super().__init__(name="write_to_local", tools=tools, **kwargs)
 

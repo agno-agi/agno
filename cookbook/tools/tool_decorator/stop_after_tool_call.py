@@ -2,7 +2,7 @@ from agno.agent import Agent
 from agno.tools import tool
 
 
-@tool(show_result=True, stop_after_tool_call=True)
+@tool(stop_after_tool_call=True)
 def get_answer_to_life_universe_and_everything() -> str:
     """
     This returns the answer to the life, the universe and everything.
