@@ -91,7 +91,7 @@ async def test_async_tool_use_stream():
 def test_tool_use_tool_call_limit():
     agent = Agent(
         model=LangDB(id="gemini-1.5-pro-latest"),
-        tools=[YFinanceTools(company_news=True, cache_results=True)],
+        tools=[YFinanceTools(cache_results=True)],
         tool_call_limit=1,
         markdown=True,
         telemetry=False,
