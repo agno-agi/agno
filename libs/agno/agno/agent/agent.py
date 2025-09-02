@@ -4050,11 +4050,19 @@ class Agent:
 
         # Update the session state for the functions
         if self._functions_for_model:
-            # Collect joint media from all sources using RunInput
-            joint_images = self._collect_joint_images(run_response.input)
-            joint_files = self._collect_joint_files(run_response.input)
-            joint_audios = self._collect_joint_audios(run_response.input)
-            joint_videos = self._collect_joint_videos(run_response.input)
+            from inspect import signature
+
+            # Check if any functions need media before collecting
+            needs_media = any(
+                any(param in signature(func.entrypoint).parameters for param in ["images", "videos", "audios", "files"])
+                for func in self._functions_for_model.values()
+            )
+
+            # Only collect media if functions actually need them
+            joint_images = self._collect_joint_images(run_response.input) if needs_media else None
+            joint_files = self._collect_joint_files(run_response.input) if needs_media else None
+            joint_audios = self._collect_joint_audios(run_response.input) if needs_media else None
+            joint_videos = self._collect_joint_videos(run_response.input) if needs_media else None
 
             for func in self._functions_for_model.values():
                 func._session_state = session_state
