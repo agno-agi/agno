@@ -23,7 +23,7 @@ def team():
         name="Finance Agent",
         model=OpenAIChat("gpt-4o"),
         role="Get financial data",
-        tools=[YFinanceTools(stock_price=True)],
+        tools=[YFinanceTools(include_tools=["get_current_stock_price"])],
     )
 
     team = Team(name="Router Team", mode="route", model=OpenAIChat("gpt-4o"), members=[web_agent, finance_agent])

@@ -24,7 +24,7 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_content_sync(
+knowledge.add_content(
     path="cookbook/teams/coordinate/data", reader=PDFReader(chunk=True)
 )
 

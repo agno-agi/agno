@@ -24,10 +24,8 @@ Local Development Setup:
 3. Remember to set `local=True` on the Weaviate instantiation.
 """
 
-from agno.document import Document
-from agno.knowledge.document import DocumentKnowledgeBase
 from agno.knowledge.embedder.sentence_transformer import SentenceTransformerEmbedder
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.knowledge import Knowledge
 from agno.utils.log import set_log_level_to_debug
 from agno.vectordb.search import SearchType
 from agno.vectordb.weaviate import Distance, VectorIndex, Weaviate
@@ -43,40 +41,24 @@ vector_db = Weaviate(
     local=True,  # Set to False if using Weaviate Cloud and True if using local instance
 )
 # Create knowledge base
-knowledge_base = PDFUrlKnowledgeBase(
-    urls=["https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf"],
+knowledge_base = Knowledge(
     vector_db=vector_db,
 )
 
 vector_db.drop()
 set_log_level_to_debug()
 
-knowledge_base.load(recreate=False, upsert=True)
+knowledge_base.add_content(
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+)
 
 print(
     "Knowledge base loaded with PDF content. Loading the same data again will not recreate it."
 )
-knowledge_base.load(recreate=False, upsert=True)
 
-print("First example finished. Now dropping the knowledge base.")
-vector_db.drop()
-
-doc1 = Document(content="my first content", name="doc1")
-doc1_modified = Document(content="my first content corrected", name="doc1")
-doc2 = Document(content="my second content", name="doc2")
-
-knowledge_base = DocumentKnowledgeBase(
-    documents=[doc1, doc2],
-    vector_db=vector_db,
-)
-knowledge_base_changed = DocumentKnowledgeBase(
-    documents=[doc1_modified, doc2],
-    vector_db=vector_db,
+knowledge_base.add_content(
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+    skip_if_exists=True,
 )
 
-print("\n\nStart second example. Load initial data...")
-knowledge_base.load(recreate=False, upsert=True)
-print("\nNow uploading the changed data...")
-knowledge_base_changed.load(recreate=False, upsert=True)
-print("Example finished. Now dropping the knowledge base.")
 vector_db.drop()

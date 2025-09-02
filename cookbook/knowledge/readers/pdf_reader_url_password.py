@@ -13,7 +13,7 @@ knowledge = Knowledge(
     ),
 )
 
-knowledge.add_content_sync(
+knowledge.add_content(
     url="https://agno-public.s3.us-east-1.amazonaws.com/recipes/ThaiRecipes_protected.pdf",
     auth=ContentAuth(password="ThaiRecipes"),
 )

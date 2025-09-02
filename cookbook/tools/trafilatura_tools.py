@@ -224,7 +224,7 @@ def website_crawling():
     agent = Agent(
         tools=[
             TrafilaturaTools(
-                include_tools=["crawl_website"],
+                enable_crawl_website=True,
                 max_crawl_urls=5,  # Limit for demo
                 output_format="json",
                 with_metadata=True,
@@ -253,7 +253,7 @@ def html_to_text_conversion():
     agent = Agent(
         tools=[
             TrafilaturaTools(
-                include_tools=["html_to_text"],
+                enable_html_to_text=True,
             )
         ],
         markdown=True,

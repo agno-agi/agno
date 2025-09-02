@@ -34,10 +34,10 @@ def brightdata_tools():
         api_key="test_api_key",
         serp_zone="test_serp_zone",
         web_unlocker_zone="test_web_unlocker_zone",
-        scrape_as_markdown=True,
-        get_screenshot=True,
-        search_engine=True,
-        web_data_feed=True,
+        enable_scrape_markdown=True,
+        enable_screenshot=True,
+        enable_search_engine=True,
+        enable_web_data_feed=True,
         verbose=True,
     )
 
@@ -68,10 +68,10 @@ def test_init_with_selective_tools():
     """Test initialization with only selected tools."""
     tools = BrightDataTools(
         api_key="test_key",
-        scrape_as_markdown=True,
-        get_screenshot=False,
-        search_engine=True,
-        web_data_feed=False,
+        enable_scrape_markdown=True,
+        enable_screenshot=False,
+        enable_search_engine=True,
+        enable_web_data_feed=False,
     )
 
     function_names = [func.name for func in tools.functions.values()]

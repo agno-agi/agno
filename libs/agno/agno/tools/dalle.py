@@ -25,6 +25,8 @@ class DalleTools(Toolkit):
         quality: Literal["standard", "hd"] = "standard",
         style: Literal["vivid", "natural"] = "vivid",
         api_key: Optional[str] = None,
+        enable_create_image: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.model = model
@@ -52,7 +54,8 @@ class DalleTools(Toolkit):
             logger.error("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
 
         tools: List[Any] = []
-        tools.append(self.create_image)
+        if all or enable_create_image:
+            tools.append(self.create_image)
 
         super().__init__(name="dalle", tools=tools, **kwargs)
 

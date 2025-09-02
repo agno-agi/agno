@@ -50,10 +50,10 @@ class Knowledge:
 
     # --- Add Contents ---
     @overload
-    async def add_contents(self, contents: List[ContentDict]) -> None: ...
+    async def add_contents_async(self, contents: List[ContentDict]) -> None: ...
 
     @overload
-    async def add_contents(
+    async def add_contents_async(
         self,
         *,
         paths: Optional[List[str]] = None,
@@ -66,11 +66,11 @@ class Knowledge:
         remote_content: Optional[RemoteContent] = None,
     ) -> None: ...
 
-    async def add_contents(self, *args, **kwargs) -> None:
+    async def add_contents_async(self, *args, **kwargs) -> None:
         if args and isinstance(args[0], list):
             arguments = args[0]
             for argument in arguments:
-                await self.add_content(
+                await self.add_content_async(
                     name=argument.get("name"),
                     description=argument.get("description"),
                     path=argument.get("path"),
@@ -99,7 +99,7 @@ class Knowledge:
             remote_content = kwargs.get("remote_content", None)
 
             for path in paths:
-                await self.add_content(
+                await self.add_content_async(
                     name=name,
                     description=description,
                     path=path,
@@ -110,7 +110,7 @@ class Knowledge:
                     skip_if_exists=skip_if_exists,
                 )
             for url in urls:
-                await self.add_content(
+                await self.add_content_async(
                     name=name,
                     description=description,
                     url=url,
@@ -121,7 +121,7 @@ class Knowledge:
                     skip_if_exists=skip_if_exists,
                 )
             if topics:
-                await self.add_content(
+                await self.add_content_async(
                     name=name,
                     description=description,
                     topics=topics,
@@ -133,7 +133,7 @@ class Knowledge:
                 )
 
             if remote_content:
-                await self.add_content(
+                await self.add_content_async(
                     name=name,
                     metadata=metadata,
                     description=description,
@@ -146,10 +146,10 @@ class Knowledge:
             raise ValueError("Invalid usage of add_contents.")
 
     @overload
-    def add_contents_sync(self, contents: List[ContentDict]) -> None: ...
+    def add_contents(self, contents: List[ContentDict]) -> None: ...
 
     @overload
-    def add_contents_sync(
+    def add_contents(
         self,
         *,
         paths: Optional[List[str]] = None,
@@ -161,7 +161,7 @@ class Knowledge:
         skip_if_exists: bool = False,
     ) -> None: ...
 
-    def add_contents_sync(self, *args, **kwargs) -> None:
+    def add_contents(self, *args, **kwargs) -> None:
         """
         Synchronously add multiple content items to the knowledge base.
 
@@ -181,12 +181,12 @@ class Knowledge:
             upsert: Whether to update existing content if it already exists
             skip_if_exists: Whether to skip adding content if it already exists
         """
-        asyncio.run(self.add_contents(*args, **kwargs))
+        asyncio.run(self.add_contents_async(*args, **kwargs))
 
     # --- Add Content ---
 
     @overload
-    async def add_content(
+    async def add_content_async(
         self,
         *,
         path: Optional[str] = None,
@@ -202,9 +202,9 @@ class Knowledge:
     ) -> None: ...
 
     @overload
-    async def add_content(self, *args, **kwargs) -> None: ...
+    async def add_content_async(self, *args, **kwargs) -> None: ...
 
-    async def add_content(
+    async def add_content_async(
         self,
         name: Optional[str] = None,
         description: Optional[str] = None,
@@ -252,7 +252,7 @@ class Knowledge:
         await self._load_content(content, upsert, skip_if_exists, include, exclude)
 
     @overload
-    def add_content_sync(
+    def add_content(
         self,
         *,
         path: Optional[str] = None,
@@ -268,9 +268,9 @@ class Knowledge:
     ) -> None: ...
 
     @overload
-    def add_content_sync(self, *args, **kwargs) -> None: ...
+    def add_content(self, *args, **kwargs) -> None: ...
 
-    def add_content_sync(
+    def add_content(
         self,
         name: Optional[str] = None,
         description: Optional[str] = None,
@@ -306,7 +306,7 @@ class Knowledge:
             skip_if_exists: Whether to skip adding content if it already exists
         """
         asyncio.run(
-            self.add_content(
+            self.add_content_async(
                 name=name,
                 description=description,
                 path=path,

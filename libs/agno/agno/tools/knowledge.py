@@ -12,13 +12,14 @@ class KnowledgeTools(Toolkit):
     def __init__(
         self,
         knowledge: Knowledge,
-        think: bool = True,
-        search: bool = True,
-        analyze: bool = True,
+        enable_think: bool = True,
+        enable_search: bool = True,
+        enable_analyze: bool = True,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
         add_few_shot: bool = False,
         few_shot_examples: Optional[str] = None,
+        all: bool = False,
         **kwargs,
     ):
         if knowledge is None:
@@ -39,11 +40,11 @@ class KnowledgeTools(Toolkit):
         self.knowledge: Knowledge = knowledge
 
         tools: List[Any] = []
-        if think:
+        if enable_think or all:
             tools.append(self.think)
-        if search:
+        if enable_search or all:
             tools.append(self.search)
-        if analyze:
+        if enable_analyze or all:
             tools.append(self.analyze)
 
         super().__init__(

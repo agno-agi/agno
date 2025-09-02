@@ -14,7 +14,12 @@ except ImportError:
 
 class WebexTools(Toolkit):
     def __init__(
-        self, send_message: bool = True, list_rooms: bool = True, access_token: Optional[str] = None, **kwargs
+        self,
+        enable_send_message: bool = True,
+        enable_list_rooms: bool = True,
+        all: bool = False,
+        access_token: Optional[str] = None,
+        **kwargs,
     ):
         access_token = access_token or getenv("WEBEX_ACCESS_TOKEN")
         if access_token is None:
@@ -23,9 +28,9 @@ class WebexTools(Toolkit):
         self.client = WebexAPI(access_token=access_token)
 
         tools: List[Any] = []
-        if send_message:
+        if all or enable_send_message:
             tools.append(self.send_message)
-        if list_rooms:
+        if all or enable_list_rooms:
             tools.append(self.list_rooms)
 
         super().__init__(name="webex", tools=tools, **kwargs)

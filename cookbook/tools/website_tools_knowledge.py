@@ -25,7 +25,7 @@ agent = Agent(
     knowledge=kb,
     search_knowledge=True,
     tools=[
-        WebsiteTools(knowledge_base=kb)  # Set combined or website knowledge base
+        WebsiteTools(knowledge=kb)  # Set combined or website knowledge base
     ],
 )
 

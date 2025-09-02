@@ -17,15 +17,32 @@ except ImportError:
 
 
 class BrightDataTools(Toolkit):
+    """
+    BrightData is a toolkit for web scraping, screenshots, search engines, and web data feeds.
+
+    Args:
+        api_key (Optional[str]): Bright Data API key. Retrieved from BRIGHT_DATA_API_KEY env variable if not provided.
+        enable_scrape_markdown (bool): Enable webpage scraping as Markdown. Default is True.
+        enable_screenshot (bool): Enable website screenshot capture. Default is True.
+        enable_search_engine (bool): Enable search engine functionality. Default is True.
+        enable_web_data_feed (bool): Enable web data feed retrieval. Default is True.
+        all (bool): Enable all tools. Overrides individual flags when True. Default is False.
+        serp_zone (str): SERP zone for search operations. Default is "serp_api".
+        web_unlocker_zone (str): Web unlocker zone for scraping operations. Default is "web_unlocker1".
+        verbose (bool): Enable verbose logging. Default is False.
+        timeout (int): Timeout in seconds for operations. Default is 600.
+    """
+
     def __init__(
         self,
         api_key: Optional[str] = None,
+        enable_scrape_markdown: bool = True,
+        enable_screenshot: bool = True,
+        enable_search_engine: bool = True,
+        enable_web_data_feed: bool = True,
+        all: bool = False,
         serp_zone: str = "serp_api",
         web_unlocker_zone: str = "web_unlocker1",
-        scrape_as_markdown: bool = True,
-        get_screenshot: bool = False,
-        search_engine: bool = True,
-        web_data_feed: bool = True,
         verbose: bool = False,
         timeout: int = 600,
         **kwargs,
@@ -48,14 +65,13 @@ class BrightDataTools(Toolkit):
         self.timeout = timeout
 
         tools: List[Any] = []
-
-        if scrape_as_markdown:
+        if all or enable_scrape_markdown:
             tools.append(self.scrape_as_markdown)
-        if get_screenshot:
+        if all or enable_screenshot:
             tools.append(self.get_screenshot)
-        if search_engine:
+        if all or enable_search_engine:
             tools.append(self.search_engine)
-        if web_data_feed:
+        if all or enable_web_data_feed:
             tools.append(self.web_data_feed)
 
         super().__init__(name="brightdata_tools", tools=tools, **kwargs)

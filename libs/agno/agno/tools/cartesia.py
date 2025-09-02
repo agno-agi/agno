@@ -23,9 +23,10 @@ class CartesiaTools(Toolkit):
         api_key: Optional[str] = None,
         model_id: str = "sonic-2",
         default_voice_id: str = "78ab82d5-25be-4f7d-82b3-7ad64e5b85b2",
-        text_to_speech_enabled: bool = True,
-        list_voices_enabled: bool = True,
-        voice_localize_enabled: bool = False,
+        enable_text_to_speech: bool = True,
+        enable_list_voices: bool = True,
+        enable_localize_voice: bool = False,
+        all: bool = False,
         **kwargs,
     ):
         self.api_key = api_key or getenv("CARTESIA_API_KEY")
@@ -38,11 +39,11 @@ class CartesiaTools(Toolkit):
         self.default_voice_id = default_voice_id
 
         tools: List[Any] = []
-        if voice_localize_enabled:
+        if all or enable_localize_voice:
             tools.append(self.localize_voice)
-        if text_to_speech_enabled:
+        if all or enable_text_to_speech:
             tools.append(self.text_to_speech)
-        if list_voices_enabled:
+        if all or enable_list_voices:
             tools.append(self.list_voices)
 
         super().__init__(name="cartesia_tools", tools=tools, **kwargs)

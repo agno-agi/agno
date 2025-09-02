@@ -23,7 +23,16 @@ clickup_agent = Agent(
     name="ClickUp Agent",
     role="Manage ClickUp tasks and spaces",
     model=OpenAIChat(id="gpt-4o-mini"),
-    tools=[ClickUpTools(list_spaces=True, list_lists=True, list_tasks=True)],
+    tools=[
+        ClickUpTools(
+            exclude_tools=[
+                "create_task",
+                "get_task",
+                "update_task",
+                "delete_task",
+            ]
+        )
+    ],
     instructions=[
         "You are a ClickUp assistant that helps users manage their tasks and spaces.",
         "You can:",

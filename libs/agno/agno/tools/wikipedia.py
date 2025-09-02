@@ -1,4 +1,3 @@
-import asyncio
 import json
 from typing import List, Optional
 
@@ -10,7 +9,12 @@ from agno.utils.log import log_debug, log_info
 
 
 class WikipediaTools(Toolkit):
-    def __init__(self, knowledge: Optional[Knowledge] = None, **kwargs):
+    def __init__(
+        self,
+        knowledge: Optional[Knowledge] = None,
+        all: bool = False,
+        **kwargs,
+    ):
         tools = []
 
         self.knowledge: Optional[Knowledge] = knowledge
@@ -34,11 +38,9 @@ class WikipediaTools(Toolkit):
             return "Knowledge not provided"
 
         log_debug(f"Adding to knowledge: {topic}")
-        asyncio.run(
-            self.knowledge.add_content(
-                topics=[topic],
-                reader=WikipediaReader(),
-            )
+        self.knowledge.add_content(
+            topics=[topic],
+            reader=WikipediaReader(),
         )
         log_debug(f"Searching knowledge: {topic}")
         relevant_docs: List[Document] = self.knowledge.search(query=topic)

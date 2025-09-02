@@ -33,7 +33,7 @@ knowledge = Knowledge(
 )
 
 # Add documents with metadata for agentic filtering
-knowledge.add_contents_sync(
+knowledge.add_contents(
     [
         {
             "path": downloaded_cv_paths[0],

@@ -31,7 +31,7 @@ agno_docs_knowledge = Knowledge(
 )
 
 # Add content to knowledge base
-agno_docs_knowledge.add_content_sync(url="https://docs.agno.com/llms-full.txt")
+agno_docs_knowledge.add_content(url="https://docs.agno.com/llms-full.txt")
 
 # Create web search agent for supplementary information
 web_agent = Agent(

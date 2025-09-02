@@ -28,12 +28,12 @@ def prepare_knowledge(setup_vector_db):
     kb = Knowledge(vector_db=setup_vector_db)
 
     # Load with different user IDs and metadata
-    kb.add_content_sync(
+    kb.add_content(
         path=get_filtered_data_dir() / "cv_1.pdf",
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    kb.add_content_sync(
+    kb.add_content(
         path=get_filtered_data_dir() / "cv_2.pdf",
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -47,12 +47,12 @@ async def aprepare_knowledge(setup_vector_db):
     kb = Knowledge(vector_db=setup_vector_db)
 
     # Load documents with different user IDs and metadata
-    await kb.add_content(
+    await kb.add_content_async(
         path=get_filtered_data_dir() / "cv_1.pdf",
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    await kb.add_content(
+    await kb.add_content_async(
         path=get_filtered_data_dir() / "cv_2.pdf",
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -71,7 +71,7 @@ def test_pdf_knowledge():
         vector_db=vector_db,
     )
 
-    knowledge.add_content_sync(path=str(Path(__file__).parent / "data/thai_recipes_short.pdf"))
+    knowledge.add_content(path=str(Path(__file__).parent / "data/thai_recipes_short.pdf"))
 
     assert vector_db.exists()
 
@@ -105,7 +105,7 @@ async def test_pdf_knowledge_async():
         vector_db=vector_db,
     )
 
-    await knowledge.add_content(path=str(Path(__file__).parent / "data/thai_recipes_short.pdf"))
+    await knowledge.add_content_async(path=str(Path(__file__).parent / "data/thai_recipes_short.pdf"))
 
     assert await vector_db.async_exists()
     assert await vector_db.async_get_count() == 146
@@ -135,12 +135,12 @@ def test_text_knowledge_with_metadata_path(setup_vector_db):
         vector_db=setup_vector_db,
     )
 
-    kb.add_content_sync(
+    kb.add_content(
         path=str(get_filtered_data_dir() / "cv_1.pdf"),
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    kb.add_content_sync(
+    kb.add_content(
         path=str(get_filtered_data_dir() / "cv_2.pdf"),
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )
@@ -165,12 +165,12 @@ def test_knowledge_with_metadata_path_invalid_filter(setup_vector_db):
         vector_db=setup_vector_db,
     )
 
-    kb.add_content_sync(
+    kb.add_content(
         path=str(get_filtered_data_dir() / "cv_1.pdf"),
         metadata={"user_id": "jordan_mitchell", "document_type": "cv", "experience_level": "entry"},
     )
 
-    kb.add_content_sync(
+    kb.add_content(
         path=str(get_filtered_data_dir() / "cv_2.pdf"),
         metadata={"user_id": "taylor_brooks", "document_type": "cv", "experience_level": "mid"},
     )

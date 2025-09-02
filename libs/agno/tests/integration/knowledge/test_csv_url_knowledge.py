@@ -15,13 +15,13 @@ def test_csv_url_knowledge():
         vector_db=vector_db,
     )
 
-    knowledge.add_content_sync(
+    knowledge.add_content(
         url="https://agno-public.s3.amazonaws.com/demo_data/IMDB-Movie-Data.csv",
         reader=CSVUrlReader(
             chunk=False,
         ),
     )
-    knowledge.add_content_sync(
+    knowledge.add_content(
         url="https://agno-public.s3.amazonaws.com/csvs/employees.csv",
         reader=CSVUrlReader(
             chunk=False,
@@ -62,7 +62,7 @@ async def test_csv_url_knowledge_async():
     )
 
     # Set chunk explicitly to False
-    await knowledge.add_contents(
+    await knowledge.add_contents_async(
         urls=[
             "https://agno-public.s3.amazonaws.com/demo_data/IMDB-Movie-Data.csv",
             "https://agno-public.s3.amazonaws.com/csvs/employees.csv",

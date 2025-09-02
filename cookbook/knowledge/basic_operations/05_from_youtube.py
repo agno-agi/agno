@@ -20,7 +20,7 @@ knowledge = Knowledge(
 
 # Add from Youtube link to knowledge. Youtube links are automatically detected and the reader is assigned automatically.
 asyncio.run(
-    knowledge.add_content(
+    knowledge.add_content_async(
         name="Agents from Scratch",
         url="https://www.youtube.com/watch?v=nLkBNnnA8Ac",
         metadata={"user_tag": "Youtube video"},
