@@ -500,3 +500,52 @@ async def test_aupdate_memory_task_with_db(memory_with_db):
     memories = memory_with_db.get_user_memories("test_user")
     assert len(memories) > 0
     assert any("John Doe" not in memory.memory for memory in memories)
+
+
+def test_memory_deepcopy(memory_with_db):
+    """Test that deepcopy works correctly for Memory instances."""
+    from copy import deepcopy
+
+    # Add some data to the original memory
+    user_memory = UserMemory(memory="The user's name is John Doe", topics=["name", "user"], last_updated=datetime.now())
+    memory_id = memory_with_db.add_user_memory(memory=user_memory, user_id="test_user")
+
+    # Add a run
+    session_id = "test_session"
+    run_response = RunResponse(
+        content="Sample response",
+        messages=[
+            Message(role="user", content="Hello, how are you?"),
+            Message(role="assistant", content="I'm doing well, thank you for asking!"),
+        ],
+    )
+    memory_with_db.add_run(session_id, run_response)
+
+    # Create a deep copy
+    copied_memory = deepcopy(memory_with_db)
+
+    # Verify the copy is a different object
+    assert copied_memory is not memory_with_db
+
+    # Verify shared objects are reused (not copied)
+    assert copied_memory.db is memory_with_db.db
+    assert copied_memory.memory_manager is memory_with_db.memory_manager
+    assert copied_memory.summary_manager is memory_with_db.summary_manager
+
+    # Verify memories are deep copied
+    assert copied_memory.memories is not memory_with_db.memories
+    assert copied_memory.memories["test_user"] is not memory_with_db.memories["test_user"]
+    assert copied_memory.memories["test_user"][memory_id] is not memory_with_db.memories["test_user"][memory_id]
+    assert (
+        copied_memory.memories["test_user"][memory_id].memory == memory_with_db.memories["test_user"][memory_id].memory
+    )
+
+    # Verify runs are deep copied
+    assert copied_memory.runs is not memory_with_db.runs
+    assert copied_memory.runs[session_id] is not memory_with_db.runs[session_id]
+    assert len(copied_memory.runs[session_id]) == len(memory_with_db.runs[session_id])
+
+    # Verify modifying the copy doesn't affect the original
+    copied_memory.memories["test_user"][memory_id].memory = "Modified memory"
+    assert memory_with_db.memories["test_user"][memory_id].memory == "The user's name is John Doe"
+    assert copied_memory.memories["test_user"][memory_id].memory == "Modified memory"

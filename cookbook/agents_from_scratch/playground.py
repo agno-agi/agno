@@ -1,6 +1,6 @@
 """Your Agent Playground
 
-Install dependencies: `pip install openai duckduckgo-search lancedb tantivy elevenlabs sqlalchemy 'fastapi[standard]' agno`
+Install dependencies: `pip install openai ddgs lancedb tantivy elevenlabs sqlalchemy 'fastapi[standard]' agno`
 """
 
 from agent_with_knowledge import agent_with_knowledge

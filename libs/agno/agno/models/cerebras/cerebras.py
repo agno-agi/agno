@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 
 try:
     from cerebras.cloud.sdk import AsyncCerebras as AsyncCerebrasClient
@@ -129,7 +129,7 @@ class Cerebras(Model):
         self.async_client = AsyncCerebrasClient(**client_params)
         return self.async_client
 
-    def get_request_kwargs(
+    def get_request_params(
         self,
         tools: Optional[List[Dict[str, Any]]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
@@ -191,6 +191,8 @@ class Cerebras(Model):
         if self.request_params:
             request_params.update(self.request_params)
 
+        if request_params:
+            log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
 
     def invoke(
@@ -212,7 +214,7 @@ class Cerebras(Model):
         return self.get_client().chat.completions.create(
             model=self.id,
             messages=[self._format_message(m) for m in messages],  # type: ignore
-            **self.get_request_kwargs(response_format=response_format, tools=tools),
+            **self.get_request_params(response_format=response_format, tools=tools),
         )
 
     async def ainvoke(
@@ -234,7 +236,7 @@ class Cerebras(Model):
         return await self.get_async_client().chat.completions.create(
             model=self.id,
             messages=[self._format_message(m) for m in messages],  # type: ignore
-            **self.get_request_kwargs(response_format=response_format, tools=tools),
+            **self.get_request_params(response_format=response_format, tools=tools),
         )
 
     def invoke_stream(
@@ -257,7 +259,7 @@ class Cerebras(Model):
             model=self.id,
             messages=[self._format_message(m) for m in messages],  # type: ignore
             stream=True,
-            **self.get_request_kwargs(response_format=response_format, tools=tools),
+            **self.get_request_params(response_format=response_format, tools=tools),
         )  # type: ignore
 
     async def ainvoke_stream(
@@ -280,7 +282,7 @@ class Cerebras(Model):
             model=self.id,
             messages=[self._format_message(m) for m in messages],  # type: ignore
             stream=True,
-            **self.get_request_kwargs(response_format=response_format, tools=tools),
+            **self.get_request_params(response_format=response_format, tools=tools),
         )
         async for chunk in async_stream:  # type: ignore
             yield chunk  # type: ignore
@@ -401,25 +403,26 @@ class Cerebras(Model):
         # Get the first choice (assuming single response)
         if response_delta.choices is not None:
             choice: ChatChunkResponseChoice = response_delta.choices[0]
-            delta: ChatChunkResponseChoiceDelta = choice.delta
+            choice_delta: ChatChunkResponseChoiceDelta = choice.delta
 
-            # Add content
-            if delta.content:
-                model_response.content = delta.content
+            if choice_delta:
+                # Add content
+                if choice_delta.content:
+                    model_response.content = choice_delta.content
 
-            # Add tool calls
-            if delta.tool_calls:
-                model_response.tool_calls = [
-                    {
-                        "id": tool_call.id,
-                        "type": tool_call.type,
-                        "function": {
-                            "name": tool_call.function.name,
-                            "arguments": tool_call.function.arguments,
-                        },
-                    }
-                    for tool_call in delta.tool_calls
-                ]
+                # Add tool calls
+                if choice_delta.tool_calls:
+                    model_response.tool_calls = [
+                        {
+                            "id": tool_call.id,
+                            "type": tool_call.type,
+                            "function": {
+                                "name": tool_call.function.name,
+                                "arguments": tool_call.function.arguments,
+                            },
+                        }
+                        for tool_call in choice_delta.tool_calls
+                    ]
 
         # Add usage metrics
         if response_delta.usage:

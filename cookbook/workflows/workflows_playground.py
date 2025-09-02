@@ -1,9 +1,9 @@
 """
-1. Install dependencies using: `pip install openai duckduckgo-search sqlalchemy 'fastapi[standard]' newspaper4k lxml_html_clean yfinance agno`
+1. Install dependencies using: `pip install openai ddgs sqlalchemy 'fastapi[standard]' newspaper4k lxml_html_clean yfinance agno`
 2. Run the script using: `python cookbook/workflows/workflows_playground.py`
 """
 
-from agno.playground import Playground, serve_playground_app
+from agno.playground import Playground
 from agno.storage.sqlite import SqliteStorage
 
 # Import the workflows

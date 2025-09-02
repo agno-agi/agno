@@ -1,5 +1,5 @@
 from agno.agent.agent import Agent
-from agno.app.agui.app import AGUIApp
+from agno.app.agui import AGUIApp
 from agno.models.openai import OpenAIChat
 from agno.tools.yfinance import YFinanceTools
 

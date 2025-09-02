@@ -7,5 +7,5 @@ psycopg[binary]
 simplejson
 sqlalchemy
 streamlit
-duckduckgo-search
+ddgs
 nest_asyncio

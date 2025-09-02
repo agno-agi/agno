@@ -52,7 +52,11 @@ for run_response in agent.run(
                 # We have to set the result on the tool execution object so that the agent can continue
                 tool.result = result
 
-        run_response = agent.continue_run(run_response=run_response, stream=True)
+        run_response = agent.continue_run(
+            run_id=agent.run_response.run_id,
+            updated_tools=agent.run_response.tools,
+            stream=True,
+        )
         pprint.pprint_run_response(run_response)
 
 

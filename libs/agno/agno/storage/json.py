@@ -8,12 +8,15 @@ from agno.storage.base import Storage
 from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
+from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
 from agno.storage.session.workflow import WorkflowSession
 from agno.utils.log import logger
 
 
 class JsonStorage(Storage):
-    def __init__(self, dir_path: Union[str, Path], mode: Optional[Literal["agent", "team", "workflow"]] = "agent"):
+    def __init__(
+        self, dir_path: Union[str, Path], mode: Optional[Literal["agent", "team", "workflow", "workflow_v2"]] = "agent"
+    ):
         super().__init__(mode)
         self.dir_path = Path(dir_path)
         self.dir_path.mkdir(parents=True, exist_ok=True)
@@ -42,6 +45,8 @@ class JsonStorage(Storage):
                     return TeamSession.from_dict(data)
                 elif self.mode == "workflow":
                     return WorkflowSession.from_dict(data)
+                elif self.mode == "workflow_v2":
+                    return WorkflowSessionV2.from_dict(data)
         except FileNotFoundError:
             return None
 
@@ -69,6 +74,8 @@ class JsonStorage(Storage):
                         elif self.mode == "team" and data["team_id"] == entity_id:
                             session_ids.append(data["session_id"])
                         elif self.mode == "workflow" and data["workflow_id"] == entity_id:
+                            session_ids.append(data["session_id"])
+                        elif self.mode == "workflow_v2" and data["workflow_id"] == entity_id:
                             session_ids.append(data["session_id"])
                 else:
                     # No filters applied, add all session_ids
@@ -107,7 +114,8 @@ class JsonStorage(Storage):
                             _session = TeamSession.from_dict(data)
                         elif self.mode == "workflow" and data["workflow_id"] == entity_id:
                             _session = WorkflowSession.from_dict(data)
-
+                        elif self.mode == "workflow_v2" and data["workflow_id"] == entity_id:
+                            _session = WorkflowSessionV2.from_dict(data)
                     if _session:
                         sessions.append(_session)
                 else:
@@ -118,6 +126,8 @@ class JsonStorage(Storage):
                         _session = TeamSession.from_dict(data)
                     elif self.mode == "workflow":
                         _session = WorkflowSession.from_dict(data)
+                    elif self.mode == "workflow_v2":
+                        _session = WorkflowSessionV2.from_dict(data)
                     if _session:
                         sessions.append(_session)
         return sessions
@@ -158,7 +168,8 @@ class JsonStorage(Storage):
                             continue
                         elif self.mode == "workflow" and data["workflow_id"] != entity_id:
                             continue
-
+                        elif self.mode == "workflow_v2" and data["workflow_id"] != entity_id:
+                            continue
                     # Store with created_at for sorting
                     created_at = data.get("created_at", 0)
                     session_data.append((created_at, data))
@@ -181,7 +192,8 @@ class JsonStorage(Storage):
                 session = TeamSession.from_dict(data)
             elif self.mode == "workflow":
                 session = WorkflowSession.from_dict(data)
-
+            elif self.mode == "workflow_v2":
+                session = WorkflowSessionV2.from_dict(data)
             if session is not None:
                 sessions.append(session)
 
@@ -190,9 +202,13 @@ class JsonStorage(Storage):
     def upsert(self, session: Session) -> Optional[Session]:
         """Insert or update a Session in storage."""
         try:
-            data = asdict(session)
+            if self.mode == "workflow_v2":
+                data = session.to_dict()
+            else:
+                data = asdict(session)
+
             data["updated_at"] = int(time.time())
-            if "created_at" not in data:
+            if "created_at" not in data or data["created_at"] is None:
                 data["created_at"] = data["updated_at"]
 
             with open(self.dir_path / f"{session.session_id}.json", "w", encoding="utf-8") as f:
