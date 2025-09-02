@@ -1152,12 +1152,6 @@ class Agent:
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-        # If no retries are set, use the agent's default retries
-        retries = retries if retries is not None else self.retries
-
-        last_exception = None
-        num_attempts = retries + 1
-
         self._determine_tools_for_model(
             model=self.model,
             run_response=run_response,
@@ -1167,6 +1161,12 @@ class Agent:
             async_mode=False,
             knowledge_filters=effective_filters,
         )
+
+        # If no retries are set, use the agent's default retries
+        retries = retries if retries is not None else self.retries
+
+        last_exception = None
+        num_attempts = retries + 1
 
         for attempt in range(num_attempts):
             try:
@@ -1712,12 +1712,6 @@ class Agent:
         run_response.metrics = Metrics()
         run_response.metrics.start_timer()
 
-        # If no retries are set, use the agent's default retries
-        retries = retries if retries is not None else self.retries
-
-        last_exception = None
-        num_attempts = retries + 1
-
         self._determine_tools_for_model(
             model=self.model,
             run_response=run_response,
@@ -1727,6 +1721,12 @@ class Agent:
             async_mode=False,
             knowledge_filters=effective_filters,
         )
+
+        # If no retries are set, use the agent's default retries
+        retries = retries if retries is not None else self.retries
+
+        last_exception = None
+        num_attempts = retries + 1
 
         for attempt in range(num_attempts):
             try:
