@@ -11,7 +11,6 @@ from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
-from agno.run.messages import RunMessages
 from agno.utils.log import logger
 
 
@@ -305,7 +304,7 @@ class RunInput:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation"""
-        result = {}
+        result: Dict[str, Any] = {}  
 
         if self.input_content is not None:
             if isinstance(self.input_content, (str)):

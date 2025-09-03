@@ -772,10 +772,11 @@ class Agent:
         if self.store_media:
             self._store_media(run_response, model_response)
         else:
-            run_response.input.images = []
-            run_response.input.videos = []
-            run_response.input.audios = []
-            run_response.input.files = []
+            if run_response.input is not None:
+                run_response.input.images = []
+                run_response.input.videos = []
+                run_response.input.audios = []
+                run_response.input.files = []
 
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
@@ -1336,10 +1337,11 @@ class Agent:
         if self.store_media:
             self._store_media(run_response, model_response)
         else:
-            run_response.input.images = []
-            run_response.input.videos = []
-            run_response.input.audios = []
-            run_response.input.files = []
+            if run_response.input is not None:
+                run_response.input.images = []
+                run_response.input.videos = []
+                run_response.input.audios = []
+                run_response.input.files = []
 
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
@@ -3886,7 +3888,7 @@ class Agent:
                 try:
                     if artifact.url:
                         joint_audios.append(Audio(url=artifact.url))
-                    elif artifact.content:
+                    elif artifact.base64_audio:
                         joint_audios.append(Audio(content=artifact.base64_audio))
                 except Exception as e:
                     log_warning(f"Error converting AudioArtifact to Audio: {e}")
@@ -3903,7 +3905,7 @@ class Agent:
                             try:
                                 if artifact.url:
                                     joint_audios.append(Audio(url=artifact.url))
-                                elif artifact.content:
+                                elif artifact.base64_audio:
                                     joint_audios.append(Audio(content=artifact.base64_audio))
                             except Exception as e:
                                 log_warning(f"Error converting historical AudioArtifact to Audio: {e}")
@@ -3918,7 +3920,7 @@ class Agent:
                             try:
                                 if artifact.url:
                                     joint_audios.append(Audio(url=artifact.url))
-                                elif artifact.content:
+                                elif artifact.base64_audio:
                                     joint_audios.append(Audio(content=artifact.base64_audio))
                             except Exception as e:
                                 log_warning(f"Error converting input AudioArtifact to Audio: {e}")
@@ -3939,7 +3941,7 @@ class Agent:
         """Collect files from input and session history."""
         from agno.utils.log import log_debug
 
-        joint_files = []
+        joint_files: List[File] = []
 
         # 1. Add files from current input
         if run_input and run_input.files:
@@ -4055,6 +4057,7 @@ class Agent:
             needs_media = any(
                 any(param in signature(func.entrypoint).parameters for param in ["images", "videos", "audios", "files"])
                 for func in self._functions_for_model.values()
+                if func.entrypoint is not None
             )
 
             # Only collect media if functions actually need them
