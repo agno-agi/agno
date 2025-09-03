@@ -104,6 +104,7 @@ module = [
   "boto3.*",
   "botocore.*",
   "docker.*",
+  "tomllib.*",
   "yaml.*",
 ]
 ignore_missing_imports = true
