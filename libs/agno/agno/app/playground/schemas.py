@@ -91,6 +91,7 @@ class AgentSessionsResponse(BaseModel):
     session_id: Optional[str] = None
     session_name: Optional[str] = None
     created_at: Optional[int] = None
+    updated_at: Optional[int] = None
 
 
 class MemoryResponse(BaseModel):
@@ -115,6 +116,7 @@ class WorkflowSessionResponse(BaseModel):
     session_id: Optional[str] = None
     session_name: Optional[str] = None
     created_at: Optional[int] = None
+    updated_at: Optional[int] = None
 
 
 class WorkflowGetResponse(BaseModel):
@@ -213,6 +215,7 @@ class TeamSessionResponse(BaseModel):
     session_id: Optional[str] = None
     session_name: Optional[str] = None
     created_at: Optional[int] = None
+    updated_at: Optional[int] = None
 
 
 class TeamRenameRequest(BaseModel):

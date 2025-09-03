@@ -528,6 +528,7 @@ def get_async_playground_router(
                     session_id=session.session_id,
                     session_name=session.session_data.get("session_name") if session.session_data else None,
                     created_at=session.created_at,
+                    updated_at=session.updated_at,
                 )
             )
         return agent_sessions
@@ -751,6 +752,7 @@ def get_async_playground_router(
                     "session_id": session.session_id,
                     "session_name": session.session_data.get("session_name") if session.session_data else None,
                     "created_at": session.created_at,
+                    "updated_at": session.updated_at,
                 }  # type: ignore
             )
         return workflow_sessions
@@ -945,6 +947,7 @@ def get_async_playground_router(
                     session_id=session.session_id,
                     session_name=session.session_data.get("session_name") if session.session_data else None,
                     created_at=session.created_at,
+                    updated_at=session.updated_at,
                 )
             )
         return team_sessions
