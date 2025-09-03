@@ -3,12 +3,12 @@ from textwrap import dedent
 from typing import Optional, Union
 
 import requests
-from pydantic import BaseModel
 
 from agno.agent.agent import Agent, RunResponse
 from agno.media import Audio, File, Image, Video
 from agno.team.team import Team, TeamRunResponse
 from agno.utils.log import log_info, log_warning
+from agno.utils.message import get_text_from_message
 
 try:
     import discord
@@ -169,14 +169,7 @@ class DiscordClient:
             )
 
         # Handle structured outputs properly
-        if isinstance(response.content, BaseModel):
-            try:
-                content_message = response.content.model_dump_json(exclude_none=True)
-            except Exception as e:
-                log_warning(f"Failed to serialize structured output for Discord: {e}")
-                content_message = str(response.content)
-        else:
-            content_message = str(response.content) if response.content else ""
+        content_message = get_text_from_message(response.content)
 
         await self._send_discord_messages(thread=thread, message=content_message)
 

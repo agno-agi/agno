@@ -36,11 +36,11 @@ chat_agent = Agent(
 agui_app = AGUIApp(
     agent=chat_agent,
     name="Basic AG-UI Agent",
-    app_id="basic_agui_agent",
+    app_id="structured_output_agui_agent",
     description="A basic agent that demonstrates AG-UI protocol integration.",
 )
 
 app = agui_app.get_app()
 
 if __name__ == "__main__":
-    agui_app.serve(app="response_model:app", port=8000, reload=True)
+    agui_app.serve(app="structured_output:app", port=8000, reload=True)

@@ -22,13 +22,12 @@ from ag_ui.core import (
     ToolCallStartEvent,
 )
 from ag_ui.core.types import Message as AGUIMessage
-from pydantic import BaseModel
 
 from agno.models.message import Message
 from agno.run.response import RunEvent, RunResponseContentEvent, RunResponseEvent, RunResponsePausedEvent
 from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
 from agno.run.team import TeamRunEvent, TeamRunResponseEvent
-from agno.utils.log import log_warning
+from agno.utils.message import get_text_from_message
 
 
 @dataclass
@@ -109,16 +108,7 @@ def extract_team_response_chunk_content(response: TeamRunResponseContentEvent) -
     members_response = "\n".join(members_content) if members_content else ""
 
     # Handle structured outputs
-    main_content = ""
-    if response.content:
-        if isinstance(response.content, BaseModel):
-            try:
-                main_content = response.content.model_dump_json(exclude_none=True)
-            except Exception as e:
-                log_warning(f"Failed to serialize structured output for AGUI: {e}")
-                main_content = str(response.content)
-        else:
-            main_content = str(response.content)
+    main_content = get_text_from_message(response.content)
 
     return main_content + members_response
 
@@ -130,25 +120,10 @@ def extract_response_chunk_content(response: RunResponseContentEvent) -> str:
         for msg in reversed(response.messages):  # type: ignore
             if hasattr(msg, "role") and msg.role == "assistant" and hasattr(msg, "content") and msg.content:
                 # Handle structured outputs from messages
-                if isinstance(msg.content, BaseModel):
-                    try:
-                        return msg.content.model_dump_json(exclude_none=True)
-                    except Exception as e:
-                        log_warning(f"Failed to serialize structured output for AGUI: {e}")
-                        return str(msg.content)
-                return str(msg.content)
+                return get_text_from_message(msg.content)
 
     # Handle structured outputs
-    if response.content:
-        if isinstance(response.content, BaseModel):
-            try:
-                return response.content.model_dump_json(exclude_none=True)
-            except Exception as e:
-                log_warning(f"Failed to serialize structured output for AGUI: {e}")
-                return str(response.content)
-        return str(response.content)
-
-    return ""
+    return get_text_from_message(response.content)
 
 
 def _create_events_from_chunk(
