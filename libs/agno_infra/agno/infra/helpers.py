@@ -20,7 +20,7 @@ def is_docker_only_project(infra_root_path: Path) -> bool:
     """
     Check if the project is a docker only project.
     """
-    
+
     infrastructure_indicators = [
         "compose.yaml",
         "docker-compose.yaml",
@@ -34,6 +34,7 @@ def is_docker_only_project(infra_root_path: Path) -> bool:
             log_debug(f"Found infrastructure file '{indicator}' - using root directory as infra path")
             return True
     return False
+
 
 def get_infra_dir_path(infra_root_path: Path) -> Optional[Path]:
     """

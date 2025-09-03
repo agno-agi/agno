@@ -57,6 +57,9 @@ def create_infra_from_template(
     repo_to_clone: Optional[str] = url
     infra_template = InfraStarterTemplate.agent_infra_docker
     templates = list(InfraStarterTemplate.__members__.values())
+    
+    print_subheading("Creating a new Agno Infra project\n")
+    
 
     if repo_to_clone is None:
         # Get repo_to_clone from template
@@ -103,10 +106,12 @@ def create_infra_from_template(
     # Check if we can create the infra in the current dir
     infra_root_path: Path = current_dir.joinpath(infra_dir_name)
     if infra_root_path.exists():
-        logger.error(f"Directory {infra_root_path} exists, please delete the directory or choose another name for your Agno Infra project.")
+        logger.error(
+            f"Directory {infra_root_path} exists, please delete the directory or choose another name for your Agno Infra project."
+        )
         return None
 
-    print_info(f"Creating {str(infra_root_path)}")
+    print_info(f"\nCreating your new Agno Infra project...")
     logger.debug("Cloning: {}".format(repo_to_clone))
     try:
         git.Repo.clone_from(
@@ -157,8 +162,7 @@ def create_infra_from_template(
 
     if infra_config is not None:
         print_info("\n--------------------------------")
-        print_info(f"Congrats! Your new Agno Infra project is available at:")
-        print_info(f"\t{str(infra_root_path)} \n")
+        print_info(f"Done! Your new Agno Infra project is available at: {str(infra_root_path)} \n")
         print_info("1. Start Infra:")
         print_info("\tag infra up")
         print_info("2. Stop Infra:")
@@ -169,7 +173,6 @@ def create_infra_from_template(
     else:
         print_info("Infra setup unsuccessful. Please try again.")
     return None
-
 
 
 def setup_infra_config_from_dir(infra_root_path: Path) -> Optional[InfraConfig]:
