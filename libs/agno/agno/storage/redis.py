@@ -294,7 +294,7 @@ class RedisStorage(Storage):
             else:
                 data = asdict(session)
             data["updated_at"] = int(time.time())
-            if "created_at" not in data:
+            if "created_at" not in data or data["created_at"] is None:
                 data["created_at"] = data["updated_at"]
 
             key = self._get_key(session.session_id)

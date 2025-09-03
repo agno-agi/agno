@@ -5,7 +5,6 @@ from pydantic import BaseModel, Field
 
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.openai import OpenAIResponses
-from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.exa import ExaTools
 from agno.tools.yfinance import YFinanceTools
 
@@ -153,22 +152,29 @@ def test_parallel_tool_calls():
 
 def test_multiple_tool_calls():
     """Test multiple different tool types with the responses API."""
+
+    def get_the_weather(city: str):
+        return f"It is currently 70 degrees and cloudy in {city}"
+
+    def get_favourite_city():
+        return "Tokyo"
+
     agent = Agent(
-        model=OpenAIResponses(id="gpt-4o-mini"),
-        tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
+        model=OpenAIResponses(id="gpt-4.1-mini"),
+        tools=[get_the_weather, get_favourite_city],
         markdown=True,
         telemetry=False,
         monitoring=False,
     )
 
-    response = agent.run("What is the current price of TSLA and what is the latest news about it?")
+    response = agent.run("Find my favourite city. Then, get the weather in that city.")
 
     # Verify tool usage
     tool_calls = [msg.tool_calls for msg in response.messages if msg.tool_calls]
-    assert len(tool_calls) >= 1  # At least one message has tool calls
-    assert sum(len(calls) for calls in tool_calls) >= 2  # Total of 2 tool calls made
+    assert len(tool_calls) >= 2  # At least one message has tool calls
+    assert sum(len(calls) for calls in tool_calls) >= 1  # Total of 1 tool calls made
     assert response.content is not None
-    assert "TSLA" in response.content and "latest news" in response.content.lower()
+    assert "Tokyo" in response.content and "70" in response.content
 
 
 def test_tool_call_custom_tool_no_parameters():

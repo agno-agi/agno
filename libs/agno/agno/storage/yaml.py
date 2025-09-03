@@ -213,7 +213,7 @@ class YamlStorage(Storage):
             else:
                 data = asdict(session)
             data["updated_at"] = int(time.time())
-            if "created_at" not in data:
+            if "created_at" not in data or data["created_at"] is None:
                 data["created_at"] = data["updated_at"]
             with open(self.dir_path / f"{session.session_id}.yaml", "w", encoding="utf-8") as f:
                 f.write(self.serialize(data))

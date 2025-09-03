@@ -1,4 +1,4 @@
-"""Run `pip install duckduckgo-search sqlalchemy pgvector pypdf cerebras_cloud_sdk` to install dependencies."""
+"""Run `pip install ddgs sqlalchemy pgvector pypdf cerebras_cloud_sdk` to install dependencies."""
 
 from agno.agent import Agent
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase

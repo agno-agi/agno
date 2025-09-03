@@ -1,7 +1,10 @@
 from pathlib import Path
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union, cast
+
+from pydantic import model_validator
 
 from agno.document import Document
+from agno.document.chunking.markdown import MarkdownChunking
 from agno.document.reader.markdown_reader import MarkdownReader
 from agno.knowledge.agent import AgentKnowledge
 from agno.utils.log import log_info, logger
@@ -10,11 +13,18 @@ from agno.utils.log import log_info, logger
 class MarkdownKnowledgeBase(AgentKnowledge):
     path: Optional[Union[str, Path, List[Dict[str, Union[str, Dict[str, Any]]]]]] = None
     formats: List[str] = [".md"]
-    reader: MarkdownReader = MarkdownReader()
+    reader: Optional[MarkdownReader] = None
+
+    @model_validator(mode="after")
+    def set_reader(self) -> "MarkdownKnowledgeBase":
+        if self.reader is None:
+            self.reader = MarkdownReader(chunking_strategy=self.chunking_strategy or MarkdownChunking())
+        return self
 
     @property
     def document_lists(self) -> Iterator[List[Document]]:
         """Iterate over text files and yield lists of documents."""
+        self.reader = cast(MarkdownReader, self.reader)
         if self.path is None:
             raise ValueError("Path is not set")
 
@@ -49,6 +59,7 @@ class MarkdownKnowledgeBase(AgentKnowledge):
     @property
     async def async_document_lists(self) -> AsyncIterator[List[Document]]:
         """Iterate over text files and yield lists of documents asynchronously."""
+        self.reader = cast(MarkdownReader, self.reader)
         if self.path is None:
             raise ValueError("Path is not set")
 
@@ -85,6 +96,7 @@ class MarkdownKnowledgeBase(AgentKnowledge):
         skip_existing: bool = True,
     ) -> None:
         """Load documents from a single text file with specific metadata into the vector DB."""
+        self.reader = cast(MarkdownReader, self.reader)
 
         _file_path = Path(path) if isinstance(path, str) else path
 
@@ -117,6 +129,7 @@ class MarkdownKnowledgeBase(AgentKnowledge):
         skip_existing: bool = True,
     ) -> None:
         """Load documents from a single text file with specific metadata into the vector DB."""
+        self.reader = cast(MarkdownReader, self.reader)
 
         _file_path = Path(path) if isinstance(path, str) else path
 

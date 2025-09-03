@@ -1,4 +1,4 @@
-"""Run `pip install duckduckgo-search openai` to install dependencies."""
+"""Run `pip install ddgs openai` to install dependencies."""
 
 from agno.agent import Agent
 from agno.storage.yaml import YamlStorage

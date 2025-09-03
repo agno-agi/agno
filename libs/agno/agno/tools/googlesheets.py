@@ -98,6 +98,7 @@ class GoogleSheetsTools(Toolkit):
         create: bool = False,
         update: bool = False,
         duplicate: bool = False,
+        oauth_port: int = 0,
         **kwargs,
     ):
         """Initialize GoogleSheetsTools with the specified configuration.
@@ -113,6 +114,7 @@ class GoogleSheetsTools(Toolkit):
             create (bool): Enable create operations. Defaults to False.
             update (bool): Enable update operations. Defaults to False.
             duplicate (bool): Enable duplicate operations. Defaults to False.
+            oauth_port (int): Port to use for OAuth authentication. Defaults to 0.
         """
 
         self.spreadsheet_id = spreadsheet_id
@@ -120,6 +122,7 @@ class GoogleSheetsTools(Toolkit):
         self.creds = creds
         self.credentials_path = creds_path
         self.token_path = token_path
+        self.oauth_port = oauth_port
         self.service: Optional[Resource] = None
 
         # Determine required scopes based on operations if no custom scopes provided
@@ -185,11 +188,13 @@ class GoogleSheetsTools(Toolkit):
                         "redirect_uris": [getenv("GOOGLE_REDIRECT_URI", "http://localhost")],
                     }
                 }
+                # File based authentication
                 if creds_file.exists():
                     flow = InstalledAppFlow.from_client_secrets_file(str(creds_file), self.scopes)
                 else:
                     flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
-                self.creds = flow.run_local_server(port=0)
+                # Opens up a browser window for OAuth authentication
+                self.creds = flow.run_local_server(port=self.oauth_port)
             token_file.write_text(self.creds.to_json()) if self.creds else None
 
     @authenticate
