@@ -260,10 +260,18 @@ class Function(BaseModel):
                 del type_hints["team"]
             if "session_state" in sig.parameters and "session_state" in type_hints:
                 del type_hints["session_state"]
+            if "images" in sig.parameters and "images" in type_hints:
+                del type_hints["images"]
+            if "videos" in sig.parameters and "videos" in type_hints:
+                del type_hints["videos"]
+            if "audios" in sig.parameters and "audios" in type_hints:
+                del type_hints["audios"]
+            if "files" in sig.parameters and "files" in type_hints:
+                del type_hints["files"]
             # log_info(f"Type hints for {self.name}: {type_hints}")
 
             # Filter out return type and only process parameters
-            excluded_params = ["return", "agent", "team", "session_state", "self"]
+            excluded_params = ["return", "agent", "team", "session_state", "self", "images", "videos", "audios", "files"]
             if self.requires_user_input and self.user_input_fields:
                 if len(self.user_input_fields) == 0:
                     excluded_params.extend(list(type_hints.keys()))
@@ -376,7 +384,7 @@ class Function(BaseModel):
     def process_schema_for_strict(self):
         self.parameters["additionalProperties"] = False
         self.parameters["required"] = [
-            name for name in self.parameters["properties"] if name not in ["agent", "team", "session_state", "self"]
+            name for name in self.parameters["properties"] if name not in ["agent", "team", "session_state", "images", "videos", "audios", "files", "self"]
         ]
 
     def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
@@ -391,6 +399,14 @@ class Function(BaseModel):
             del copy_entrypoint_args["team"]
         if "session_state" in copy_entrypoint_args:
             del copy_entrypoint_args["session_state"]
+        if "images" in copy_entrypoint_args:
+            del copy_entrypoint_args["images"]
+        if "videos" in copy_entrypoint_args:
+            del copy_entrypoint_args["videos"]
+        if "audios" in copy_entrypoint_args:
+            del copy_entrypoint_args["audios"]
+        if "files" in copy_entrypoint_args:
+            del copy_entrypoint_args["files"]
         args_str = str(copy_entrypoint_args)
 
         kwargs_str = str(sorted((call_args or {}).items()))
