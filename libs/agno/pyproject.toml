@@ -41,6 +41,7 @@ dependencies = [
   "python-multipart",
   "pyyaml",
   "rich",
+  "tiktoken",
   "tomli",
   "typer",
   "typing-extensions",

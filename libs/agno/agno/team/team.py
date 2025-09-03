@@ -256,6 +256,12 @@ class Team:
     # If True, the agent adds a reference to the session summaries in the response
     add_session_summary_references: Optional[bool] = None
 
+    # --- Adaptive Context Management ---
+    # If True, enable adaptive context management (switch between full history and summaries)
+    adaptive_context: Optional[bool] = False
+    # Maximum context tokens before switching to summaries
+    max_context_tokens: int = 100_000
+
     # --- Team History ---
     # If True, enable the team history (Deprecated in favor of add_history_to_messages)
     enable_team_history: bool = False
@@ -365,6 +371,8 @@ class Team:
         add_memory_references: Optional[bool] = None,
         enable_session_summaries: bool = False,
         add_session_summary_references: Optional[bool] = None,
+        adaptive_context: Optional[bool] = False,
+        max_context_tokens: int = 100_000,
         enable_team_history: bool = False,
         add_history_to_messages: bool = False,
         num_of_interactions_from_history: Optional[int] = None,
@@ -457,6 +465,14 @@ class Team:
         self.add_memory_references = add_memory_references
         self.enable_session_summaries = enable_session_summaries
         self.add_session_summary_references = add_session_summary_references
+
+        self.adaptive_context = adaptive_context
+        self.max_context_tokens = max_context_tokens
+
+        # If adaptive context is enabled, ensure session summaries and history are enabled
+        if self.adaptive_context:
+            self.enable_session_summaries = True
+            self.add_history_to_messages = True
 
         self.enable_team_history = enable_team_history
         self.add_history_to_messages = add_history_to_messages
@@ -5628,7 +5644,65 @@ class Team:
             run_messages.user_message = user_message
             run_messages.messages.append(user_message)
 
+        # 4. Apply summary if enabled and context is too long
+        if self.adaptive_context and self._estimate_messages_tokens(run_messages.messages) > self.max_context_tokens:
+            run_messages = self._apply_summary(run_messages, session_id, user_id)
+
         return run_messages
+
+    def _apply_summary(self, run_messages: RunMessages, session_id: str, user_id: Optional[str] = None) -> RunMessages:
+        """Apply summary to the run messages"""
+        filtered_messages = []
+        # Add system message
+        if run_messages.system_message:
+            filtered_messages.append(run_messages.system_message)
+        # Add summary
+        summary = self.get_session_summary(session_id=session_id, user_id=user_id)
+        if summary:
+            # Create summary message
+            summary_message = Message(
+                role="system", content=f"Previous conversation summary:\n\n{summary}", name="context_summary"
+            )
+            filtered_messages.append(summary_message)
+        # Add user message
+        if run_messages.user_message:
+            filtered_messages.append(run_messages.user_message)
+
+        run_messages.messages = filtered_messages
+
+        return run_messages
+
+    def _estimate_messages_tokens(self, messages: List[Message]) -> int:
+        if not messages:
+            return 0
+        return sum(self._estimate_message_tokens(msg) for msg in messages)
+
+    def _estimate_message_tokens(self, message: Message) -> int:
+        if not message:
+            return 0
+            
+        import tiktoken
+
+        encoding = tiktoken.encoding_for_model("gpt-4")
+        content = message.content or ""
+        # Ensure content is a string before encoding
+        if isinstance(content, str):
+            content_tokens = len(encoding.encode(content))
+        else:
+            # Handle case where content might be a list or other type
+            content_tokens = len(encoding.encode(str(content)))
+
+        # Add media tokens
+        if hasattr(message, "images") and message.images:
+            content_tokens += len(message.images) * 1000
+
+        if hasattr(message, "audio") and message.audio:
+            content_tokens += len(message.audio) * 50
+
+        if hasattr(message, "videos") and message.videos:
+            content_tokens += len(message.videos) * 100
+
+        return content_tokens
 
     def _get_user_message(
         self,
