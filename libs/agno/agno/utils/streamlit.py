@@ -17,7 +17,7 @@ def add_message(
     if "messages" not in st.session_state:
         st.session_state["messages"] = []
 
-    message = Dict[str, Any] = {"role": role, "content": content}
+    message: Dict[str, Any] = {"role": role, "content": content}
     if tool_calls:
         message["tool_calls"] = tool_calls
 
@@ -211,7 +211,7 @@ def session_selector_widget(
 def _load_session(session_id: str, model_id: str, agent_creation_callback: Callable[[str, str], Agent]):
     try:
         logger.info(f"Creating agent with session_id: {session_id}")
-        new_agent = agent_creation_callback(model_id=model_id, session_id=session_id)
+        new_agent = agent_creation_callback(model_id, session_id)
 
         st.session_state["agent"] = new_agent
         st.session_state["session_id"] = session_id
@@ -219,9 +219,12 @@ def _load_session(session_id: str, model_id: str, agent_creation_callback: Calla
         st.session_state["current_model"] = model_id  # Keep current_model in sync
 
         try:
-            selected_session = new_agent.db.get_session(
-                session_id=session_id, session_type="agent", deserialize=True
-            )
+            if new_agent.db:
+                selected_session = new_agent.db.get_session(
+                    session_id=session_id, session_type=SessionType.AGENT, deserialize=True
+                )
+            else:
+                selected_session = None
 
             # Recreate the chat history
             if selected_session:
@@ -348,12 +351,12 @@ def display_chat_messages() -> None:
                     st.markdown(content)
 
 
-def initialize_agent(model_id: str, agent_creation_callback: Callable[[str, str], Agent]) -> Agent:
+def initialize_agent(model_id: str, agent_creation_callback: Callable[[str, Optional[str]], Agent]) -> Agent:
     """Initialize or get agent with proper session management."""
     if "agent" not in st.session_state or st.session_state["agent"] is None:
         # First time initialization - get existing session_id if any
         session_id = st.session_state.get("session_id")
-        agent = agent_creation_callback(model_id=model_id, session_id=session_id)
+        agent = agent_creation_callback(model_id, session_id)
         st.session_state["agent"] = agent
         st.session_state["current_model"] = model_id
 
