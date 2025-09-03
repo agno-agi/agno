@@ -1,8 +1,9 @@
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import streamlit as st
 from agno.agent import Agent
+from agno.db.base import SessionType
 from agno.models.anthropic import Claude
 from agno.models.google import Gemini
 from agno.models.openai import OpenAIChat
@@ -16,7 +17,7 @@ def add_message(
     if "messages" not in st.session_state:
         st.session_state["messages"] = []
 
-    message = {"role": role, "content": content}
+    message = Dict[str, Any] = {"role": role, "content": content}
     if tool_calls:
         message["tool_calls"] = tool_calls
 
@@ -49,7 +50,7 @@ def display_tool_calls(container, tools: List[Any]):
 
 
 def session_selector_widget(
-    agent: Agent, model_id: str, agent_creation_callback: callable
+    agent: Agent, model_id: str, agent_creation_callback: Callable[[str, str], Agent]
 ) -> None:
     """Session selector widget"""
     if not agent.db:
@@ -58,7 +59,7 @@ def session_selector_widget(
 
     try:
         sessions = agent.db.get_sessions(
-            session_type="agent",
+            session_type=SessionType.AGENT,
             deserialize=True,
             sort_by="created_at",
             sort_order="desc",
@@ -207,7 +208,7 @@ def session_selector_widget(
                     st.rerun()
 
 
-def _load_session(session_id: str, model_id: str, agent_creation_callback: callable):
+def _load_session(session_id: str, model_id: str, agent_creation_callback: Callable[[str, str], Agent]):
     try:
         logger.info(f"Creating agent with session_id: {session_id}")
         new_agent = agent_creation_callback(model_id=model_id, session_id=session_id)
@@ -347,7 +348,7 @@ def display_chat_messages() -> None:
                     st.markdown(content)
 
 
-def initialize_agent(model_id: str, agent_creation_callback: callable) -> Agent:
+def initialize_agent(model_id: str, agent_creation_callback: Callable[[str, str], Agent]) -> Agent:
     """Initialize or get agent with proper session management."""
     if "agent" not in st.session_state or st.session_state["agent"] is None:
         # First time initialization - get existing session_id if any
