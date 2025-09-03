@@ -344,6 +344,14 @@ class Agent:
     # This helps us improve the Agent and provide better support
     telemetry: bool = True
 
+    # --- Model Response Caching ---
+    # If True, cache model responses to disk
+    cache_model_response: bool = False
+    # Time-to-live for cached model responses in seconds
+    cache_model_ttl: int = 3600
+    # Directory to store model response cache files. Defaults to system temp dir.
+    cache_model_dir: Optional[str] = None
+
     def __init__(
         self,
         *,
@@ -438,6 +446,9 @@ class Agent:
         debug_level: Literal[1, 2] = 1,
         monitoring: bool = False,
         telemetry: bool = True,
+        cache_model_response: bool = False,
+        cache_model_ttl: int = 3600,
+        cache_model_dir: Optional[str] = None,
     ):
         self.model = model
         self.name = name
@@ -557,6 +568,10 @@ class Agent:
         self.debug_level = debug_level
         self.monitoring = monitoring
         self.telemetry = telemetry
+
+        self.cache_model_response = cache_model_response
+        self.cache_model_ttl = cache_model_ttl
+        self.cache_model_dir = cache_model_dir
 
         # --- Params not to be set by user ---
         self.session_metrics: Optional[SessionMetrics] = None
@@ -768,6 +783,7 @@ class Agent:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         refresh_session_before_write: Optional[bool] = False,
+        cache_model_response: Optional[bool] = None,
     ) -> RunResponse:
         """Run the Agent and return the RunResponse.
 
@@ -791,13 +807,10 @@ class Agent:
 
         # 2. Generate a response from the Model (includes running function calls)
         self.model = cast(Model, self.model)
-        model_response: ModelResponse = self.model.response(
-            messages=run_messages.messages,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
-            tool_choice=self.tool_choice,
-            tool_call_limit=self.tool_call_limit,
+        model_response = self._get_model_response_with_cache(
+            run_messages=run_messages,
             response_format=response_format,
+            cache_model_response=cache_model_response,
         )
         # If an output model is provided, generate output using the output model
         self._generate_response_with_output_model(model_response, run_messages)
@@ -858,6 +871,7 @@ class Agent:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
         refresh_session_before_write: Optional[bool] = False,
+        cache_model_response: Optional[bool] = None,
     ) -> Iterator[RunResponseEvent]:
         """Run the Agent and yield the RunResponse.
 
@@ -890,6 +904,7 @@ class Agent:
                 run_messages=run_messages,
                 response_format=response_format,
                 stream_intermediate_steps=stream_intermediate_steps,
+                cache_model_response=cache_model_response,
             ):
                 yield event
         else:
@@ -900,6 +915,7 @@ class Agent:
                 run_messages=run_messages,
                 response_format=response_format,
                 stream_intermediate_steps=stream_intermediate_steps,
+                cache_model_response=cache_model_response,
             ):
                 if isinstance(event, RunResponseContentEvent):
                     if stream_intermediate_steps:
@@ -978,6 +994,7 @@ class Agent:
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         refresh_session_before_write: Optional[bool] = False,
+        cache_model_response: Optional[bool] = None,
         **kwargs: Any,
     ) -> RunResponse: ...
 
@@ -999,6 +1016,7 @@ class Agent:
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         refresh_session_before_write: Optional[bool] = False,
+        cache_model_response: Optional[bool] = None,
         **kwargs: Any,
     ) -> Iterator[RunResponseEvent]: ...
 
@@ -1019,6 +1037,7 @@ class Agent:
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         refresh_session_before_write: Optional[bool] = False,
+        cache_model_response: Optional[bool] = None,
         **kwargs: Any,
     ) -> Union[RunResponse, Iterator[RunResponseEvent]]:
         """Run the Agent and return the response."""
@@ -1151,6 +1170,7 @@ class Agent:
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
                         refresh_session_before_write=refresh_session_before_write,
+                        cache_model_response=cache_model_response,
                     )
                     return response_iterator
                 else:
@@ -1161,6 +1181,7 @@ class Agent:
                         session_id=session_id,
                         response_format=response_format,
                         refresh_session_before_write=refresh_session_before_write,
+                        cache_model_response=cache_model_response,
                     )
                     return response
             except ModelProviderError as e:
@@ -1209,6 +1230,7 @@ class Agent:
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         refresh_session_before_write: Optional[bool] = False,
+        cache_model_response: Optional[bool] = None,
     ) -> RunResponse:
         """Run the Agent and yield the RunResponse.
 
@@ -1232,13 +1254,10 @@ class Agent:
         index_of_last_user_message = len(run_messages.messages)
 
         # 2. Generate a response from the Model (includes running function calls)
-        model_response: ModelResponse = await self.model.aresponse(
-            messages=run_messages.messages,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
-            tool_choice=self.tool_choice,
-            tool_call_limit=self.tool_call_limit,
+        model_response = await self._aget_model_response_with_cache(
+            run_messages=run_messages,
             response_format=response_format,
+            cache_model_response=cache_model_response,
         )
 
         # If an output model is provided, generate output using the output model
@@ -1299,6 +1318,7 @@ class Agent:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
         refresh_session_before_write: Optional[bool] = False,
+        cache_model_response: Optional[bool] = None,
     ) -> AsyncIterator[RunResponseEvent]:
         """Run the Agent and yield the RunResponse.
 
@@ -1331,6 +1351,7 @@ class Agent:
                 run_messages=run_messages,
                 response_format=response_format,
                 stream_intermediate_steps=stream_intermediate_steps,
+                cache_model_response=cache_model_response,
             ):
                 yield event
         else:
@@ -1341,6 +1362,7 @@ class Agent:
                 run_messages=run_messages,
                 response_format=response_format,
                 stream_intermediate_steps=stream_intermediate_steps,
+                cache_model_response=cache_model_response,
             ):
                 if isinstance(event, RunResponseContentEvent):
                     if stream_intermediate_steps:
@@ -1424,6 +1446,7 @@ class Agent:
         retries: Optional[int] = None,
         knowledge_filters: Optional[Dict[str, Any]] = None,
         refresh_session_before_write: Optional[bool] = False,
+        cache_model_response: Optional[bool] = None,
         **kwargs: Any,
     ) -> Any:
         """Async Run the Agent and return the response."""
@@ -1556,6 +1579,7 @@ class Agent:
                         response_format=response_format,
                         stream_intermediate_steps=stream_intermediate_steps,
                         refresh_session_before_write=refresh_session_before_write,
+                        cache_model_response=cache_model_response,
                     )  # type: ignore[assignment]
                     return response_iterator
                 else:
@@ -1566,6 +1590,7 @@ class Agent:
                         session_id=session_id,
                         response_format=response_format,
                         refresh_session_before_write=refresh_session_before_write,
+                        cache_model_response=cache_model_response,
                     )
                     return response
             except ModelProviderError as e:
@@ -1981,6 +2006,7 @@ class Agent:
             run_messages=run_messages,
             response_format=response_format,
             stream_intermediate_steps=stream_intermediate_steps,
+            cache_model_response=None,  # Continue run doesn't need caching
         ):
             yield event
 
@@ -3049,6 +3075,7 @@ class Agent:
         run_messages: RunMessages,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
+        cache_model_response: Optional[bool] = None,
     ) -> Iterator[RunResponseEvent]:
         self.model = cast(Model, self.model)
 
@@ -3063,13 +3090,10 @@ class Agent:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
-        for model_response_event in self.model.response_stream(
-            messages=run_messages.messages,
+        for model_response_event in self._get_model_response_stream_with_cache(
+            run_messages=run_messages,
             response_format=response_format,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
-            tool_choice=self.tool_choice,
-            tool_call_limit=self.tool_call_limit,
+            cache_model_response=cache_model_response,
             stream_model_response=stream_model_response,
         ):
             yield from self._handle_model_response_chunk(
@@ -3116,6 +3140,7 @@ class Agent:
         run_messages: RunMessages,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
+        cache_model_response: Optional[bool] = None,
     ) -> AsyncIterator[RunResponseEvent]:
         self.model = cast(Model, self.model)
 
@@ -3130,17 +3155,12 @@ class Agent:
             log_debug("Response model set, model response is not streamed.")
             stream_model_response = False
 
-        model_response_stream = self.model.aresponse_stream(
-            messages=run_messages.messages,
+        async for model_response_event in self._aget_model_response_stream_with_cache(
+            run_messages=run_messages,
             response_format=response_format,
-            tools=self._tools_for_model,
-            functions=self._functions_for_model,
-            tool_choice=self.tool_choice,
-            tool_call_limit=self.tool_call_limit,
+            cache_model_response=cache_model_response,
             stream_model_response=stream_model_response,
-        )  # type: ignore
-
-        async for model_response_event in model_response_stream:  # type: ignore
+        ):
             for event in self._handle_model_response_chunk(
                 run_response=run_response,
                 model_response=model_response,
@@ -6714,8 +6734,6 @@ class Agent:
                     self.run_response.extra_data.references = []
                 self.run_response.extra_data.references.append(references)
             retrieval_timer.stop()
-            from agno.utils.log import log_debug
-
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 
             if docs_from_knowledge is None:
@@ -6791,7 +6809,6 @@ class Agent:
                     self.run_response.extra_data.references = []
                 self.run_response.extra_data.references.append(references)
             retrieval_timer.stop()
-            from agno.utils.log import log_debug
 
             log_debug(f"Time to get references: {retrieval_timer.elapsed:.4f}s")
 
@@ -7046,6 +7063,7 @@ class Agent:
         # Add tags to include in markdown content
         tags_to_include_in_markdown: Set[str] = {"think", "thinking"},
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        cache_model_response: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
         import json
@@ -7108,6 +7126,7 @@ class Agent:
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
                     knowledge_filters=knowledge_filters,
+                    cache_model_response=cache_model_response,
                     **kwargs,
                 ):
                     if isinstance(resp, tuple(get_args(RunResponseEvent))):
@@ -7240,7 +7259,6 @@ class Agent:
                         panels.append(tool_calls_panel)
                         live_log.update(Group(*panels))
 
-                    response_panel = None
                     # Check if we have any response content to display
                     if response_content_stream and not self.markdown:
                         response_content = response_content_stream
@@ -7343,6 +7361,7 @@ class Agent:
                     stream=False,
                     stream_intermediate_steps=stream_intermediate_steps,
                     knowledge_filters=knowledge_filters,
+                    cache_model_response=cache_model_response,
                     **kwargs,
                 )
                 response_timer.stop()
@@ -7511,6 +7530,7 @@ class Agent:
         # Add tags to include in markdown content
         tags_to_include_in_markdown: Set[str] = {"think", "thinking"},
         knowledge_filters: Optional[Dict[str, Any]] = None,
+        cache_model_response: Optional[bool] = None,
         **kwargs: Any,
     ) -> None:
         import json
@@ -7573,6 +7593,7 @@ class Agent:
                     stream=True,
                     stream_intermediate_steps=stream_intermediate_steps,
                     knowledge_filters=knowledge_filters,
+                    cache_model_response=cache_model_response,
                     **kwargs,
                 )
 
@@ -7708,7 +7729,6 @@ class Agent:
                         panels.append(tool_calls_panel)
                         live_log.update(Group(*panels))
 
-                    response_panel = None
                     # Check if we have any response content to display
                     if response_content_stream and not self.markdown:
                         response_content = response_content_stream
@@ -7811,6 +7831,7 @@ class Agent:
                     stream=False,
                     stream_intermediate_steps=stream_intermediate_steps,
                     knowledge_filters=knowledge_filters,
+                    cache_model_response=cache_model_response,
                     **kwargs,
                 )
                 response_timer.stop()
@@ -8085,8 +8106,6 @@ class Agent:
 
         except Exception as e:
             # Log the error but don't crash
-            from agno.utils.log import log_error
-
             log_error(f"Failed to add reasoning metrics to extra_data: {str(e)}")
 
     def _get_effective_filters(self, knowledge_filters: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
@@ -8117,6 +8136,384 @@ class Agent:
             log_debug(f"Using knowledge filters: {effective_filters}")
 
         return effective_filters
+
+    def _get_model_cache_key(self, messages: List[Message], stream: bool = False, **kwargs) -> str:
+        """Generate a cache key based on model messages and core parameters."""
+        import json
+        from hashlib import md5
+
+        message_data = []
+        for msg in messages:
+            msg_dict = {
+                "role": msg.role,
+                "content": msg.content,
+            }
+            message_data.append(msg_dict)
+
+        # Create a simpler cache key focusing on stable parameters
+        cache_data = {
+            "model_id": getattr(self.model, "id", str(type(self.model))),
+            "messages": message_data,
+            # Include basic tool info but not detailed tool definitions that might change
+            "has_tools": bool(self._tools_for_model),
+            "response_format": kwargs.get("response_format"),
+            "stream": stream,
+        }
+
+        cache_str = json.dumps(cache_data, sort_keys=True)
+        cache_key = md5(cache_str.encode()).hexdigest()
+
+        # Debug logging to help troubleshoot cache hits/misses
+        log_debug(f"Generated cache key: {cache_key} for {len(message_data)} messages")
+
+        return cache_key
+
+    def _get_model_cache_file_path(self, cache_key: str) -> str:
+        """Get the full path for the model response cache file."""
+        from pathlib import Path
+
+        # Use a persistent cache directory that survives across runs
+        if self.cache_model_dir:
+            base_cache_dir = Path(self.cache_model_dir)
+        else:
+            # Default to a persistent cache in user's home directory
+            home_dir = Path.home()
+            base_cache_dir = home_dir / ".agno" / "cache"
+
+        model_cache_dir = base_cache_dir / "model_responses"
+        model_cache_dir.mkdir(parents=True, exist_ok=True)
+
+        log_debug(f"Using cache directory: {model_cache_dir}")
+
+        return str(model_cache_dir / f"{cache_key}.json")
+
+    def _get_cached_model_response(self, cache_file: str):
+        """Retrieve cached model response if valid."""
+        import json
+        from pathlib import Path
+        from time import time
+
+        cache_path = Path(cache_file)
+        if not cache_path.exists():
+            return None
+
+        try:
+            with cache_path.open("r") as f:
+                cache_data = json.load(f)
+
+            timestamp = cache_data.get("timestamp", 0)
+
+            if time() - timestamp <= self.cache_model_ttl:
+                # Check if this is streaming cache or regular cache
+                if cache_data.get("is_streaming", False):
+                    return {"is_streaming": True, "streaming_responses": cache_data.get("streaming_responses", [])}
+                else:
+                    return {"is_streaming": False, "result": cache_data.get("result")}
+
+            # Remove expired entry
+            cache_path.unlink()
+        except Exception as e:
+            log_error(f"Error reading model cache: {e}")
+
+        return None
+
+    def _save_model_response_to_cache(self, cache_file: str, model_response):
+        """Save model response to cache using ModelResponse.to_dict()."""
+        import json
+        from time import time
+
+        try:
+            cache_data = {"timestamp": time(), "result": model_response.to_dict(), "is_streaming": False}
+
+            with open(cache_file, "w") as f:
+                json.dump(cache_data, f)
+
+            log_debug(f"Model response cached to: {cache_file}")
+        except Exception as e:
+            log_error(f"Error writing model cache: {e}")
+
+    def _save_streaming_responses_to_cache(self, cache_file: str, streaming_responses):
+        """Save all streaming responses to cache for replay."""
+        import json
+        from time import time
+
+        try:
+            cache_data = {
+                "timestamp": time(),
+                "streaming_responses": [response.to_dict() for response in streaming_responses],
+                "is_streaming": True,
+            }
+
+            with open(cache_file, "w") as f:
+                json.dump(cache_data, f)
+
+            log_debug(f"Streaming responses cached ({len(streaming_responses)} chunks) to: {cache_file}")
+        except Exception as e:
+            log_error(f"Error writing streaming cache: {e}")
+
+    def _model_response_from_cache(self, cached_data: dict):
+        """Reconstruct a ModelResponse from cached data using ModelResponse.from_dict()."""
+        from agno.models.response import ModelResponse
+
+        try:
+            return ModelResponse.from_dict(cached_data)
+        except Exception as e:
+            log_error(f"Error reconstructing ModelResponse from cache: {e}")
+            return None
+
+    def _streaming_responses_from_cache(self, cached_data: list):
+        """Reconstruct streaming responses from cached data."""
+        from agno.models.response import ModelResponse
+
+        try:
+            return [ModelResponse.from_dict(response_data) for response_data in cached_data]
+        except Exception as e:
+            log_error(f"Error reconstructing streaming responses from cache: {e}")
+            return None
+
+    def _get_model_response_with_cache(
+        self,
+        run_messages,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        cache_model_response: Optional[bool] = None,
+    ):
+        """Helper function to get model response with caching support."""
+        # Check if caching is enabled
+        should_cache = cache_model_response if cache_model_response is not None else self.cache_model_response
+        cached_response = None
+
+        log_debug(f"Model cache enabled: {should_cache}")
+
+        cache_key = self._get_model_cache_key(
+            messages=run_messages.messages,
+            response_format=response_format,
+            stream=False,
+        )
+
+        if should_cache:
+            try:
+                cache_file = self._get_model_cache_file_path(cache_key)
+                log_debug(f"Checking cache file: {cache_file}")
+                cached_data = self._get_cached_model_response(cache_file)
+
+                if cached_data and not cached_data.get("is_streaming", False):
+                    log_debug("Cache hit! Using cached model response")
+                    cached_response = self._model_response_from_cache(cached_data.get("result"))
+                else:
+                    log_debug("Cache miss - no valid cached response found")
+            except Exception as e:
+
+                log_warning(f"Error checking model cache: {e}")
+
+        if cached_response:
+            model_response = cached_response
+        else:
+            self.model = cast(Model, self.model)
+            model_response = self.model.response(
+                messages=run_messages.messages,
+                tools=self._tools_for_model,
+                functions=self._functions_for_model,
+                tool_choice=self.tool_choice,
+                tool_call_limit=self.tool_call_limit,
+                response_format=response_format,
+            )
+
+            # Save to cache if caching is enabled
+            if should_cache:
+                try:
+                    cache_file = self._get_model_cache_file_path(cache_key)
+                    log_debug(f"Saving model response to cache: {cache_file}")
+                    self._save_model_response_to_cache(cache_file, model_response)
+                except Exception as e:
+                    log_warning(f"Error saving to model cache: {e}")
+
+        return model_response
+
+    async def _aget_model_response_with_cache(
+        self,
+        run_messages,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        cache_model_response: Optional[bool] = None,
+    ):
+        """Async helper function to get model response with caching support."""
+        # Check if caching is enabled
+        should_cache = cache_model_response if cache_model_response is not None else self.cache_model_response
+        cached_response = None
+
+        cache_key = self._get_model_cache_key(
+            messages=run_messages.messages,
+            response_format=response_format,
+            stream=False,
+        )
+
+        if should_cache:
+            try:
+                cache_file = self._get_model_cache_file_path(cache_key)
+                log_debug(f"Checking cache file: {cache_file}")
+                cached_data = self._get_cached_model_response(cache_file)
+
+                if cached_data and not cached_data.get("is_streaming", False):
+                    log_debug("Cache hit! Using cached model response")
+                    cached_response = self._model_response_from_cache(cached_data.get("result"))
+                else:
+                    log_debug("Cache miss - no valid cached response found")
+            except Exception as e:
+                log_warning(f"Error checking model cache: {e}")
+
+        if cached_response:
+            model_response = cached_response
+        else:
+            self.model = cast(Model, self.model)
+            model_response = await self.model.aresponse(
+                messages=run_messages.messages,
+                tools=self._tools_for_model,
+                functions=self._functions_for_model,
+                tool_choice=self.tool_choice,
+                tool_call_limit=self.tool_call_limit,
+                response_format=response_format,
+            )
+
+            # Save to cache if caching is enabled
+            if should_cache:
+                try:
+                    cache_file = self._get_model_cache_file_path(cache_key)
+                    log_debug(f"Saving model response to cache: {cache_file}")
+                    self._save_model_response_to_cache(cache_file, model_response)
+                except Exception as e:
+                    log_warning(f"Error saving to model cache: {e}")
+
+        return model_response
+
+    def _get_model_response_stream_with_cache(
+        self,
+        run_messages,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        cache_model_response: Optional[bool] = None,
+        stream_model_response: bool = True,
+    ):
+        """Helper function to get model response stream with caching support."""
+        # Check if caching is enabled
+        should_cache = cache_model_response if cache_model_response is not None else self.cache_model_response
+        cached_responses = None
+
+        cache_key = self._get_model_cache_key(
+            messages=run_messages.messages,
+            response_format=response_format,
+            stream=True,
+        )
+        if should_cache:
+            try:
+                cache_file = self._get_model_cache_file_path(cache_key)
+                log_debug(f"Checking cache file: {cache_file}")
+                cached_data = self._get_cached_model_response(cache_file)
+
+                if cached_data and cached_data.get("is_streaming", False):
+                    log_debug("Cache hit! Using cached model response")
+                    cached_responses = self._streaming_responses_from_cache(cached_data.get("streaming_responses", []))
+                else:
+                    log_debug("Cache miss - no valid cached response found")
+            except Exception as e:
+                log_warning(f"Error checking model cache: {e}")
+
+        if cached_responses:
+            log_debug(f"Replaying {len(cached_responses)} cached streaming responses")
+            for cached_response in cached_responses:
+                import time
+                time.sleep(0.005)
+                yield cached_response
+        else:
+            # Stream normally and collect all responses for caching
+            streaming_responses = []
+            self.model = cast(Model, self.model)
+            log_debug("Streaming model response")
+            for model_response_event in self.model.response_stream(
+                messages=run_messages.messages,
+                response_format=response_format,
+                tools=self._tools_for_model,
+                functions=self._functions_for_model,
+                tool_choice=self.tool_choice,
+                tool_call_limit=self.tool_call_limit,
+                stream_model_response=stream_model_response,
+            ):
+                streaming_responses.append(model_response_event)
+                yield model_response_event
+
+            # Save all streaming responses to cache if caching is enabled
+            if should_cache and streaming_responses:
+                try:
+                    cache_file = self._get_model_cache_file_path(cache_key)
+                    log_debug(f"Saving streaming responses to cache: {cache_file}")
+                    self._save_streaming_responses_to_cache(cache_file, streaming_responses)
+                except Exception as e:
+                    log_warning(f"Error saving streaming responses to model cache: {e}")
+
+    async def _aget_model_response_stream_with_cache(
+        self,
+        run_messages,
+        response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
+        cache_model_response: Optional[bool] = None,
+        stream_model_response: bool = True,
+    ):
+        """Async helper function to get model response stream with caching support."""
+        # Check if caching is enabled
+        should_cache = cache_model_response if cache_model_response is not None else self.cache_model_response
+        cached_responses = None
+
+        log_debug(f"Model cache enabled: {should_cache}")
+
+        cache_key = self._get_model_cache_key(
+            messages=run_messages.messages,
+            response_format=response_format,
+            stream=True,
+        )
+        if should_cache:
+            try:
+                cache_file = self._get_model_cache_file_path(cache_key)
+                log_debug(f"Checking cache file: {cache_file}")
+                cached_data = self._get_cached_model_response(cache_file)
+
+                if cached_data and cached_data.get("is_streaming", False):
+                    log_debug("Cache hit! Using cached model response")
+                    cached_responses = self._streaming_responses_from_cache(cached_data.get("streaming_responses", []))
+                else:
+                    log_debug("Cache miss - no valid cached response found")
+            except Exception as e:
+                log_warning(f"Error checking model cache: {e}")
+
+        if cached_responses:
+            # Replay all cached streaming responses
+            log_debug(f"Replaying {len(cached_responses)} cached async streaming responses")
+            for cached_response in cached_responses:
+                import asyncio
+                await asyncio.sleep(0.005)
+                yield cached_response
+        else:
+            # Stream normally and collect all responses for caching
+            streaming_responses = []
+            self.model = cast(Model, self.model)
+            log_debug("Streaming model response")
+            model_response_stream = self.model.aresponse_stream(
+                messages=run_messages.messages,
+                response_format=response_format,
+                tools=self._tools_for_model,
+                functions=self._functions_for_model,
+                tool_choice=self.tool_choice,
+                tool_call_limit=self.tool_call_limit,
+                stream_model_response=stream_model_response,
+            )
+
+            async for model_response_event in model_response_stream:
+                streaming_responses.append(model_response_event)
+                yield model_response_event
+
+            # Save all streaming responses to cache if caching is enabled
+            if should_cache and streaming_responses:
+                try:
+                    cache_file = self._get_model_cache_file_path(cache_key)
+                    log_debug(f"Saving streaming responses to cache: {cache_file}")
+                    self._save_streaming_responses_to_cache(cache_file, streaming_responses)
+                except Exception as e:
+                    log_warning(f"Error saving async streaming responses to model cache: {e}")
 
     def get_previous_sessions_messages_function(
         self, num_history_sessions: Optional[int] = 2, user_id: Optional[str] = None
