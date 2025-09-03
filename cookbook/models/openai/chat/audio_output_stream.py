@@ -21,7 +21,7 @@ agent = Agent(
         },  # Only pcm16 is supported with streaming
     ),
 )
-output_stream: Iterator[RunResponse] = agent.run(
+output_stream: Iterator[RunResponseEvent] = agent.run(
     "Tell me a 10 second story", stream=True
 )
 
