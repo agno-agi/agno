@@ -440,6 +440,8 @@ def main():
             session_id="personalized-email-generator",
             storage=SqliteStorage(
                 table_name="personalized_email_workflows",
+                mode="workflow",
+                auto_upgrade_schema=True,
                 db_file="tmp/agno_workflows.db",
             ),
         )

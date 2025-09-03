@@ -15,13 +15,6 @@ class ThinkingTools(Toolkit):
         add_instructions: bool = False,
         **kwargs,
     ):
-        super().__init__(
-            name="thinking_tools",
-            instructions=instructions,
-            add_instructions=add_instructions,
-            **kwargs,
-        )
-
         if instructions is None:
             self.instructions = dedent("""\
             ## Using the think tool
@@ -34,10 +27,20 @@ class ThinkingTools(Toolkit):
             ## Rules
             - Use the think tool generously to jot down thoughts and ideas.\
             """)
+        else:
+            self.instructions = instructions
 
+        tools = []
         if think:
-            # Register the think tool
-            self.register(self.think)
+            tools.append(self.think)
+
+        super().__init__(
+            name="thinking_tools",
+            instructions=self.instructions,
+            add_instructions=add_instructions,
+            tools=tools,
+            **kwargs,
+        )
 
     def think(self, agent: Union[Agent, Team], thought: str) -> str:
         """Use the tool to think about something.

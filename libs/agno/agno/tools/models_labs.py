@@ -1,7 +1,7 @@
 import json
 import time
 from os import getenv
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -40,8 +40,6 @@ class ModelsLabTools(Toolkit):
         file_type: FileType = FileType.MP4,
         **kwargs,
     ):
-        super().__init__(name="models_labs", **kwargs)
-
         file_type_str = file_type.value.upper()
         self.url = MODELS_LAB_URLS[file_type_str]
         self.fetch_url = MODELS_LAB_FETCH_URLS[file_type_str]
@@ -54,7 +52,10 @@ class ModelsLabTools(Toolkit):
         if not self.api_key:
             logger.error("MODELS_LAB_API_KEY not set. Please set the MODELS_LAB_API_KEY environment variable.")
 
-        self.register(self.generate_media)
+        tools: List[Any] = []
+        tools.append(self.generate_media)
+
+        super().__init__(name="models_labs", tools=tools, **kwargs)
 
     def _create_payload(self, prompt: str) -> Dict[str, Any]:
         """Create payload based on file type."""

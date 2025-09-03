@@ -52,7 +52,7 @@ class NebiusTools(Toolkit):
 
     def _get_client(self):
         if self._nebius_client is None:
-            self._nebius_client = Nebius(api_key=self.api_key, base_url=self.base_url, id=self.image_model).get_client()
+            self._nebius_client = Nebius(api_key=self.api_key, base_url=self.base_url, id=self.image_model).get_client()  # type: ignore
         return self._nebius_client
 
     def generate_image(

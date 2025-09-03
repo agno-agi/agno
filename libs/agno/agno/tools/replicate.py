@@ -1,6 +1,6 @@
 import os
 from os import getenv
-from typing import Optional, Union
+from typing import Any, Iterable, Iterator, List, Optional, Union
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -24,12 +24,15 @@ class ReplicateTools(Toolkit):
         model: str = "minimax/video-01",
         **kwargs,
     ):
-        super().__init__(name="replicate_toolkit", **kwargs)
         self.api_key = api_key or getenv("REPLICATE_API_TOKEN")
         if not self.api_key:
             logger.error("REPLICATE_API_TOKEN not set. Please set the REPLICATE_API_TOKEN environment variable.")
         self.model = model
-        self.register(self.generate_media)
+
+        tools: List[Any] = []
+        tools.append(self.generate_media)
+
+        super().__init__(name="replicate_toolkit", tools=tools, **kwargs)
 
     def generate_media(self, agent: Union[Agent, Team], prompt: str) -> str:
         """
@@ -39,8 +42,33 @@ class ReplicateTools(Toolkit):
         Returns:
             str: Return a URI to the generated video or image.
         """
-        output: FileOutput = replicate.run(ref=self.model, input={"prompt": prompt})
+        if not self.api_key:
+            logger.error("API key is not set. Please provide a valid API key.")
+            return "API key is not set."
 
+        outputs = replicate.run(ref=self.model, input={"prompt": prompt})
+        if isinstance(outputs, FileOutput):
+            outputs = [outputs]
+        elif isinstance(outputs, (Iterable, Iterator)) and not isinstance(outputs, str):
+            outputs = list(outputs)
+        else:
+            logger.error(f"Unexpected output type: {type(outputs)}")
+            return f"Unexpected output type: {type(outputs)}"
+
+        results = []
+        for output in outputs:
+            if not isinstance(output, FileOutput):
+                logger.error(f"Unexpected output type: {type(output)}")
+                return f"Unexpected output type: {type(output)}"
+
+            result = self._parse_output(agent, output)
+            results.append(result)
+        return "\n".join(results)
+
+    def _parse_output(self, agent: Union[Agent, Team], output: FileOutput) -> str:
+        """
+        Parse the outputs from the replicate model.
+        """
         # Parse the URL to extract the file extension
         parsed_url = urlparse(output.url)
         path = parsed_url.path

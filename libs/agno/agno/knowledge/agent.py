@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Set, Tuple
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from agno.document import Document
 from agno.document.chunking.fixed import FixedSizeChunking
@@ -24,8 +24,7 @@ class AgentKnowledge(BaseModel):
     # Number of documents to optimize the vector db on
     optimize_on: Optional[int] = 1000
 
-    chunking_strategy: ChunkingStrategy = Field(default_factory=FixedSizeChunking)
-
+    chunking_strategy: Optional[ChunkingStrategy] = None
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     valid_metadata_filters: Set[str] = None  # type: ignore
@@ -33,7 +32,7 @@ class AgentKnowledge(BaseModel):
     @model_validator(mode="after")
     def update_reader(self) -> "AgentKnowledge":
         if self.reader is not None and self.reader.chunking_strategy is None:
-            self.reader.chunking_strategy = self.chunking_strategy
+            self.reader.chunking_strategy = self.chunking_strategy or FixedSizeChunking()
         return self
 
     @property
@@ -44,11 +43,58 @@ class AgentKnowledge(BaseModel):
         raise NotImplementedError
 
     @property
-    def async_document_lists(self) -> AsyncIterator[List[Document]]:
+    async def async_document_lists(self) -> AsyncIterator[List[Document]]:
         """Iterator that yields lists of documents in the knowledge base
         Each object yielded by the iterator is a list of documents.
         """
         raise NotImplementedError
+
+    def _upsert_warning(self, upsert) -> None:
+        """Log a warning if upsert is not available"""
+        if upsert and self.vector_db is not None and not self.vector_db.upsert_available():
+            log_info(
+                f"Vector db '{self.vector_db.__class__.__module__}' does not support upsert. Falling back to insert."
+            )
+
+    def _load_init(self, recreate: bool, upsert: bool) -> None:
+        """Initial setup for loading knowledge base"""
+        if self.vector_db is None:
+            logger.warning("No vector db provided")
+            return
+
+        if recreate:
+            log_info("Dropping collection")
+            self.vector_db.drop()
+
+        if not self.vector_db.exists():
+            log_info("Creating collection")
+            self.vector_db.create()
+
+        self._upsert_warning(upsert)
+
+    async def _aload_init(self, recreate: bool, upsert: bool) -> None:
+        """Initial async setup for loading knowledge base"""
+        if self.vector_db is None:
+            logger.warning("No vector db provided")
+            return
+
+        if recreate:
+            log_info("Dropping collection")
+            try:
+                await self.vector_db.async_drop()
+            except NotImplementedError:
+                logger.warning("Vector db does not support async drop, falling back to sync drop")
+                self.vector_db.drop()
+
+        if not self.vector_db.exists():
+            log_info("Creating collection")
+            try:
+                await self.vector_db.async_create()
+            except NotImplementedError:
+                logger.warning("Vector db does not support async create, falling back to sync create")
+                self.vector_db.create()
+
+        self._upsert_warning(upsert)
 
     def search(
         self, query: str, num_documents: Optional[int] = None, filters: Optional[Dict[str, Any]] = None
@@ -80,7 +126,7 @@ class AgentKnowledge(BaseModel):
             try:
                 return await self.vector_db.async_search(query=query, limit=_num_documents, filters=filters)
             except NotImplementedError:
-                logger.info("Vector db does not support async search")
+                log_info("Vector db does not support async search")
                 return self.search(query=query, num_documents=_num_documents, filters=filters)
         except Exception as e:
             logger.error(f"Error searching for documents: {e}")
@@ -99,17 +145,9 @@ class AgentKnowledge(BaseModel):
             upsert (bool): If True, upserts documents to the vector db. Defaults to False.
             skip_existing (bool): If True, skips documents which already exist in the vector db when inserting. Defaults to True.
         """
+        self._load_init(recreate, upsert)
         if self.vector_db is None:
-            logger.warning("No vector db provided")
             return
-
-        if recreate:
-            log_info("Dropping collection")
-            self.vector_db.drop()
-
-        if not self.vector_db.exists():
-            log_info("Creating collection")
-            self.vector_db.create()
 
         log_info("Loading knowledge base")
         num_documents = 0
@@ -123,7 +161,8 @@ class AgentKnowledge(BaseModel):
 
             # Upsert documents if upsert is True and vector db supports upsert
             if upsert and self.vector_db.upsert_available():
-                self.vector_db.upsert(documents=document_list, filters=doc.meta_data)
+                for doc in documents_to_load:
+                    self.vector_db.upsert(documents=[doc], filters=doc.meta_data)
             # Insert documents
             else:
                 # Filter out documents which already exist in the vector db
@@ -132,10 +171,11 @@ class AgentKnowledge(BaseModel):
                     documents_to_load = self.filter_existing_documents(document_list)
 
                 if documents_to_load:
-                    self.vector_db.insert(documents=documents_to_load, filters=doc.meta_data)
+                    for doc in documents_to_load:
+                        self.vector_db.insert(documents=[doc], filters=doc.meta_data)
 
             num_documents += len(documents_to_load)
-            log_info(f"Added {len(documents_to_load)} documents to knowledge base")
+        log_info(f"Added {num_documents} documents to knowledge base")
 
     async def aload(
         self,
@@ -150,22 +190,15 @@ class AgentKnowledge(BaseModel):
             upsert (bool): If True, upserts documents to the vector db. Defaults to False.
             skip_existing (bool): If True, skips documents which already exist in the vector db when inserting. Defaults to True.
         """
-
+        await self._aload_init(recreate, upsert)
         if self.vector_db is None:
-            logger.warning("No vector db provided")
             return
-
-        if recreate:
-            log_info("Dropping collection")
-            await self.vector_db.async_drop()
-
-        if not await self.vector_db.async_exists():
-            log_info("Creating collection")
-            await self.vector_db.async_create()
 
         log_info("Loading knowledge base")
         num_documents = 0
-        async for document_list in self.async_document_lists:
+        document_iterator = self.async_document_lists
+        async for document_list in document_iterator:  # type: ignore
+            documents_to_load = document_list
             # Track metadata for filtering capabilities
             for doc in document_list:
                 if doc.meta_data:
@@ -173,20 +206,21 @@ class AgentKnowledge(BaseModel):
 
             # Upsert documents if upsert is True and vector db supports upsert
             if upsert and self.vector_db.upsert_available():
-                await self.vector_db.async_upsert(documents=document_list, filters=doc.meta_data)
+                for doc in documents_to_load:
+                    await self.vector_db.async_upsert(documents=[doc], filters=doc.meta_data)
             # Insert documents
             else:
                 # Filter out documents which already exist in the vector db
-                documents_to_load = document_list
                 if skip_existing:
                     log_debug("Filtering out existing documents before insertion.")
-                    documents_to_load = self.filter_existing_documents(document_list)
+                    documents_to_load = await self.async_filter_existing_documents(document_list)
 
                 if documents_to_load:
-                    await self.vector_db.async_insert(documents=documents_to_load, filters=doc.meta_data)
+                    for doc in documents_to_load:
+                        await self.vector_db.async_insert(documents=[doc], filters=doc.meta_data)
 
             num_documents += len(documents_to_load)
-            log_info(f"Added {len(documents_to_load)} documents to knowledge base")
+        log_info(f"Added {num_documents} documents to knowledge base")
 
     def load_documents(
         self,
@@ -203,15 +237,11 @@ class AgentKnowledge(BaseModel):
             skip_existing (bool): If True, skips documents which already exist in the vector db when inserting. Defaults to True.
             filters (Optional[Dict[str, Any]]): Filters to add to each row that can be used to limit results during querying. Defaults to None.
         """
-
-        log_info("Loading knowledge base")
+        self._load_init(recreate=False, upsert=upsert)
         if self.vector_db is None:
-            logger.warning("No vector db provided")
             return
 
-        log_debug("Creating collection")
-        self.vector_db.create()
-
+        log_info("Loading knowledge base")
         # Upsert documents if upsert is True
         if upsert and self.vector_db.upsert_available():
             self.vector_db.upsert(documents=documents, filters=filters)
@@ -246,17 +276,11 @@ class AgentKnowledge(BaseModel):
             skip_existing (bool): If True, skips documents which already exist in the vector db when inserting. Defaults to True.
             filters (Optional[Dict[str, Any]]): Filters to add to each row that can be used to limit results during querying. Defaults to None.
         """
-        log_info("Loading knowledge base")
+        await self._aload_init(recreate=False, upsert=upsert)
         if self.vector_db is None:
-            logger.warning("No vector db provided")
             return
 
-        log_debug("Creating collection")
-        try:
-            await self.vector_db.async_create()
-        except NotImplementedError:
-            logger.warning("Vector db does not support async create")
-            self.vector_db.create()
+        log_info("Loading knowledge base")
 
         # Upsert documents if upsert is True
         if upsert and self.vector_db.upsert_available():
@@ -297,7 +321,7 @@ class AgentKnowledge(BaseModel):
             else:
                 log_info("No new documents to load")
 
-    def add_document_to_knowledge_base(
+    def load_document(
         self,
         document: Document,
         upsert: bool = False,
@@ -409,6 +433,41 @@ class AgentKnowledge(BaseModel):
         Returns:
             List[Document]: Filtered list of documents that don't exist in the database
         """
+        if not self.vector_db:
+            log_debug("No vector database configured, skipping document filtering")
+            return documents
+
+        # Use set for O(1) lookups
+        seen_content = set()
+        original_count = len(documents)
+        filtered_documents = []
+
+        for doc in documents:
+            # Check hash and existence in DB
+            content_hash = doc.content  # Assuming doc.content is reliable hash key
+            if content_hash not in seen_content and not self.vector_db.doc_exists(doc):
+                seen_content.add(content_hash)
+                filtered_documents.append(doc)
+            else:
+                log_debug(f"Skipping existing document: {doc.name} (or duplicate content)")
+
+        if len(filtered_documents) < original_count:
+            log_info(f"Skipped {original_count - len(filtered_documents)} existing/duplicate documents.")
+
+        return filtered_documents
+
+    async def async_filter_existing_documents(self, documents: List[Document]) -> List[Document]:
+        """Filter out documents that already exist in the vector database.
+
+        This helper method is used across various knowledge base implementations
+        to avoid inserting duplicate documents.
+
+        Args:
+            documents (List[Document]): List of documents to filter
+
+        Returns:
+            List[Document]: Filtered list of documents that don't exist in the database
+        """
         from agno.utils.log import log_debug, log_info
 
         if not self.vector_db:
@@ -423,7 +482,7 @@ class AgentKnowledge(BaseModel):
         for doc in documents:
             # Check hash and existence in DB
             content_hash = doc.content  # Assuming doc.content is reliable hash key
-            if content_hash not in seen_content and not self.vector_db.doc_exists(doc):
+            if content_hash not in seen_content and not await self.vector_db.async_doc_exists(doc):
                 seen_content.add(content_hash)
                 filtered_documents.append(doc)
             else:
@@ -514,20 +573,9 @@ class AgentKnowledge(BaseModel):
             self._track_metadata_structure(metadata)
 
         # 3. Prepare vector DB
+        self._load_init(recreate, upsert=False)
         if self.vector_db is None:
-            logger.warning("Cannot load file: No vector db provided.")
             return False
-
-        # Recreate collection if requested
-        if recreate:
-            # log_info(f"Recreating collection.")
-            self.vector_db.drop()
-
-        # Create collection if it doesn't exist
-        if not self.vector_db.exists():
-            # log_info(f"Collection does not exist. Creating.")
-            self.vector_db.create()
-
         return True
 
     async def aprepare_load(
@@ -562,20 +610,9 @@ class AgentKnowledge(BaseModel):
             self._track_metadata_structure(metadata)
 
         # 3. Prepare vector DB
+        await self._aload_init(recreate, upsert=False)
         if self.vector_db is None:
-            logger.warning("Cannot load file: No vector db provided.")
             return False
-
-        # Recreate collection if requested
-        if recreate:
-            log_info("Recreating collection.")
-            await self.vector_db.async_drop()
-
-        # Create collection if it doesn't exist
-        if not await self.vector_db.async_exists():
-            log_info("Collection does not exist. Creating.")
-            await self.vector_db.async_create()
-
         return True
 
     def process_documents(
@@ -599,6 +636,8 @@ class AgentKnowledge(BaseModel):
             return
 
         log_info(f"Loading {len(documents)} documents from {source_info} with metadata: {metadata}")
+
+        self._upsert_warning(upsert)
 
         # Decide loading strategy: upsert or insert (with optional skip)
         if upsert and self.vector_db.upsert_available():  # type: ignore
@@ -639,6 +678,8 @@ class AgentKnowledge(BaseModel):
             logger.warning(f"No documents were read from {source_info}")
             return
 
+        self._upsert_warning(upsert)
+
         log_info(f"Loading {len(documents)} documents from {source_info} with metadata: {metadata}")
 
         # Decide loading strategy: upsert or insert (with optional skip)
@@ -650,7 +691,7 @@ class AgentKnowledge(BaseModel):
             documents_to_insert = documents
             if skip_existing:
                 log_debug("Filtering out existing documents before insertion.")
-                documents_to_insert = self.filter_existing_documents(documents)
+                documents_to_insert = await self.async_filter_existing_documents(documents)
 
             if documents_to_insert:  # type: ignore
                 log_debug(f"Inserting {len(documents_to_insert)} new documents.")

@@ -57,6 +57,7 @@ team = Team(
     show_tool_calls=True,
     markdown=True,
     show_members_responses=True,
+    debug_mode=True,
 )
 
 session_id = "stock_team_session_1"
@@ -75,8 +76,8 @@ team.print_response(
     stream_intermediate_steps=True,
     session_id=session_id,
 )
-print("Team Context: ", memory.team_context[session_id].text)
-for interaction in memory.team_context[session_id].member_interactions:
+print("Team Context: ", team.memory.team_context[session_id].text)
+for interaction in team.memory.team_context[session_id].member_interactions:
     print(
         "Member Interactions: ",
         f"{interaction.member_name}: {interaction.task} - {interaction.response.content}",

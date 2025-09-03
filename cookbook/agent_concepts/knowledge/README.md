@@ -24,7 +24,7 @@ pip install -U pgvector "psycopg[binary]" sqlalchemy openai agno
 - Run using a helper script
 
 ```shell
-./cookbook/run_pgvector.sh
+./cookbook/scripts/run_pgvector.sh
 ```
 
 - OR run using the docker run command

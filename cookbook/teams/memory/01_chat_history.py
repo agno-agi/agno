@@ -39,7 +39,7 @@ user_id = "john_doe@example.com"
 team = Team(
     name="Stock Team",
     mode="coordinate",
-    model=Claude(id="claude-3-7-latest"),
+    model=Claude(id="claude-3-7-sonnet-latest"),
     members=[stock_searcher, web_searcher],
     instructions=[
         "First, search the stock market for information about a particular company's stock.",

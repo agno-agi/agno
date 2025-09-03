@@ -61,7 +61,6 @@ agent = Agent(
     model=OpenAIChat(id="gpt-4"),
     tools=[zoom_tools],
     markdown=True,
-    debug_mode=True,
     show_tool_calls=True,
     instructions=[
         "You are an expert at managing Zoom meetings using the Zoom API.",

@@ -16,7 +16,7 @@ class MessageReferences(BaseModel):
     # The query used to retrieve the references.
     query: str
     # References (from the vector database or function calls)
-    references: Optional[List[Dict[str, Any]]] = None
+    references: Optional[List[Union[Dict[str, Any], str]]] = None
     # Time taken to retrieve the references.
     time: Optional[float] = None
 
@@ -59,6 +59,7 @@ class MessageMetrics:
     input_audio_tokens: int = 0
     output_audio_tokens: int = 0
     cached_tokens: int = 0
+    cache_write_tokens: int = 0
     reasoning_tokens: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
@@ -72,7 +73,7 @@ class MessageMetrics:
 
     timer: Optional[Timer] = None
 
-    def _to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         metrics_dict = asdict(self)
         metrics_dict.pop("timer")
         metrics_dict = {
@@ -109,6 +110,7 @@ class MessageMetrics:
             input_audio_tokens=self.input_audio_tokens + other.input_audio_tokens,
             output_audio_tokens=self.output_audio_tokens + other.output_audio_tokens,
             cached_tokens=self.cached_tokens + other.cached_tokens,
+            cache_write_tokens=self.cache_write_tokens + other.cache_write_tokens,
             reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
         )
 
@@ -246,6 +248,7 @@ class Message(BaseModel):
             "tool_calls": self.tool_calls,
             "thinking": self.thinking,
             "redacted_thinking": self.redacted_thinking,
+            "provider_data": self.provider_data,
         }
         # Filter out None and empty collections
         message_dict = {
@@ -265,7 +268,7 @@ class Message(BaseModel):
         if self.references:
             message_dict["references"] = self.references.model_dump()
         if self.metrics:
-            message_dict["metrics"] = self.metrics._to_dict()
+            message_dict["metrics"] = self.metrics.to_dict()
             if not message_dict["metrics"]:
                 message_dict.pop("metrics")
 
@@ -335,8 +338,12 @@ class Message(BaseModel):
                             if isinstance(tool_call_arguments, dict)
                             else json.loads(tool_call_arguments)
                         )
-                        arguments = ", ".join(f"{k}: {v}" for k, v in tool_call_args.items())
-                        tool_calls_list.append(f"    Arguments: '{arguments}'")
+                        # Ensure tool_call_args is a dictionary before calling .items()
+                        if isinstance(tool_call_args, dict):
+                            arguments = ", ".join(f"{k}: {v}" for k, v in tool_call_args.items())
+                            tool_calls_list.append(f"    Arguments: '{arguments}'")
+                        else:
+                            tool_calls_list.append(f"    Arguments: '{tool_call_args}'")
                     except json.JSONDecodeError:
                         tool_calls_list.append("    Arguments: 'Invalid JSON format'")
             tool_calls_str = "\n".join(tool_calls_list)
@@ -365,6 +372,8 @@ class Message(BaseModel):
                 token_metrics.append(f"total={self.metrics.total_tokens}")
             if self.metrics.cached_tokens:
                 token_metrics.append(f"cached={self.metrics.cached_tokens}")
+            if self.metrics.cache_write_tokens:
+                token_metrics.append(f"cache_write_tokens={self.metrics.cache_write_tokens}")
             if self.metrics.reasoning_tokens:
                 token_metrics.append(f"reasoning={self.metrics.reasoning_tokens}")
             if self.metrics.audio_tokens:

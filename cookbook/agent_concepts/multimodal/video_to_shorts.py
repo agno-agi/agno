@@ -20,7 +20,6 @@ agent = Agent(
     description="Process videos and generate engaging shorts.",
     model=Gemini(id="gemini-2.0-flash-exp"),
     markdown=True,
-    debug_mode=True,
     instructions=[
         "Analyze the provided video directly—do NOT reference or analyze any external sources or YouTube videos.",
         "Identify engaging moments that meet the specified criteria for short-form content.",

@@ -1,7 +1,7 @@
 import json
 import re
 from os import getenv
-from typing import Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -34,7 +34,6 @@ class ZendeskTools(Toolkit):
         password (str): The password for Zendesk API authentication.
         company_name (str): The company name to form the base URL for API requests.
         """
-        super().__init__(name="zendesk_tools", **kwargs)
         self.username = username or getenv("ZENDESK_USERNAME")
         self.password = password or getenv("ZENDESK_PW")
         self.company_name = company_name or getenv("ZENDESK_COMPANY_NAME")
@@ -42,7 +41,10 @@ class ZendeskTools(Toolkit):
         if not self.username or not self.password or not self.company_name:
             logger.error("Username, password, or company name not provided.")
 
-        self.register(self.search_zendesk)
+        tools: List[Any] = []
+        tools.append(self.search_zendesk)
+
+        super().__init__(name="zendesk_tools", tools=tools, **kwargs)
 
     def search_zendesk(self, search_string: str) -> str:
         """

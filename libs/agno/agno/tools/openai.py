@@ -1,9 +1,10 @@
 from os import getenv
-from typing import Literal, Optional
+from typing import Any, List, Literal, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
 from agno.media import AudioArtifact, ImageArtifact
+from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_warning
 
@@ -37,8 +38,6 @@ class OpenAITools(Toolkit):
         image_style: Optional[Literal["vivid", "natural"]] = None,
         **kwargs,
     ):
-        super().__init__(name="openai_tools", **kwargs)
-
         self.api_key = api_key or getenv("OPENAI_API_KEY")
         if not self.api_key:
             raise ValueError("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
@@ -53,12 +52,15 @@ class OpenAITools(Toolkit):
         self.image_style = image_style
         self.image_size = image_size
 
+        tools: List[Any] = []
         if enable_transcription:
-            self.register(self.transcribe_audio)
+            tools.append(self.transcribe_audio)
         if enable_image_generation:
-            self.register(self.generate_image)
+            tools.append(self.generate_image)
         if enable_speech_generation:
-            self.register(self.generate_speech)
+            tools.append(self.generate_speech)
+
+        super().__init__(name="openai_tools", tools=tools, **kwargs)
 
     def transcribe_audio(self, audio_path: str) -> str:
         """Transcribe audio file using OpenAI's Whisper API
@@ -69,7 +71,7 @@ class OpenAITools(Toolkit):
         try:
             audio_file = open(audio_path, "rb")
 
-            transcript = OpenAIClient().audio.transcriptions.create(
+            transcript = OpenAIClient(api_key=self.api_key).audio.transcriptions.create(
                 model=self.transcription_model,
                 file=audio_file,
                 response_format="text",
@@ -83,7 +85,7 @@ class OpenAITools(Toolkit):
 
     def generate_image(
         self,
-        agent: Agent,
+        agent: Union[Agent, Team],
         prompt: str,
     ) -> str:
         """Generate images based on a text prompt.
@@ -101,17 +103,17 @@ class OpenAITools(Toolkit):
             # gpt-image-1 by default outputs a base64 encoded image but other models do not
             # so we add a response_format parameter to have consistent output.
             if self.image_model and self.image_model.startswith("gpt-image"):
-                response = OpenAIClient().images.generate(
+                response = OpenAIClient(api_key=self.api_key).images.generate(
                     model=self.image_model,
                     prompt=prompt,
-                    **extra_params,
+                    **extra_params,  # type: ignore
                 )
             else:
-                response = OpenAIClient().images.generate(
+                response = OpenAIClient(api_key=self.api_key).images.generate(
                     model=self.image_model,
                     prompt=prompt,
                     response_format="b64_json",
-                    **extra_params,
+                    **extra_params,  # type: ignore
                 )
             data = None
             if hasattr(response, "data") and response.data:
@@ -138,7 +140,7 @@ class OpenAITools(Toolkit):
 
     def generate_speech(
         self,
-        agent: Agent,
+        agent: Union[Agent, Team],
         text_input: str,
     ) -> str:
         """Generate speech from text using OpenAI's Text-to-Speech API.
@@ -148,7 +150,7 @@ class OpenAITools(Toolkit):
         try:
             import base64
 
-            response = OpenAIClient().audio.speech.create(
+            response = OpenAIClient(api_key=self.api_key).audio.speech.create(
                 model=self.tts_model,
                 voice=self.tts_voice,
                 input=text_input,

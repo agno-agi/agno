@@ -218,6 +218,8 @@ if __name__ == "__main__":
         session_id=f"investment-report-{url_safe_companies}",
         storage=SqliteStorage(
             table_name="investment_report_workflows",
+            mode="workflow",
+            auto_upgrade_schema=True,
             db_file="tmp/agno_workflows.db",
         ),
     )

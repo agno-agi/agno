@@ -151,7 +151,7 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
         elif message.role == "assistant":
             content = []
 
-            if isinstance(message.content, str) and message.content:
+            if isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
                 content.append(TextBlock(text=message.content, type="text"))
 
             if message.tool_calls:

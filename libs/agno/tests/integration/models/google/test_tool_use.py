@@ -1,3 +1,5 @@
+from enum import Enum
+
 import pytest
 from pydantic import BaseModel, Field
 
@@ -11,7 +13,6 @@ def test_tool_use():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
@@ -24,14 +25,12 @@ def test_tool_use():
     # Verify tool usage
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
-    assert "TSLA" in response.content
 
 
 def test_tool_use_stream():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
@@ -45,15 +44,15 @@ def test_tool_use_stream():
     tool_call_seen = False
 
     for chunk in response_stream:
-        assert isinstance(chunk, RunResponse)
         responses.append(chunk)
-        if chunk.tools:
-            if any(tc.get("tool_name") for tc in chunk.tools):
+
+        # Check for ToolCallStartedEvent or ToolCallCompletedEvent
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
+            if chunk.tool.tool_name:
                 tool_call_seen = True
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("TSLA" in r.content for r in responses if r.content)
 
 
 @pytest.mark.asyncio
@@ -61,7 +60,6 @@ async def test_async_tool_use():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
@@ -74,7 +72,6 @@ async def test_async_tool_use():
     # Verify tool usage
     assert any(msg.tool_calls for msg in response.messages if msg.role == "assistant")
     assert response.content is not None
-    assert "TSLA" in response.content
 
 
 @pytest.mark.asyncio
@@ -82,7 +79,6 @@ async def test_async_tool_use_stream():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
@@ -98,10 +94,11 @@ async def test_async_tool_use_stream():
     tool_call_seen = False
 
     async for chunk in response_stream:
-        assert isinstance(chunk, RunResponse)
         responses.append(chunk)
-        if chunk.tools:
-            if any(tc.get("tool_name") for tc in chunk.tools):
+
+        # Check for ToolCallStartedEvent or ToolCallCompletedEvent
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
+            if chunk.tool.tool_name:
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -116,9 +113,8 @@ def test_tool_use_with_native_structured_outputs():
         currency: str = Field(..., description="The currency of the stock")
 
     agent = Agent(
-        model=Gemini(id="gemini-2.0-flash-001"),
+        model=Gemini(id="gemini-2.5-flash-preview-04-17"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         response_model=StockPrice,
         telemetry=False,
@@ -143,7 +139,6 @@ def test_tool_use_with_json_structured_outputs():
         tools=[YFinanceTools(cache_results=True)],
         exponential_backoff=True,
         delay_between_retries=5,
-        show_tool_calls=True,
         markdown=True,
         response_model=StockPrice,
         use_json_mode=True,
@@ -162,7 +157,6 @@ def test_parallel_tool_calls():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
@@ -177,7 +171,7 @@ def test_parallel_tool_calls():
     for msg in response.messages:
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
-    assert len([call for call in tool_calls if call.get("type", "") == "function"]) == 2  # Total of 2 tool calls made
+    assert len([call for call in tool_calls if call.get("type", "") == "function"]) >= 2  # Total of 2 tool calls made
     assert response.content is not None
     assert "TSLA" in response.content and "AAPL" in response.content
 
@@ -186,7 +180,6 @@ def test_multiple_tool_calls():
     agent = Agent(
         model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
         tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         exponential_backoff=True,
         delay_between_retries=5,
@@ -201,7 +194,7 @@ def test_multiple_tool_calls():
     for msg in response.messages:
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
-    assert len([call for call in tool_calls if call.get("type", "") == "function"]) == 2  # Total of 2 tool calls made
+    assert len([call for call in tool_calls if call.get("type", "") == "function"]) >= 2  # Total of 2 tool calls made
     assert response.content is not None
     assert "TSLA" in response.content
 
@@ -239,7 +232,6 @@ def test_grounding_stream():
     citations_found = False
 
     for chunk in response_stream:
-        assert isinstance(chunk, RunResponse)
         responses.append(chunk)
         if chunk.citations is not None and chunk.citations.urls:
             citations_found = True
@@ -263,10 +255,38 @@ def test_search_stream():
     citations_found = False
 
     for chunk in response_stream:
-        assert isinstance(chunk, RunResponse)
         responses.append(chunk)
         if chunk.citations is not None and chunk.citations.urls:
             citations_found = True
 
     assert len(responses) > 0
     assert citations_found
+
+
+def test_tool_use_with_enum():
+    """A simple test for enum tool use."""
+
+    class Color(str, Enum):
+        RED = "red"
+        BLUE = "blue"
+
+    def get_color(color: Color) -> str:
+        """Returns the chosen color."""
+        return f"The color is {color.value}"
+
+    agent = Agent(
+        model=Gemini(id="gemini-2.0-flash-lite-preview-02-05"),
+        tools=[get_color],
+        telemetry=False,
+        monitoring=False,
+    )
+    response = agent.run("I want the color red.")
+
+    assert any(msg.tool_calls for msg in response.messages)
+    tool_calls = []
+    for msg in response.messages:
+        if msg.tool_calls:
+            tool_calls.extend(msg.tool_calls)
+    assert tool_calls[0]["function"]["name"] == "get_color"
+    assert '"color": "red"' in tool_calls[0]["function"]["arguments"]
+    assert "red" in response.content

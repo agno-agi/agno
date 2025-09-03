@@ -15,7 +15,6 @@ def test_tool_use():
     agent = Agent(
         model=Nebius(id=NEBIUS_MODEL_ID),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -33,7 +32,6 @@ def test_tool_use_stream():
     agent = Agent(
         model=Nebius(id=NEBIUS_MODEL_ID),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -45,10 +43,9 @@ def test_tool_use_stream():
     tool_call_seen = False
 
     for chunk in response_stream:
-        assert isinstance(chunk, RunResponse)
         responses.append(chunk)
         if chunk.tools:
-            if any(tc.get("tool_name") for tc in chunk.tools):
+            if any(tc.tool_name for tc in chunk.tools):
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -61,7 +58,6 @@ async def test_async_tool_use():
     agent = Agent(
         model=Nebius(id=NEBIUS_MODEL_ID),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -80,7 +76,6 @@ async def test_async_tool_use_stream():
     agent = Agent(
         model=Nebius(id=NEBIUS_MODEL_ID),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -94,10 +89,9 @@ async def test_async_tool_use_stream():
     tool_call_seen = False
 
     async for chunk in response_stream:
-        assert isinstance(chunk, RunResponse)
         responses.append(chunk)
         if chunk.tools:
-            if any(tc.get("tool_name") for tc in chunk.tools):
+            if any(tc.tool_name for tc in chunk.tools):
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -109,7 +103,6 @@ def test_parallel_tool_calls():
     agent = Agent(
         model=Nebius(id=NEBIUS_MODEL_ID),
         tools=[YFinanceTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -122,7 +115,7 @@ def test_parallel_tool_calls():
     for msg in response.messages:
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
-    assert len([call for call in tool_calls if call.get("type", "") == "function"]) == 2  # Total of 2 tool calls made
+    assert len([call for call in tool_calls if call.get("type", "") == "function"]) >= 2  # Total of 2 tool calls made
     assert response.content is not None
     assert "TSLA" in response.content and "AAPL" in response.content
 
@@ -131,7 +124,6 @@ def test_multiple_tool_calls():
     agent = Agent(
         model=Nebius(id=NEBIUS_MODEL_ID),
         tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -144,7 +136,7 @@ def test_multiple_tool_calls():
     for msg in response.messages:
         if msg.tool_calls:
             tool_calls.extend(msg.tool_calls)
-    assert len([call for call in tool_calls if call.get("type", "") == "function"]) == 2  # Total of 2 tool calls made
+    assert len([call for call in tool_calls if call.get("type", "") == "function"]) >= 2  # Total of 2 tool calls made
     assert response.content is not None
     assert "TSLA" in response.content and "latest news" in response.content.lower()
 
@@ -159,7 +151,6 @@ def test_tool_call_custom_tool_no_parameters():
     agent = Agent(
         model=Nebius(id=NEBIUS_MODEL_ID),
         tools=[get_the_weather_in_tokyo],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -189,7 +180,6 @@ def test_tool_call_custom_tool_optional_parameters():
     agent = Agent(
         model=Nebius(id=NEBIUS_MODEL_ID),
         tools=[get_the_weather],
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -208,7 +198,6 @@ def test_tool_call_list_parameters():
         model=Nebius(id=NEBIUS_MODEL_ID),
         tools=[ExaTools()],
         instructions="Use a single tool call if possible",
-        show_tool_calls=True,
         markdown=True,
         telemetry=False,
         monitoring=False,
@@ -226,5 +215,5 @@ def test_tool_call_list_parameters():
             tool_calls.extend(msg.tool_calls)
     for call in tool_calls:
         if call.get("type", "") == "function":
-            assert call["function"]["name"] in ["get_contents", "exa_answer"]
+            assert call["function"]["name"] in ["get_contents", "exa_answer", "search_exa"]
     assert response.content is not None

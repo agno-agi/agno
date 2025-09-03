@@ -24,7 +24,6 @@ audio_agent = Agent(
         "The audio should be long and detailed.",
     ],
     markdown=True,
-    debug_mode=True,
     show_tool_calls=True,
 )
 

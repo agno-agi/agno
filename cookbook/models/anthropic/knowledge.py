@@ -1,4 +1,4 @@
-"""Run `pip install duckduckgo-search sqlalchemy pgvector pypdf anthropic openai` to install dependencies."""
+"""Run `pip install ddgs sqlalchemy pgvector pypdf anthropic openai` to install dependencies."""
 
 from agno.agent import Agent
 from agno.embedder.azure_openai import AzureOpenAIEmbedder
@@ -19,7 +19,7 @@ knowledge_base = PDFUrlKnowledgeBase(
 knowledge_base.load(recreate=False)  # Comment out after first run
 
 agent = Agent(
-    model=Claude(id="claude-3-5-sonnet-20241022"),
+    model=Claude(id="claude-sonnet-4-20250514"),
     knowledge=knowledge_base,
     show_tool_calls=True,
     debug_mode=True,

@@ -14,6 +14,7 @@ def factorial():
     )
     response: RunResponse = agent.run("What is 10!?")
     evaluation = ReliabilityEval(
+        name="Tool Call Reliability",
         agent_response=response,
         expected_tool_calls=["factorial"],
     )

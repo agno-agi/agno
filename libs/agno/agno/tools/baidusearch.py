@@ -37,14 +37,17 @@ class BaiduSearchTools(Toolkit):
         debug: Optional[bool] = False,
         **kwargs,
     ):
-        super().__init__(name="baidusearch", **kwargs)
         self.fixed_max_results = fixed_max_results
         self.fixed_language = fixed_language
         self.headers = headers
         self.proxy = proxy
         self.timeout = timeout
         self.debug = debug
-        self.register(self.baidu_search)
+
+        tools = []
+        tools.append(self.baidu_search)
+
+        super().__init__(name="baidusearch", tools=tools, **kwargs)
 
     def baidu_search(self, query: str, max_results: int = 5, language: str = "zh") -> str:
         """Execute Baidu search and return results

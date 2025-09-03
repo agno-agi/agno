@@ -1,12 +1,14 @@
 import json
 from os import getenv
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
 
 try:
     from github import Auth, Github, GithubException
+    from github.GithubObject import NotSet
+
 except ImportError:
     raise ImportError("`PyGithub` not installed. Please install using `pip install pygithub`")
 
@@ -17,6 +19,7 @@ class GithubTools(Toolkit):
         access_token: Optional[str] = None,
         base_url: Optional[str] = None,
         search_repositories: bool = True,
+        list_repositories: bool = False,
         get_repository: bool = False,
         get_pull_request: bool = False,
         get_pull_request_changes: bool = False,
@@ -56,91 +59,92 @@ class GithubTools(Toolkit):
         create_review_request: bool = False,
         **kwargs,
     ):
-        super().__init__(name="github", **kwargs)
-
         self.access_token = access_token or getenv("GITHUB_ACCESS_TOKEN")
         self.base_url = base_url
 
         self.g = self.authenticate()
 
+        tools: List[Any] = []
         if search_repositories:
-            self.register(self.search_repositories)
+            tools.append(self.search_repositories)
+        if list_repositories:
+            tools.append(self.list_repositories)
         if get_repository:
-            self.register(self.get_repository)
+            tools.append(self.get_repository)
         if get_pull_request:
-            self.register(self.get_pull_request)
+            tools.append(self.get_pull_request)
         if get_pull_request_changes:
-            self.register(self.get_pull_request_changes)
+            tools.append(self.get_pull_request_changes)
         if create_issue:
-            self.register(self.create_issue)
+            tools.append(self.create_issue)
         if create_repository:
-            self.register(self.create_repository)
+            tools.append(self.create_repository)
         if delete_repository:
-            self.register(self.delete_repository)
+            tools.append(self.delete_repository)
         if list_branches:
-            self.register(self.list_branches)
+            tools.append(self.list_branches)
         if get_repository_languages:
-            self.register(self.get_repository_languages)
+            tools.append(self.get_repository_languages)
         if get_pull_request_count:
-            self.register(self.get_pull_request_count)
+            tools.append(self.get_pull_request_count)
         if get_repository_stars:
-            self.register(self.get_repository_stars)
+            tools.append(self.get_repository_stars)
         if get_pull_requests:
-            self.register(self.get_pull_requests)
+            tools.append(self.get_pull_requests)
         if get_pull_request_comments:
-            self.register(self.get_pull_request_comments)
+            tools.append(self.get_pull_request_comments)
         if create_pull_request_comment:
-            self.register(self.create_pull_request_comment)
+            tools.append(self.create_pull_request_comment)
         if edit_pull_request_comment:
-            self.register(self.edit_pull_request_comment)
+            tools.append(self.edit_pull_request_comment)
         if get_pull_request_with_details:
-            self.register(self.get_pull_request_with_details)
+            tools.append(self.get_pull_request_with_details)
         if get_repository_with_stats:
-            self.register(self.get_repository_with_stats)
-
+            tools.append(self.get_repository_with_stats)
         if list_issues:
-            self.register(self.list_issues)
+            tools.append(self.list_issues)
         if get_issue:
-            self.register(self.get_issue)
+            tools.append(self.get_issue)
         if comment_on_issue:
-            self.register(self.comment_on_issue)
+            tools.append(self.comment_on_issue)
         if close_issue:
-            self.register(self.close_issue)
+            tools.append(self.close_issue)
         if reopen_issue:
-            self.register(self.reopen_issue)
+            tools.append(self.reopen_issue)
         if assign_issue:
-            self.register(self.assign_issue)
+            tools.append(self.assign_issue)
         if label_issue:
-            self.register(self.label_issue)
+            tools.append(self.label_issue)
         if list_issue_comments:
-            self.register(self.list_issue_comments)
+            tools.append(self.list_issue_comments)
         if edit_issue:
-            self.register(self.edit_issue)
-
+            tools.append(self.edit_issue)
         if create_pull_request:
-            self.register(self.create_pull_request)
+            tools.append(self.create_pull_request)
         if create_file:
-            self.register(self.create_file)
+            tools.append(self.create_file)
         if get_file_content:
-            self.register(self.get_file_content)
+            tools.append(self.get_file_content)
         if update_file:
-            self.register(self.update_file)
+            tools.append(self.update_file)
         if delete_file:
-            self.register(self.delete_file)
+            tools.append(self.delete_file)
         if get_directory_content:
-            self.register(self.get_directory_content)
+            tools.append(self.get_directory_content)
         if get_branch_content:
-            self.register(self.get_branch_content)
+            tools.append(self.get_branch_content)
         if create_branch:
-            self.register(self.create_branch)
+            tools.append(self.create_branch)
         if set_default_branch:
-            self.register(self.set_default_branch)
+            tools.append(self.set_default_branch)
         if search_code:
-            self.register(self.search_code)
+            tools.append(self.search_code)
         if search_issues_and_prs:
-            self.register(self.search_issues_and_prs)
+            tools.append(self.search_issues_and_prs)
         if create_review_request:
-            self.register(self.create_review_request)
+            tools.append(self.create_review_request)
+
+        super().__init__(name="github", tools=tools, **kwargs)
 
     def authenticate(self):
         """Authenticate with GitHub using the provided access token."""
@@ -424,7 +428,7 @@ class GithubTools(Toolkit):
             logger.error(f"Error getting pull request changes: {e}")
             return json.dumps({"error": str(e)})
 
-    def create_issue(self, repo_name: str, title: str, body: Optional[str] = None) -> str:
+    def create_issue(self, repo_name: str, title: str, body: Optional[str] = NotSet) -> str:
         """Create an issue in a repository.
 
         Args:
@@ -454,35 +458,63 @@ class GithubTools(Toolkit):
             logger.error(f"Error creating issue: {e}")
             return json.dumps({"error": str(e)})
 
-    def list_issues(self, repo_name: str, state: str = "open", limit: int = 20) -> str:
-        """List issues for a repository.
+    def list_issues(self, repo_name: str, state: str = "open", page: int = 1, per_page: int = 20) -> str:
+        """List issues for a repository with pagination.
 
         Args:
             repo_name (str): The full name of the repository (e.g., 'owner/repo').
             state (str, optional): The state of issues to list ('open', 'closed', 'all'). Defaults to 'open'.
-            limit (int, optional): The maximum number of issues to return. Defaults to 20.
+            page (int, optional): Page number of results to return, counting from 1. Defaults to 1.
+            per_page (int, optional): Number of results per page. Defaults to 20.
         Returns:
-            A JSON-formatted string containing a list of issues.
+            A JSON-formatted string containing a list of issues with pagination metadata.
         """
-        log_debug(f"Listing issues for repository: {repo_name} with state: {state}")
+        log_debug(f"Listing issues for repository: {repo_name} with state: {state}, page: {page}, per_page: {per_page}")
         try:
             repo = self.g.get_repo(repo_name)
+
             issues = repo.get_issues(state=state)
+
             # Filter out pull requests after fetching issues
-            logger.info(f"Issues: {issues}")
-            filtered_issues = [issue for issue in issues if not issue.pull_request]
+            total_issues = 0
+            all_issues = []
+            for issue in issues:
+                if not issue.pull_request:
+                    all_issues.append(issue)
+                    total_issues += 1
+
+            # Calculate pagination metadata
+            total_pages = (total_issues + per_page - 1) // per_page
+
+            # Validate page number
+            if page < 1:
+                page = 1
+            elif page > total_pages and total_pages > 0:
+                page = total_pages
+
+            # Get the specified page of results
             issue_list = []
-            for issue in filtered_issues[:limit]:
-                issue_info = {
-                    "number": issue.number,
-                    "title": issue.title,
-                    "user": issue.user.login,
-                    "created_at": issue.created_at.isoformat(),
-                    "state": issue.state,
-                    "url": issue.html_url,
-                }
-                issue_list.append(issue_info)
-            return json.dumps(issue_list, indent=2)
+            page_start = (page - 1) * per_page
+            page_end = page_start + per_page
+
+            for i in range(page_start, min(page_end, total_issues)):
+                if i < len(all_issues):
+                    issue = all_issues[i]
+                    issue_info = {
+                        "number": issue.number,
+                        "title": issue.title,
+                        "user": issue.user.login,
+                        "created_at": issue.created_at.isoformat(),
+                        "state": issue.state,
+                        "url": issue.html_url,
+                    }
+                    issue_list.append(issue_info)
+
+            meta = {"current_page": page, "per_page": per_page, "total_items": total_issues, "total_pages": total_pages}
+
+            response = {"data": issue_list, "meta": meta}
+
+            return json.dumps(response, indent=2)
         except GithubException as e:
             logger.error(f"Error listing issues: {e}")
             return json.dumps({"error": str(e)})
@@ -665,8 +697,8 @@ class GithubTools(Toolkit):
         self,
         repo_name: str,
         issue_number: int,
-        title: Optional[str] = None,
-        body: Optional[str] = None,
+        title: Optional[str] = NotSet,
+        body: Optional[str] = NotSet,
     ) -> str:
         """Edit the title or body of an issue.
 
@@ -1292,7 +1324,7 @@ class GithubTools(Toolkit):
         path: str,
         content: str,
         message: str,
-        branch: Optional[str] = None,
+        branch: Optional[str] = NotSet,
     ) -> str:
         """Create a new file in a repository.
 
@@ -1323,13 +1355,15 @@ class GithubTools(Toolkit):
                 "url": result["content"].html_url,
                 "commit": {
                     "sha": result["commit"].sha,
-                    "message": result["commit"].commit.message,
+                    "message": result["commit"].commit.message
+                    if result["commit"].commit
+                    else result["commit"]._rawData["message"],
                     "url": result["commit"].html_url,
                 },
             }
 
             return json.dumps(file_info, indent=2)
-        except GithubException as e:
+        except (GithubException, AssertionError) as e:
             logger.error(f"Error creating file: {e}")
             return json.dumps({"error": str(e)})
 
@@ -1664,19 +1698,32 @@ class GithubTools(Toolkit):
             log_debug(f"Final search query: {search_query}")
             code_results = self.g.search_code(search_query)
 
-            # Process results
-            results = []
-            for code in code_results[:50]:  # Limit to 50 results to prevent timeouts
-                code_info = {
-                    "repository": code.repository.full_name,
-                    "path": code.path,
-                    "name": code.name,
-                    "sha": code.sha,
-                    "html_url": code.html_url,
-                    "git_url": code.git_url,
-                    "score": code.score,
-                }
-                results.append(code_info)
+            results: list[dict] = []
+            limit = 60
+            max_pages = 2  # GitHub returns 30 items per page, so 2 pages covers our limit
+            page_index = 0
+
+            while len(results) < limit and page_index < max_pages:
+                # Fetch one page of results from GitHub API
+                page_items = code_results.get_page(page_index)
+
+                # Stop if no more results available
+                if not page_items:
+                    break
+
+                # Process each code result in the current page
+                for code in page_items:
+                    code_info = {
+                        "repository": code.repository.full_name,
+                        "path": code.path,
+                        "name": code.name,
+                        "sha": code.sha,
+                        "html_url": code.html_url,
+                        "git_url": code.git_url,
+                        "score": code.score,
+                    }
+                    results.append(code_info)
+                page_index += 1
 
             # Return search results
             return json.dumps(

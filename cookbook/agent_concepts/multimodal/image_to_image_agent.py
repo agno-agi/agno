@@ -8,7 +8,6 @@ agent = Agent(
     name="Image to Image Agent",
     tools=[FalTools()],
     markdown=True,
-    debug_mode=True,
     show_tool_calls=True,
     instructions=[
         "You have to use the `image_to_image` tool to generate the image.",

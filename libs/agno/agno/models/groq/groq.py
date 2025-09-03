@@ -9,7 +9,7 @@ from agno.exceptions import ModelProviderError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.openai import images_to_message
 
 try:
@@ -124,7 +124,7 @@ class Groq(Model):
             )
         return AsyncGroqClient(**client_params)
 
-    def get_request_kwargs(
+    def get_request_params(
         self,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
@@ -163,6 +163,9 @@ class Groq(Model):
         # Add additional request params if provided
         if self.request_params:
             request_params.update(self.request_params)
+
+        if request_params:
+            log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
 
     def to_dict(self) -> Dict[str, Any]:
@@ -258,7 +261,7 @@ class Groq(Model):
             return self.get_client().chat.completions.create(
                 model=self.id,
                 messages=[self.format_message(m) for m in messages],  # type: ignore
-                **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
         except (APIResponseValidationError, APIStatusError) as e:
             log_error(f"Error calling Groq API: {str(e)}")
@@ -286,7 +289,7 @@ class Groq(Model):
             return await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self.format_message(m) for m in messages],  # type: ignore
-                **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
         except (APIResponseValidationError, APIStatusError) as e:
             log_error(f"Error calling Groq API: {str(e)}")
@@ -315,7 +318,7 @@ class Groq(Model):
                 model=self.id,
                 messages=[self.format_message(m) for m in messages],  # type: ignore
                 stream=True,
-                **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
         except (APIResponseValidationError, APIStatusError) as e:
             log_error(f"Error calling Groq API: {str(e)}")
@@ -345,7 +348,7 @@ class Groq(Model):
                 model=self.id,
                 messages=[self.format_message(m) for m in messages],  # type: ignore
                 stream=True,
-                **self.get_request_kwargs(response_format=response_format, tools=tools, tool_choice=tool_choice),
+                **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
             async for chunk in stream:  # type: ignore
                 yield chunk
@@ -460,15 +463,16 @@ class Groq(Model):
         model_response = ModelResponse()
 
         if len(response.choices) > 0:
-            delta: ChoiceDelta = response.choices[0].delta
+            choice_delta: ChoiceDelta = response.choices[0].delta
 
-            # Add content
-            if delta.content is not None:
-                model_response.content = delta.content
+            if choice_delta:
+                # Add content
+                if choice_delta.content is not None:
+                    model_response.content = choice_delta.content
 
-            # Add tool calls
-            if delta.tool_calls is not None:
-                model_response.tool_calls = delta.tool_calls  # type: ignore
+                # Add tool calls
+                if choice_delta.tool_calls is not None:
+                    model_response.tool_calls = choice_delta.tool_calls  # type: ignore
 
         # Add usage metrics if present
         if response.x_groq is not None and response.x_groq.usage is not None:

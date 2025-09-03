@@ -1,4 +1,4 @@
-from typing import Iterator, List, Optional
+from typing import AsyncIterator, Iterator, List, Optional
 
 from agno.aws.resource.s3.bucket import S3Bucket  # type: ignore
 from agno.aws.resource.s3.object import S3Object  # type: ignore
@@ -21,6 +21,10 @@ class S3KnowledgeBase(AgentKnowledge):
 
     @property
     def document_lists(self) -> Iterator[List[Document]]:
+        raise NotImplementedError
+
+    @property
+    def async_document_lists(self) -> AsyncIterator[List[Document]]:
         raise NotImplementedError
 
     @property

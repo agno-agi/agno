@@ -8,7 +8,6 @@ agent = Agent(
         modalities=["text", "audio"],
         audio={"voice": "sage", "format": "wav"},
     ),
-    debug_mode=True,
     add_history_to_messages=True,
 )
 

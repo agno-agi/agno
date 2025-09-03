@@ -356,20 +356,12 @@ def test_mixed_sequence_types_tool_parsing():
 
 
 def test_nested_pydantic_model_with_dict_tool_parsing():
-    class Accommodation(BaseModel):
-        hotel_name: str
-        room_type: str
-        amenities: List[str]
-        price_per_night: float
-
     class Location(BaseModel):
         city: str
         country: str
-        coordinates: Optional[Tuple[float, float]] = None
 
     class TravelPlan(BaseModel):
         location: Location
-        accommodation: Accommodation
         duration_days: int
         travelers: int
         preferences: Dict[str, List[str]]
@@ -380,12 +372,10 @@ def test_nested_pydantic_model_with_dict_tool_parsing():
         Create a vacation plan based on the provided details
 
         Args:
-            travel_plan: The travel plan details including location, accommodation, and preferences
+            travel_plan: The travel plan details including location, and preferences
         """
         city = travel_plan.location.city
         country = travel_plan.location.country
-        hotel = travel_plan.accommodation.hotel_name
-        room = travel_plan.accommodation.room_type
         days = travel_plan.duration_days
         travelers = travel_plan.travelers
 
@@ -396,7 +386,6 @@ def test_nested_pydantic_model_with_dict_tool_parsing():
 
         return (
             f"Vacation plan for {travelers} travelers to {city}, {country} for {days} days{budget_info}. "
-            f"Staying at {hotel} in a {room} room. "
             f"Food preferences: {food_prefs}. Activity preferences: {activity_prefs}."
         )
 

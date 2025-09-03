@@ -9,7 +9,6 @@ def test_tool_use():
     agent = Agent(
         model=Cerebras(id="llama-4-scout-17b-16e-instruct"),
         tools=[DuckDuckGoTools(cache_results=True)],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )
@@ -26,7 +25,6 @@ def test_tool_use_stream():
     agent = Agent(
         model=Cerebras(id="llama-4-scout-17b-16e-instruct"),
         tools=[DuckDuckGoTools(cache_results=True)],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )
@@ -37,15 +35,16 @@ def test_tool_use_stream():
     tool_call_seen = False
 
     for chunk in response_stream:
-        assert isinstance(chunk, RunResponse)
         responses.append(chunk)
-        if chunk.tools:
-            if any(tc.get("tool_name") for tc in chunk.tools):
+
+        # Check for ToolCallStartedEvent or ToolCallCompletedEvent
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
+            if chunk.tool.tool_name:
                 tool_call_seen = True
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("France" in r.content for r in responses if r.content)
+    assert any("France" in r.content for r in responses if hasattr(r, "content") and r.content)
 
 
 @pytest.mark.asyncio
@@ -53,7 +52,6 @@ async def test_async_tool_use():
     agent = Agent(
         model=Cerebras(id="llama-4-scout-17b-16e-instruct"),
         tools=[DuckDuckGoTools(cache_results=True)],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )
@@ -71,7 +69,6 @@ async def test_async_tool_use_stream():
     agent = Agent(
         model=Cerebras(id="llama-4-scout-17b-16e-instruct"),
         tools=[DuckDuckGoTools(cache_results=True)],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )
@@ -82,22 +79,22 @@ async def test_async_tool_use_stream():
     tool_call_seen = False
 
     async for chunk in response_stream:
-        assert isinstance(chunk, RunResponse)
         responses.append(chunk)
-        if chunk.tools:
-            if any(tc.get("tool_name") for tc in chunk.tools):
+
+        # Check for ToolCallStartedEvent or ToolCallCompletedEvent
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
+            if chunk.tool.tool_name:
                 tool_call_seen = True
 
     assert len(responses) > 0
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("France" in r.content for r in responses if r.content)
+    assert any("France" in r.content for r in responses if hasattr(r, "content") and r.content)
 
 
 def test_tool_use_with_content():
     agent = Agent(
         model=Cerebras(id="llama-4-scout-17b-16e-instruct"),
         tools=[DuckDuckGoTools(cache_results=True)],
-        show_tool_calls=True,
         telemetry=False,
         monitoring=False,
     )

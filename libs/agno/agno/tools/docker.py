@@ -1,7 +1,7 @@
 import json
 import os
 import sys
-from typing import Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from agno.tools import Toolkit
 from agno.utils.log import logger
@@ -64,9 +64,6 @@ class DockerTools(Toolkit):
         enable_network_management: bool = False,
         **kwargs,
     ):
-        """Initialize Docker tools."""
-        super().__init__(name="docker_tools", **kwargs)
-
         self._check_docker_availability()
 
         try:
@@ -83,38 +80,46 @@ class DockerTools(Toolkit):
         except Exception as e:
             logger.error(f"Error connecting to Docker: {e}")
 
-        # Register tools based on enabled features
+        tools: List[Any] = []
         if enable_container_management:
-            self.register(self.list_containers)
-            self.register(self.start_container)
-            self.register(self.stop_container)
-            self.register(self.remove_container)
-            self.register(self.get_container_logs)
-            self.register(self.inspect_container)
-            self.register(self.run_container)
-            self.register(self.exec_in_container)
-
+            tools.extend(
+                [
+                    self.list_containers,
+                    self.start_container,
+                    self.stop_container,
+                    self.remove_container,
+                    self.get_container_logs,
+                    self.inspect_container,
+                    self.run_container,
+                    self.exec_in_container,
+                ]
+            )
         if enable_image_management:
-            self.register(self.list_images)
-            self.register(self.pull_image)
-            self.register(self.remove_image)
-            self.register(self.build_image)
-            self.register(self.tag_image)
-            self.register(self.inspect_image)
-
+            tools.extend(
+                [
+                    self.list_images,
+                    self.pull_image,
+                    self.remove_image,
+                    self.build_image,
+                    self.tag_image,
+                    self.inspect_image,
+                ]
+            )
         if enable_volume_management:
-            self.register(self.list_volumes)
-            self.register(self.create_volume)
-            self.register(self.remove_volume)
-            self.register(self.inspect_volume)
-
+            tools.extend([self.list_volumes, self.create_volume, self.remove_volume, self.inspect_volume])
         if enable_network_management:
-            self.register(self.list_networks)
-            self.register(self.create_network)
-            self.register(self.remove_network)
-            self.register(self.inspect_network)
-            self.register(self.connect_container_to_network)
-            self.register(self.disconnect_container_from_network)
+            tools.extend(
+                [
+                    self.list_networks,
+                    self.create_network,
+                    self.remove_network,
+                    self.inspect_network,
+                    self.connect_container_to_network,
+                    self.disconnect_container_from_network,
+                ]
+            )
+
+        super().__init__(name="docker_tools", tools=tools, **kwargs)
 
     def _check_docker_availability(self):
         """Check if Docker socket exists and is accessible."""

@@ -98,8 +98,25 @@ class AgentMemory(BaseModel):
 
     def add_run(self, agent_run: AgentRun) -> None:
         """Adds an AgentRun to the runs list."""
-        self.runs.append(agent_run)
-        log_debug("Added AgentRun to AgentMemory")
+        # Initialize runs list if it doesn't exist
+        if self.runs is None:
+            self.runs = []
+
+        # Process run if it has a valid response with run_id
+        if agent_run.response and agent_run.response.run_id:
+            run_id = agent_run.response.run_id
+
+            # Check for existing run with same ID
+            for i, run in enumerate(self.runs):
+                if run.response and run.response.run_id == run_id:
+                    # Replace existing run
+                    self.runs[i] = agent_run
+                    log_debug(f"Replaced existing AgentRun with run_id {run_id} in memory")
+                    return
+
+            # Add new run if not found
+            self.runs.append(agent_run)
+            log_debug("Added AgentRun to AgentMemory")
 
     def add_system_message(self, message: Message, system_message_role: str = "system") -> None:
         """Add the system messages to the messages list"""
@@ -256,7 +273,7 @@ class AgentMemory(BaseModel):
 
         self.classifier.existing_memories = self.memories
         classifier_response = self.classifier.run(input)
-        if classifier_response == "yes":
+        if classifier_response and classifier_response.lower() == "yes":
             return True
         return False
 
@@ -269,7 +286,7 @@ class AgentMemory(BaseModel):
 
         self.classifier.existing_memories = self.memories
         classifier_response = await self.classifier.arun(input)
-        if classifier_response == "yes":
+        if classifier_response and classifier_response.lower() == "yes":
             return True
         return False
 
@@ -387,24 +404,20 @@ class AgentMemory(BaseModel):
         self.summary = None
         self.memories = None
 
-    def deep_copy(self) -> "AgentMemory":
+    def __deepcopy__(self, memo):
         from copy import deepcopy
 
-        # Create a shallow copy of the object
-        copied_obj = self.__class__(**self.to_dict())
+        # Create a new instance without calling __init__
+        cls = self.__class__
+        copied_obj = cls.__new__(cls)
+        memo[id(self)] = copied_obj
 
-        # Manually deepcopy fields that are known to be safe
-        for field_name, field_value in self.__dict__.items():
-            if field_name not in ["db", "classifier", "manager", "summarizer"]:
-                try:
-                    setattr(copied_obj, field_name, deepcopy(field_value))
-                except Exception as e:
-                    logger.warning(f"Failed to deepcopy field: {field_name} - {e}")
-                    setattr(copied_obj, field_name, field_value)
-
-        copied_obj.db = self.db
-        copied_obj.classifier = self.classifier
-        copied_obj.manager = self.manager
-        copied_obj.summarizer = self.summarizer
+        # Deep copy attributes
+        for k, v in self.__dict__.items():
+            # Reuse db
+            if k in {"db", "classifier", "manager", "summarizer"}:
+                setattr(copied_obj, k, v)
+            else:
+                setattr(copied_obj, k, deepcopy(v, memo))
 
         return copied_obj

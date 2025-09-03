@@ -1,5 +1,5 @@
 """
-1. Run: `pip install openai duckduckgo-search newspaper4k lxml_html_clean agno` to install the dependencies
+1. Run: `pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
 2. Run: `python cookbook/storage/json_storage/json_storage_for_team.py` to run the team
 
 We can start Redis locally using docker:
@@ -59,7 +59,6 @@ hn_team = Team(
     response_model=Article,
     show_tool_calls=True,
     markdown=True,
-    debug_mode=True,
     show_members_responses=True,
 )
 

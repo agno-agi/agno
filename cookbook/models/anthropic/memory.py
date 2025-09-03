@@ -14,7 +14,7 @@ from agno.storage.postgres import PostgresStorage
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 agent = Agent(
-    model=Claude(id="claude-3-5-sonnet-20241022"),
+    model=Claude(id="claude-sonnet-4-20250514"),
     # Store the memories and summary in a database
     memory=Memory(
         db=PostgresMemoryDb(table_name="agent_memory", db_url=db_url),

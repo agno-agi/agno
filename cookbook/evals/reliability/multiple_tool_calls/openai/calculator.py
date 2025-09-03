@@ -16,6 +16,7 @@ def multiply_and_exponentiate():
         "What is 10*5 then to the power of 2? do it step by step"
     )
     evaluation = ReliabilityEval(
+        name="Tool Calls Reliability",
         agent_response=response,
         expected_tool_calls=["multiply", "exponentiate"],
     )

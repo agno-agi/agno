@@ -15,7 +15,6 @@ image_agent = Agent(
         "Don't convert image URL to markdown or anything else.",
     ],
     markdown=True,
-    debug_mode=True,
     show_tool_calls=True,
 )
 

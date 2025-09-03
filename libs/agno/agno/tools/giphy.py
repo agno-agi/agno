@@ -1,6 +1,6 @@
 import os
 import uuid
-from typing import Optional, Union
+from typing import Any, List, Optional, Union
 
 import httpx
 
@@ -18,15 +18,23 @@ class GiphyTools(Toolkit):
         limit: int = 1,
         **kwargs,
     ):
-        super().__init__(name="giphy_tools", **kwargs)
+        """Initialize Giphy tools.
 
+        Args:
+            api_key: Giphy API key. Defaults to GIPHY_API_KEY environment variable.
+            limit: Number of GIFs to return. Defaults to 1.
+            search_gifs: Whether to enable GIF search functionality. Defaults to True.
+        """
         self.api_key = api_key or os.getenv("GIPHY_API_KEY")
         if not self.api_key:
             logger.error("No Giphy API key provided")
 
         self.limit: int = limit
 
-        self.register(self.search_gifs)
+        tools: List[Any] = []
+        tools.append(self.search_gifs)
+
+        super().__init__(name="giphy_tools", tools=tools, **kwargs)
 
     def search_gifs(self, agent: Union[Agent, Team], query: str) -> str:
         """Find a GIPHY gif

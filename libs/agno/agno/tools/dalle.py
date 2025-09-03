@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Literal, Optional, Union
+from typing import Any, List, Literal, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -26,8 +26,6 @@ class DalleTools(Toolkit):
         api_key: Optional[str] = None,
         **kwargs,
     ):
-        super().__init__(name="dalle", **kwargs)
-
         self.model = model
         self.n = n
         self.size = size
@@ -52,7 +50,11 @@ class DalleTools(Toolkit):
         if not self.api_key:
             logger.error("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
 
-        self.register(self.create_image)
+        tools: List[Any] = []
+        tools.append(self.create_image)
+
+        super().__init__(name="dalle", tools=tools, **kwargs)
+
         # TODO:
         # - Add support for response_format
         # - Add support for saving images

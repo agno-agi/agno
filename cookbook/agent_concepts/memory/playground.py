@@ -44,7 +44,20 @@ agent = Agent(
 )
 
 
-app = Playground(agents=[agent]).get_app()
+playground = Playground(
+    agents=[
+        agent,
+    ],
+    app_id="memory-playground-app",
+    name="Memory Playground",
+)
+app = playground.get_app()
 
 if __name__ == "__main__":
-    serve_playground_app("playground:app")
+    # Start the playground server
+    playground.serve(
+        app="playground:app",
+        host="localhost",
+        port=7777,
+        reload=True,
+    )

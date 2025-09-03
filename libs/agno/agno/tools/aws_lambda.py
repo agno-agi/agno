@@ -1,3 +1,5 @@
+from typing import Any, List
+
 from agno.tools import Toolkit
 
 try:
@@ -10,13 +12,23 @@ class AWSLambdaTools(Toolkit):
     name: str = "AWSLambdaTool"
     description: str = "A tool for interacting with AWS Lambda functions"
 
-    def __init__(self, region_name: str = "us-east-1", **kwargs):
-        super().__init__(name="aws-lambda", **kwargs)
+    def __init__(
+        self,
+        region_name: str = "us-east-1",
+        **kwargs,
+    ):
         self.client = boto3.client("lambda", region_name=region_name)
-        self.register(self.list_functions)
-        self.register(self.invoke_function)
+
+        tools: List[Any] = []
+        tools.append(self.list_functions)
+        tools.append(self.invoke_function)
+
+        super().__init__(name="aws-lambda", tools=tools, **kwargs)
 
     def list_functions(self) -> str:
+        """
+        List all AWS Lambda functions in the configured AWS account.
+        """
         try:
             response = self.client.list_functions()
             functions = [func["FunctionName"] for func in response["Functions"]]
@@ -25,6 +37,13 @@ class AWSLambdaTools(Toolkit):
             return f"Error listing functions: {str(e)}"
 
     def invoke_function(self, function_name: str, payload: str = "{}") -> str:
+        """
+        Invoke a specific AWS Lambda function with an optional JSON payload.
+
+        Args:
+            function_name (str): The name of the Lambda function to invoke.
+            payload (str): The JSON payload to send to the function. Defaults to "{}".
+        """
         try:
             response = self.client.invoke(FunctionName=function_name, Payload=payload)
             return f"Function invoked successfully. Status code: {response['StatusCode']}, Payload: {response['Payload'].read().decode('utf-8')}"

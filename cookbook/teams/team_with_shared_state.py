@@ -54,7 +54,7 @@ shopping_list_agent = Agent(
 
 def list_items(team: Team) -> str:
     """List all items in the shopping list."""
-    shopping_list = team.session_state["shopping_list"]
+    shopping_list = team.team_session_state["shopping_list"]
 
     if not shopping_list:
         return "The shopping list is empty."
@@ -67,7 +67,7 @@ shopping_team = Team(
     name="Shopping List Team",
     mode="coordinate",
     model=OpenAIChat(id="gpt-4o-mini"),
-    session_state={"shopping_list": []},
+    team_session_state={"shopping_list": []},
     tools=[list_items],
     members=[
         shopping_list_agent,
@@ -87,19 +87,19 @@ shopping_team = Team(
 shopping_team.print_response(
     "Add milk, eggs, and bread to the shopping list", stream=True
 )
-print(f"Session state: {shopping_team.session_state}")
+print(f"Session state: {shopping_team.team_session_state}")
 
 shopping_team.print_response("I got bread", stream=True)
-print(f"Session state: {shopping_team.session_state}")
+print(f"Session state: {shopping_team.team_session_state}")
 
 shopping_team.print_response("I need apples and oranges", stream=True)
-print(f"Session state: {shopping_team.session_state}")
+print(f"Session state: {shopping_team.team_session_state}")
 
 shopping_team.print_response("whats on my list?", stream=True)
-print(f"Session state: {shopping_team.session_state}")
+print(f"Session state: {shopping_team.team_session_state}")
 
 shopping_team.print_response(
     "Clear everything from my list and start over with just bananas and yogurt",
     stream=True,
 )
-print(f"Session state: {shopping_team.session_state}")
+print(f"Session state: {shopping_team.team_session_state}")

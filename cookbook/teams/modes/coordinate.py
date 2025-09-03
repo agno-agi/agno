@@ -1,5 +1,5 @@
 """
-1. Run: `pip install openai duckduckgo-search newspaper4k lxml_html_clean agno` to install the dependencies
+1. Run: `pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
 2. Run: `python cookbook/teams/coordinate/hackernews_team.py` to run the agent
 
 This example demonstrates a coordinated team of AI agents working together to research topics across different platforms.
@@ -75,7 +75,6 @@ hn_team = Team(
     add_member_tools_to_system_message=False,
     show_tool_calls=True,
     markdown=True,
-    debug_mode=True,
     show_members_responses=True,
     enable_agentic_context=True,
 )

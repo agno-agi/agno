@@ -1,16 +1,20 @@
 import uuid
 from os import getenv
 from textwrap import dedent
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
-    from zep_cloud import BadRequestError, NotFoundError
+    from zep_cloud import (
+        BadRequestError,
+        NotFoundError,
+    )
+    from zep_cloud import (
+        Message as ZepMessage,
+    )
     from zep_cloud.client import AsyncZep, Zep
-    from zep_cloud.types import MemorySearchResult
-    from zep_cloud.types import Message as ZepMessage
 except ImportError:
     raise ImportError("`zep-cloud` package not found. Please install it with `pip install zep-cloud`")
 
@@ -23,7 +27,7 @@ DEFAULT_INSTRUCTIONS = dedent(
 
     Guidelines:
     - Use `add_zep_message` tool to add relevant messages to the users memories. You can use this tool multiple times to add multiple messages.
-    - Use `get_zep_memory` tool to get the memory for the current Zep session for additional context. This will give you a summary of the users memories.
+    - Use `get_zep_memory` tool to get the memory for the current Zep session for additional context. This will give you a entire context of the user's memories with relevant facts.
     - Use `search_zep_memory` tool to search the Zep user memories for relevant facts. This will give you a list of relevant facts.
     """
 )
@@ -43,8 +47,6 @@ class ZepTools(Toolkit):
         add_instructions: bool = False,
         **kwargs,
     ):
-        super().__init__(name="zep_tools", instructions=instructions, add_instructions=add_instructions, **kwargs)
-
         self._api_key = api_key or getenv("ZEP_API_KEY")
         if not self._api_key:
             raise ValueError(
@@ -53,6 +55,8 @@ class ZepTools(Toolkit):
 
         if instructions is None:
             self.instructions = "<Memory Instructions>\n" + DEFAULT_INSTRUCTIONS + "\n</Memory Instructions>"
+        else:
+            self.instructions = instructions
 
         self.zep_client: Optional[Zep] = None
         self._initialized = False
@@ -66,13 +70,17 @@ class ZepTools(Toolkit):
 
         self.initialize()
 
-        # Register methods as tools conditionally
+        tools: List[Any] = []
         if add_zep_message:
-            self.register(self.add_zep_message)
+            tools.append(self.add_zep_message)
         if get_zep_memory:
-            self.register(self.get_zep_memory)
+            tools.append(self.get_zep_memory)
         if search_zep_memory:
-            self.register(self.search_zep_memory)
+            tools.append(self.search_zep_memory)
+
+        super().__init__(
+            name="zep_tools", instructions=self.instructions, add_instructions=add_instructions, tools=tools, **kwargs
+        )
 
     def initialize(self) -> bool:
         """
@@ -108,6 +116,13 @@ class ZepTools(Toolkit):
                         self.zep_client = None  # Reset client on failure
                         return False  # Initialization failed
 
+            # Create session associated with the user
+            try:
+                self.zep_client.thread.create(thread_id=self.session_id, user_id=self.user_id)
+                log_debug(f"Created session {self.session_id} for user {self.user_id}")
+            except Exception as e:
+                log_debug(f"Session may already exist: {e}")
+
             self._initialized = True
             return True
 
@@ -133,7 +148,7 @@ class ZepTools(Toolkit):
 
         try:
             zep_message = ZepMessage(
-                role_type=role,
+                role=role,
                 content=content,
             )
 
@@ -141,8 +156,8 @@ class ZepTools(Toolkit):
             ignore_roles_list = ["assistant"] if self.ignore_assistant_messages else None
 
             # Add message to Zep memory
-            self.zep_client.memory.add(  # type: ignore
-                session_id=self.session_id,
+            self.zep_client.thread.add_messages(  # type: ignore
+                thread_id=self.session_id,
                 messages=[zep_message],
                 ignore_roles=ignore_roles_list,
             )
@@ -156,7 +171,7 @@ class ZepTools(Toolkit):
         """
         Retrieves the memory for the current Zep session.
         Args:
-            memory_type: The type of memory to retrieve ('context', 'summary', 'messages').
+            memory_type: The type of memory to retrieve ('context', 'messages').
         Returns:
             The requested memory content as a string, or an error string.
         """
@@ -166,21 +181,16 @@ class ZepTools(Toolkit):
 
         try:
             log_debug(f"Getting Zep memory for session {self.session_id}")
-            memory_data = self.zep_client.memory.get(session_id=self.session_id)  # type: ignore
 
             if memory_type == "context":
                 # Ensure context is a string
-                return memory_data.context or "No context available."
-            elif memory_type == "summary":
-                # Ensure summary content is a string, checking both summary and its content
-                return (
-                    (memory_data.summary.content or "Summary content not available.")
-                    if memory_data.summary
-                    else "No summary available."
-                )
+                user_context = self.zep_client.thread.get_user_context(thread_id=self.session_id, mode="basic")  # type: ignore
+                log_debug(f"Memory data: {user_context}")
+                return user_context.context or "No context available."
             elif memory_type == "messages":
+                messages_list = self.zep_client.thread.get(thread_id=self.session_id)  # type: ignore
                 # Ensure messages string representation is returned
-                return str(memory_data.messages) if memory_data.messages else "No messages available."
+                return str(messages_list.messages) if messages_list.messages else "No messages available."
             else:
                 warning_msg = f"Unsupported memory_type requested: {memory_type}. Returning empty string."
                 log_warning(warning_msg)
@@ -190,59 +200,41 @@ class ZepTools(Toolkit):
             log_error(f"Failed to get Zep memory for session {self.session_id}: {e}")
             return f"Error getting memory for session {self.session_id}"
 
-    def search_zep_memory(self, query: str, search_scope: str = "messages") -> str:
+    def search_zep_memory(self, query: str, search_scope: str = "edges") -> str:
         """
-        Searches the Zep memory store for relevant messages or summaries associated with the configured user_id.
+        Searches the Zep knowledge graph for relevant facts or nodes.
         Args:
-            query: The search term to find relevant facts.
-            search_scope: The scope of the search to perform. Can be "messages" or "summary".
+            query: The search term to find relevant facts or nodes.
+            search_scope: The scope of the search to perform. Can be "edges" (for facts) or "nodes".
         Returns:
             A string of the search result
         """
-        results: List = []
-        search_result = ""
-        if not self.zep_client or not self.user_id or not self.session_id:
-            log_error("Zep client or user ID or session ID not initialized. Cannot search memory.")
-            return "Error: Zep client/user/session not initialized."
+        # Graph search is built on user_id not on session_id
+        if not self.zep_client or not self.user_id:
+            log_error("Zep client or user ID not initialized. Cannot search graph.")
+            return "Error: Zep client/user not initialized."
 
         try:
-            search_response: List[MemorySearchResult] = self.zep_client.memory.search(
-                text=query, session_id=self.session_id, search_scope=search_scope
+            search_response = self.zep_client.graph.search(
+                query=query,
+                user_id=self.user_id,
+                scope=search_scope,  # Can be "edges" or "nodes"
             )
-            results = [
-                {
-                    "content": response.message.content,
-                    "created_at": response.message.created_at,
-                    "uuid": response.message.uuid_,
-                    "score": response.score,
-                    "summary": response.summary,
-                }
-                for response in search_response
-                if response.message is not None
-            ]
-            log_debug(f"Memory search found {len(results)} relevant messages.")
-        except Exception as e:
-            log_error(f"Failed to search Zep graph memory for user {self.user_id}: {e}")
 
-        if results is not None and results != []:
-            if search_scope == "summary":
-                search_result = " ".join(
-                    [result.get("summary", "") for result in results if result.get("summary") is not None]
-                )
-                if search_result == "":
-                    return "No relevant summary found."
-                else:
-                    return search_result
+            if search_scope == "edges" and search_response.edges:
+                # Return facts from edges
+                facts_str = "\n".join([f"- {edge.fact}" for edge in search_response.edges])
+                return f"Found {len(search_response.edges)} facts:\n{facts_str}"
+            elif search_scope == "nodes" and search_response.nodes:
+                # Return node summaries
+                nodes_str = "\n".join([f"- {node.name}: {node.summary}" for node in search_response.nodes])
+                return f"Found {len(search_response.nodes)} nodes:\n{nodes_str}"
             else:
-                search_result = " ".join(
-                    [result.get("content", "") for result in results if result.get("content") is not None]
-                )
-                if search_result == "":
-                    return "No relevant content found."
-                else:
-                    return search_result
-        else:
-            return "No relevant messages found."
+                return f"No {search_scope} found for query: {query}"
+
+        except Exception as e:
+            log_error(f"Failed to search Zep graph for user {self.user_id}: {e}")
+            return f"Error searching graph: {e}"
 
 
 class ZepAsyncTools(Toolkit):
@@ -259,8 +251,6 @@ class ZepAsyncTools(Toolkit):
         add_instructions: bool = False,
         **kwargs,
     ):
-        super().__init__(name="zep_tools", instructions=instructions, add_instructions=add_instructions, **kwargs)
-
         self._api_key = api_key or getenv("ZEP_API_KEY")
         if not self._api_key:
             raise ValueError(
@@ -269,6 +259,8 @@ class ZepAsyncTools(Toolkit):
 
         if instructions is None:
             self.instructions = "<Memory Instructions>\n" + DEFAULT_INSTRUCTIONS + "\n</Memory Instructions>"
+        else:
+            self.instructions = instructions
 
         self.zep_client: Optional[AsyncZep] = None
         self._initialized = False
@@ -283,12 +275,17 @@ class ZepAsyncTools(Toolkit):
         self._initialized = False
 
         # Register methods as tools conditionally
+        tools = []
         if add_zep_message:
-            self.register(self.add_zep_message)
+            tools.append(self.add_zep_message)
         if get_zep_memory:
-            self.register(self.get_zep_memory)
+            tools.append(self.get_zep_memory)  # type: ignore
         if search_zep_memory:
-            self.register(self.search_zep_memory)
+            tools.append(self.search_zep_memory)  # type: ignore
+
+        super().__init__(
+            name="zep_tools", instructions=self.instructions, add_instructions=add_instructions, tools=tools, **kwargs
+        )
 
     async def initialize(self) -> bool:
         """
@@ -324,6 +321,13 @@ class ZepAsyncTools(Toolkit):
                         self.zep_client = None  # Reset client on failure
                         return False  # Initialization failed
 
+            # Create session associated with the user
+            try:
+                await self.zep_client.thread.create(thread_id=self.session_id, user_id=self.user_id)  # type: ignore
+                log_debug(f"Created session {self.session_id} for user {self.user_id}")
+            except Exception as e:
+                log_debug(f"Session may already exist: {e}")
+
             self._initialized = True
             return True
 
@@ -352,7 +356,7 @@ class ZepAsyncTools(Toolkit):
 
         try:
             zep_message = ZepMessage(
-                role_type=role,
+                role=role,
                 content=content,
             )
 
@@ -360,8 +364,8 @@ class ZepAsyncTools(Toolkit):
             ignore_roles_list = ["assistant"] if self.ignore_assistant_messages else None
 
             # Add message to Zep memory
-            await self.zep_client.memory.add(  # type: ignore
-                session_id=self.session_id,
+            await self.zep_client.thread.add_messages(  # type: ignore
+                thread_id=self.session_id,
                 messages=[zep_message],
                 ignore_roles=ignore_roles_list,
             )
@@ -375,7 +379,7 @@ class ZepAsyncTools(Toolkit):
         """
         Retrieves the memory for the current Zep session.
         Args:
-            memory_type: The type of memory to retrieve ('context', 'summary', 'messages').
+            memory_type: The type of memory to retrieve ('context', 'messages').
         Returns:
             The requested memory content as a string, or an error string.
         """
@@ -387,87 +391,61 @@ class ZepAsyncTools(Toolkit):
             return "Error: Zep client/session not initialized."
 
         try:
-            memory_data = await self.zep_client.memory.get(session_id=self.session_id)  # type: ignore
-
             if memory_type == "context":
                 # Ensure context is a string
-                return memory_data.context or "No context available."
-            elif memory_type == "summary":
-                # Ensure summary content is a string, checking both summary and its content
-                return (
-                    (memory_data.summary.content or "Summary content not available.")
-                    if memory_data.summary
-                    else "No summary available."
-                )
+                user_context = await self.zep_client.thread.get_user_context(thread_id=self.session_id, mode="basic")  # type: ignore
+                log_debug(f"Memory data: {user_context}")
+                return user_context.context or "No context available."
             elif memory_type == "messages":
                 # Ensure messages string representation is returned
-                return str(memory_data.messages) if memory_data.messages else "No messages available."
+                messages_list = await self.zep_client.thread.get(thread_id=self.session_id)  # type: ignore
+                return str(messages_list.messages) if messages_list.messages else "No messages available."
             else:
-                warning_msg = f"Unsupported memory_type requested: {memory_type}. Returning empty string."
+                warning_msg = f"Unsupported memory_type requested: {memory_type}. Returning context."
                 log_warning(warning_msg)
-                return warning_msg
+                return "No context available."
 
         except Exception as e:
             error_msg = f"Failed to get Zep memory for session {self.session_id}: {e}"
             log_error(error_msg)
             return f"Error getting memory: {e}"
 
-    async def search_zep_memory(self, query: str, search_scope: str = "messages") -> str:
+    async def search_zep_memory(self, query: str, scope: str = "edges", limit: int = 5) -> str:
         """
-        Searches the Zep memory store for relevant messages or summaries associated with the configured user_id.
+        Searches the Zep knowledge graph for relevant facts or nodes.
         Args:
-            query: The search term to find relevant facts.
-            search_scope: The scope of the search to perform. Can be "messages" or "summary".
+            query: The search term to find relevant facts or nodes.
+            scope: The scope of the search to perform. Can be "edges" (for facts) or "nodes".
+            limit: The maximum number of results to return.
         Returns:
             A string of the search result
         """
         if not self._initialized:
             await self.initialize()
 
-        results: List = []
-        search_result = ""
-
-        if not self.zep_client or not self.user_id or not self.session_id:
-            log_error("Zep client or user ID or session ID not initialized. Cannot search memory.")
-            return "Error: Zep client/user/session not initialized."
+        if not self.zep_client or not self.user_id:
+            log_error("Zep client or user ID not initialized. Cannot search graph.")
+            return "Error: Zep client/user not initialized."
 
         try:
-            search_response: List[MemorySearchResult] = await self.zep_client.memory.search(
-                text=query, session_id=self.session_id, search_scope=search_scope
+            search_response = await self.zep_client.graph.search(  # type: ignore
+                query=query,
+                user_id=self.user_id,
+                scope=scope,  # Can be "edges" or "nodes"
+                limit=limit,
             )
 
-            results = [
-                {
-                    "content": response.message.content,
-                    "created_at": response.message.created_at,
-                    "uuid": response.message.uuid_,
-                    "score": response.score,
-                    "summary": response.summary,
-                }
-                for response in search_response
-                if response.message is not None
-            ]
-
-            log_debug(f"Memory search found {len(results)} relevant messages.")
-        except Exception as e:
-            log_error(f"Failed to search Zep graph memory for user {self.user_id}: {e}")
-
-        if results is not None and results != []:
-            if search_scope == "summary":
-                search_result = " ".join(
-                    [result.get("summary", "") for result in results if result.get("summary") is not None]
-                )
-                if search_result == "":
-                    return "No relevant summary found."
-                else:
-                    return search_result
+            if scope == "edges" and search_response.edges:
+                # Return facts from edges
+                facts_str = "\n".join([f"- {edge.fact}" for edge in search_response.edges])
+                return f"Found {len(search_response.edges)} facts:\n{facts_str}"
+            elif scope == "nodes" and search_response.nodes:
+                # Return node summaries
+                nodes_str = "\n".join([f"- {node.name}: {node.summary}" for node in search_response.nodes])
+                return f"Found {len(search_response.nodes)} nodes:\n{nodes_str}"
             else:
-                search_result = " ".join(
-                    [result.get("content", "") for result in results if result.get("content") is not None]
-                )
-                if search_result == "":
-                    return "No relevant content found."
-                else:
-                    return search_result
-        else:
-            return "No relevant messages found."
+                return f"No {scope} found for query: {query}"
+
+        except Exception as e:
+            log_error(f"Failed to search Zep graph for user {self.user_id}: {e}")
+            return f"Error searching graph: {e}"

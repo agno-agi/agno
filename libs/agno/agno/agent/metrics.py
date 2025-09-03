@@ -15,6 +15,7 @@ class SessionMetrics:
     input_audio_tokens: int = 0
     output_audio_tokens: int = 0
     cached_tokens: int = 0
+    cache_write_tokens: int = 0
     reasoning_tokens: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
@@ -55,6 +56,7 @@ class SessionMetrics:
             input_audio_tokens=self.input_audio_tokens + other.input_audio_tokens,
             output_audio_tokens=self.output_audio_tokens + other.output_audio_tokens,
             cached_tokens=self.cached_tokens + other.cached_tokens,
+            cache_write_tokens=self.cache_write_tokens + other.cache_write_tokens,
             reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
         )
 
@@ -67,7 +69,10 @@ class SessionMetrics:
             # Add values from other
             if other.prompt_tokens_details:
                 for key, value in other.prompt_tokens_details.items():
-                    result.prompt_tokens_details[key] = result.prompt_tokens_details.get(key, 0) + value
+                    existing_value = result.prompt_tokens_details.get(key, 0)
+                    if not isinstance(existing_value, int):
+                        continue
+                    result.prompt_tokens_details[key] = existing_value + value
 
         # Handle completion_tokens_details similarly
         if self.completion_tokens_details or other.completion_tokens_details:

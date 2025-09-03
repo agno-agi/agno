@@ -1,6 +1,6 @@
 import json
 from os import getenv
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
@@ -30,8 +30,6 @@ class RedditTools(Toolkit):
         reply_to_comment: bool = True,
         **kwargs,
     ):
-        super().__init__(name="reddit", **kwargs)
-
         if reddit_instance is not None:
             log_info("Using provided Reddit instance")
             self.reddit = reddit_instance
@@ -67,22 +65,25 @@ class RedditTools(Toolkit):
             else:
                 logger.warning("Missing Reddit API credentials")
 
+        tools: List[Any] = []
         if get_user_info:
-            self.register(self.get_user_info)
+            tools.append(self.get_user_info)
         if get_top_posts:
-            self.register(self.get_top_posts)
+            tools.append(self.get_top_posts)
         if get_subreddit_info:
-            self.register(self.get_subreddit_info)
+            tools.append(self.get_subreddit_info)
         if get_trending_subreddits:
-            self.register(self.get_trending_subreddits)
+            tools.append(self.get_trending_subreddits)
         if get_subreddit_stats:
-            self.register(self.get_subreddit_stats)
+            tools.append(self.get_subreddit_stats)
         if create_post:
-            self.register(self.create_post)
+            tools.append(self.create_post)
         if reply_to_post:
-            self.register(self.reply_to_post)
+            tools.append(self.reply_to_post)
         if reply_to_comment:
-            self.register(self.reply_to_comment)
+            tools.append(self.reply_to_comment)
+
+        super().__init__(name="reddit", tools=tools, **kwargs)
 
     def _check_user_auth(self) -> bool:
         """

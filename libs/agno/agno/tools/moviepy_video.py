@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info, logger
@@ -19,14 +19,15 @@ class MoviePyVideoTools(Toolkit):
         embed_captions: bool = True,
         **kwargs,
     ):
-        super().__init__(name="video_tools", **kwargs)
-
+        tools: List[Any] = []
         if process_video:
-            self.register(self.extract_audio)
+            tools.append(self.extract_audio)
         if generate_captions:
-            self.register(self.create_srt)
+            tools.append(self.create_srt)
         if embed_captions:
-            self.register(self.embed_captions)
+            tools.append(self.embed_captions)
+
+        super().__init__(name="video_tools", tools=tools, **kwargs)
 
     def split_text_into_lines(self, words: List[Dict]) -> List[Dict]:
         """Split transcribed words into lines based on duration and length constraints

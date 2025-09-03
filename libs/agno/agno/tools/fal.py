@@ -25,14 +25,16 @@ class FalTools(Toolkit):
         model: str = "fal-ai/hunyuan-video",
         **kwargs,
     ):
-        super().__init__(name="fal", **kwargs)
-
         self.api_key = api_key or getenv("FAL_KEY")
         if not self.api_key:
             logger.error("FAL_KEY not set. Please set the FAL_KEY environment variable.")
         self.model = model
         self.seen_logs: set[str] = set()
-        self.register(self.generate_media)
+
+        tools = []
+        tools.append(self.generate_media)
+
+        super().__init__(name="fal-tools", tools=tools, **kwargs)
 
     def on_queue_update(self, update):
         if isinstance(update, fal_client.InProgress) and update.logs:

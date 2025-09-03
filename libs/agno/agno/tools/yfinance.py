@@ -39,26 +39,27 @@ class YFinanceTools(Toolkit):
         enable_all: bool = False,
         **kwargs,
     ):
-        super().__init__(name="yfinance_tools", **kwargs)
-
+        tools = []
         if stock_price or enable_all:
-            self.register(self.get_current_stock_price)
+            tools.append(self.get_current_stock_price)
         if company_info or enable_all:
-            self.register(self.get_company_info)
+            tools.append(self.get_company_info)
         if stock_fundamentals or enable_all:
-            self.register(self.get_stock_fundamentals)
+            tools.append(self.get_stock_fundamentals)
         if income_statements or enable_all:
-            self.register(self.get_income_statements)
+            tools.append(self.get_income_statements)
         if key_financial_ratios or enable_all:
-            self.register(self.get_key_financial_ratios)
+            tools.append(self.get_key_financial_ratios)
         if analyst_recommendations or enable_all:
-            self.register(self.get_analyst_recommendations)
+            tools.append(self.get_analyst_recommendations)
         if company_news or enable_all:
-            self.register(self.get_company_news)
+            tools.append(self.get_company_news)
         if technical_indicators or enable_all:
-            self.register(self.get_technical_indicators)
+            tools.append(self.get_technical_indicators)
         if historical_prices or enable_all:
-            self.register(self.get_historical_stock_prices)
+            tools.append(self.get_historical_stock_prices)
+
+        super().__init__(name="yfinance_tools", tools=tools, **kwargs)
 
     def get_current_stock_price(self, symbol: str) -> str:
         """

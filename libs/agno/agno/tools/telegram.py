@@ -1,5 +1,5 @@
 import os
-from typing import Optional, Union
+from typing import Any, List, Optional, Union
 
 import httpx
 
@@ -11,15 +11,16 @@ class TelegramTools(Toolkit):
     base_url = "https://api.telegram.org"
 
     def __init__(self, chat_id: Union[str, int], token: Optional[str] = None, **kwargs):
-        super().__init__(name="telegram", **kwargs)
-
         self.token = token or os.getenv("TELEGRAM_TOKEN")
         if not self.token:
             logger.error("TELEGRAM_TOKEN not set. Please set the TELEGRAM_TOKEN environment variable.")
 
         self.chat_id = chat_id
 
-        self.register(self.send_message)
+        tools: List[Any] = []
+        tools.append(self.send_message)
+
+        super().__init__(name="telegram", tools=tools, **kwargs)
 
     def _call_post_method(self, method, *args, **kwargs):
         return httpx.post(f"{self.base_url}/bot{self.token}/{method}", *args, **kwargs)

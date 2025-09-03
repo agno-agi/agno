@@ -1,6 +1,0 @@
-agno
-google-generativeai
-openai
-streamlit
-pillow
-duckduckgo-search

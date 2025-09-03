@@ -30,6 +30,7 @@ if [ -z "$1" ]; then
     echo "- google"
     echo "- groq"
     echo "- ibm"
+    echo "- litellm"
     echo "- mistral"
     echo "- nvidia"
     echo "- openai"
@@ -38,6 +39,7 @@ if [ -z "$1" ]; then
     echo "- sambanova"
     echo "- together"
     echo "- xai"
+    echo "- vercel"
     exit 1
 fi
 
@@ -56,6 +58,8 @@ pip install --upgrade pip
 
 print_info "Installing base packages..."
 pip install \
+    aioboto3 \
+    boto3 \
     docstring-parser \
     gitpython \
     httpx \
@@ -198,6 +202,14 @@ case $MODEL_NAME in
             exit 1
         fi
         ;;
+    "litellm")
+        if [ -z "${LITELLM_API_KEY}" ] && [ -z "${OPENAI_API_KEY}" ]; then
+            print_heading "Error: LITELLM_API_KEY or OPENAI_API_KEY environment variable is not set"
+            exit 1
+        fi
+        print_info "Installing litellm package -- required in tests"
+        pip install litellm
+        ;;
     "cerebras")
         if [ -z "${CEREBRAS_API_KEY}" ]; then
             print_heading "Error: CEREBRAS_API_KEY environment variable is not set"
@@ -207,6 +219,12 @@ case $MODEL_NAME in
     "deepinfra")
         if [ -z "${DEEPINFRA_API_KEY}" ]; then
             print_heading "Error: DEEPINFRA_API_KEY environment variable is not set"
+            exit 1
+        fi
+        ;;
+    "vercel")
+        if [ -z "${V0_API_KEY}" ]; then
+            print_heading "Error: V0_API_KEY environment variable is not set"
             exit 1
         fi
         ;;

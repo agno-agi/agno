@@ -1,4 +1,3 @@
-import json
 from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Tuple
@@ -17,9 +16,8 @@ except ImportError:
 class HuggingfaceCustomEmbedder(Embedder):
     """Huggingface Custom Embedder"""
 
-    id: str = "jinaai/jina-embeddings-v2-base-code"
+    id: str = "intfloat/multilingual-e5-large"
     api_key: Optional[str] = getenv("HUGGINGFACE_API_KEY")
-    task: str = "feature-extraction"
     client_params: Optional[Dict[str, Any]] = None
     huggingface_client: Optional[InferenceClient] = None
 
@@ -36,16 +34,21 @@ class HuggingfaceCustomEmbedder(Embedder):
         return self.huggingface_client
 
     def _response(self, text: str):
-        return self.client.post(json={"inputs": text}, model=self.id, task=self.task)
+        return self.client.feature_extraction(text=text, model=self.id)
 
     def get_embedding(self, text: str) -> List[float]:
         response = self._response(text=text)
         try:
-            decoded_string = response.decode("utf-8")
-            return json.loads(decoded_string)
-
+            # If already a list, return directly
+            if isinstance(response, list):
+                return response
+            # If numpy array, convert to list
+            elif hasattr(response, "tolist"):
+                return response.tolist()
+            else:
+                return list(response)
         except Exception as e:
-            logger.warning(e)
+            logger.warning(f"Failed to process embeddings: {e}")
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:

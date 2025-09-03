@@ -1,4 +1,5 @@
 import json
+from typing import Any, List
 
 import httpx
 
@@ -15,13 +16,13 @@ class HackerNewsTools(Toolkit):
     """
 
     def __init__(self, get_top_stories: bool = True, get_user_details: bool = True, **kwargs):
-        super().__init__(name="hackers_news", **kwargs)
-
-        # Register functions in the toolkit
+        tools: List[Any] = []
         if get_top_stories:
-            self.register(self.get_top_hackernews_stories)
+            tools.append(self.get_top_hackernews_stories)
         if get_user_details:
-            self.register(self.get_user_details)
+            tools.append(self.get_user_details)
+
+        super().__init__(name="hackers_news", tools=tools, **kwargs)
 
     def get_top_hackernews_stories(self, num_stories: int = 10) -> str:
         """Use this function to get top stories from Hacker News.
