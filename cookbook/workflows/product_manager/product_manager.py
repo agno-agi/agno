@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 
 from agno.agent.agent import Agent
-from agno.run.response import RunEvent, RunResponse
+from agno.run.response import RunResponse
 from agno.run.workflow import WorkflowCompletedEvent
 from agno.storage.postgres import PostgresStorage
 from agno.tools.linear import LinearTools

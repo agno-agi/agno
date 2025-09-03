@@ -3,15 +3,14 @@ from typing import List, Optional
 
 from agno.agent import Agent, RunResponse
 from agno.models.openai import OpenAIChat
-from agno.run.response import RunEvent
 from agno.tools.firecrawl import FirecrawlTools
 from agno.utils.log import logger
 from agno.workflow import Workflow
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-from cookbook.workflows.content_creator_workflow.config import PostType
-from cookbook.workflows.content_creator_workflow.prompts import (
+from cookbook.workflows.content_creator.config import PostType
+from cookbook.workflows.content_creator.prompts import (
     agents_config,
     tasks_config,
 )

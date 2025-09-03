@@ -4,6 +4,7 @@ from agno.models.openai import OpenAIChat
 
 basic_agent = Agent(
     name="Basic Agent",
+    agent_id="basic_agent",
     model=OpenAIChat(id="gpt-4o"),
     add_history_to_messages=True,
     num_history_responses=3,

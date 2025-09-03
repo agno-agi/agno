@@ -6,6 +6,7 @@ from agno.storage.base import Storage
 from agno.storage.session import Session
 from agno.storage.session.agent import AgentSession
 from agno.storage.session.team import TeamSession
+from agno.storage.session.v2.workflow import WorkflowSession as WorkflowSessionV2
 from agno.storage.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, logger
 
@@ -25,7 +26,7 @@ class MongoDbStorage(Storage):
         db_url: Optional[str] = None,
         db_name: str = "agno",
         client: Optional[MongoClient] = None,
-        mode: Optional[Literal["agent", "team", "workflow"]] = "agent",
+        mode: Optional[Literal["agent", "team", "workflow", "workflow_v2"]] = "agent",
     ):
         """
         This class provides agent storage using MongoDB.
@@ -64,6 +65,8 @@ class MongoDbStorage(Storage):
                 self.collection.create_index("team_id")
             elif self.mode == "workflow":
                 self.collection.create_index("workflow_id")
+            elif self.mode == "workflow_v2":
+                self.collection.create_index("workflow_id")
         except PyMongoError as e:
             logger.error(f"Error creating indexes: {e}")
             raise
@@ -91,6 +94,8 @@ class MongoDbStorage(Storage):
                     return TeamSession.from_dict(doc)
                 elif self.mode == "workflow":
                     return WorkflowSession.from_dict(doc)
+                elif self.mode == "workflow_v2":
+                    return WorkflowSessionV2.from_dict(doc)
             return None
         except PyMongoError as e:
             logger.error(f"Error reading session: {e}")
@@ -115,7 +120,8 @@ class MongoDbStorage(Storage):
                     query["team_id"] = entity_id
                 elif self.mode == "workflow":
                     query["workflow_id"] = entity_id
-
+                elif self.mode == "workflow_v2":
+                    query["workflow_id"] = entity_id
             cursor = self.collection.find(query, {"session_id": 1}).sort("created_at", -1)
 
             return [str(doc["session_id"]) for doc in cursor]
@@ -142,7 +148,8 @@ class MongoDbStorage(Storage):
                     query["team_id"] = entity_id
                 elif self.mode == "workflow":
                     query["workflow_id"] = entity_id
-
+                elif self.mode == "workflow_v2":
+                    query["workflow_id"] = entity_id
             cursor = self.collection.find(query).sort("created_at", -1)
             sessions: List[Session] = []
             for doc in cursor:
@@ -193,7 +200,8 @@ class MongoDbStorage(Storage):
                     query["team_id"] = entity_id
                 elif self.mode == "workflow":
                     query["workflow_id"] = entity_id
-
+                elif self.mode == "workflow_v2":
+                    query["workflow_id"] = entity_id
             # Execute query with sort and limit
             cursor = self.collection.find(query)
             cursor = cursor.sort("created_at", -1)  # Sort by created_at descending
@@ -212,7 +220,8 @@ class MongoDbStorage(Storage):
                     session = TeamSession.from_dict(doc)
                 elif self.mode == "workflow":
                     session = WorkflowSession.from_dict(doc)
-
+                elif self.mode == "workflow_v2":
+                    session = WorkflowSessionV2.from_dict(doc)
                 if session is not None:
                     sessions.append(session)
 

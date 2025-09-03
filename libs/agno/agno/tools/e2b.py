@@ -58,7 +58,7 @@ class E2BTools(Toolkit):
 
         # According to official docs, the parameter is 'timeout' (in seconds), not 'timeout_ms'
         try:
-            self.sandbox = Sandbox(api_key=self.api_key, timeout=timeout, **self.sandbox_options)
+            self.sandbox = Sandbox.create(api_key=self.api_key, timeout=timeout, **self.sandbox_options)
         except Exception as e:
             logger.error(f"Warning: Could not create sandbox: {e}")
             raise e

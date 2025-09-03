@@ -449,7 +449,7 @@ class Claude(Model):
 
     def get_system_message_for_model(self, tools: Optional[List[Any]] = None) -> Optional[str]:
         if tools is not None and len(tools) > 0:
-            tool_call_prompt = "Do not reflect on the quality of the returned search results in your response"
+            tool_call_prompt = "Do not reflect on the quality of the returned search results in your response\n\n"
             return tool_call_prompt
         return None
 
@@ -570,7 +570,6 @@ class Claude(Model):
                 }
 
         elif isinstance(response, ContentBlockStopEvent):
-            # Handle tool calls
             if response.content_block.type == "tool_use":  # type: ignore
                 tool_use = response.content_block  # type: ignore
                 tool_name = tool_use.name

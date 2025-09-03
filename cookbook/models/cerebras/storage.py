@@ -1,4 +1,4 @@
-"""Run `pip install duckduckgo-search sqlalchemy cerebras_cloud_sdk` to install dependencies."""
+"""Run `pip install ddgs sqlalchemy cerebras_cloud_sdk` to install dependencies."""
 
 from agno.agent import Agent
 from agno.models.cerebras import Cerebras

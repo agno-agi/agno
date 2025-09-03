@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -9,17 +9,19 @@ from agno.document.reader.youtube_reader import YouTubeReader
 @pytest.fixture
 def mock_transcript():
     return [
-        {"text": "First segment", "start": 0.0, "duration": 2.0},
-        {"text": "Second segment", "start": 2.0, "duration": 2.0},
-        {"text": "Third segment", "start": 4.0, "duration": 2.0},
+        MagicMock(text="First segment", start=0.0, duration=2.0),
+        MagicMock(text="Second segment", start=2.0, duration=2.0),
+        MagicMock(text="Third segment", start=4.0, duration=2.0),
     ]
 
 
 def test_read_video(mock_transcript):
     video_url = "https://www.youtube.com/watch?v=test_video_id"
 
-    with patch("agno.document.reader.youtube_reader.YouTubeTranscriptApi") as mock_api:
-        mock_api.get_transcript.return_value = mock_transcript
+    with patch("agno.document.reader.youtube_reader.YouTubeTranscriptApi") as mock_api_class:
+        mock_api_instance = MagicMock()
+        mock_api_class.return_value = mock_api_instance
+        mock_api_instance.fetch.return_value = mock_transcript
 
         reader = YouTubeReader()
         # Ensure chunking is disabled
@@ -87,10 +89,12 @@ def test_read_large_transcript():
     video_url = "https://www.youtube.com/watch?v=test_video_id"
 
     # Create a large transcript
-    mock_transcript = [{"text": f"Segment {i}", "start": float(i), "duration": 1.0} for i in range(1000)]
+    mock_transcript = [MagicMock(text=f"Segment {i}", start=float(i), duration=1.0) for i in range(1000)]
 
-    with patch("agno.document.reader.youtube_reader.YouTubeTranscriptApi") as mock_api:
-        mock_api.get_transcript.return_value = mock_transcript
+    with patch("agno.document.reader.youtube_reader.YouTubeTranscriptApi") as mock_api_class:
+        mock_api_instance = MagicMock()
+        mock_api_class.return_value = mock_api_instance
+        mock_api_instance.fetch.return_value = mock_transcript
 
         reader = YouTubeReader()
         # Ensure chunking is disabled
@@ -123,10 +127,12 @@ def test_read_video_with_params():
 def test_read_video_unicode_content():
     video_url = "https://www.youtube.com/watch?v=test_video_id"
 
-    mock_transcript = [{"text": "Unicode content 值", "start": 0.0, "duration": 2.0}]
+    mock_transcript = [MagicMock(text="Unicode content 值", start=0.0, duration=2.0)]
 
-    with patch("agno.document.reader.youtube_reader.YouTubeTranscriptApi") as mock_api:
-        mock_api.get_transcript.return_value = mock_transcript
+    with patch("agno.document.reader.youtube_reader.YouTubeTranscriptApi") as mock_api_class:
+        mock_api_instance = MagicMock()
+        mock_api_class.return_value = mock_api_instance
+        mock_api_instance.fetch.return_value = mock_transcript
 
         reader = YouTubeReader()
         reader.chunk = False
@@ -140,8 +146,10 @@ def test_read_video_unicode_content():
 async def test_async_read_video(mock_transcript):
     video_url = "https://www.youtube.com/watch?v=test_video_id"
 
-    with patch("agno.document.reader.youtube_reader.YouTubeTranscriptApi") as mock_api:
-        mock_api.get_transcript.return_value = mock_transcript
+    with patch("agno.document.reader.youtube_reader.YouTubeTranscriptApi") as mock_api_class:
+        mock_api_instance = MagicMock()
+        mock_api_class.return_value = mock_api_instance
+        mock_api_instance.fetch.return_value = mock_transcript
 
         reader = YouTubeReader()
         # Ensure chunking is disabled
@@ -213,10 +221,12 @@ async def test_async_read_large_transcript():
     video_url = "https://www.youtube.com/watch?v=test_video_id"
 
     # Create a large transcript
-    mock_transcript = [{"text": f"Segment {i}", "start": float(i), "duration": 1.0} for i in range(1000)]
+    mock_transcript = [MagicMock(text=f"Segment {i}", start=float(i), duration=1.0) for i in range(1000)]
 
-    with patch("agno.document.reader.youtube_reader.YouTubeTranscriptApi") as mock_api:
-        mock_api.get_transcript.return_value = mock_transcript
+    with patch("agno.document.reader.youtube_reader.YouTubeTranscriptApi") as mock_api_class:
+        mock_api_instance = MagicMock()
+        mock_api_class.return_value = mock_api_instance
+        mock_api_instance.fetch.return_value = mock_transcript
 
         reader = YouTubeReader()
         # Ensure chunking is disabled
@@ -251,10 +261,12 @@ async def test_async_read_video_with_params():
 async def test_async_read_video_unicode_content():
     video_url = "https://www.youtube.com/watch?v=test_video_id"
 
-    mock_transcript = [{"text": "Unicode content 值", "start": 0.0, "duration": 2.0}]
+    mock_transcript = [MagicMock(text="Unicode content 值", start=0.0, duration=2.0)]
 
-    with patch("agno.document.reader.youtube_reader.YouTubeTranscriptApi") as mock_api:
-        mock_api.get_transcript.return_value = mock_transcript
+    with patch("agno.document.reader.youtube_reader.YouTubeTranscriptApi") as mock_api_class:
+        mock_api_instance = MagicMock()
+        mock_api_class.return_value = mock_api_instance
+        mock_api_instance.fetch.return_value = mock_transcript
 
         reader = YouTubeReader()
         reader.chunk = False

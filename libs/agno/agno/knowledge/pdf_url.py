@@ -19,18 +19,22 @@ class PDFUrlKnowledgeBase(AgentKnowledge):
 
         for item in self.urls:
             if isinstance(item, dict) and "url" in item:
-                # Handle URL with metadata
+                # Handle URL with metadata/password
                 url = item["url"]
                 config = item.get("metadata", {})
+                pdf_password = item.get("password")
+                if pdf_password is not None and not isinstance(pdf_password, str):
+                    pdf_password = None
+
                 if self._is_valid_url(url):  # type: ignore
-                    documents = self.reader.read(url=url)  # type: ignore
+                    documents = self.reader.read(url=url, password=pdf_password)  # type: ignore
                     if config:
                         for doc in documents:
                             log_info(f"Adding metadata {config} to document from URL: {url}")
                             doc.meta_data.update(config)  # type: ignore
                     yield documents
             else:
-                # Handle simple URL
+                # Handle simple URL - no password
                 if self._is_valid_url(item):  # type: ignore
                     yield self.reader.read(url=item)  # type: ignore
 
@@ -49,11 +53,15 @@ class PDFUrlKnowledgeBase(AgentKnowledge):
 
         for item in self.urls:
             if isinstance(item, dict) and "url" in item:
-                # Handle URL with metadata
+                # Handle URL with metadata/password
                 url = item["url"]
                 config = item.get("metadata", {})
+                pdf_password = item.get("password")
+                if pdf_password is not None and not isinstance(pdf_password, str):
+                    pdf_password = None
+
                 if self._is_valid_url(url):  # type: ignore
-                    documents = await self.reader.async_read(url=url)  # type: ignore
+                    documents = await self.reader.async_read(url=url, password=pdf_password)  # type: ignore
                     if config:
                         for doc in documents:
                             log_info(f"Adding metadata {config} to document from URL: {url}")
