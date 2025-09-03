@@ -134,15 +134,18 @@ def create_infra_from_template(
 
     try:
         # infra_dir_path is the path to the infra_root/infra dir
-        infra_dir_path: Path = get_infra_dir_path(infra_root_path)
-        infra_secrets_dir = infra_dir_path.joinpath("secrets").resolve()
-        infra_example_secrets_dir = infra_dir_path.joinpath("example_secrets").resolve()
+        infra_dir_path: Optional[Path] = get_infra_dir_path(infra_root_path)
+        if infra_dir_path is not None:
+            infra_secrets_dir = infra_dir_path.joinpath("secrets").resolve()
+            infra_example_secrets_dir = infra_dir_path.joinpath("example_secrets").resolve()
 
-        print_info(f"Creating {str(infra_secrets_dir)}")
-        copytree(
-            str(infra_example_secrets_dir),
-            str(infra_secrets_dir),
-        )
+            print_info(f"Creating {str(infra_secrets_dir)}")
+            copytree(
+                str(infra_example_secrets_dir),
+                str(infra_secrets_dir),
+            )
+        else:
+            log_warning("Could not find infra directory - skipping secrets setup")
     except Exception as e:
         log_warning(f"Could not create infra/secrets: {e}")
         log_warning("Please manually copy infra/example_secrets to infra/secrets")
@@ -195,7 +198,10 @@ def setup_infra(infra_root_path: Path) -> Optional[InfraConfig]:
 
         # Check if the infra contains a `infra` dir
         infra_dir_path = get_infra_dir_path(infra_root_path)
-        logger.debug(f"Found the `infra` configuration at: {infra_dir_path}")
+        if infra_dir_path is not None:
+            logger.debug(f"Found the `infra` configuration at: {infra_dir_path}")
+        else:
+            logger.debug(f"No infra directory found, but continuing setup")
         infra_config = agno_config.create_or_update_infra_config(infra_root_path=infra_root_path, set_as_active=True)
         if infra_config is None:
             logger.error(f"Failed to create InfraConfig for {infra_root_path}")
