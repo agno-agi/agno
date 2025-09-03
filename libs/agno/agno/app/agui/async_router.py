@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from typing import AsyncIterator, Optional, cast
+from typing import AsyncIterator, Optional
 
 from ag_ui.core import (
     BaseEvent,
