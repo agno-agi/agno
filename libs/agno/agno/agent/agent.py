@@ -811,7 +811,7 @@ class Agent:
         self.save_session(session=session)
 
         # Log Agent Telemetry
-        # self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
+        self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
