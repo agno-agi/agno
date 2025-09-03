@@ -18,7 +18,6 @@ class RunCancellationManager:
         """Register a new run as not cancelled."""
         with self._lock:
             self._cancelled_runs[run_id] = False
-            logger.debug(f"Registered run {run_id} for cancellation tracking")
 
     def cancel_run(self, run_id: str) -> bool:
         """Cancel a run by marking it as cancelled.
@@ -45,7 +44,6 @@ class RunCancellationManager:
         with self._lock:
             if run_id in self._cancelled_runs:
                 del self._cancelled_runs[run_id]
-                logger.debug(f"Cleaned up cancellation tracking for run {run_id}")
 
     def raise_if_cancelled(self, run_id: str) -> None:
         """Check if a run should be cancelled and raise exception if so."""

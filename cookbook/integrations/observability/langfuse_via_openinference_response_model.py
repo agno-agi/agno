@@ -37,10 +37,9 @@ os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = f"Authorization=Basic {LANGFUSE_AUTH}
 
 tracer_provider = TracerProvider()
 tracer_provider.add_span_processor(SimpleSpanProcessor(OTLPSpanExporter()))
-trace_api.set_tracer_provider(tracer_provider=tracer_provider)
 
 # Start instrumenting agno
-AgnoInstrumentor().instrument()
+AgnoInstrumentor().instrument(tracer_provider=tracer_provider)
 
 
 class MarketArea(Enum):
