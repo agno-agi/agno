@@ -3755,6 +3755,7 @@ class Agent:
     def _collect_joint_images(
         self,
         run_input: Optional[RunInput] = None,
+        session: Optional[AgentSession] = None,
     ) -> Optional[Sequence[Image]]:
         """Collect images from input, session history, and current run response."""
         joint_images = []
@@ -3774,7 +3775,6 @@ class Agent:
 
         # 2. Add images from session history (from both input and generated sources)
         try:
-            session = self.get_session()
             if session and session.runs:
                 for historical_run in session.runs:
                     # Add generated images from previous runs
@@ -3815,6 +3815,7 @@ class Agent:
     def _collect_joint_videos(
         self,
         run_input: Optional[RunInput] = None,
+        session: Optional[AgentSession] = None,
     ) -> Optional[Sequence[Video]]:
         """Collect videos from input, session history, and current run response."""
         joint_videos = []
@@ -3834,7 +3835,6 @@ class Agent:
 
         # 2. Add videos from session history (from both input and generated sources)
         try:
-            session = self.get_session()
             if session and session.runs:
                 for historical_run in session.runs:
                     # Add generated videos from previous runs
@@ -3875,6 +3875,7 @@ class Agent:
     def _collect_joint_audios(
         self,
         run_input: Optional[RunInput] = None,
+        session: Optional[AgentSession] = None,
     ) -> Optional[Sequence[Audio]]:
         """Collect audios from input, session history, and current run response."""
         joint_audios = []
@@ -3894,7 +3895,6 @@ class Agent:
 
         # 2. Add audios from session history (from both input and generated sources)
         try:
-            session = self.get_session()
             if session and session.runs:
                 for historical_run in session.runs:
                     # Add generated audios from previous runs
@@ -4058,10 +4058,10 @@ class Agent:
             )
 
             # Only collect media if functions actually need them
-            joint_images = self._collect_joint_images(run_response.input) if needs_media else None
+            joint_images = self._collect_joint_images(run_response.input, session) if needs_media else None
             joint_files = self._collect_joint_files(run_response.input) if needs_media else None
-            joint_audios = self._collect_joint_audios(run_response.input) if needs_media else None
-            joint_videos = self._collect_joint_videos(run_response.input) if needs_media else None
+            joint_audios = self._collect_joint_audios(run_response.input, session) if needs_media else None
+            joint_videos = self._collect_joint_videos(run_response.input, session) if needs_media else None
 
             for func in self._functions_for_model.values():
                 func._session_state = session_state
