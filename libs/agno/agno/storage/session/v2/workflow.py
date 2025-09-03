@@ -40,21 +40,45 @@ class WorkflowSession:
         if self.runs is None:
             self.runs = []
 
-    def add_run(self, run_response: WorkflowRunResponse) -> None:
-        """Add a workflow run response to this session"""
+    def upsert_run(self, run: WorkflowRunResponse) -> None:
+        """Add or update a workflow run (upsert behavior)"""
         if self.runs is None:
             self.runs = []
-        # Store the actual WorkflowRunResponse object
-        self.runs.append(run_response)
+
+        # Find existing run and update it, or append new one
+        for i, existing_run in enumerate(self.runs):
+            if existing_run.run_id == run.run_id:
+                # Update existing run
+                self.runs[i] = run
+                return
+
+        # Run not found, append new one
+        self.runs.append(run)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for storage, serializing runs to dicts"""
+
+        runs_data = None
+        if self.runs:
+            runs_data = []
+            for run in self.runs:
+                try:
+                    runs_data.append(run.to_dict())
+                except Exception as e:
+                    # If run serialization fails, create a minimal representation
+                    runs_data.append(
+                        {
+                            "run_id": getattr(run, "run_id", "unknown"),
+                            "status": str(getattr(run, "status", "unknown")),
+                            "error": f"Serialization failed: {str(e)}",
+                        }
+                    )
         return {
             "session_id": self.session_id,
             "user_id": self.user_id,
             "workflow_id": self.workflow_id,
             "workflow_name": self.workflow_name,
-            "runs": [run.to_dict() for run in self.runs] if self.runs else None,
+            "runs": runs_data,
             "session_data": self.session_data,
             "workflow_data": self.workflow_data,
             "extra_data": self.extra_data,

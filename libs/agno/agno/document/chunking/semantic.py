@@ -14,9 +14,7 @@ except ImportError:
 class SemanticChunking(ChunkingStrategy):
     """Chunking strategy that splits text into semantic chunks using chonkie"""
 
-    def __init__(
-        self, embedder: Optional[Embedder] = None, chunk_size: int = 5000, similarity_threshold: Optional[float] = 0.5
-    ):
+    def __init__(self, embedder: Optional[Embedder] = None, chunk_size: int = 5000, similarity_threshold: float = 0.5):
         self.embedder = embedder or OpenAIEmbedder(id="text-embedding-3-small")  # type: ignore
         self.chunk_size = chunk_size
         self.similarity_threshold = similarity_threshold
