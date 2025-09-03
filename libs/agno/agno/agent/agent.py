@@ -3803,7 +3803,8 @@ class Agent:
         except Exception as e:
             log_debug(f"Could not access session history for images: {e}")
 
-        log_debug(f"Joint Images Available: {len(joint_images)} images")
+        if joint_images:
+            log_debug(f"Joint Images Available: {len(joint_images)} images")
         return joint_images if joint_images else None
 
     def _collect_joint_videos(
@@ -3862,8 +3863,9 @@ class Agent:
                         )
         except Exception as e:
             log_debug(f"Could not access session history for videos: {e}")
-
-        log_debug(f"Joint Videos Available: {len(joint_videos)} videos")
+        
+        if joint_videos:
+            log_debug(f"Joint Videos Available: {len(joint_videos)} videos")
         return joint_videos if joint_videos else None
 
     def _collect_joint_audios(
@@ -3923,7 +3925,8 @@ class Agent:
         except Exception as e:
             log_debug(f"Could not access session history for audios: {e}")
 
-        log_debug(f"Joint Audios Available: {len(joint_audios)} audios")
+        if joint_audios:
+            log_debug(f"Joint Audios Available: {len(joint_audios)} audios")
         return joint_audios if joint_audios else None
 
     def _collect_joint_files(
@@ -3942,7 +3945,8 @@ class Agent:
 
         # TODO: Files aren't stored in session history yet and dont have a FileArtifact
 
-        log_debug(f"Joint Files Available: {len(joint_files)} files")
+        if joint_files:
+            log_debug(f"Joint Files Available: {len(joint_files)} files")
         return joint_files if joint_files else None
 
     def _determine_tools_for_model(
