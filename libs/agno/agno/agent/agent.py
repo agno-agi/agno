@@ -40,12 +40,7 @@ from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecutio
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.base import RunResponseExtraData, RunStatus
 from agno.run.messages import RunMessages
-from agno.run.response import (
-    RunEvent,
-    RunResponse,
-    RunResponseEvent,
-    RunResponsePausedEvent,
-)
+from agno.run.response import RunEvent, RunResponse, RunResponseEvent, RunResponsePausedEvent
 from agno.run.team import TeamRunResponse, TeamRunResponseEvent
 from agno.storage.base import Storage
 from agno.storage.session.agent import AgentSession
@@ -269,7 +264,7 @@ class Agent:
 
     # --- Agent Response Model Settings ---
     # Provide a response model to get the response as a Pydantic model
-    response_model: Optional[Type[BaseModel]] = None
+    response_model: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
     # Provide a secondary model to parse the response from the primary model
     parser_model: Optional[Model] = None
     # Provide a prompt for the parser model
@@ -417,7 +412,7 @@ class Agent:
         exponential_backoff: bool = False,
         parser_model: Optional[Model] = None,
         parser_model_prompt: Optional[str] = None,
-        response_model: Optional[Type[BaseModel]] = None,
+        response_model: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         parse_response: bool = True,
         output_model: Optional[Model] = None,
         output_model_prompt: Optional[str] = None,
@@ -2485,7 +2480,27 @@ class Agent:
 
     def _convert_response_to_structured_format(self, run_response: Union[RunResponse, ModelResponse]):
         # Convert the response to the structured format if needed
-        if self.response_model is not None and not isinstance(run_response.content, self.response_model):
+        if self.response_model is None:
+            return
+
+        # Handle JSON schema as a dictionary
+        if isinstance(self.response_model, dict):
+            if isinstance(run_response.content, str):
+                import json
+                try:
+                    structured_output = json.loads(run_response.content)
+                    run_response.content = structured_output
+                    if hasattr(run_response, "content_type"):
+                        run_response.content_type = "json"
+                except json.JSONDecodeError as e:
+                    log_warning(f"Failed to parse JSON response: {e}")
+                except Exception as e:
+                    log_warning(f"An unexpected error occurred while parsing JSON response: {e}")
+            # If content is not a string, no conversion is needed
+            return
+
+        # Handle Pydantic model
+        if not isinstance(run_response.content, self.response_model):
             if isinstance(run_response.content, str) and self.parse_response:
                 try:
                     structured_output = parse_response_model_str(run_response.content, self.response_model)
