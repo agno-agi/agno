@@ -697,8 +697,6 @@ class SingleStoreDb(BaseDb):
                     if row is None:
                         return None
 
-                    log_debug(f"Upserted session with id '{session_dict.get('session_id')}'")
-
                     if not deserialize:
                         return row._mapping
 
@@ -740,8 +738,6 @@ class SingleStoreDb(BaseDb):
                     if row is None:
                         return None
 
-                    log_debug(f"Upserted session with id '{session_dict.get('session_id')}'")
-
                     if not deserialize:
                         return row._mapping
 
@@ -782,8 +778,6 @@ class SingleStoreDb(BaseDb):
                     row = sess.execute(select_stmt).fetchone()
                     if row is None:
                         return None
-
-                    log_debug(f"Upserted session with id '{session_dict.get('session_id')}'")
 
                     if not deserialize:
                         return row._mapping
@@ -1116,8 +1110,6 @@ class SingleStoreDb(BaseDb):
                 row = sess.execute(select_stmt).fetchone()
                 if row is None:
                     return None
-
-            log_debug(f"Upserted user memory with id '{memory.memory_id}'")
 
             memory_raw = row._mapping
             if not memory_raw or not deserialize:
@@ -1460,8 +1452,6 @@ class SingleStoreDb(BaseDb):
                 stmt = mysql.insert(table).values(knowledge_row.model_dump())
                 stmt = stmt.on_duplicate_key_update(**update_fields)
                 sess.execute(stmt)
-
-            log_debug(f"Upserted knowledge source with id '{knowledge_row.id}'")
 
             return knowledge_row
 

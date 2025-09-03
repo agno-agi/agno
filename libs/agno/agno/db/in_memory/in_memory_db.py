@@ -280,8 +280,6 @@ class InMemoryDb(BaseDb):
                 session_dict["updated_at"] = session_dict.get("created_at")
                 self._sessions.append(session_dict)
 
-            log_debug(f"Upserted session with id '{session.session_id}'")
-
             if not deserialize:
                 return session_dict
 
@@ -463,8 +461,6 @@ class InMemoryDb(BaseDb):
 
             if not memory_updated:
                 self._memories.append(memory_dict)
-
-            log_debug(f"Upserted user memory with id '{memory.memory_id}'")
 
             if not deserialize:
                 return memory_dict
@@ -738,8 +734,6 @@ class InMemoryDb(BaseDb):
 
             if not item_updated:
                 self._knowledge.append(knowledge_dict)
-
-            log_debug(f"Upserted knowledge source with id '{knowledge_row.id}'")
 
             return knowledge_row
 

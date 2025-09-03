@@ -91,7 +91,6 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
             log_warning(f"Missing columns {missing_columns} in table {table_name}")
             return False
 
-        log_debug(f"Table {table_name} has all expected columns")
         return True
     except Exception as e:
         log_error(f"Error validating table schema for {table_name}: {e}")
