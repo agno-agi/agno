@@ -771,6 +771,11 @@ class Agent:
 
         if self.store_media:
             self._store_media(run_response, model_response)
+        else:
+            run_response.input.images = []
+            run_response.input.videos = []
+            run_response.input.audios = []
+            run_response.input.files = []
 
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
@@ -1075,16 +1080,11 @@ class Agent:
             images=images, videos=videos, audios=audio
         )
 
-        if self.store_media:
-            # Create RunInput to capture the original user input
-            run_input = RunInput(
-                input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
-            )
-        else:
-            # Clear the RunInput which contains the input media if media is not stored
-            run_input = RunInput(
-                input_content=input,
-            )
+        # Create RunInput to capture the original user input
+        run_input = RunInput(
+            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
+        )
+
 
         # Read existing session from database
         agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
@@ -1335,6 +1335,11 @@ class Agent:
 
         if self.store_media:
             self._store_media(run_response, model_response)
+        else:
+            run_response.input.images = []
+            run_response.input.videos = []
+            run_response.input.audios = []
+            run_response.input.files = []
 
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
@@ -1648,16 +1653,10 @@ class Agent:
             images=images, videos=videos, audios=audio
         )
 
-        if self.store_media:
-            # Create RunInput to capture the original user input
-            run_input = RunInput(
-                input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
-            )
-        else:
-            # Clear the RunInput which contains the input media if media is not stored
-            run_input = RunInput(
-                input_content=input,
-            )
+        # Create RunInput to capture the original user input
+        run_input = RunInput(
+            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
+        )
 
         # Read existing session from storage
         agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
