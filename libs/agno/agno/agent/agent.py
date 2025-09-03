@@ -772,11 +772,7 @@ class Agent:
         if self.store_media:
             self._store_media(run_response, model_response)
         else:
-            if run_response.input is not None:
-                run_response.input.images = []
-                run_response.input.videos = []
-                run_response.input.audios = []
-                run_response.input.files = []
+            self._scrub_media_from_run_output(run_response)
 
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
@@ -815,7 +811,7 @@ class Agent:
         self.save_session(session=session)
 
         # Log Agent Telemetry
-        self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
+        # self._log_agent_telemetry(session_id=session.session_id, run_id=run_response.run_id)
 
         log_debug(f"Agent Run End: {run_response.run_id}", center=True, symbol="*")
 
@@ -1337,11 +1333,7 @@ class Agent:
         if self.store_media:
             self._store_media(run_response, model_response)
         else:
-            if run_response.input is not None:
-                run_response.input.images = []
-                run_response.input.videos = []
-                run_response.input.audios = []
-                run_response.input.files = []
+            self._scrub_media_from_run_output(run_response)
 
         # We should break out of the run function
         if any(tool_call.is_paused for tool_call in run_response.tools or []):
@@ -7118,6 +7110,48 @@ class Agent:
             log_debug(f"Using knowledge filters: {effective_filters}")
 
         return effective_filters
+
+    def _scrub_media_from_run_output(self, run_response: RunOutput) -> None:
+        """
+        Completely remove all media from RunOutput when store_media=False.
+        This includes media in input, output artifacts, and all messages.
+        """
+        # 1. Scrub RunInput media
+        if run_response.input is not None:
+            run_response.input.images = []
+            run_response.input.videos = []
+            run_response.input.audios = []
+            run_response.input.files = []
+
+        # 2. RunOutput artifact media are skipped since we don't store them when store_media=False
+    
+        # 3. Scrub media from all messages
+        if run_response.messages:
+            for message in run_response.messages:
+                self._scrub_media_from_message(message)
+
+        # 4. Scrub media from additional_input messages if any
+        if run_response.additional_input:
+            for message in run_response.additional_input:
+                self._scrub_media_from_message(message)
+
+        # 5. Scrub media from reasoning_messages if any
+        if run_response.reasoning_messages:
+            for message in run_response.reasoning_messages:
+                self._scrub_media_from_message(message)
+
+    def _scrub_media_from_message(self, message: Message) -> None:
+        """Remove all media from a Message object."""
+        # Input media
+        message.images = None
+        message.videos = None
+        message.audio = None
+        message.files = None
+        
+        # Output media
+        message.audio_output = None
+        message.image_output = None
+        message.video_output = None
 
     def _convert_media_to_artifacts(
         self,
