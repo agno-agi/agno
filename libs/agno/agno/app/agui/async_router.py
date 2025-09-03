@@ -9,9 +9,9 @@ from ag_ui.core import (
     EventType,
     RunAgentInput,
     RunErrorEvent,
-    RunStartedEvent,
     RunFinishedEvent,
-    StateSnapshotEvent
+    RunStartedEvent,
+    StateSnapshotEvent,
 )
 from ag_ui.encoder import EventEncoder
 from fastapi import APIRouter
@@ -43,8 +43,7 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
 
         # Stream the response content in AG-UI format
         async for event in async_stream_agno_response_as_agui_events(
-            state_holder=agent,
-            response_stream=response_stream
+            state_holder=agent, response_stream=response_stream
         ):
             yield event
 
@@ -75,8 +74,7 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
 
         # Stream the response content in AG-UI format
         async for event in async_stream_agno_response_as_agui_events(
-            state_holder=team,
-            response_stream=response_stream
+            state_holder=team, response_stream=response_stream
         ):
             yield event
 
@@ -90,7 +88,7 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
 
 def get_async_agui_router(agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
     """Return an AG-UI compatible FastAPI router."""
-    if (sum(x is not None for x in (agent, team)) != 1):
+    if sum(x is not None for x in (agent, team)) != 1:
         raise ValueError("One of 'agent' or 'team' must be provided.")
 
     router = APIRouter()

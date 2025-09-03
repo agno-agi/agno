@@ -179,8 +179,8 @@ async def test_stream_basic():
 
     events = []
     async for event in async_stream_agno_response_as_agui_events(
-        state_holder=agent, # type: ignore
-        response_stream=mock_stream()
+        state_holder=agent,  # type: ignore
+        response_stream=mock_stream(),
     ):
         events.append(event)
 
@@ -233,8 +233,8 @@ async def test_stream_with_tool_call_blocking():
 
     events = []
     async for event in async_stream_agno_response_as_agui_events(
-        state_holder=agent, # type: ignore
-        response_stream=mock_stream_with_tool_calls()
+        state_holder=agent,  # type: ignore
+        response_stream=mock_stream_with_tool_calls(),
     ):
         events.append(event)
 

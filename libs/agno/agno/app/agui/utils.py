@@ -10,6 +10,8 @@ from typing import AsyncIterator, Deque, List, Optional, Set, Tuple, Union
 from ag_ui.core import (
     BaseEvent,
     EventType,
+    StateDeltaEvent,
+    StateSnapshotEvent,
     StepFinishedEvent,
     StepStartedEvent,
     TextMessageContentEvent,
@@ -19,17 +21,17 @@ from ag_ui.core import (
     ToolCallEndEvent,
     ToolCallResultEvent,
     ToolCallStartEvent,
-    StateSnapshotEvent,
-    StateDeltaEvent
 )
 from ag_ui.core.types import Message as AGUIMessage
+from jsonpatch import make_patch
 
+from agno.agent import Agent
 from agno.models.message import Message
 from agno.run.response import RunEvent, RunResponseContentEvent, RunResponseEvent, RunResponsePausedEvent
-from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent, TeamRunEvent, TeamRunResponseEvent
-from agno.agent import Agent
+from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
+from agno.run.team import TeamRunEvent, TeamRunResponseEvent
 from agno.team import Team
-from jsonpatch import make_patch
+
 
 @dataclass
 class EventBuffer:
@@ -331,8 +333,7 @@ def _generate_state_patch(old_state: dict, new_state: dict):
 
 
 def stream_agno_response_as_agui_events(
-    state_holder: Agent | Team,
-    response_stream: Iterator[Union[RunResponseEvent, TeamRunResponseEvent]]
+    state_holder: Agent | Team, response_stream: Iterator[Union[RunResponseEvent, TeamRunResponseEvent]]
 ) -> Iterator[BaseEvent]:
     """Map the Agno response stream to AG-UI format, handling event ordering constraints."""
     message_id = str(uuid.uuid4())
@@ -350,9 +351,7 @@ def stream_agno_response_as_agui_events(
             or chunk.event == TeamRunEvent.run_completed
             or chunk.event == RunEvent.run_paused
         ):
-            completion_events = _create_completion_events(
-                chunk, event_buffer, message_started, message_id
-            )
+            completion_events = _create_completion_events(chunk, event_buffer, message_started, message_id)
 
             # Reset to false to ensure next team member emits a new TextMessageStartEvent
             message_started = False
@@ -379,6 +378,7 @@ def stream_agno_response_as_agui_events(
                 for emit_event in events_to_emit:
                     yield emit_event
 
+
 # Async version - thin wrapper
 async def async_stream_agno_response_as_agui_events(
     state_holder: Agent | Team,
@@ -403,9 +403,7 @@ async def async_stream_agno_response_as_agui_events(
             or chunk.event == RunEvent.run_completed
             or chunk.event == RunEvent.run_paused
         ):
-            completion_events = _create_completion_events(
-                chunk, event_buffer, message_started, message_id
-            )
+            completion_events = _create_completion_events(chunk, event_buffer, message_started, message_id)
 
             # Reset to false to ensure next team member emits a new TextMessageStartEvent
             message_started = False
