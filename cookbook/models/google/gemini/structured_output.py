@@ -66,7 +66,7 @@ class EventSchema(BaseModel):
     )
 
 
-agent = Agent(
+structured_output_agent = Agent(
     name="Advanced Event Planner",
     model=Gemini(id="gemini-2.5-pro"),
     response_model=EventSchema,
@@ -80,6 +80,6 @@ agent = Agent(
     """,
 )
 
-result = agent.print_response(
+structured_output_agent.print_response(
     "Plan a corporate product launch event for 150 people next month"
 )
