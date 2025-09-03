@@ -38,7 +38,7 @@ def create_infra_from_template(
     import git
 
     from agno.cli.operator import initialize_agno_cli
-    from agno.infra.helpers import get_infra_dir_path
+    from agno.infra.helpers import get_infra_dir_path, is_docker_only_project
     from agno.utilities.filesystem import rmdir_recursive
     from agno.utilities.git import GitCloneProgress
 
@@ -103,7 +103,7 @@ def create_infra_from_template(
     # Check if we can create the infra in the current dir
     infra_root_path: Path = current_dir.joinpath(infra_dir_name)
     if infra_root_path.exists():
-        logger.error(f"Directory {infra_root_path} exists, please delete directory or choose another name for infra")
+        logger.error(f"Directory {infra_root_path} exists, please delete the directory or choose another name for your Agno Infra project.")
         return None
 
     print_info(f"Creating {str(infra_root_path)}")
@@ -132,90 +132,44 @@ def create_infra_from_template(
 
     agno_config.add_new_infra_to_config(infra_root_path=infra_root_path)
 
-    try:
-        # infra_dir_path is the path to the infra_root/infra dir
-        infra_dir_path: Optional[Path] = get_infra_dir_path(infra_root_path)
-        if infra_dir_path is not None:
-            infra_secrets_dir = infra_dir_path.joinpath("secrets").resolve()
-            infra_example_secrets_dir = infra_dir_path.joinpath("example_secrets").resolve()
+    if is_docker_only_project(infra_root_path):
+        logger.debug("Docker only project detected - skipping secrets setup")
+    else:
+        try:
+            # infra_dir_path is the path to the infra_root/infra dir
+            infra_dir_path: Optional[Path] = get_infra_dir_path(infra_root_path)
+            if infra_dir_path is not None:
+                infra_secrets_dir = infra_dir_path.joinpath("secrets").resolve()
+                infra_example_secrets_dir = infra_dir_path.joinpath("example_secrets").resolve()
 
-            print_info(f"Creating {str(infra_secrets_dir)}")
-            copytree(
-                str(infra_example_secrets_dir),
-                str(infra_secrets_dir),
-            )
-        else:
-            log_warning("Could not find infra directory - skipping secrets setup")
-    except Exception as e:
-        log_warning(f"Could not create infra/secrets: {e}")
-        log_warning("Please manually copy infra/example_secrets to infra/secrets")
+                print_info(f"Creating {str(infra_secrets_dir)}")
+                copytree(
+                    str(infra_example_secrets_dir),
+                    str(infra_secrets_dir),
+                )
+            else:
+                log_warning("Could not find infra directory - skipping secrets setup")
+        except Exception as e:
+            log_warning(f"Could not create infra/secrets: {e}")
+            log_warning("Please manually copy infra/example_secrets to infra/secrets")
 
     infra_config = agno_config.create_or_update_infra_config(infra_root_path=infra_root_path, set_as_active=True)
 
     if infra_config is not None:
-        print_info(f"Your new Agno Infra project is available at {str(infra_root_path)}\n")
+        print_info("\n--------------------------------")
+        print_info(f"Congrats! Your new Agno Infra project is available at:")
+        print_info(f"\t{str(infra_root_path)} \n")
         print_info("1. Start Infra:")
         print_info("\tag infra up")
         print_info("2. Stop Infra:")
         print_info("\tag infra down")
+        print_info("--------------------------------")
 
         return infra_config
     else:
         print_info("Infra setup unsuccessful. Please try again.")
     return None
 
-
-def setup_infra(infra_root_path: Path) -> Optional[InfraConfig]:
-    """Setup an Agno Infra project at `infra_root_path` and return the InfraConfig
-
-    1. Steps
-    1.1 Check if infra_root_path exists and is a directory
-    1.2 Create AgnoCliConfig if needed
-    1.3 Create a InfraConfig if needed
-    1.4 Get the Infra name
-    1.5 Create or update InfraConfig
-    """
-    from agno.cli.operator import initialize_agno_cli
-
-    print_heading("Setting up infra\n")
-
-    ######################################################
-    ## 1. Steps
-    ######################################################
-    # 1.1 Check infra_root_path exists and is a directory
-    infra_is_valid: bool = infra_root_path is not None and infra_root_path.exists() and infra_root_path.is_dir()
-    if not infra_is_valid:
-        logger.error("Invalid directory: {}".format(infra_root_path))
-        return None
-
-    # 1.2 Create AgnoCliConfig if needed
-    agno_config: Optional[AgnoCliConfig] = AgnoCliConfig.from_saved_config()
-    if not agno_config:
-        agno_config = initialize_agno_cli()
-        if not agno_config:
-            log_config_not_available_msg()
-            return None
-
-    # 1.3 Create a InfraConfig if needed
-    logger.debug(f"Checking for a infra at {infra_root_path}")
-    infra_config: Optional[InfraConfig] = agno_config.get_infra_config_by_path(infra_root_path)
-    if infra_config is None:
-        # There's no record of this infra, reasons:
-        # - The user is setting up a new infra
-        # - The user ran `ag init -r` which erased existing infra
-        logger.debug(f"Could not find a infra at: {infra_root_path}")
-
-        infra_config = setup_infra_config_from_dir(infra_root_path)
-    else:
-        logger.debug(f"Found infra at {infra_root_path}")
-
-    print_subheading("Setup complete! Next steps:")
-    print_info("1. Start Infra:")
-    print_info("\tag infra up")
-    print_info("2. Stop Infra:")
-    print_info("\tag infra down")
-
-    return infra_config
 
 
 def setup_infra_config_from_dir(infra_root_path: Path) -> Optional[InfraConfig]:

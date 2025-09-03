@@ -16,6 +16,25 @@ def get_infra_dir_from_env() -> Optional[Path]:
     return None
 
 
+def is_docker_only_project(infra_root_path: Path) -> bool:
+    """
+    Check if the project is a docker only project.
+    """
+    
+    infrastructure_indicators = [
+        "compose.yaml",
+        "docker-compose.yaml",
+        "docker-compose.yml",
+        "Dockerfile",
+        "compose.yml",
+    ]
+
+    for indicator in infrastructure_indicators:
+        if infra_root_path.joinpath(indicator).exists():
+            log_debug(f"Found infrastructure file '{indicator}' - using root directory as infra path")
+            return True
+    return False
+
 def get_infra_dir_path(infra_root_path: Path) -> Optional[Path]:
     """
     Get the infra directory path from the given project root path.
@@ -47,19 +66,5 @@ def get_infra_dir_path(infra_root_path: Path) -> Optional[Path]:
                 if agno_conf_infra_dir_path.exists() and agno_conf_infra_dir_path.is_dir():
                     return agno_conf_infra_dir_path
 
-    # Case 3: Check if root directory contains infrastructure files (Docker-based templates)
-    infrastructure_indicators = [
-        "compose.yaml",
-        "docker-compose.yaml",
-        "docker-compose.yml",
-        "Dockerfile",
-        "compose.yml",
-    ]
-
-    for indicator in infrastructure_indicators:
-        if infra_root_path.joinpath(indicator).exists():
-            log_debug(f"Found infrastructure file '{indicator}' - using root directory as infra path")
-            return infra_root_path
-
-    log_error(f"Could not find a infra directory at: {infra_root_path}")
+    log_debug(f"Could not find a infra directory at: {infra_root_path}")
     return None
