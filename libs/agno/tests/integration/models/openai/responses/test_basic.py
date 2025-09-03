@@ -10,6 +10,7 @@ from agno.memory.classifier import MemoryClassifier
 from agno.memory.db.sqlite import SqliteMemoryDb
 from agno.memory.manager import MemoryManager
 from agno.memory.summarizer import MemorySummarizer
+from agno.models.message import Message
 from agno.models.openai import OpenAIResponses
 from agno.storage.agent.sqlite import SqliteAgentStorage
 from agno.tools.duckduckgo import DuckDuckGoTools
@@ -230,3 +231,15 @@ def test_persistent_memory():
 
     response = agent.run("What is current news in France?")
     assert response.content is not None
+
+
+def test_reasoning_summary():
+    """Test we obtain reasoning summaries from the model when requesting them."""
+    model = OpenAIResponses(id="o4-mini", reasoning_summary="auto")
+
+    raw_model_reponse = model.invoke(messages=[Message(role="user", content="What is going on in France?")])
+    model_response = model.parse_provider_response(raw_model_reponse)
+
+    assert model_response is not None
+    assert model_response.reasoning_content is not None
+    assert "France" in model_response.reasoning_content

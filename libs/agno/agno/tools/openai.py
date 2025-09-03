@@ -1,9 +1,10 @@
 from os import getenv
-from typing import Any, List, Literal, Optional
+from typing import Any, List, Literal, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
 from agno.media import AudioArtifact, ImageArtifact
+from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_warning
 
@@ -84,7 +85,7 @@ class OpenAITools(Toolkit):
 
     def generate_image(
         self,
-        agent: Agent,
+        agent: Union[Agent, Team],
         prompt: str,
     ) -> str:
         """Generate images based on a text prompt.
@@ -139,7 +140,7 @@ class OpenAITools(Toolkit):
 
     def generate_speech(
         self,
-        agent: Agent,
+        agent: Union[Agent, Team],
         text_input: str,
     ) -> str:
         """Generate speech from text using OpenAI's Text-to-Speech API.

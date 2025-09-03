@@ -170,19 +170,29 @@ def test_get_pull_request_with_details(mock_github):
     result = github_tools.list_issues("test-org/test-repo")
     result_data = json.loads(result)
 
-    assert len(result_data) == 2
-    assert result_data[0]["number"] == 1
-    assert result_data[0]["state"] == "open"
-    assert result_data[1]["number"] == 2
-    assert result_data[1]["state"] == "closed"
+    assert "data" in result_data
+    assert "meta" in result_data
+    assert len(result_data["data"]) == 2
+    assert result_data["data"][0]["number"] == 1
+    assert result_data["data"][0]["state"] == "open"
+    assert result_data["data"][1]["number"] == 2
+    assert result_data["data"][1]["state"] == "closed"
+
+    # Check pagination metadata
+    assert result_data["meta"]["current_page"] == 1
+    assert result_data["meta"]["per_page"] == 20
+    assert result_data["meta"]["total_items"] == 2
+    assert result_data["meta"]["total_pages"] == 1
 
     # Test listing only open issues
     mock_repo.get_issues.return_value = [mock_issue1]
     result = github_tools.list_issues("test-org/test-repo", state="open")
     result_data = json.loads(result)
 
-    assert len(result_data) == 1
-    assert result_data[0]["state"] == "open"
+    assert "data" in result_data
+    assert len(result_data["data"]) == 1
+    assert result_data["data"][0]["state"] == "open"
+    assert result_data["meta"]["total_items"] == 1
 
 
 def test_create_issue(mock_github):
@@ -1524,6 +1534,7 @@ def test_search_code(mock_github):
     mock_code_results.totalCount = 2
     mock_code_results.__getitem__.return_value = [mock_code1, mock_code2]
     mock_code_results.__iter__.return_value = [mock_code1, mock_code2]
+    mock_code_results.get_page.side_effect = lambda page: [mock_code1, mock_code2] if page == 0 else []
 
     mock_client.search_code.return_value = mock_code_results
 

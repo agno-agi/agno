@@ -91,3 +91,28 @@ def test_gemini_with_openai_parser_model():
 
     assert isinstance(response.content.best_season_to_visit, str)
     assert len(response.content.best_season_to_visit) > 0
+
+
+def test_parser_model_stream():
+    park_agent = Agent(
+        model=OpenAIChat(id="gpt-4o"),  # Main model to generate the content
+        description="You are an expert on national parks and provide concise guides.",
+        response_model=ParkGuide,
+        parser_model=Claude(id="claude-sonnet-4-20250514"),  # Model to parse the output
+    )
+
+    response = park_agent.run("Tell me about Yosemite National Park.", stream=True)
+
+    for event in response:
+        print(event)
+
+    assert park_agent.run_response.content is not None
+    assert isinstance(park_agent.run_response.content, ParkGuide)
+    assert isinstance(park_agent.run_response.content.park_name, str)
+    assert len(park_agent.run_response.content.park_name) > 0
+
+    assert isinstance(park_agent.run_response.content.activities, list)
+    assert len(park_agent.run_response.content.activities) >= 2
+    for activity in park_agent.run_response.content.activities:
+        assert isinstance(activity, str)
+        assert len(activity) > 0

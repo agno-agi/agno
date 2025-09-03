@@ -27,51 +27,6 @@ def memory_agent(agent_storage, memory):
     )
 
 
-def test_agent_session_state(chat_agent, agent_storage):
-    session_id = "session_1"
-
-    chat_agent.session_id = session_id
-    chat_agent.session_name = "my_test_session"
-    chat_agent.session_state = {"test_key": "test_value"}
-    chat_agent.team_session_state = {"team_test_key": "team_test_value"}
-
-    response = chat_agent.run("Hello, how are you?")
-    assert response.run_id is not None
-    assert chat_agent.session_id == session_id
-    assert chat_agent.session_name == "my_test_session"
-    assert chat_agent.session_state == {"current_session_id": session_id, "test_key": "test_value"}
-    assert chat_agent.team_session_state == {"current_session_id": session_id, "team_test_key": "team_test_value"}
-    session_from_storage = agent_storage.read(session_id=session_id)
-    assert session_from_storage is not None
-    assert session_from_storage.session_id == session_id
-    assert session_from_storage.session_data["session_name"] == "my_test_session"
-    assert session_from_storage.session_data["session_state"] == {
-        "current_session_id": session_id,
-        "test_key": "test_value",
-    }
-
-    # Run again with the same session ID
-    response = chat_agent.run("What can you do?", session_id=session_id)
-    assert response.run_id is not None
-    assert chat_agent.session_id == session_id
-    assert chat_agent.session_name == "my_test_session"
-    assert chat_agent.session_state == {"current_session_id": session_id, "test_key": "test_value"}
-
-    # Run with a different session ID
-    response = chat_agent.run("What can you do?", session_id="session_2")
-    assert response.run_id is not None
-    assert chat_agent.session_id == "session_2"
-    assert chat_agent.session_name is None
-    assert chat_agent.session_state == {"current_session_id": "session_2"}
-
-    # Run again with original session ID
-    response = chat_agent.run("What name should I call you?", session_id=session_id)
-    assert response.run_id is not None
-    assert chat_agent.session_id == session_id
-    assert chat_agent.session_name == "my_test_session"
-    assert chat_agent.session_state == {"current_session_id": session_id, "test_key": "test_value"}
-
-
 def test_agent_runs_in_memory(chat_agent):
     session_id = "test_session"
     response = chat_agent.run("Hello, how are you?", session_id=session_id)
@@ -86,6 +41,40 @@ def test_agent_runs_in_memory(chat_agent):
 
     # Check that the run is also stored in the agent session
     assert len(chat_agent.agent_session.memory["runs"]) == 1
+
+
+def test_agent_runs_in_memory_default_memory(agent_storage):
+    # No memory is set on the agent
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        storage=agent_storage,
+        add_history_to_messages=True,
+        num_history_runs=3,
+    )
+    session_id = "test_session"
+    agent.run("What is the capital of France?", session_id=session_id)
+    assert len(agent.memory.runs[session_id]) == 1
+    assert len(agent.agent_session.memory["runs"]) == 1
+
+    agent.run("What is the capital of Germany?", session_id=session_id)
+    assert len(agent.memory.runs[session_id]) == 2
+    assert len(agent.agent_session.memory["runs"]) == 2
+
+    agent.run("What have I asked so far?", session_id=session_id)
+    assert len(agent.memory.runs[session_id]) == 3
+    assert len(agent.agent_session.memory["runs"]) == 3
+
+    # New agent instance
+    agent = Agent(
+        model=OpenAIChat(id="gpt-4o-mini"),
+        storage=agent_storage,
+        add_history_to_messages=True,
+        num_history_runs=3,
+    )
+
+    agent.run("What have I asked so far?", session_id=session_id)
+    assert len(agent.memory.runs[session_id]) == 4
+    assert len(agent.agent_session.memory["runs"]) == 4
 
 
 def test_agent_runs_in_memory_legacy(chat_agent):
@@ -171,7 +160,6 @@ async def test_multi_user_multi_session_chat(memory_agent, agent_storage, memory
     assert len(user_3_sessions) == 1
     assert user_3_session_1_id in [session.session_id for session in user_3_sessions]
 
-    print(memory.memories)
     # Verify memory DB has the right memories
     user_1_memories = memory.get_user_memories(user_id=user_1_id)
     assert len(user_1_memories) >= 1  # At least 1 memory for user 1

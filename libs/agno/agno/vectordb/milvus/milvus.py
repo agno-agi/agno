@@ -568,7 +568,7 @@ class Milvus(VectorDb):
         self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
     ) -> List[Document]:
         if self.search_type == SearchType.hybrid:
-            return self.hybrid_search(query, limit, filters)
+            return await self.async_hybrid_search(query, limit, filters)
 
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
@@ -689,6 +689,94 @@ class Milvus(VectorDb):
 
         except Exception as e:
             logger.error(f"Error during hybrid search: {e}")
+            return []
+
+    async def async_hybrid_search(
+        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+    ) -> List[Document]:
+        """
+        Perform an asynchronous hybrid search combining dense and sparse vector similarity.
+
+        Args:
+            query (str): Query string to search for
+            limit (int): Maximum number of results to return
+            filters (Optional[Dict[str, Any]]): Filters to apply to the search
+
+        Returns:
+            List[Document]: List of matching documents
+        """
+        from pymilvus import AnnSearchRequest, RRFRanker
+
+        # Get query embeddings
+        dense_vector = self.embedder.get_embedding(query)
+        sparse_vector = self._get_sparse_vector(query)
+
+        if dense_vector is None:
+            logger.error(f"Error getting dense embedding for Query: {query}")
+            return []
+
+        try:
+            # Refer to docs for details- https://milvus.io/docs/multi-vector-search.md
+
+            # Create search request for dense vectors
+            dense_search_param = {
+                "data": [dense_vector],
+                "anns_field": "dense_vector",
+                "param": {"metric_type": self._get_metric_type(), "params": {"nprobe": 10}},
+                "limit": limit
+                * 2,  # Fetch more candidates for better reranking quality - each vector search returns 2x results which are then merged and reranked
+            }
+
+            # Create search request for sparse vectors
+            sparse_search_param = {
+                "data": [sparse_vector],
+                "anns_field": "sparse_vector",
+                "param": {"metric_type": "IP", "params": {"drop_ratio_build": 0.2}},
+                "limit": limit * 2,  # Match dense search limit to ensure balanced candidate pool for reranking
+            }
+
+            # Create search requests
+            dense_request = AnnSearchRequest(**dense_search_param)
+            sparse_request = AnnSearchRequest(**sparse_search_param)
+            reqs = [dense_request, sparse_request]
+
+            # Use RRFRanker for balanced importance between vectors
+            ranker = RRFRanker(60)  # Default k=60
+
+            log_info("Performing async hybrid search")
+            results = await self.async_client.hybrid_search(
+                collection_name=self.collection, reqs=reqs, ranker=ranker, limit=limit, output_fields=["*"]
+            )
+
+            # Build search results
+            search_results: List[Document] = []
+            for hits in results:
+                for hit in hits:
+                    entity = hit.get("entity", {})
+                    meta_data = json.loads(entity.get("meta_data", "{}")) if entity.get("meta_data") else {}
+                    usage = json.loads(entity.get("usage", "{}")) if entity.get("usage") else None
+
+                    search_results.append(
+                        Document(
+                            id=hit.get("id"),
+                            name=entity.get("name", None),
+                            meta_data=meta_data,  # Now a dictionary
+                            content=entity.get("content", ""),
+                            embedder=self.embedder,
+                            embedding=entity.get("dense_vector", None),
+                            usage=usage,  # Now a dictionary or None
+                        )
+                    )
+
+            # Apply additional reranking if custom reranker is provided
+            if self.reranker and search_results:
+                search_results = self.reranker.rerank(query=query, documents=search_results)
+
+            log_info(f"Found {len(search_results)} documents")
+            return search_results
+
+        except Exception as e:
+            logger.error(f"Error during async hybrid search: {e}")
             return []
 
     def drop(self) -> None:

@@ -1,4 +1,4 @@
-"""Run `pip install duckduckgo-search sqlalchemy pgvector pypdf openai google.genai` to install dependencies."""
+"""Run `pip install ddgs sqlalchemy pgvector pypdf openai google.genai` to install dependencies."""
 
 from agno.agent import Agent
 from agno.embedder.google import GeminiEmbedder
