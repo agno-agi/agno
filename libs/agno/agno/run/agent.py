@@ -304,7 +304,7 @@ class RunInput:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation"""
-        result: Dict[str, Any] = {}  
+        result: Dict[str, Any] = {}
 
         if self.input_content is not None:
             if isinstance(self.input_content, (str)):

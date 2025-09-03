@@ -1082,7 +1082,6 @@ class Agent:
             input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
         )
 
-
         # Read existing session from database
         agent_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=agent_session)
@@ -7128,7 +7127,7 @@ class Agent:
             run_response.input.files = []
 
         # 2. RunOutput artifact media are skipped since we don't store them when store_media=False
-    
+
         # 3. Scrub media from all messages
         if run_response.messages:
             for message in run_response.messages:
@@ -7151,7 +7150,7 @@ class Agent:
         message.videos = None
         message.audio = None
         message.files = None
-        
+
         # Output media
         message.audio_output = None
         message.image_output = None

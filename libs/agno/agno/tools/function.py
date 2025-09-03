@@ -271,7 +271,17 @@ class Function(BaseModel):
             # log_info(f"Type hints for {self.name}: {type_hints}")
 
             # Filter out return type and only process parameters
-            excluded_params = ["return", "agent", "team", "session_state", "self", "images", "videos", "audios", "files"]
+            excluded_params = [
+                "return",
+                "agent",
+                "team",
+                "session_state",
+                "self",
+                "images",
+                "videos",
+                "audios",
+                "files",
+            ]
             if self.requires_user_input and self.user_input_fields:
                 if len(self.user_input_fields) == 0:
                     excluded_params.extend(list(type_hints.keys()))
@@ -384,7 +394,9 @@ class Function(BaseModel):
     def process_schema_for_strict(self):
         self.parameters["additionalProperties"] = False
         self.parameters["required"] = [
-            name for name in self.parameters["properties"] if name not in ["agent", "team", "session_state", "images", "videos", "audios", "files", "self"]
+            name
+            for name in self.parameters["properties"]
+            if name not in ["agent", "team", "session_state", "images", "videos", "audios", "files", "self"]
         ]
 
     def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
