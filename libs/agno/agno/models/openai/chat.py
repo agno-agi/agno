@@ -404,11 +404,15 @@ class OpenAIChat(Model):
             ChatCompletion: The chat completion response from the API.
         """
         try:
-            return await self.get_async_client().chat.completions.create(
+            
+            stuff = await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
                 **self.get_request_params(response_format=response_format, tools=tools, tool_choice=tool_choice),
             )
+            
+            
+            return stuff
         except RateLimitError as e:
             log_error(f"Rate limit error from OpenAI API: {e}")
             error_message = e.response.json().get("error", {})
@@ -510,6 +514,43 @@ class OpenAIChat(Model):
             log_error(f"Error from OpenAI API: {e}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
+    def correct_parameter_types(self, tools):
+        """
+        Corrects parameter types in a list of tool definitions to match OpenAI API conventions.
+        
+        If a parameter's 'type' key is missing, this function extracts the type from the 
+        'description' string and maps it to a valid OpenAI type (e.g., 'str' becomes 'string').
+        
+        Args:
+            tools (list): A list of tool definitions, where each tool is a dictionary.
+            
+        Returns:
+            list: The updated list of tool definitions with corrected parameter types.
+        """
+        type_mapping = {
+            "str": "string",
+            "int": "integer",
+            "float": "number",
+            "bool": "boolean",
+            "list": "array",
+            "dict": "object"
+        }
+        
+        for tool in tools:
+            if 'parameters' in tool['function'] and 'properties' in tool['function']['parameters']:
+                for param_name, param_details in tool['function']['parameters']['properties'].items():
+                    if 'type' not in param_details:
+                        if '(' in param_details['description'] and ')' in param_details['description']:
+                            start_index = param_details['description'].find('(') + 1
+                            end_index = param_details['description'].find(')')
+                            extracted_type = param_details['description'][start_index:end_index].lower()
+                            
+                            # Map the extracted type to the OpenAI convention
+                            param_details['type'] = type_mapping.get(extracted_type, extracted_type)
+                            print(f"Corrected type for parameter '{param_name}' in tool '{tool['function']['name']}' to '{param_details['type']}'.")
+        return tools
+
+    
     async def ainvoke_stream(
         self,
         messages: List[Message],
@@ -527,7 +568,9 @@ class OpenAIChat(Model):
             Any: An asynchronous iterator of chat completion chunks.
         """
 
-        try:
+        try:            
+            tools = self.correct_parameter_types(tools)
+            # self.infer_type_from_description
             async_stream = await self.get_async_client().chat.completions.create(
                 model=self.id,
                 messages=[self._format_message(m) for m in messages],  # type: ignore
@@ -676,9 +719,9 @@ class OpenAIChat(Model):
                     )
             except Exception as e:
                 log_warning(f"Error processing audio: {e}")
-
-        if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:
-            model_response.reasoning_content = response_message.reasoning_content
+        if hasattr(response_message, "reasoning") and response_message.reasoning is not None:
+            model_response.reasoning = f"<think>\n{response_message.reasoning}\n</think>"
+            model_response.content = f"{model_response.reasoning}\n {model_response.content}"
 
         if response.usage is not None:
             model_response.response_usage = response.usage
@@ -700,10 +743,21 @@ class OpenAIChat(Model):
             choice_delta: ChoiceDelta = response_delta.choices[0].delta
 
             if choice_delta:
-                # Add content
-                if choice_delta.content is not None:
-                    model_response.content = choice_delta.content
+                                
+                # Add thinking as content
+                is_reasoning_text = hasattr(choice_delta, 'reasoning')
+                is_reasoning_content = hasattr(choice_delta, 'reasoning_content')
+                
+                if is_reasoning_text and choice_delta.reasoning is not None:                    
+                    model_response.content = choice_delta.reasoning
+                
+                elif is_reasoning_content and choice_delta.reasoning_content is not None:                    
+                    model_response.content = choice_delta.reasoning_content
 
+                # Add content if there is no thinking
+                if not (is_reasoning_text or is_reasoning_content) and choice_delta.content is not None:
+                    model_response.content = choice_delta.content
+                                    
                 # Add tool calls
                 if choice_delta.tool_calls is not None:
                     model_response.tool_calls = choice_delta.tool_calls  # type: ignore
