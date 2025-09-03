@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Optional, cast
 
 from ag_ui.core import (
     BaseEvent,
@@ -10,6 +10,8 @@ from ag_ui.core import (
     RunAgentInput,
     RunErrorEvent,
     RunStartedEvent,
+    RunFinishedEvent,
+    StateSnapshotEvent
 )
 from ag_ui.encoder import EventEncoder
 from fastapi import APIRouter
@@ -41,9 +43,13 @@ async def run_agent(agent: Agent, run_input: RunAgentInput) -> AsyncIterator[Bas
 
         # Stream the response content in AG-UI format
         async for event in async_stream_agno_response_as_agui_events(
-            response_stream=response_stream, thread_id=run_input.thread_id, run_id=run_id
+            state_holder=agent,
+            response_stream=response_stream
         ):
             yield event
+
+        yield StateSnapshotEvent(snapshot=agent.session_state)
+        yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=run_input.thread_id, run_id=run_id)
 
     # Emit a RunErrorEvent if any error occurs
     except Exception as e:
@@ -69,9 +75,13 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
 
         # Stream the response content in AG-UI format
         async for event in async_stream_agno_response_as_agui_events(
-            response_stream=response_stream, thread_id=input.thread_id, run_id=run_id
+            state_holder=team,
+            response_stream=response_stream
         ):
             yield event
+
+        yield StateSnapshotEvent(snapshot=team.team_session_state)
+        yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=input.thread_id, run_id=run_id)
 
     except Exception as e:
         logger.error(f"Error running team: {e}", exc_info=True)
@@ -80,7 +90,7 @@ async def run_team(team: Team, input: RunAgentInput) -> AsyncIterator[BaseEvent]
 
 def get_async_agui_router(agent: Optional[Agent] = None, team: Optional[Team] = None) -> APIRouter:
     """Return an AG-UI compatible FastAPI router."""
-    if (agent is None and team is None) or (agent is not None and team is not None):
+    if (sum(x is not None for x in (agent, team)) != 1):
         raise ValueError("One of 'agent' or 'team' must be provided.")
 
     router = APIRouter()

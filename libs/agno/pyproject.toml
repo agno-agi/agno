@@ -152,7 +152,7 @@ csv = ["aiofiles"]
 markdown = ["unstructured", "markdown", "aiofiles"]
 
 # Dependencies for AG-UI integration
-agui = ["ag-ui-protocol"]
+agui = ["ag-ui-protocol", "jsonpatch"]
 
 # Dependencies for Embedders
 huggingface = [

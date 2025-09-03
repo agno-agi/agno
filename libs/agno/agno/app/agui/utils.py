@@ -10,7 +10,6 @@ from typing import AsyncIterator, Deque, List, Optional, Set, Tuple, Union
 from ag_ui.core import (
     BaseEvent,
     EventType,
-    RunFinishedEvent,
     StepFinishedEvent,
     StepStartedEvent,
     TextMessageContentEvent,
@@ -20,14 +19,17 @@ from ag_ui.core import (
     ToolCallEndEvent,
     ToolCallResultEvent,
     ToolCallStartEvent,
+    StateSnapshotEvent,
+    StateDeltaEvent
 )
 from ag_ui.core.types import Message as AGUIMessage
 
 from agno.models.message import Message
 from agno.run.response import RunEvent, RunResponseContentEvent, RunResponseEvent, RunResponsePausedEvent
-from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
-from agno.run.team import TeamRunEvent, TeamRunResponseEvent
-
+from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent, TeamRunEvent, TeamRunResponseEvent
+from agno.agent import Agent
+from agno.team import Team
+from jsonpatch import make_patch
 
 @dataclass
 class EventBuffer:
@@ -129,7 +131,7 @@ def _create_events_from_chunk(
     Process a single chunk and return events to emit + updated message_started state.
     Returns: (events_to_emit, new_message_started_state)
     """
-    events_to_emit: List[BaseEvent] = []
+    events_to_emit = []
 
     # Extract content if the contextual event is a content event
     if chunk.event == RunEvent.run_response_content:
@@ -216,8 +218,6 @@ def _create_completion_events(
     event_buffer: EventBuffer,
     message_started: bool,
     message_id: str,
-    thread_id: str,
-    run_id: str,
 ) -> List[BaseEvent]:
     """Create events for run completion."""
     events_to_emit = []
@@ -262,9 +262,6 @@ def _create_completion_events(
                 tool_call_id=tool.tool_call_id,
             )
             events_to_emit.append(end_event)
-
-    run_finished_event = RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id=thread_id, run_id=run_id)
-    events_to_emit.append(run_finished_event)
 
     return events_to_emit
 
@@ -319,13 +316,32 @@ def _emit_event_logic(event: BaseEvent, event_buffer: EventBuffer) -> List[BaseE
     return events_to_emit
 
 
+def _retrieve_state(state_holder: Agent | Team):
+    """Retrieve the state of an Agent or Team"""
+    if isinstance(state_holder, Agent):
+        return state_holder.session_state or {}
+    else:
+        return state_holder.team_session_state or {}
+
+
+def _generate_state_patch(old_state: dict, new_state: dict):
+    """Generate JSON Patch for updating state"""
+    patch = make_patch(old_state, new_state)
+    return list(patch)
+
+
 def stream_agno_response_as_agui_events(
-    response_stream: Iterator[Union[RunResponseEvent, TeamRunResponseEvent]], thread_id: str, run_id: str
+    state_holder: Agent | Team,
+    response_stream: Iterator[Union[RunResponseEvent, TeamRunResponseEvent]]
 ) -> Iterator[BaseEvent]:
     """Map the Agno response stream to AG-UI format, handling event ordering constraints."""
     message_id = str(uuid.uuid4())
     message_started = False
     event_buffer = EventBuffer()
+
+    # Emit initial state snapshot
+    last_state = _retrieve_state(state_holder).copy()
+    yield StateSnapshotEvent(snapshot=last_state)
 
     for chunk in response_stream:
         # Handle the lifecycle end event
@@ -335,12 +351,23 @@ def stream_agno_response_as_agui_events(
             or chunk.event == RunEvent.run_paused
         ):
             completion_events = _create_completion_events(
-                chunk, event_buffer, message_started, message_id, thread_id, run_id
+                chunk, event_buffer, message_started, message_id
             )
+
+            # Reset to false to ensure next team member emits a new TextMessageStartEvent
+            message_started = False
+
             for event in completion_events:
                 events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
                 for emit_event in events_to_emit:
                     yield emit_event
+
+            # Incremental state changes
+            current_state = _retrieve_state(state_holder).copy()
+            patch = _generate_state_patch(last_state, current_state)
+            if patch:
+                yield StateDeltaEvent(delta=patch)
+            last_state = current_state.copy()
         else:
             # Process regular chunk
             events_from_chunk, message_started = _create_events_from_chunk(
@@ -352,32 +379,48 @@ def stream_agno_response_as_agui_events(
                 for emit_event in events_to_emit:
                     yield emit_event
 
-
 # Async version - thin wrapper
 async def async_stream_agno_response_as_agui_events(
+    state_holder: Agent | Team,
     response_stream: AsyncIterator[Union[RunResponseEvent, TeamRunResponseEvent]],
-    thread_id: str,
-    run_id: str,
 ) -> AsyncIterator[BaseEvent]:
-    """Map the Agno response stream to AG-UI format, handling event ordering constraints."""
+    """
+    Map the Agno response stream to AG-UI format, handling event ordering constraints.
+    Also handles propagation of state changes.
+    """
     message_id = str(uuid.uuid4())
     message_started = False
     event_buffer = EventBuffer()
 
+    # Emit initial state snapshot
+    last_state = _retrieve_state(state_holder).copy()
+    yield StateSnapshotEvent(snapshot=last_state)
+
     async for chunk in response_stream:
         # Handle the lifecycle end event
         if (
-            chunk.event == RunEvent.run_completed
-            or chunk.event == TeamRunEvent.run_completed
+            chunk.event == TeamRunEvent.run_completed
+            or chunk.event == RunEvent.run_completed
             or chunk.event == RunEvent.run_paused
         ):
             completion_events = _create_completion_events(
-                chunk, event_buffer, message_started, message_id, thread_id, run_id
+                chunk, event_buffer, message_started, message_id
             )
+
+            # Reset to false to ensure next team member emits a new TextMessageStartEvent
+            message_started = False
+
             for event in completion_events:
                 events_to_emit = _emit_event_logic(event_buffer=event_buffer, event=event)
                 for emit_event in events_to_emit:
                     yield emit_event
+
+            # Incremental state changes
+            current_state = _retrieve_state(state_holder).copy()
+            patch = _generate_state_patch(last_state, current_state)
+            if patch:
+                yield StateDeltaEvent(delta=patch)
+            last_state = current_state.copy()
         else:
             # Process regular chunk
             events_from_chunk, message_started = _create_events_from_chunk(
