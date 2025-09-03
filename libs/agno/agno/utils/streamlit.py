@@ -3,6 +3,9 @@ from typing import Any, Dict, List, Optional
 
 import streamlit as st
 from agno.agent import Agent
+from agno.models.anthropic import Claude
+from agno.models.google import Gemini
+from agno.models.openai import OpenAIChat
 from agno.utils.log import logger
 
 
@@ -325,6 +328,9 @@ def display_response(agent: Agent, question: str) -> None:
 
 def display_chat_messages() -> None:
     """Display all chat messages from session state."""
+    if "messages" not in st.session_state:
+        return
+    
     for message in st.session_state["messages"]:
         if message["role"] in ["user", "assistant"]:
             content = message["content"]
@@ -414,6 +420,39 @@ def export_chat_history(app_name: str = "Chat") -> str:
         role_display = "## 🙋 User" if role == "user" else "## 🤖 Assistant"
         chat_text += f"{role_display}\n\n{content}\n\n---\n\n"
     return chat_text
+
+
+def get_model_from_id(model_id: str):
+    """Get a model instance from a model ID string."""
+    if model_id.startswith("openai:"):
+        return OpenAIChat(id=model_id.split("openai:")[1])
+    elif model_id.startswith("anthropic:"):
+        return Claude(id=model_id.split("anthropic:")[1])
+    elif model_id.startswith("google:"):
+        return Gemini(id=model_id.split("google:")[1])
+    else:
+        return OpenAIChat(id="gpt-4o")
+
+def about_section(description: str):
+    """About section"""
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### ℹ️ About")
+    st.sidebar.markdown(f"""
+    {description}
+
+    Built with:
+    - 🚀 Agno
+    - 💫 Streamlit
+    """)
+
+
+MODELS = [
+    "gpt-4o",
+    "o3-mini",
+    "gpt-5",
+    "claude-4-sonnet",
+    "gemini-2.5-pro",
+]
 
 
 COMMON_CSS = """

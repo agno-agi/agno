@@ -4,7 +4,7 @@ from os import unlink
 import nest_asyncio
 import streamlit as st
 from agentic_rag import get_agentic_rag_agent
-from streamlit_utils import (
+from agno.utils.streamlit import (
     COMMON_CSS,
     add_message,
     display_chat_messages,
@@ -14,8 +14,9 @@ from streamlit_utils import (
     knowledge_base_info_widget,
     reset_session_state,
     session_selector_widget,
+    about_section,
+    MODELS
 )
-from utils import MODELS, about_section
 
 nest_asyncio.apply()
 st.set_page_config(
@@ -227,7 +228,7 @@ def main():
     ####################################################################
     # About section
     ####################################################################
-    about_section()
+    about_section("This Agentic RAG Assistant helps you analyze documents and web content using natural language queries.")
 
 
 main()

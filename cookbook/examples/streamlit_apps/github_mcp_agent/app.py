@@ -3,14 +3,14 @@ import os
 
 import streamlit as st
 from agents import run_github_agent
-from streamlit_utils import (
+from agno.utils.streamlit import (
     COMMON_CSS,
     add_message,
     display_chat_messages,
     export_chat_history,
-    reset_session_state,
+    about_section,
+    MODELS
 )
-from utils import MODELS, about_section
 
 st.set_page_config(
     page_title="GitHub MCP Agent",
@@ -21,6 +21,25 @@ st.set_page_config(
 
 # Add custom CSS
 st.markdown(COMMON_CSS, unsafe_allow_html=True)
+
+
+def restart_agent():
+    """Reset the agent session"""
+    st.session_state["messages"] = []
+    st.session_state["is_new_session"] = True
+
+
+def on_model_change():
+    """Handle model selection change"""
+    selected_model = st.session_state.get("model_selector")
+    if selected_model:
+        if selected_model in MODELS:
+            current_model = st.session_state.get("current_model")
+            if current_model and current_model != selected_model:
+                st.session_state["current_model"] = selected_model
+                restart_agent()
+        else:
+            st.sidebar.error(f"Unknown model: {selected_model}")
 
 
 def main():
@@ -58,6 +77,7 @@ def main():
         options=MODELS,
         index=0,
         key="model_selector",
+        on_change=on_model_change,
     )
 
     ####################################################################
@@ -99,7 +119,7 @@ def main():
     col1, col2 = st.sidebar.columns([1, 1])
     with col1:
         if st.sidebar.button("🔄 New Chat", use_container_width=True):
-            reset_session_state()
+            restart_agent()
             st.rerun()
 
     with col2:
@@ -109,7 +129,7 @@ def main():
         if has_messages:
             if st.sidebar.download_button(
                 "💾 Export Chat",
-                export_chat_history(),
+                export_chat_history("GitHub Agent"),
                 file_name=f"github_mcp_chat_{repo.replace('/', '_')}.md",
                 mime="text/markdown",
                 use_container_width=True,
@@ -117,7 +137,7 @@ def main():
                 st.sidebar.success("Chat history exported!")
 
     # About section
-    about_section()
+    about_section("This GitHub MCP Agent helps you analyze repositories using natural language queries.")
 
     ####################################################################
     # Chat input and processing
@@ -142,10 +162,10 @@ def main():
             with st.spinner("Analyzing GitHub repository..."):
                 try:
                     result = asyncio.run(run_github_agent(full_query, selected_model))
-                    add_message("agent", result)
+                    add_message("assistant", result)
                 except Exception as e:
                     error_msg = f"Error: {str(e)}"
-                    add_message("agent", error_msg)
+                    add_message("assistant", error_msg)
             st.rerun()
 
     ####################################################################
