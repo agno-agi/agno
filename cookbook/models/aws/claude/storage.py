@@ -1,4 +1,4 @@
-"""Run `pip install duckduckgo-search sqlalchemy anthropic` to install dependencies."""
+"""Run `pip install ddgs sqlalchemy anthropic` to install dependencies."""
 
 from agno.agent import Agent
 from agno.models.aws import Claude

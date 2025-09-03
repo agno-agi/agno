@@ -9,6 +9,7 @@ from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
 
 try:
     import litellm
@@ -73,6 +74,31 @@ class LiteLLM(Model):
         for m in messages:
             msg = {"role": m.role, "content": m.content if m.content is not None else ""}
 
+            # Handle media
+            if (m.images is not None and len(m.images) > 0) or (m.audio is not None and len(m.audio) > 0):
+                if isinstance(m.content, str):
+                    content_list = [{"type": "text", "text": m.content}]
+                    if m.images is not None:
+                        content_list.extend(images_to_message(images=m.images))
+                    if m.audio is not None:
+                        content_list.extend(audio_to_message(audio=m.audio))
+                    msg["content"] = content_list
+
+            if m.videos is not None and len(m.videos) > 0:
+                log_warning("Video input is currently unsupported by LLM providers.")
+
+            # Handle files
+            if m.files is not None:
+                if isinstance(msg["content"], str):
+                    content_list = [{"type": "text", "text": msg["content"]}]
+                else:
+                    content_list = msg["content"]
+                for file in m.files:
+                    file_part = _format_file_for_message(file)
+                    if file_part:
+                        content_list.append(file_part)
+                msg["content"] = content_list
+
             # Handle tool calls in assistant messages
             if m.role == "assistant" and m.tool_calls:
                 msg["tool_calls"] = [
@@ -95,12 +121,8 @@ class LiteLLM(Model):
                 if m.images is not None and len(m.images) > 0:
                     log_warning("Image input is currently unsupported.")
 
-                if m.files is not None and len(m.files) > 0:
-                    log_warning("File input is currently unsupported.")
-
                 if m.videos is not None and len(m.videos) > 0:
                     log_warning("Video input is currently unsupported.")
-
             formatted_messages.append(msg)
 
         return formatted_messages
@@ -160,6 +182,7 @@ class LiteLLM(Model):
         completion_kwargs = self.get_request_params(tools=tools)
         completion_kwargs["messages"] = self._format_messages(messages)
         completion_kwargs["stream"] = True
+        completion_kwargs["stream_options"] = {"include_usage": True}
         return self.get_client().completion(**completion_kwargs)
 
     async def ainvoke(
@@ -185,6 +208,7 @@ class LiteLLM(Model):
         completion_kwargs = self.get_request_params(tools=tools)
         completion_kwargs["messages"] = self._format_messages(messages)
         completion_kwargs["stream"] = True
+        completion_kwargs["stream_options"] = {"include_usage": True}
 
         try:
             # litellm.acompletion returns a coroutine that resolves to an async iterator
@@ -234,9 +258,12 @@ class LiteLLM(Model):
 
                 if hasattr(choice_delta, "tool_calls") and choice_delta.tool_calls:
                     processed_tool_calls = []
-                    for i, tool_call in enumerate(choice_delta.tool_calls):
-                        # Create a basic structure with index
-                        tool_call_dict = {"index": i, "type": "function"}
+                    for tool_call in choice_delta.tool_calls:
+                        # Get the actual index from the tool call, defaulting to 0 if not available
+                        actual_index = getattr(tool_call, "index", 0) if hasattr(tool_call, "index") else 0
+
+                        # Create a basic structure with the correct index
+                        tool_call_dict = {"index": actual_index, "type": "function"}
 
                         # Extract ID if available
                         if hasattr(tool_call, "id") and tool_call.id is not None:
@@ -254,6 +281,10 @@ class LiteLLM(Model):
                         processed_tool_calls.append(tool_call_dict)
 
                     model_response.tool_calls = processed_tool_calls
+
+        # Add usage metrics if present in streaming response
+        if hasattr(response_delta, "usage") and response_delta.usage is not None:
+            model_response.response_usage = response_delta.usage
 
         return model_response
 

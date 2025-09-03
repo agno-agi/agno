@@ -279,7 +279,7 @@ def test_team_memory_cleanup_after_session_switch(agent_storage, team_storage, m
         mode="route",
         model=OpenAIChat(id="gpt-4o-mini"),
         members=[agent],
-        storage=agent_storage,
+        storage=team_storage,
         memory=memory,
         enable_user_memories=True,
     )

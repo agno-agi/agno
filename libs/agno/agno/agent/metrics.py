@@ -69,7 +69,10 @@ class SessionMetrics:
             # Add values from other
             if other.prompt_tokens_details:
                 for key, value in other.prompt_tokens_details.items():
-                    result.prompt_tokens_details[key] = result.prompt_tokens_details.get(key, 0) + value
+                    existing_value = result.prompt_tokens_details.get(key, 0)
+                    if not isinstance(existing_value, int):
+                        continue
+                    result.prompt_tokens_details[key] = existing_value + value
 
         # Handle completion_tokens_details similarly
         if self.completion_tokens_details or other.completion_tokens_details:

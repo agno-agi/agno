@@ -45,19 +45,19 @@ class CustomerDBTools(Toolkit):
         return f"Customer profile for {customer_id}"
 
 
-def validation_hook(function_name: str, call_func: Callable, arguments: Dict[str, Any]):
-    if function_name == "retrieve_customer_profile":
+def validation_hook(name: str, func: Callable, arguments: Dict[str, Any]):
+    if name == "retrieve_customer_profile":
         cust_id = arguments.get("customer_id")
         if cust_id == "123":
             raise ValueError("Cannot retrieve customer profile for ID 123")
 
-    if function_name == "delete_customer_profile":
+    if name == "delete_customer_profile":
         cust_id = arguments.get("customer_id")
         if cust_id == "123":
             raise ValueError("Cannot delete customer profile for ID 123")
 
     logger.info("Before Validation Hook")
-    result = call_func(**arguments)
+    result = func(**arguments)
     logger.info("After Validation Hook")
     # Remove name from result to sanitize the output
     result = json.loads(result)
@@ -65,9 +65,9 @@ def validation_hook(function_name: str, call_func: Callable, arguments: Dict[str
     return json.dumps(result)
 
 
-def logger_hook(function_name: str, call_func: Callable, arguments: Dict[str, Any]):
+def logger_hook(name: str, func: Callable, arguments: Dict[str, Any]):
     logger.info("Before Logger Hook")
-    result = call_func(**arguments)
+    result = func(**arguments)
     logger.info("After Logger Hook")
     return result
 

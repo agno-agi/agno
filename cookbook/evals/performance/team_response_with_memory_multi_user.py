@@ -1,5 +1,6 @@
 import asyncio
 import random
+import uuid
 
 from agno.agent import Agent
 from agno.eval.performance import PerformanceEval
@@ -8,6 +9,7 @@ from agno.memory.v2.memory import Memory
 from agno.models.openai import OpenAIChat
 from agno.storage.postgres import PostgresStorage
 from agno.team.team import Team
+from agno.tools.reasoning import ReasoningTools
 
 users = [
     "abel@example.com",
@@ -68,8 +70,8 @@ def get_activities(city: str) -> str:
     return f"The activities in {city} are {', '.join(selected_activities)}."
 
 
-agent_1 = Agent(
-    agent_id="agent_1",
+weather_agent = Agent(
+    agent_id="weather_agent",
     model=OpenAIChat(id="gpt-4o-mini"),
     description="You are a helpful assistant that can answer questions about the weather.",
     instructions="Be concise, reply with one sentence.",
@@ -79,8 +81,8 @@ agent_1 = Agent(
     add_history_to_messages=True,
 )
 
-agent_2 = Agent(
-    agent_id="agent_2",
+activities_agent = Agent(
+    agent_id="activities_agent",
     model=OpenAIChat(id="gpt-4o-mini"),
     description="You are a helpful assistant that can answer questions about activities in a city.",
     instructions="Be concise, reply with one sentence.",
@@ -91,7 +93,7 @@ agent_2 = Agent(
 )
 
 team = Team(
-    members=[agent_1, agent_2],
+    members=[weather_agent, activities_agent],
     model=OpenAIChat(id="gpt-4o-mini"),
     instructions="Be concise, reply with one sentence.",
     memory=memory,
@@ -108,7 +110,7 @@ async def run_team():
         await team.arun(
             message=f"I love {random_city}! What activities and weather can I expect in {random_city}?",
             user_id=user,
-            session_id=f"session_{user}",
+            session_id=f"session_{uuid.uuid4()}",
         )
 
     tasks = []
@@ -119,7 +121,7 @@ async def run_team():
 
     await asyncio.gather(*tasks)
 
-    print("Team memory runs:", len(team.memory.runs))
+    print("Team memory runs:", sum(len(runs) for runs in team.memory.runs.values()))
     print("Team memory memories:", len(team.memory.memories))
 
     return "Successfully ran team"
@@ -132,11 +134,11 @@ team_response_with_memory_impact = PerformanceEval(
     warmup_runs=0,
     measure_runtime=False,
     debug_mode=True,
+    memory_growth_tracking=True,
+    top_n_memory_allocations=10,
 )
 
 if __name__ == "__main__":
     asyncio.run(
-        team_response_with_memory_impact.arun(
-            print_results=True, print_summary=True, with_growth_tracking=True
-        )
+        team_response_with_memory_impact.arun(print_results=True, print_summary=True)
     )

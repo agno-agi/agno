@@ -1,4 +1,4 @@
-"""Run `pip install duckduckgo-search sqlalchemy pgvector pypdf anthropic openai` to install dependencies."""
+"""Run `pip install ddgs sqlalchemy pgvector pypdf anthropic openai` to install dependencies."""
 
 from agno.agent import Agent
 from agno.embedder.azure_openai import AzureOpenAIEmbedder

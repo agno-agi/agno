@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, Iterator, List, Optional, Type, Union
+from typing import Any, Dict, Iterator, List, Literal, Optional, Type, Union
 
 import httpx
 from pydantic import BaseModel
@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from agno.exceptions import ModelProviderError
 from agno.media import AudioResponse
 from agno.models.base import Model
-from agno.models.message import Citations, Message, UrlCitation
+from agno.models.message import Message
 from agno.models.response import ModelResponse
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.openai import _format_file_for_message, audio_to_message, images_to_message
@@ -45,6 +45,7 @@ class OpenAIChat(Model):
     # Request parameters
     store: Optional[bool] = None
     reasoning_effort: Optional[str] = None
+    verbosity: Optional[Literal["low", "medium", "high"]] = None
     metadata: Optional[Dict[str, Any]] = None
     frequency_penalty: Optional[float] = None
     logit_bias: Optional[Any] = None
@@ -62,6 +63,7 @@ class OpenAIChat(Model):
     temperature: Optional[float] = None
     user: Optional[str] = None
     top_p: Optional[float] = None
+    service_tier: Optional[str] = None  # "auto" | "default" | "flex" | "priority", defaults to "auto" when not set
     extra_headers: Optional[Any] = None
     extra_query: Optional[Any] = None
     request_params: Optional[Dict[str, Any]] = None
@@ -75,7 +77,7 @@ class OpenAIChat(Model):
     max_retries: Optional[int] = None
     default_headers: Optional[Any] = None
     default_query: Optional[Any] = None
-    http_client: Optional[httpx.Client] = None
+    http_client: Optional[Union[httpx.Client, httpx.AsyncClient]] = None
     client_params: Optional[Dict[str, Any]] = None
 
     # The role to map the message role to.
@@ -121,8 +123,11 @@ class OpenAIChat(Model):
             OpenAIClient: An instance of the OpenAI client.
         """
         client_params: Dict[str, Any] = self._get_client_params()
-        if self.http_client is not None:
-            client_params["http_client"] = self.http_client
+        if self.http_client:
+            if isinstance(self.http_client, httpx.Client):
+                client_params["http_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.Client.")
         return OpenAIClient(**client_params)
 
     def get_async_client(self) -> AsyncOpenAIClient:
@@ -134,7 +139,14 @@ class OpenAIChat(Model):
         """
         client_params: Dict[str, Any] = self._get_client_params()
         if self.http_client:
-            client_params["http_client"] = self.http_client
+            if isinstance(self.http_client, httpx.AsyncClient):
+                client_params["http_client"] = self.http_client
+            else:
+                log_warning("http_client is not an instance of httpx.AsyncClient. Using default httpx.AsyncClient.")
+                # Create a new async HTTP client with custom limits
+                client_params["http_client"] = httpx.AsyncClient(
+                    limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100)
+                )
         else:
             # Create a new async HTTP client with custom limits
             client_params["http_client"] = httpx.AsyncClient(
@@ -158,6 +170,7 @@ class OpenAIChat(Model):
         base_params = {
             "store": self.store,
             "reasoning_effort": self.reasoning_effort,
+            "verbosity": self.verbosity,
             "frequency_penalty": self.frequency_penalty,
             "logit_bias": self.logit_bias,
             "logprobs": self.logprobs,
@@ -175,6 +188,7 @@ class OpenAIChat(Model):
             "extra_headers": self.extra_headers,
             "extra_query": self.extra_query,
             "metadata": self.metadata,
+            "service_tier": self.service_tier,
         }
 
         # Handle response format - always use JSON schema approach
@@ -225,6 +239,8 @@ class OpenAIChat(Model):
         model_dict.update(
             {
                 "store": self.store,
+                "reasoning_effort": self.reasoning_effort,
+                "verbosity": self.verbosity,
                 "frequency_penalty": self.frequency_penalty,
                 "logit_bias": self.logit_bias,
                 "logprobs": self.logprobs,
@@ -241,6 +257,7 @@ class OpenAIChat(Model):
                 "user": self.user,
                 "extra_headers": self.extra_headers,
                 "extra_query": self.extra_query,
+                "service_tier": self.service_tier,
             }
         )
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
@@ -663,17 +680,6 @@ class OpenAIChat(Model):
         if hasattr(response_message, "reasoning_content") and response_message.reasoning_content is not None:
             model_response.reasoning_content = response_message.reasoning_content
 
-        # Add citations if present
-        if hasattr(response, "citations") and response.citations:
-            citations = Citations()
-            url_citations = []
-            for citation_url in response.citations:
-                url_citations.append(UrlCitation(url=str(citation_url)))
-
-            citations.urls = url_citations
-            citations.raw = response.citations
-            model_response.citations = citations
-
         if response.usage is not None:
             model_response.response_usage = response.usage
 
@@ -702,6 +708,9 @@ class OpenAIChat(Model):
                 if choice_delta.tool_calls is not None:
                     model_response.tool_calls = choice_delta.tool_calls  # type: ignore
 
+                if hasattr(choice_delta, "reasoning_content") and choice_delta.reasoning_content is not None:
+                    model_response.reasoning_content = choice_delta.reasoning_content
+
                 # Add audio if present
                 if hasattr(choice_delta, "audio") and choice_delta.audio is not None:
                     try:
@@ -725,16 +734,6 @@ class OpenAIChat(Model):
                             )
                     except Exception as e:
                         log_warning(f"Error processing audio: {e}")
-
-        if hasattr(response_delta, "citations") and response_delta.citations:
-            citations = Citations()
-            url_citations = []
-            for citation_url in response_delta.citations:
-                url_citations.append(UrlCitation(url=str(citation_url)))
-
-            citations.urls = url_citations
-            citations.raw = response_delta.citations
-            model_response.citations = citations
 
         # Add usage metrics if present
         if response_delta.usage is not None:

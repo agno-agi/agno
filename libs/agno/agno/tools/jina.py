@@ -5,7 +5,7 @@ import httpx
 from pydantic import BaseModel, Field, HttpUrl
 
 from agno.tools import Toolkit
-from agno.utils.log import log_info, logger
+from agno.utils.log import logger
 
 
 class JinaReaderToolsConfig(BaseModel):
@@ -14,6 +14,7 @@ class JinaReaderToolsConfig(BaseModel):
     search_url: HttpUrl = Field("https://s.jina.ai/", description="Search URL for Jina Reader API")  # type: ignore
     max_content_length: int = Field(10000, description="Maximum content length in characters")
     timeout: Optional[int] = Field(None, description="Timeout for Jina Reader API requests")
+    search_query_content: Optional[bool] = Field(False, description="Toggle full URL content in query search result")
 
 
 class JinaReaderTools(Toolkit):
@@ -26,14 +27,17 @@ class JinaReaderTools(Toolkit):
         timeout: Optional[int] = None,
         read_url: bool = True,
         search_query: bool = False,
+        search_query_content: bool = True,
         **kwargs,
     ):
+        self.api_key = api_key or getenv("JINA_API_KEY")
         self.config: JinaReaderToolsConfig = JinaReaderToolsConfig(
-            api_key=api_key,
+            api_key=self.api_key,
             base_url=base_url,
             search_url=search_url,
             max_content_length=max_content_length,
             timeout=timeout,
+            search_query_content=search_query_content,
         )
 
         tools: List[Any] = []
@@ -47,7 +51,6 @@ class JinaReaderTools(Toolkit):
     def read_url(self, url: str) -> str:
         """Reads a URL and returns the truncated content using Jina Reader API."""
         full_url = f"{self.config.base_url}{url}"
-        log_info(f"Reading URL: {full_url}")
         try:
             response = httpx.get(full_url, headers=self._get_headers())
             response.raise_for_status()
@@ -60,10 +63,14 @@ class JinaReaderTools(Toolkit):
 
     def search_query(self, query: str) -> str:
         """Performs a web search using Jina Reader API and returns the truncated results."""
-        full_url = f"{self.config.search_url}{query}"
-        log_info(f"Performing search: {full_url}")
+        full_url = f"{self.config.search_url}"
+        headers = self._get_headers()
+        if not self.config.search_query_content:
+            headers["X-Respond-With"] = "no-content"  # to avoid returning full content in search results
+
+        body = {"q": query}
         try:
-            response = httpx.get(full_url, headers=self._get_headers())
+            response = httpx.post(full_url, headers=headers, json=body)
             response.raise_for_status()
             content = response.json()
             return self._truncate_content(str(content))
