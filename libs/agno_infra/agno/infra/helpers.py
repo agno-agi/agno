@@ -49,10 +49,13 @@ def get_infra_dir_path(infra_root_path: Path) -> Optional[Path]:
 
     # Case 3: Check if root directory contains infrastructure files (Docker-based templates)
     infrastructure_indicators = [
-        "compose.yaml", "docker-compose.yaml", "docker-compose.yml", 
-        "Dockerfile", "compose.yml"
+        "compose.yaml",
+        "docker-compose.yaml",
+        "docker-compose.yml",
+        "Dockerfile",
+        "compose.yml",
     ]
-    
+
     for indicator in infrastructure_indicators:
         if infra_root_path.joinpath(indicator).exists():
             log_debug(f"Found infrastructure file '{indicator}' - using root directory as infra path")

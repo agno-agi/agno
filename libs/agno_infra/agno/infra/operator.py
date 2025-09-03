@@ -85,7 +85,7 @@ def create_infra_from_template(
         repo_to_clone = TEMPLATE_TO_REPO_MAP.get(infra_template)
 
     if infra_dir_name is None:
-        default_infra_name = "agent-infra-docker"
+        default_infra_name = "agno-infra-project"
         if url is not None:
             # Get default_infra_name from url
             default_infra_name = url.split("/")[-1].split(".")[0]
@@ -150,8 +150,19 @@ def create_infra_from_template(
         log_warning(f"Could not create infra/secrets: {e}")
         log_warning("Please manually copy infra/example_secrets to infra/secrets")
 
-    print_info(f"Your new infra is available at {str(infra_root_path)}\n")
-    return setup_infra(infra_root_path=infra_root_path)
+    infra_config = agno_config.create_or_update_infra_config(infra_root_path=infra_root_path, set_as_active=True)
+
+    if infra_config is not None:
+        print_info(f"Your new Agno Infra project is available at {str(infra_root_path)}\n")
+        print_info("1. Start Infra:")
+        print_info("\tag infra up")
+        print_info("2. Stop Infra:")
+        print_info("\tag infra down")
+
+        return infra_config
+    else:
+        print_info("Infra setup unsuccessful. Please try again.")
+    return None
 
 
 def setup_infra(infra_root_path: Path) -> Optional[InfraConfig]:
@@ -165,8 +176,6 @@ def setup_infra(infra_root_path: Path) -> Optional[InfraConfig]:
     1.5 Create or update InfraConfig
     """
     from agno.cli.operator import initialize_agno_cli
-    from agno.infra.helpers import get_infra_dir_path
-    from agno.utilities.git import get_remote_origin_for_dir
 
     print_heading("Setting up infra\n")
 
@@ -196,45 +205,42 @@ def setup_infra(infra_root_path: Path) -> Optional[InfraConfig]:
         # - The user ran `ag init -r` which erased existing infra
         logger.debug(f"Could not find a infra at: {infra_root_path}")
 
-        # Check if the infra contains a `infra` dir
-        infra_dir_path = get_infra_dir_path(infra_root_path)
-        if infra_dir_path is not None:
-            logger.debug(f"Found the `infra` configuration at: {infra_dir_path}")
-        else:
-            logger.debug(f"No infra directory found, but continuing setup")
-        infra_config = agno_config.create_or_update_infra_config(infra_root_path=infra_root_path, set_as_active=True)
-        if infra_config is None:
-            logger.error(f"Failed to create InfraConfig for {infra_root_path}")
-            return None
+        infra_config = setup_infra_config_from_dir(infra_root_path)
     else:
         logger.debug(f"Found infra at {infra_root_path}")
 
-    # 1.4 Get the infra name
-    infra_name = infra_root_path.stem.replace(" ", "-").replace("_", "-").lower()
-    logger.debug(f"Infra name: {infra_name}")
+    print_subheading("Setup complete! Next steps:")
+    print_info("1. Start Infra:")
+    print_info("\tag infra up")
+    print_info("2. Stop Infra:")
+    print_info("\tag infra down")
 
-    # 1.5 Get the git remote origin url
-    git_remote_origin_url: Optional[str] = get_remote_origin_for_dir(infra_root_path)
-    logger.debug("Git origin: {}".format(git_remote_origin_url))
+    return infra_config
 
-    # 1.6 Create or update InfraConfig
-    infra_config = agno_config.create_or_update_infra_config(infra_root_path=infra_root_path, set_as_active=True)
 
-    if infra_config is not None:
-        print_subheading("Setup complete! Next steps:")
-        print_info("1. Start Infra:")
-        print_info("\tag infra up")
-        print_info("2. Stop Infra:")
-        print_info("\tag infra down")
+def setup_infra_config_from_dir(infra_root_path: Path) -> Optional[InfraConfig]:
+    from agno.cli.operator import initialize_agno_cli
+    from agno.infra.helpers import get_infra_dir_path
 
-        return infra_config
+    # 1.2 Create AgnoCliConfig if needed
+    agno_config: Optional[AgnoCliConfig] = AgnoCliConfig.from_saved_config()
+    if not agno_config:
+        agno_config = initialize_agno_cli()
+        if not agno_config:
+            log_config_not_available_msg()
+            return None
+
+    # Check if the infra contains a `infra` dir
+    infra_dir_path = get_infra_dir_path(infra_root_path)
+    if infra_dir_path is not None:
+        logger.debug(f"Found the `infra` configuration at: {infra_dir_path}")
     else:
-        print_info("Infra setup unsuccessful. Please try again.")
-    return None
-
-    ######################################################
-    ## End Infra setup
-    ######################################################
+        logger.debug("No infra directory found, but continuing setup")
+    infra_config = agno_config.create_or_update_infra_config(infra_root_path=infra_root_path, set_as_active=True)
+    if infra_config is None:
+        logger.error(f"Failed to create InfraConfig for {infra_root_path}")
+        return None
+    return infra_config
 
 
 def start_infra(

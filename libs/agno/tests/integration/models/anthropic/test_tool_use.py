@@ -100,9 +100,14 @@ async def test_async_tool_use_stream():
 def test_tool_use_tool_call_limit():
     agent = Agent(
         model=Claude(id="claude-3-5-haiku-20241022"),
-        tools=[YFinanceTools(include_tools=[
+        tools=[
+            YFinanceTools(
+                include_tools=[
                     "get_company_news",
-                ], cache_results=True)],
+                ],
+                cache_results=True,
+            )
+        ],
         tool_call_limit=1,
         markdown=True,
         telemetry=False,

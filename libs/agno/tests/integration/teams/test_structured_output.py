@@ -23,14 +23,7 @@ def test_route_team_multiple_output_schemas():
         model=OpenAIChat("gpt-4o"),
         output_schema=StockAnalysis,
         role="Searches for information on stocks and provides price analysis.",
-        tools=[
-            YFinanceTools(
-                include_tools=[
-                    "get_current_stock_price",
-                    "get_analyst_recommendations"
-                ]
-            )
-        ],
+        tools=[YFinanceTools(include_tools=["get_current_stock_price", "get_analyst_recommendations"])],
     )
 
     company_info_agent = Agent(

@@ -13,10 +13,12 @@ def read_pyproject_agno(pyproject_file: Path) -> Optional[Dict]:
         # Try tomllib first (Python 3.11+), then fall back to tomli
         try:
             import tomllib
-            with open(pyproject_file, 'rb') as f:
+
+            with open(pyproject_file, "rb") as f:
                 pyproject_dict = tomllib.load(f)
         except ImportError:
             import tomli
+
             pyproject_dict = tomli.loads(pyproject_file.read_text())
 
         agno_conf = pyproject_dict.get("tool", {}).get("agno", None)
