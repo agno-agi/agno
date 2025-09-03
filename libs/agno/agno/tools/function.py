@@ -371,6 +371,20 @@ class Function(BaseModel):
         key_str = f"{self.name}:{args_str}:{kwargs_str}"
         return md5(key_str.encode()).hexdigest()
 
+    def _get_cache_key_from_resolved_args(self, resolved_args: Dict[str, Any]) -> str:
+        """Generate a cache key from resolved arguments with deterministic serialization."""
+        from hashlib import md5
+
+        # Create a copy and remove framework arguments that shouldn't affect caching
+        clean_args = resolved_args.copy()
+        for framework_arg in ["agent", "team", "fc"]:
+            clean_args.pop(framework_arg, None)
+        
+        # Sort arguments for consistent cache key regardless of order
+        args_str = str(sorted(clean_args.items()))
+        key_str = f"{self.name}:{args_str}"
+        return md5(key_str.encode()).hexdigest()
+
     def _get_cache_file_path(self, cache_key: str) -> str:
         """Get the full path for the cache file."""
         from pathlib import Path
@@ -533,6 +547,13 @@ class FunctionCall(BaseModel):
             entrypoint_args["fc"] = self
         return entrypoint_args
 
+    def _build_resolved_args(self, entrypoint_args: Dict[str, Any]) -> Dict[str, Any]:
+        """Build canonical resolved arguments for consistent cache key computation."""
+        resolved_args = entrypoint_args.copy()
+        if self.arguments is not None:
+            resolved_args.update(self.arguments)
+        return resolved_args
+
     def _build_hook_args(self, hook: Callable, name: str, func: Callable, args: Dict[str, Any]) -> Dict[str, Any]:
         """Build the arguments for the hook."""
         from inspect import signature
@@ -623,9 +644,14 @@ class FunctionCall(BaseModel):
 
         entrypoint_args = self._build_entrypoint_args()
 
+        # Build canonical resolved arguments for consistent cache key computation
+        resolved_args = self._build_resolved_args(entrypoint_args)
+        cache_key = None
+        cache_file = None
+
         # Check cache if enabled and not a generator function
         if self.function.cache_results and not isgeneratorfunction(self.function.entrypoint):
-            cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
+            cache_key = self.function._get_cache_key_from_resolved_args(resolved_args)
             cache_file = self.function._get_cache_file_path(cache_key)
             cached_result = self.function._get_cached_result(cache_file)
 
@@ -644,17 +670,13 @@ class FunctionCall(BaseModel):
                 arguments = entrypoint_args
                 if self.arguments is not None:
                     arguments.update(self.arguments)
-                result = self.function.entrypoint(**arguments)
-
-            # Handle generator case
+                result = self.function.entrypoint(**arguments)            # Handle generator case
             if isgenerator(result):
                 self.result = result  # Store generator directly, can't cache
             else:
                 self.result = result
-                # Only cache non-generator results
-                if self.function.cache_results:
-                    cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
-                    cache_file = self.function._get_cache_file_path(cache_key)
+                # Only cache non-generator results using precomputed cache key
+                if self.function.cache_results and cache_key is not None and cache_file is not None:
                     self.function._save_to_cache(cache_file, self.result)
 
         except AgentRunException as e:
@@ -804,11 +826,16 @@ class FunctionCall(BaseModel):
 
         entrypoint_args = self._build_entrypoint_args()
 
+        # Build canonical resolved arguments for consistent cache key computation
+        resolved_args = self._build_resolved_args(entrypoint_args)
+        cache_key = None
+        cache_file = None
+
         # Check cache if enabled and not a generator function
         if self.function.cache_results and not (
             isasyncgenfunction(self.function.entrypoint) or isgeneratorfunction(self.function.entrypoint)
         ):
-            cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
+            cache_key = self.function._get_cache_key_from_resolved_args(resolved_args)
             cache_file = self.function._get_cache_file_path(cache_key)
             cached_result = self.function._get_cached_result(cache_file)
             if cached_result is not None:
@@ -831,13 +858,10 @@ class FunctionCall(BaseModel):
                 if isasyncgenfunction(self.function.entrypoint):
                     self.result = result  # Store async generator directly
                 else:
-                    self.result = await result
-
-            # Only cache if not a generator
+                    self.result = await result            # Only cache if not a generator using precomputed cache key
             if self.function.cache_results and not (isgenerator(self.result) or isasyncgen(self.result)):
-                cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
-                cache_file = self.function._get_cache_file_path(cache_key)
-                self.function._save_to_cache(cache_file, self.result)
+                if cache_key is not None and cache_file is not None:
+                    self.function._save_to_cache(cache_file, self.result)
 
         except AgentRunException as e:
             log_debug(f"{e.__class__.__name__}: {e}")
