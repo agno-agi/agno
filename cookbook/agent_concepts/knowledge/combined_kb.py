@@ -50,10 +50,10 @@ local_pdf_kb = PDFKnowledgeBase(
 # Combine knowledge bases
 knowledge_base = CombinedKnowledgeBase(
     sources=[
-        csv_kb,
-        pdf_url_kb,
-        website_kb,
-        local_pdf_kb,
+        {"source": csv_kb, "priority": 0},
+        {"source": pdf_url_kb, "priority": 0},
+        {"source": website_kb, "priority": 0},
+        {"source": local_pdf_kb, "priority": 0},
     ],
     vector_db=PgVector(
         table_name="combined_documents",
