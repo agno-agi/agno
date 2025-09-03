@@ -284,3 +284,52 @@ def format_messages(messages: List[Message]) -> Tuple[List[Dict[str, str]], str]
 
         chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
     return chat_messages, " ".join(system_messages)
+
+
+def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Optional[List[Dict[str, Any]]]:
+    """
+    Transforms function definitions into a format accepted by the Anthropic API.
+    """
+    if not tools:
+        return None
+
+    parsed_tools: List[Dict[str, Any]] = []
+    for tool_def in tools:
+        if tool_def.get("type", "") != "function":
+            parsed_tools.append(tool_def)
+            continue
+
+        func_def = tool_def.get("function", {})
+        parameters: Dict[str, Any] = func_def.get("parameters", {})
+        properties: Dict[str, Any] = parameters.get("properties", {})
+        required: List[str] = parameters.get("required", [])
+        required_params: List[str] = required
+
+        if not required_params:
+            for param_name, param_info in properties.items():
+                param_type = param_info.get("type", "")
+                param_type_list: List[str] = [param_type] if isinstance(param_type, str) else param_type or []
+
+                if "null" not in param_type_list:
+                    required_params.append(param_name)
+
+        input_properties: Dict[str, Any] = {}
+        for param_name, param_info in properties.items():
+            # Preserve the complete schema structure for complex types
+            input_properties[param_name] = param_info.copy()
+
+            # Ensure description is present (default to empty if missing)
+            if "description" not in input_properties[param_name]:
+                input_properties[param_name]["description"] = ""
+
+        tool = {
+            "name": func_def.get("name") or "",
+            "description": func_def.get("description") or "",
+            "input_schema": {
+                "type": parameters.get("type", "object"),
+                "properties": input_properties,
+                "required": required_params,
+            },
+        }
+        parsed_tools.append(tool)
+    return parsed_tools
