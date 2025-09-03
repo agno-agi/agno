@@ -57,9 +57,8 @@ def create_infra_from_template(
     repo_to_clone: Optional[str] = url
     infra_template = InfraStarterTemplate.agent_infra_docker
     templates = list(InfraStarterTemplate.__members__.values())
-    
+
     print_subheading("Creating a new Agno Infra project\n")
-    
 
     if repo_to_clone is None:
         # Get repo_to_clone from template
@@ -111,7 +110,7 @@ def create_infra_from_template(
         )
         return None
 
-    print_info(f"\nCreating your new Agno Infra project...")
+    print_info("\nCreating your new Agno Infra project...")
     logger.debug("Cloning: {}".format(repo_to_clone))
     try:
         git.Repo.clone_from(

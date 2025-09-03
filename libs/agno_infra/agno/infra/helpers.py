@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Optional
 
-from agno.utilities.logging import log_debug, log_error
+from agno.utilities.logging import log_debug
 
 
 def get_infra_dir_from_env() -> Optional[Path]:
