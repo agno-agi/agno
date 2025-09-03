@@ -108,7 +108,7 @@ def extract_team_response_chunk_content(response: TeamRunResponseContentEvent) -
     members_response = "\n".join(members_content) if members_content else ""
 
     # Handle structured outputs
-    main_content = get_text_from_message(response.content)
+    main_content = get_text_from_message(response.content) if response.content is not None else ""
 
     return main_content + members_response
 
@@ -123,7 +123,7 @@ def extract_response_chunk_content(response: RunResponseContentEvent) -> str:
                 return get_text_from_message(msg.content)
 
     # Handle structured outputs
-    return get_text_from_message(response.content)
+    return get_text_from_message(response.content) if response.content is not None else ""
 
 
 def _create_events_from_chunk(

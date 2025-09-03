@@ -169,7 +169,7 @@ class DiscordClient:
             )
 
         # Handle structured outputs properly
-        content_message = get_text_from_message(response.content)
+        content_message = get_text_from_message(response.content) if response.content is not None else ""
 
         await self._send_discord_messages(thread=thread, message=content_message)
 
