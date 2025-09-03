@@ -1,4 +1,4 @@
-"""Run `pip install duckduckgo-search boto3 openai` to install dependencies."""
+"""Run `pip install ddgs boto3 openai` to install dependencies."""
 
 from agno.agent import Agent
 from agno.storage.dynamodb import DynamoDbStorage

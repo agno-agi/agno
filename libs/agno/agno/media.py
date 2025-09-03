@@ -38,13 +38,34 @@ class ImageArtifact(Media):
     mime_type: Optional[str] = None
     alt_text: Optional[str] = None
 
+    def _normalise_content(self) -> Optional[Union[str, bytes]]:
+        if self.content is None:
+            return None
+        content_normalised: Union[str, bytes] = self.content
+        if content_normalised and isinstance(content_normalised, bytes):
+            from base64 import b64encode
+
+            try:
+                # First try to decode as UTF-8
+                content_normalised = content_normalised.decode("utf-8")  # type: ignore
+            except UnicodeDecodeError:
+                # Fallback to base64 encoding for binary content
+                content_normalised = b64encode(bytes(content_normalised)).decode("utf-8")  # type: ignore
+            except Exception:
+                # Last resort: try to convert to base64
+                try:
+                    content_normalised = b64encode(bytes(content_normalised)).decode("utf-8")  # type: ignore
+                except Exception:
+                    pass
+        return content_normalised
+
     def to_dict(self) -> Dict[str, Any]:
+        content_normalised = self._normalise_content()
+
         response_dict = {
             "id": self.id,
             "url": self.url,
-            "content": self.content.decode("utf-8")
-            if self.content and isinstance(self.content, bytes)
-            else self.content,
+            "content": content_normalised,
             "mime_type": self.mime_type,
             "alt_text": self.alt_text,
         }
@@ -136,7 +157,7 @@ class Video(BaseModel):
 
     @classmethod
     def from_artifact(cls, artifact: VideoArtifact) -> "Video":
-        return cls(url=artifact.url)
+        return cls(url=artifact.url, content=artifact.content, format=artifact.mime_type)
 
 
 class Audio(BaseModel):
@@ -308,7 +329,7 @@ class Image(BaseModel):
 
     @classmethod
     def from_artifact(cls, artifact: ImageArtifact) -> "Image":
-        return cls(url=artifact.url)
+        return cls(url=artifact.url, content=artifact.content, format=artifact.mime_type)
 
 
 class File(BaseModel):

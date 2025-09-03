@@ -201,6 +201,7 @@ def test_get_recent_sessions(agent_storage: InMemoryStorage):
             session_id=f"session-{i}",
             agent_id="test-agent",
             user_id="test-user",
+            created_at=int(time.time()),
         )
         agent_storage.upsert(session)
         sessions.append(session)

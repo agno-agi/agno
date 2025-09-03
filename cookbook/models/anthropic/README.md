@@ -20,7 +20,7 @@ export ANTHROPIC_API_KEY=xxx
 ### 3. Install libraries
 
 ```shell
-pip install -U anthropic duckduckgo-search duckdb yfinance agno
+pip install -U anthropic ddgs duckdb yfinance agno
 ```
 
 ### 4. Run basic Agent
@@ -68,7 +68,7 @@ export OPENAI_API_KEY=***
 python cookbook/models/anthropic/knowledge.py
 ```
 
-### 9. Run Agent that uses memory   
+### 9. Run Agent that uses memory
 
 ```shell
 python cookbook/models/anthropic/memory.py
@@ -80,7 +80,7 @@ python cookbook/models/anthropic/memory.py
 python cookbook/models/anthropic/image_agent.py
 ```
 
-### 11. Run Agent with Thinking enabled 
+### 11. Run Agent with Thinking enabled
 
 - Streaming on
 ```shell

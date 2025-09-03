@@ -133,7 +133,7 @@ class GmailTools(Toolkit):
             send_email (bool): Enable sending emails. Defaults to True.
             search_emails (bool): Enable searching emails. Defaults to True.
             send_email_reply (bool): Enable sending email replies. Defaults to True.
-            creds (Optional[Credentials]): Pre-existing credentials. Defaults to None.
+            creds (Optional[Credentials]): Pre-fetched OAuth credentials. Use this to skip a new auth flow. Defaults to None.
             credentials_path (Optional[str]): Path to credentials file. Defaults to None.
             token_path (Optional[str]): Path to token file. Defaults to None.
             scopes (Optional[List[str]]): Custom OAuth scopes. If None, uses DEFAULT_SCOPES.

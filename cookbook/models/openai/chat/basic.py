@@ -1,9 +1,7 @@
 from agno.agent import Agent, RunResponse  # noqa
 from agno.models.openai import OpenAIChat
 
-agent = Agent(
-    model=OpenAIChat(id="gpt-4o", temperature=0.5), debug_mode=True, markdown=True
-)
+agent = Agent(model=OpenAIChat(id="gpt-4o", temperature=0.5), markdown=True)
 
 # Get the response in a variable
 # run: RunResponse = agent.run("Share a 2 sentence horror story")
