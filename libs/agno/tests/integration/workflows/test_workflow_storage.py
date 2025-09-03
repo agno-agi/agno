@@ -72,8 +72,7 @@ async def test_workflow_storage_async_streaming(workflow_storage):
             yield RunResponse(run_id=self.run_id, content="Received message: " + message)
 
     workflow = ExampleWorkflow(storage=workflow_storage)
-    response = await workflow.arun(message="Tell me a joke.")
-    async for item in response:
+    async for item in workflow.arun(message="Tell me a joke."):
         assert item.content == "Received message: Tell me a joke."
 
     stored_workflow_session = workflow_storage.read(session_id=workflow.session_id)

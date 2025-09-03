@@ -7,6 +7,7 @@ from rich.text import Text
 
 LOGGER_NAME = "agno"
 TEAM_LOGGER_NAME = f"{LOGGER_NAME}-team"
+WORKFLOW_LOGGER_NAME = f"{LOGGER_NAME}-workflow"
 
 # Define custom styles for different log sources
 LOG_STYLES = {
@@ -17,6 +18,10 @@ LOG_STYLES = {
     "team": {
         "debug": "magenta",
         "info": "steel_blue1",
+    },
+    "workflow": {
+        "debug": "sandy_brown",
+        "info": "orange3",
     },
 }
 
@@ -92,6 +97,7 @@ def build_logger(logger_name: str, source_type: Optional[str] = None) -> Any:
 
 agent_logger: AgnoLogger = build_logger(LOGGER_NAME, source_type="agent")
 team_logger: AgnoLogger = build_logger(TEAM_LOGGER_NAME, source_type="team")
+workflow_logger: AgnoLogger = build_logger(WORKFLOW_LOGGER_NAME, source_type="workflow")
 
 # Set the default logger to the agent logger
 logger: AgnoLogger = agent_logger
@@ -122,6 +128,22 @@ def set_log_level_to_info(source_type: Optional[str] = None):
     debug_on = False
 
 
+def set_log_level_to_warning(source_type: Optional[str] = None):
+    _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
+    _logger.setLevel(logging.WARNING)
+
+    global debug_on
+    debug_on = False
+
+
+def set_log_level_to_error(source_type: Optional[str] = None):
+    _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
+    _logger.setLevel(logging.ERROR)
+
+    global debug_on
+    debug_on = False
+
+
 def center_header(message: str, symbol: str = "*") -> str:
     try:
         import shutil
@@ -144,6 +166,12 @@ def use_agent_logger():
     """Switch the default logger to use the default agent logger"""
     global logger
     logger = agent_logger
+
+
+def use_workflow_logger():
+    """Switch the default logger to use workflow_logger"""
+    global logger
+    logger = workflow_logger
 
 
 def log_debug(msg, center: bool = False, symbol: str = "*", log_level: Literal[1, 2] = 1, *args, **kwargs):

@@ -16,7 +16,7 @@ source .venv/bin/activate
 Install the required dependencies:
 
 ```bash
-pip install openai duckduckgo-search yfinance lancedb tantivy pypdf requests exa-py newspaper4k lxml_html_clean sqlalchemy agno
+pip install openai ddgs yfinance lancedb tantivy pypdf requests exa-py newspaper4k lxml_html_clean sqlalchemy agno
 ```
 
 Export your OpenAI API key:

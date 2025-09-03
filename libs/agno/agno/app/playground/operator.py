@@ -92,30 +92,36 @@ def get_session_title_from_workflow_session(workflow_session: WorkflowSession) -
     )
     if session_name is not None:
         return session_name
-    memory = workflow_session.memory
-    if memory is not None:
-        runs = memory.get("runs")
-        runs = cast(List[Any], runs)
-        for _run in runs:
-            try:
-                # Try to get content directly from the run first (workflow structure)
-                content = _run.get("content")
-                if content:
-                    # Split content by newlines and take first line, but limit to 100 chars
-                    first_line = content.split("\n")[0]
-                    return first_line[:100] + "..." if len(first_line) > 100 else first_line
-
-                # Fallback to response.content structure (if it exists)
-                response = _run.get("response")
-                if response:
-                    content = response.get("content")
+    if hasattr(workflow_session, "memory"):
+        memory = workflow_session.memory
+        if memory is not None:
+            runs = memory.get("runs")
+            runs = cast(List[Any], runs)
+            for _run in runs:
+                try:
+                    # Try to get content directly from the run first (workflow structure)
+                    content = _run.get("content")
                     if content:
                         # Split content by newlines and take first line, but limit to 100 chars
                         first_line = content.split("\n")[0]
                         return first_line[:100] + "..." if len(first_line) > 100 else first_line
 
-            except Exception as e:
-                logger.error(f"Error parsing workflow session: {e}")
+                    # Fallback to response.content structure (if it exists)
+                    response = _run.get("response")
+                    if response:
+                        content = response.get("content")
+                        if content:
+                            # Split content by newlines and take first line, but limit to 100 chars
+                            first_line = content.split("\n")[0]
+                            return first_line[:100] + "..." if len(first_line) > 100 else first_line
+
+                except Exception as e:
+                    logger.error(f"Error parsing workflow session: {e}")
+    if hasattr(workflow_session, "runs"):
+        if workflow_session.runs is not None and len(workflow_session.runs) > 0:
+            for _run in workflow_session.runs:
+                if _run.content:
+                    return _run.content[:100] + "..." if len(_run.content) > 100 else _run.content
     return "Unnamed session"
 
 
