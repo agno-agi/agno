@@ -16,7 +16,7 @@ class ContactInfo(BaseModel):
     contact_details: str = Field(description="Email address or phone number")
 
 
-class ComprehensiveEventSchema(BaseModel):
+class EventSchema(BaseModel):
     event_id: str = Field(description="Unique event identifier")
     event_name: str = Field(description="Name of the event")
 
@@ -69,12 +69,10 @@ class ComprehensiveEventSchema(BaseModel):
 agent = Agent(
     name="Advanced Event Planner",
     model=Gemini(id="gemini-2.5-pro"),
-    response_model=ComprehensiveEventSchema,
+    response_model=EventSchema,
     instructions="""
     Create a detailed event plan that demonstrates all schema constraints:
     - Use proper date/time/duration formats
-    - Set appropriate numeric ranges for scores and counts
-    - Include multiple categories and equipment items within limits
     - Set a realistic status from the enum options
     - Handle budget as either a number or 'TBD'
     - Include optional notes if relevant
