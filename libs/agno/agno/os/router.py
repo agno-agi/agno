@@ -370,7 +370,8 @@ def get_base_router(
 
     # -- Agent routes ---
 
-    @router.post("/agents/{agent_id}/runs", tags=["Agents"], operation_id="create_agent_run")
+    @router.post("/agents/{agent_id}/runs", tags=["Agents"], operation_id="create_agent_run", 
+        response_model_exclude_none=True)
     async def create_agent_run(
         agent_id: str,
         message: str = Form(...),
@@ -758,9 +759,10 @@ def get_base_router(
                 elif action == "start-workflow":
                     # Handle workflow execution directly via WebSocket
                     await handle_workflow_via_websocket(websocket, message, os)
-
         except Exception as e:
-            logger.error(f"WebSocket error: {e}")
+            if "1012" not in str(e):
+                logger.error(f"WebSocket error: {e}")
+        finally:
             # Clean up any run_ids associated with this websocket
             runs_to_remove = [run_id for run_id, ws in websocket_manager.active_connections.items() if ws == websocket]
             for run_id in runs_to_remove:
