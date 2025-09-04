@@ -8,6 +8,7 @@ from agno.agent.agent import Agent, RunResponse
 from agno.media import Audio, File, Image, Video
 from agno.team.team import Team, TeamRunResponse
 from agno.utils.log import log_info, log_warning
+from agno.utils.message import get_text_from_message
 
 try:
     import discord
@@ -167,7 +168,10 @@ class DiscordClient:
                 thread=thread, message=f"Reasoning: \n{response.reasoning_content}", italics=True
             )
 
-        await self._send_discord_messages(thread=thread, message=str(response.content))
+        # Handle structured outputs properly
+        content_message = get_text_from_message(response.content) if response.content is not None else ""
+
+        await self._send_discord_messages(thread=thread, message=content_message)
 
     async def _send_discord_messages(self, thread: discord.channel, message: str, italics: bool = False):  # type: ignore
         if len(message) < 1500:

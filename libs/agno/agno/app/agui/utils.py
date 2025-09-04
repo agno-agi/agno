@@ -27,6 +27,7 @@ from agno.models.message import Message
 from agno.run.response import RunEvent, RunResponseContentEvent, RunResponseEvent, RunResponsePausedEvent
 from agno.run.team import RunResponseContentEvent as TeamRunResponseContentEvent
 from agno.run.team import TeamRunEvent, TeamRunResponseEvent
+from agno.utils.message import get_text_from_message
 
 
 @dataclass
@@ -106,17 +107,23 @@ def extract_team_response_chunk_content(response: TeamRunResponseContentEvent) -
                     members_content.append(f"Team member: {member_content}")
     members_response = "\n".join(members_content) if members_content else ""
 
-    return str(response.content) + members_response
+    # Handle structured outputs
+    main_content = get_text_from_message(response.content) if response.content is not None else ""
+
+    return main_content + members_response
 
 
 def extract_response_chunk_content(response: RunResponseContentEvent) -> str:
     """Given a response stream chunk, find and extract the content."""
+
     if hasattr(response, "messages") and response.messages:  # type: ignore
         for msg in reversed(response.messages):  # type: ignore
             if hasattr(msg, "role") and msg.role == "assistant" and hasattr(msg, "content") and msg.content:
-                return str(msg.content)
+                # Handle structured outputs from messages
+                return get_text_from_message(msg.content)
 
-    return str(response.content) if response.content else ""
+    # Handle structured outputs
+    return get_text_from_message(response.content) if response.content is not None else ""
 
 
 def _create_events_from_chunk(
@@ -202,11 +209,11 @@ def _create_events_from_chunk(
 
     # Handle reasoning
     elif chunk.event == RunEvent.reasoning_started:
-        step_event = StepStartedEvent(type=EventType.STEP_STARTED, step_name="reasoning")
-        events_to_emit.append(step_event)
+        step_started_event = StepStartedEvent(type=EventType.STEP_STARTED, step_name="reasoning")
+        events_to_emit.append(step_started_event)
     elif chunk.event == RunEvent.reasoning_completed:
-        step_event = StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning")
-        events_to_emit.append(step_event)
+        step_finished_event = StepFinishedEvent(type=EventType.STEP_FINISHED, step_name="reasoning")
+        events_to_emit.append(step_finished_event)
 
     return events_to_emit, message_started
 
@@ -220,7 +227,7 @@ def _create_completion_events(
     run_id: str,
 ) -> List[BaseEvent]:
     """Create events for run completion."""
-    events_to_emit = []
+    events_to_emit: List[BaseEvent] = []
 
     # End remaining active tool calls if needed
     for tool_call_id in list(event_buffer.active_tool_call_ids):
@@ -271,7 +278,7 @@ def _create_completion_events(
 
 def _emit_event_logic(event: BaseEvent, event_buffer: EventBuffer) -> List[BaseEvent]:
     """Process an event through the buffer and return events to actually emit."""
-    events_to_emit = []
+    events_to_emit: List[BaseEvent] = []
 
     if event_buffer.is_blocked():
         # Handle events related to the current blocking tool call
