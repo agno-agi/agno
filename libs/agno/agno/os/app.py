@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+from functools import partial
 from os import getenv
 from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
@@ -34,7 +36,22 @@ from agno.os.routers.session import get_session_router
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import generate_id
 from agno.team.team import Team
+from agno.tools.mcp import MCPTools
 from agno.workflow.workflow import Workflow
+
+
+@asynccontextmanager
+async def mcp_lifespan(app, mcp_tools: List[MCPTools]):
+    """Manage MCP connection lifecycle inside a FastAPI app"""
+    # Startup logic: connect to all contextual MCP servers
+    for tool in mcp_tools:
+        await tool.connect()
+
+    yield
+
+    # Shutdown logic: Close all contextual MCP connections
+    for tool in mcp_tools:
+        await tool.close()
 
 
 class AgentOS:
@@ -75,9 +92,16 @@ class AgentOS:
         self.telemetry = telemetry
 
         self.interfaces_loaded: List[Tuple[str, str]] = []
+        self.mcp_tools: List[MCPTools] = []
 
         if self.agents:
             for agent in self.agents:
+                # Track all MCP tools to later handle their connection
+                if agent.tools:
+                    for tool in agent.tools:
+                        if isinstance(tool, MCPTools):
+                            self.mcp_tools.append(tool)
+
                 agent.initialize_agent()
 
                 # Required for the built-in routes to work
@@ -85,6 +109,12 @@ class AgentOS:
 
         if self.teams:
             for team in self.teams:
+                # Track all MCP tools to later handle their connection
+                if team.tools:
+                    for tool in team.tools:
+                        if isinstance(tool, MCPTools):
+                            self.mcp_tools.append(tool)
+
                 team.initialize_team()
 
                 # Required for the built-in routes to work
@@ -99,6 +129,7 @@ class AgentOS:
 
         if self.workflows:
             for workflow in self.workflows:
+                # TODO: track MCP tools in workflow members
                 if not workflow.id:
                     workflow.id = generate_id(workflow.name)
 
@@ -307,11 +338,17 @@ class AgentOS:
 
     def get_app(self) -> FastAPI:
         if not self.fastapi_app:
+            # Adjust the FastAPI app lifespan to handle MCP connections if relevant
+            app_lifespan = None
+            if self.mcp_tools is not None:
+                app_lifespan = partial(mcp_lifespan, mcp_tools=self.mcp_tools)
+
             self.fastapi_app = FastAPI(
                 title=self.settings.title,
                 docs_url="/docs" if self.settings.docs_enabled else None,
                 redoc_url="/redoc" if self.settings.docs_enabled else None,
                 openapi_url="/openapi.json" if self.settings.docs_enabled else None,
+                lifespan=app_lifespan,
             )
 
         if not self.fastapi_app:
