@@ -1,0 +1,236 @@
+---
+title: "Reference: Qdrant Vector Store | Vector Databases | RAG | Mastra Docs"
+description: Documentation for integrating Qdrant with Mastra, a vector similarity search engine for managing vectors and payloads.
+---
+
+# Qdrant Vector Store
+
+The QdrantVector class provides vector search using [Qdrant](https://qdrant.tech/), a vector similarity search engine.
+It provides a production-ready service with a convenient API to store, search, and manage vectors with additional payload and extended filtering support.
+
+## Constructor Options
+
+<PropertiesTable
+  content={[
+    {
+      name: "url",
+      type: "string",
+      description:
+        "REST URL of the Qdrant instance. Eg. https://xyz-example.eu-central.aws.cloud.qdrant.io:6333",
+    },
+    {
+      name: "apiKey",
+      type: "string",
+      description: "Optional Qdrant API key",
+    },
+    {
+      name: "https",
+      type: "boolean",
+      description:
+        "Whether to use TLS when setting up the connection. Recommended.",
+    },
+  ]}
+/>
+
+## Methods
+
+### createIndex()
+
+<PropertiesTable
+  content={[
+    {
+      name: "indexName",
+      type: "string",
+      description: "Name of the index to create",
+    },
+    {
+      name: "dimension",
+      type: "number",
+      description: "Vector dimension (must match your embedding model)",
+    },
+    {
+      name: "metric",
+      type: "'cosine' | 'euclidean' | 'dotproduct'",
+      isOptional: true,
+      defaultValue: "cosine",
+      description: "Distance metric for similarity search",
+    },
+  ]}
+/>
+
+### upsert()
+
+<PropertiesTable
+  content={[
+    {
+      name: "vectors",
+      type: "number[][]",
+      description: "Array of embedding vectors",
+    },
+    {
+      name: "metadata",
+      type: "Record<string, any>[]",
+      isOptional: true,
+      description: "Metadata for each vector",
+    },
+    {
+      name: "ids",
+      type: "string[]",
+      isOptional: true,
+      description: "Optional vector IDs (auto-generated if not provided)",
+    },
+  ]}
+/>
+
+### query()
+
+<PropertiesTable
+  content={[
+    {
+      name: "indexName",
+      type: "string",
+      description: "Name of the index to query",
+    },
+    {
+      name: "queryVector",
+      type: "number[]",
+      description: "Query vector to find similar vectors",
+    },
+    {
+      name: "topK",
+      type: "number",
+      isOptional: true,
+      defaultValue: "10",
+      description: "Number of results to return",
+    },
+    {
+      name: "filter",
+      type: "Record<string, any>",
+      isOptional: true,
+      description: "Metadata filters for the query",
+    },
+    {
+      name: "includeVector",
+      type: "boolean",
+      isOptional: true,
+      defaultValue: "false",
+      description: "Whether to include vectors in the results",
+    },
+  ]}
+/>
+
+### listIndexes()
+
+Returns an array of index names as strings.
+
+### describeIndex()
+
+<PropertiesTable
+  content={[
+    {
+      name: "indexName",
+      type: "string",
+      description: "Name of the index to describe",
+    },
+  ]}
+/>
+
+Returns:
+
+```typescript copy
+interface IndexStats {
+  dimension: number;
+  count: number;
+  metric: "cosine" | "euclidean" | "dotproduct";
+}
+```
+
+### deleteIndex()
+
+<PropertiesTable
+  content={[
+    {
+      name: "indexName",
+      type: "string",
+      description: "Name of the index to delete",
+    },
+  ]}
+/>
+
+### updateVector()
+
+<PropertiesTable
+  content={[
+    {
+      name: "indexName",
+      type: "string",
+      description: "Name of the index to update",
+    },
+    {
+      name: "id",
+      type: "string",
+      description: "ID of the vector to update",
+    },
+    {
+      name: "update",
+      type: "{ vector?: number[]; metadata?: Record<string, any>; }",
+      description: "Object containing the vector and/or metadata to update",
+    },
+  ]}
+/>
+
+Updates a vector and/or its metadata in the specified index. If both vector and metadata are provided, both will be updated. If only one is provided, only that will be updated.
+
+### deleteVector()
+
+<PropertiesTable
+  content={[
+    {
+      name: "indexName",
+      type: "string",
+      description: "Name of the index from which to delete the vector",
+    },
+    {
+      name: "id",
+      type: "string",
+      description: "ID of the vector to delete",
+    },
+  ]}
+/>
+
+Deletes a vector from the specified index by its ID.
+
+## Response Types
+
+Query results are returned in this format:
+
+```typescript copy
+interface QueryResult {
+  id: string;
+  score: number;
+  metadata: Record<string, any>;
+  vector?: number[]; // Only included if includeVector is true
+}
+```
+
+## Error Handling
+
+The store throws typed errors that can be caught:
+
+```typescript copy
+try {
+  await store.query({
+    indexName: "index_name",
+    queryVector: queryVector,
+  });
+} catch (error) {
+  if (error instanceof VectorStoreError) {
+    console.log(error.code); // 'connection_failed' | 'invalid_dimension' | etc
+    console.log(error.details); // Additional error context
+  }
+}
+```
+
+## Related
+
+- [Metadata Filters](./metadata-filters)

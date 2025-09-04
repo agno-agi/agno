@@ -1,0 +1,1 @@
+../@grpc/proto-loader/build/bin/proto-loader-gen-types.js

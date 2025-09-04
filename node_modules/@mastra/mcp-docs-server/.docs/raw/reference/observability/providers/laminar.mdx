@@ -1,0 +1,41 @@
+---
+title: "Reference: Laminar Integration | Mastra Observability Docs"
+description: Documentation for integrating Laminar with Mastra, a specialized observability platform for LLM applications.
+---
+
+# Laminar
+
+Laminar is a specialized observability platform for LLM applications.
+
+## Configuration
+
+To use Laminar with Mastra, configure these environment variables:
+
+```env
+OTEL_EXPORTER_OTLP_ENDPOINT=https://api.lmnr.ai:8443
+OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer your_api_key, x-laminar-team-id=your_team_id"
+```
+
+## Implementation
+
+Here's how to configure Mastra to use Laminar:
+
+```typescript
+import { Mastra } from "@mastra/core";
+
+export const mastra = new Mastra({
+  // ... other config
+  telemetry: {
+    serviceName: "your-service-name",
+    enabled: true,
+    export: {
+      type: "otlp",
+      protocol: "grpc",
+    },
+  },
+});
+```
+
+## Dashboard
+
+Access your Laminar dashboard at [https://lmnr.ai/](https://lmnr.ai/)

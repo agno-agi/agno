@@ -1,0 +1,242 @@
+---
+title: "Getting Started with Mastra and Vite/React | Mastra Guides"
+description: A step-by-step guide to integrating Mastra with Vite and React.
+---
+
+import { Callout, Steps, Tabs } from "nextra/components";
+
+# Integrate Mastra in your Vite/React project
+
+Mastra integrates with Vite, making it easy to:
+
+- Build flexible APIs to serve AI-powered features
+- Simplify deployment with a unified codebase for frontend and backend
+- Take advantage of Mastra's Client SDK
+
+Use this guide to scaffold and integrate Mastra with your Vite/React project.
+
+<Callout type="warning">
+  This guide assumes you're using Vite/React with React Router v7 at the root of
+  your project, e.g., `app`.
+</Callout>
+
+## Install Mastra
+
+Install the required Mastra packages:
+{/*
+LLM CONTEXT: This Tabs component shows commands for integrating a new Mastra backend project using different package managers.
+Each tab displays the command for that specific package manager to create an integrated Mastra backend service.
+This is part of the "Integrated Backend Integration" approach for Vite/React projects.
+All commands create the same Mastra project but use different package manager syntax.
+*/}
+
+<Tabs items={["npm", "yarn", "pnpm", "bun"]}>
+  <Tabs.Tab>
+    ```bash copy
+    npm install mastra@latest @mastra/core@latest @mastra/libsql@latest @mastra/client-js@latest
+    ```
+  </Tabs.Tab>
+  <Tabs.Tab>
+    ```bash copy
+    yarn add mastra@latest @mastra/core@latest @mastra/libsql@latest @mastra/client-js@latest
+    ```
+  </Tabs.Tab>
+  <Tabs.Tab>
+    ```bash copy
+    pnpm add mastra@latest @mastra/core@latest @mastra/libsql@latest @mastra/client-js@latest
+    ```
+  </Tabs.Tab>
+  <Tabs.Tab>
+    ```bash copy
+    bun add mastra@latest @mastra/core@latest @mastra/libsql@latest @mastra/client-js@latest
+    ```
+  </Tabs.Tab>
+</Tabs>
+
+## Integrate Mastra
+
+To integrate Mastra into your project, you have two options:
+
+### 1. Use the One-Liner
+
+Run the following command to quickly scaffold the default Weather agent with sensible defaults:
+
+```bash copy
+npx mastra@latest init --dir . --components agents,tools --example --llm openai
+```
+
+> See [mastra init](/reference/cli/init) for more information.
+
+### 2. Use the Interactive CLI
+
+If you prefer to customize the setup, run the `init` command and choose from the options when prompted:
+
+```bash copy
+npx mastra@latest init
+```
+
+<Callout type="warning">
+By default, `mastra init` suggests `src` as the install location. If you're using Vite/React at the root of your project (e.g., `app`, not `src/app`), enter `.` when prompted:
+</Callout>
+
+Add the `dev` and `build` scripts to `package.json`:
+
+<Tabs items={["app", "src/app"]}>
+  <Tabs.Tab>
+    ```json filename="package.json"
+    {
+      "scripts": {
+        ...
+        "dev:mastra": "mastra dev --dir mastra",
+        "build:mastra": "mastra build --dir mastra"
+      }
+    }
+    ```
+  </Tabs.Tab>
+  <Tabs.Tab>
+    ```json filename="package.json"
+    {
+      "scripts": {
+        ...
+        "dev:mastra": "mastra dev --dir src/mastra",
+        "build:mastra": "mastra build --dir src/mastra"
+      }
+    }
+    ```
+  </Tabs.Tab>
+</Tabs>
+
+## Configure TypeScript
+
+Modify the `tsconfig.json` file in your project root:
+
+```json filename="tsconfig.json"
+{
+  ...
+  "exclude": ["dist", ".mastra"]
+}
+```
+
+## Set Up API Keys
+
+```bash filename=".env" copy
+OPENAI_API_KEY=<your-api-key>
+```
+
+> Each LLM provider uses a different env var. See [Model Capabilities](/docs/getting-started/model-capability) for more information.
+
+## Update .gitignore
+
+Add `.mastra` to your `.gitignore` file:
+
+```bash filename=".gitignore" copy
+.mastra
+```
+
+## Start the Mastra Dev Server
+
+Start the Mastra Dev Server to expose your agents as REST endpoints:
+
+<Tabs items={["npm", "CLI"]}>
+  <Tabs.Tab>
+    ```bash copy
+    npm run dev:mastra
+    ```
+  </Tabs.Tab>
+  <Tabs.Tab>
+    ```bash copy
+    mastra dev:mastra
+    ```
+  </Tabs.Tab>
+</Tabs>
+
+> Once running, your agents are available locally. See [Local Development Environment](/docs/server-db/local-dev-playground) for more information.
+
+## Start Vite Dev Server
+
+With the Mastra Dev Server running, you can start your Vite app in the usual way.
+
+## Create Mastra Client
+
+Create a new directory and file. Then add the example code:
+
+```bash copy
+mkdir lib
+touch lib/mastra.ts
+```
+
+```typescript filename="lib/mastra.ts" showLineNumbers copy
+import { MastraClient } from "@mastra/client-js";
+
+export const mastraClient = new MastraClient({
+  baseUrl: import.meta.env.VITE_MASTRA_API_URL || "http://localhost:4111",
+});
+```
+
+## Create Test Route Config
+
+Add new `route` to the config:
+
+```typescript filename="app/routes.ts" showLineNumbers copy
+import { type RouteConfig, index, route } from "@react-router/dev/routes";
+
+export default [
+  index("routes/home.tsx"),
+  route("test", "routes/test.tsx"),
+] satisfies RouteConfig;
+```
+
+## Create Test Route
+
+Create a new Route, and add the example code:
+
+```bash copy
+touch app/routes/test.tsx
+```
+
+```typescript filename="app/routes/test.tsx" showLineNumbers copy
+import { useState } from "react";
+import { mastraClient } from "../../lib/mastra";
+
+export default function Test() {
+  const [result, setResult] = useState<string | null>(null);
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const formData = new FormData(event.currentTarget);
+    const city = formData.get("city")?.toString();
+    const agent = mastraClient.getAgent("weatherAgent");
+
+    const response = await agent.generate({
+      messages: [{ role: "user", content: `What's the weather like in ${city}?` }]
+    });
+
+    setResult(response.text);
+  }
+
+  return (
+    <>
+      <h1>Test</h1>
+      <form onSubmit={handleSubmit}>
+        <input name="city" placeholder="Enter city" required />
+        <button type="submit">Get Weather</button>
+      </form>
+      {result && <pre>{result}</pre>}
+    </>
+  );
+}
+```
+
+> You can now navigate to `/test` in your browser to try it out.
+
+Submitting **London** as the city would return a result similar to:
+
+```plaintext
+The current weather in London is partly cloudy with a temperature of 19.3°C, feeling like 17.4°C. The humidity is at 53%, and there is a wind speed of 15.9 km/h, with gusts up to 38.5 km/h.
+```
+
+
+## Next steps
+
+- [Monorepo Deployment](../../deployment/monorepo.mdx)

@@ -1,0 +1,72 @@
+---
+title: "Local Project Structure | Getting Started | Mastra Docs"
+description: Guide on organizing folders and files in Mastra, including best practices and recommended structures.
+---
+
+import { FileTree } from "nextra/components";
+
+# Project Structure
+
+This page provides a guide for organizing folders and files in Mastra. Mastra is a modular framework, and you can use any of the modules separately or together.
+
+You could write everything in a single file, or separate each agent, tool, and workflow into their own files.
+
+We don't enforce a specific folder structure, but we do recommend some best practices, and the CLI will scaffold a project with a sensible structure.
+
+## Example Project Structure
+
+A default project created with the CLI looks like this:
+
+<FileTree>
+  <FileTree.Folder name="src" defaultOpen>
+    <FileTree.Folder name="mastra" defaultOpen>
+      <FileTree.Folder name="agents" defaultOpen>
+        <FileTree.File name="agent-name.ts" />
+      </FileTree.Folder>
+      <FileTree.Folder name="tools" defaultOpen>
+        <FileTree.File name="tool-name.ts" />
+      </FileTree.Folder>
+      <FileTree.Folder name="workflows" defaultOpen>
+        <FileTree.File name="workflow-name.ts" />
+      </FileTree.Folder>
+      <FileTree.File name="index.ts" />
+    </FileTree.Folder>
+  </FileTree.Folder>
+  <FileTree.File name=".env" />
+  <FileTree.File name="package.json" />
+  <FileTree.File name="tsconfig.json" />
+</FileTree>
+{/*
+```
+root/
+├── src/
+│   └── mastra/
+│       ├── agents/
+│       │   └── index.ts
+│       ├── tools/
+│       │   └── index.ts
+│       ├── workflows/
+│       │   └── index.ts
+│       ├── index.ts
+├── .env
+├── package.json
+├── tssconfig.json
+``` */}
+
+### Top-level Folders
+
+| Folder                 | Description                          |
+| ---------------------- | ------------------------------------ |
+| `src/mastra`           | Core application folder              |
+| `src/mastra/agents`    | Agent configurations and definitions |
+| `src/mastra/tools`     | Custom tool definitions              |
+| `src/mastra/workflows` | Workflow definitions                 |
+
+### Top-level Files
+
+| File                  | Description                                         |
+| --------------------- | --------------------------------------------------- |
+| `src/mastra/index.ts` | Main configuration file for Mastra                  |
+| `.env`                | Environment variables                               |
+| `package.json`        | Node.js project metadata, scripts, and dependencies |
+| `tsconfig.json`       | TypeScript compiler configuration                   |

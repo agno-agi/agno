@@ -1,0 +1,357 @@
+---
+title: "Default Vector Store | Vector Databases | RAG | Mastra Docs"
+description: Documentation for the LibSQLVector class in Mastra, which provides vector search using LibSQL with vector extensions.
+---
+
+# LibSQLVector Store
+
+The LibSQL storage implementation provides a SQLite-compatible vector search [LibSQL](https://github.com/tursodatabase/libsql), a fork of SQLite with vector extensions, and [Turso](https://turso.tech/) with vector extensions, offering a lightweight and efficient vector database solution.
+It's part of the `@mastra/libsql` package and offers efficient vector similarity search with metadata filtering.
+
+## Installation
+
+Default vector store is included in the core package:
+
+```bash copy
+npm install @mastra/libsql@latest
+```
+
+## Usage
+
+```typescript copy showLineNumbers
+import { LibSQLVector } from "@mastra/libsql";
+
+// Create a new vector store instance
+const store = new LibSQLVector({
+  connectionUrl: process.env.DATABASE_URL,
+  // Optional: for Turso cloud databases
+  authToken: process.env.DATABASE_AUTH_TOKEN,
+});
+
+// Create an index
+await store.createIndex({
+  indexName: "myCollection",
+  dimension: 1536,
+});
+
+// Add vectors with metadata
+const vectors = [[0.1, 0.2, ...], [0.3, 0.4, ...]];
+const metadata = [
+  { text: "first document", category: "A" },
+  { text: "second document", category: "B" }
+];
+await store.upsert({
+  indexName: "myCollection",
+  vectors,
+  metadata,
+});
+
+// Query similar vectors
+const queryVector = [0.1, 0.2, ...];
+const results = await store.query({
+  indexName: "myCollection",
+  queryVector,
+  topK: 10, // top K results
+  filter: { category: "A" } // optional metadata filter
+});
+```
+
+## Constructor Options
+
+<PropertiesTable
+  content={[
+    {
+      name: "connectionUrl",
+      type: "string",
+      description:
+        "LibSQL database URL. Use ':memory:' for in-memory database, 'file:dbname.db' for local file, or a LibSQL-compatible connection string like 'libsql://your-database.turso.io'.",
+    },
+    {
+      name: "authToken",
+      type: "string",
+      isOptional: true,
+      description: "Authentication token for Turso cloud databases",
+    },
+    {
+      name: "syncUrl",
+      type: "string",
+      isOptional: true,
+      description: "URL for database replication (Turso specific)",
+    },
+    {
+      name: "syncInterval",
+      type: "number",
+      isOptional: true,
+      description:
+        "Interval in milliseconds for database sync (Turso specific)",
+    },
+  ]}
+/>
+
+## Methods
+
+### createIndex()
+
+Creates a new vector collection. The index name must start with a letter or underscore and can only contain letters, numbers, and underscores. The dimension must be a positive integer.
+
+<PropertiesTable
+  content={[
+    {
+      name: "indexName",
+      type: "string",
+      description: "Name of the index to create",
+    },
+    {
+      name: "dimension",
+      type: "number",
+      description: "Vector dimension size (must match your embedding model)",
+    },
+    {
+      name: "metric",
+      type: "'cosine' | 'euclidean' | 'dotproduct'",
+      isOptional: true,
+      defaultValue: "cosine",
+      description:
+        "Distance metric for similarity search. Note: Currently only cosine similarity is supported by LibSQL.",
+    },
+  ]}
+/>
+
+### upsert()
+
+Adds or updates vectors and their metadata in the index. Uses a transaction to ensure all vectors are inserted atomically - if any insert fails, the entire operation is rolled back.
+
+<PropertiesTable
+  content={[
+    {
+      name: "indexName",
+      type: "string",
+      description: "Name of the index to insert into",
+    },
+    {
+      name: "vectors",
+      type: "number[][]",
+      description: "Array of embedding vectors",
+    },
+    {
+      name: "metadata",
+      type: "Record<string, any>[]",
+      isOptional: true,
+      description: "Metadata for each vector",
+    },
+    {
+      name: "ids",
+      type: "string[]",
+      isOptional: true,
+      description: "Optional vector IDs (auto-generated if not provided)",
+    },
+  ]}
+/>
+
+### query()
+
+Searches for similar vectors with optional metadata filtering.
+
+<PropertiesTable
+  content={[
+    {
+      name: "indexName",
+      type: "string",
+      description: "Name of the index to search in",
+    },
+    {
+      name: "queryVector",
+      type: "number[]",
+      description: "Query vector to find similar vectors for",
+    },
+    {
+      name: "topK",
+      type: "number",
+      isOptional: true,
+      defaultValue: "10",
+      description: "Number of results to return",
+    },
+    {
+      name: "filter",
+      type: "Filter",
+      isOptional: true,
+      description: "Metadata filters",
+    },
+    {
+      name: "includeVector",
+      type: "boolean",
+      isOptional: true,
+      defaultValue: "false",
+      description: "Whether to include vector data in results",
+    },
+    {
+      name: "minScore",
+      type: "number",
+      isOptional: true,
+      defaultValue: "0",
+      description: "Minimum similarity score threshold",
+    },
+  ]}
+/>
+
+### describeIndex()
+
+Gets information about an index.
+
+<PropertiesTable
+  content={[
+    {
+      name: "indexName",
+      type: "string",
+      description: "Name of the index to describe",
+    },
+  ]}
+/>
+
+Returns:
+
+```typescript copy
+interface IndexStats {
+  dimension: number;
+  count: number;
+  metric: "cosine" | "euclidean" | "dotproduct";
+}
+```
+
+### deleteIndex()
+
+Deletes an index and all its data.
+
+<PropertiesTable
+  content={[
+    {
+      name: "indexName",
+      type: "string",
+      description: "Name of the index to delete",
+    },
+  ]}
+/>
+
+### listIndexes()
+
+Lists all vector indexes in the database.
+
+Returns: `Promise<string[]>`
+
+### truncateIndex()
+
+Removes all vectors from an index while keeping the index structure.
+
+<PropertiesTable
+  content={[
+    {
+      name: "indexName",
+      type: "string",
+      description: "Name of the index to truncate",
+    },
+  ]}
+/>
+
+### updateVector()
+
+Updates a specific vector entry by its ID with new vector data and/or metadata.
+
+<PropertiesTable
+  content={[
+    {
+      name: "indexName",
+      type: "string",
+      description: "Name of the index containing the vector",
+    },
+    {
+      name: "id",
+      type: "string",
+      description: "ID of the vector entry to update",
+    },
+    {
+      name: "update",
+      type: "object",
+      description: "Update data containing vector and/or metadata",
+    },
+    {
+      name: "update.vector",
+      type: "number[]",
+      isOptional: true,
+      description: "New vector data to update",
+    },
+    {
+      name: "update.metadata",
+      type: "Record<string, any>",
+      isOptional: true,
+      description: "New metadata to update",
+    },
+  ]}
+/>
+
+### deleteVector()
+
+Deletes a specific vector entry from an index by its ID.
+
+<PropertiesTable
+  content={[
+    {
+      name: "indexName",
+      type: "string",
+      description: "Name of the index containing the vector",
+    },
+    {
+      name: "id",
+      type: "string",
+      description: "ID of the vector entry to delete",
+    },
+  ]}
+/>
+
+## Response Types
+
+Query results are returned in this format:
+
+```typescript copy
+interface QueryResult {
+  id: string;
+  score: number;
+  metadata: Record<string, any>;
+  vector?: number[]; // Only included if includeVector is true
+}
+```
+
+## Error Handling
+
+The store throws specific errors for different failure cases:
+
+```typescript copy
+try {
+  await store.query({
+    indexName: "my-collection",
+    queryVector: queryVector,
+  });
+} catch (error) {
+  // Handle specific error cases
+  if (error.message.includes("Invalid index name format")) {
+    console.error(
+      "Index name must start with a letter/underscore and contain only alphanumeric characters",
+    );
+  } else if (error.message.includes("Table not found")) {
+    console.error("The specified index does not exist");
+  } else {
+    console.error("Vector store error:", error.message);
+  }
+}
+```
+
+Common error cases include:
+
+- Invalid index name format
+- Invalid vector dimensions
+- Table/index not found
+- Database connection issues
+- Transaction failures during upsert
+
+## Related
+
+- [Metadata Filters](./metadata-filters)

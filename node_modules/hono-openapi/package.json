@@ -1,0 +1,157 @@
+{
+  "name": "hono-openapi",
+  "description": "OpenAPI schema generator for Hono",
+  "version": "0.4.8",
+  "types": "./index.d.ts",
+  "main": "./index.js",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "hono",
+    "openapi",
+    "zod",
+    "valibot",
+    "typebox",
+    "arktype",
+    "effect"
+  ],
+  "homepage": "https://github.com/rhinobase/hono-openapi",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rhinobase/hono-openapi.git",
+    "directory": "packages/core"
+  },
+  "bugs": {
+    "url": "https://github.com/rhinobase/hono-openapi/issues"
+  },
+  "dependencies": {
+    "json-schema-walker": "^2.0.0"
+  },
+  "peerDependencies": {
+    "@hono/arktype-validator": "^2.0.0",
+    "@hono/effect-validator": "^1.2.0",
+    "@hono/typebox-validator": "^0.2.0 || ^0.3.0",
+    "@hono/valibot-validator": "^0.5.1",
+    "@hono/zod-validator": "^0.4.1",
+    "@sinclair/typebox": "^0.34.9",
+    "@valibot/to-json-schema": "^1.0.0-beta.3",
+    "arktype": "^2.0.0",
+    "effect": "^3.11.3",
+    "hono": "^4.6.13",
+    "openapi-types": "^12.1.3",
+    "valibot": "^1.0.0-beta.9",
+    "zod": "^3.23.8",
+    "zod-openapi": "^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@hono/arktype-validator": {
+      "optional": true
+    },
+    "@hono/effect-validator": {
+      "optional": true
+    },
+    "@hono/typebox-validator": {
+      "optional": true
+    },
+    "@hono/valibot-validator": {
+      "optional": true
+    },
+    "@hono/zod-validator": {
+      "optional": true
+    },
+    "@sinclair/typebox": {
+      "optional": true
+    },
+    "@valibot/to-json-schema": {
+      "optional": true
+    },
+    "arktype": {
+      "optional": true
+    },
+    "effect": {
+      "optional": true
+    },
+    "hono": {
+      "optional": true
+    },
+    "valibot": {
+      "optional": true
+    },
+    "zod": {
+      "optional": true
+    },
+    "zod-openapi": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@apidevtools/json-schema-ref-parser": "^12.0.1",
+    "@rollup/plugin-terser": "^0.4.4",
+    "@types/json-schema": "^7.0.15"
+  },
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./index.d.ts",
+        "default": "./index.js"
+      },
+      "require": {
+        "types": "./index.d.cts",
+        "default": "./index.cjs"
+      }
+    },
+    "./zod": {
+      "import": {
+        "types": "./zod.d.ts",
+        "default": "./zod.js"
+      },
+      "require": {
+        "types": "./zod.d.cts",
+        "default": "./zod.cjs"
+      }
+    },
+    "./valibot": {
+      "import": {
+        "types": "./valibot.d.ts",
+        "default": "./valibot.js"
+      },
+      "require": {
+        "types": "./valibot.d.cts",
+        "default": "./valibot.cjs"
+      }
+    },
+    "./typebox": {
+      "import": {
+        "types": "./typebox.d.ts",
+        "default": "./typebox.js"
+      },
+      "require": {
+        "types": "./typebox.d.cts",
+        "default": "./typebox.cjs"
+      }
+    },
+    "./arktype": {
+      "import": {
+        "types": "./arktype.d.ts",
+        "default": "./arktype.js"
+      },
+      "require": {
+        "types": "./arktype.d.cts",
+        "default": "./arktype.cjs"
+      }
+    },
+    "./effect": {
+      "import": {
+        "types": "./effect.d.ts",
+        "default": "./effect.js"
+      },
+      "require": {
+        "types": "./effect.d.cts",
+        "default": "./effect.cjs"
+      }
+    }
+  }
+}

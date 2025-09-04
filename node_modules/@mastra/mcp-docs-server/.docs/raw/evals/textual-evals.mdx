@@ -1,0 +1,58 @@
+---
+title: "Textual Evals"
+description: "Understand how Mastra uses LLM-as-judge methodology to evaluate text quality."
+---
+
+import { ScorerCallout } from '@/components/scorer-callout'
+
+# Textual Evals
+
+<ScorerCallout />
+
+Textual evals use an LLM-as-judge methodology to evaluate agent outputs. This approach leverages language models to assess various aspects of text quality, similar to how a teaching assistant might grade assignments using a rubric.
+
+Each eval focuses on specific quality aspects and returns a score between 0 and 1, providing quantifiable metrics for non-deterministic AI outputs.
+
+Mastra provides several eval metrics for assessing Agent outputs. Mastra is not limited to these metrics, and you can also [define your own evals](/docs/evals/custom-eval).
+
+## Why Use Textual Evals?
+
+Textual evals help ensure your agent:
+
+- Produces accurate and reliable responses
+- Uses context effectively
+- Follows output requirements
+- Maintains consistent quality over time
+
+## Available Metrics
+
+### Accuracy and Reliability
+
+These metrics evaluate how correct, truthful, and complete your agent's answers are:
+
+- [`hallucination`](/reference/evals/hallucination): Detects facts or claims not present in provided context
+- [`faithfulness`](/reference/evals/faithfulness): Measures how accurately responses represent provided context
+- [`content-similarity`](/reference/evals/content-similarity): Evaluates consistency of information across different phrasings
+- [`completeness`](/reference/evals/completeness): Checks if responses include all necessary information
+- [`answer-relevancy`](/reference/evals/answer-relevancy): Assesses how well responses address the original query
+- [`textual-difference`](/reference/evals/textual-difference): Measures textual differences between strings
+
+### Understanding Context
+
+These metrics evaluate how well your agent uses provided context:
+
+- [`context-position`](/reference/evals/context-position): Analyzes where context appears in responses
+- [`context-precision`](/reference/evals/context-precision): Evaluates whether context chunks are grouped logically
+- [`context-relevancy`](/reference/evals/context-relevancy): Measures use of appropriate context pieces
+- [`contextual-recall`](/reference/evals/contextual-recall): Assesses completeness of context usage
+
+### Output Quality
+
+These metrics evaluate adherence to format and style requirements:
+
+- [`tone`](/reference/evals/tone-consistency): Measures consistency in formality, complexity, and style
+- [`toxicity`](/reference/evals/toxicity): Detects harmful or inappropriate content
+- [`bias`](/reference/evals/bias): Detects potential biases in the output
+- [`prompt-alignment`](/reference/evals/prompt-alignment): Checks adherence to explicit instructions like length restrictions, formatting requirements, or other constraints
+- [`summarization`](/reference/evals/summarization): Evaluates information retention and conciseness
+- [`keyword-coverage`](/reference/evals/keyword-coverage): Assesses technical terminology usage

@@ -1,0 +1,445 @@
+---
+title: "Reference: Create Custom Scorer | Scorers | Mastra Docs"
+description: Documentation for creating custom scorers in Mastra, allowing users to define their own evaluation logic using either JavaScript functions or LLM-based prompts.
+---
+
+# createScorer
+
+Mastra provides a unified `createScorer` factory that allows you to define custom scorers for evaluating input/output pairs. You can use either native JavaScript functions or LLM-based prompt objects for each evaluation step. Custom scorers can be added to Agents and Workflow steps.
+
+## How to Create a Custom Scorer
+
+Use the `createScorer` factory to define your scorer with a name, description, and optional judge configuration. Then chain step methods to build your evaluation pipeline. You must provide at least a `generateScore` step.
+
+```typescript
+const scorer = createScorer({
+  name: "My Custom Scorer",
+  description: "Evaluates responses based on custom criteria",
+  judge: {
+    model: myModel,
+    instructions: "You are an expert evaluator..."
+  }
+})
+.preprocess({ /* step config */ })
+.analyze({ /* step config */ })
+.generateScore(({ run, results }) => {
+  // Return a number
+})
+.generateReason({ /* step config */ });
+```
+
+## createScorer Options
+
+<PropertiesTable
+  content={[
+    {
+      name: "name",
+      type: "string",
+      required: true,
+      description: "Name of the scorer.",
+    },
+    {
+      name: "description",
+      type: "string",
+      required: true,
+      description: "Description of what the scorer does.",
+    },
+    {
+      name: "judge",
+      type: "object",
+      required: false,
+      description: "Optional judge configuration for LLM-based steps. See Judge Object section below.",
+    },
+  ]}
+/>
+
+This function returns a scorer builder that you can chain step methods onto. See the [MastraScorer reference](./mastra-scorer) for details on the `.run()` method and its input/output.
+
+## Judge Object
+
+<PropertiesTable
+  content={[
+    {
+      name: "model",
+      type: "LanguageModel",
+      required: true,
+      description: "The LLM model instance to use for evaluation.",
+    },
+    {
+      name: "instructions",
+      type: "string",
+      required: true,
+      description: "System prompt/instructions for the LLM.",
+    },
+  ]}
+/>
+
+## Type Safety
+
+For better type inference and IntelliSense support, you can specify input/output types when creating scorers:
+
+```typescript
+import { createScorer, ScorerRunInputForAgent, ScorerRunOutputForAgent } from '@mastra/core/scorers';
+
+// For agent evaluation with full type safety
+const agentScorer = createScorer<ScorerRunInputForAgent, ScorerRunOutputForAgent>({
+  name: 'Agent Response Quality',
+  description: 'Evaluates agent responses'
+})
+.preprocess(({ run }) => {
+  // run.input is typed as ScorerRunInputForAgent
+  const userMessage = run.input.inputMessages[0]?.content;
+  return { userMessage };
+})
+.generateScore(({ run, results }) => {
+  // run.output is typed as ScorerRunOutputForAgent  
+  const response = run.output[0]?.content;
+  return response.length > 10 ? 1.0 : 0.5;
+});
+
+// For custom input/output types
+type CustomInput = { query: string; context: string[] };
+type CustomOutput = { answer: string; confidence: number };
+
+const customScorer = createScorer<CustomInput, CustomOutput>({
+  name: 'Custom Scorer',
+  description: 'Evaluates custom data'
+})
+.generateScore(({ run }) => run.output.confidence);
+```
+
+### Built-in Agent Types
+
+- **`ScorerRunInputForAgent`** - Contains `inputMessages`, `rememberedMessages`, `systemMessages`, and `taggedSystemMessages` for agent evaluation
+- **`ScorerRunOutputForAgent`** - Array of agent response messages
+
+Using these types provides autocomplete, compile-time validation, and better documentation for your scoring logic.
+
+## Step Method Signatures
+
+### preprocess
+
+Optional preprocessing step that can extract or transform data before analysis.
+
+**Function Mode:**
+Function: `({ run, results }) => any`
+
+<PropertiesTable
+  content={[
+    {
+      name: "run.input",
+      type: "any",
+      required: true,
+      description: "Input records provided to the scorer. If the scorer is added to an agent, this will be an array of user messages, e.g. `[{ role: 'user', content: 'hello world' }]`. If the scorer is used in a workflow, this will be the input of the workflow.",
+    },
+    {
+      name: "run.output",
+      type: "any",
+      required: true,
+      description: "Output record provided to the scorer. For agents, this is usually the agent's response. For workflows, this is the workflow's output.",
+    },
+    {
+      name: "run.runId",
+      type: "string",
+      required: true,
+      description: "Unique identifier for this scoring run.",
+    },
+    {
+      name: "run.runtimeContext",
+      type: "object",
+      required: false,
+      description: "Runtime context from the agent or workflow step being evaluated (optional).",
+    },
+    {
+      name: "results",
+      type: "object",
+      required: true,
+      description: "Empty object (no previous steps).",
+    },
+  ]}
+/>
+
+Returns: `any`  
+The method can return any value. The returned value will be available to subsequent steps as `preprocessStepResult`.
+
+**Prompt Object Mode:**
+<PropertiesTable
+  content={[
+    {
+      name: "description",
+      type: "string",
+      required: true,
+      description: "Description of what this preprocessing step does.",
+    },
+    {
+      name: "outputSchema",
+      type: "ZodSchema",
+      required: true,
+      description: "Zod schema for the expected output of the preprocess step.",
+    },
+    {
+      name: "createPrompt",
+      type: "function",
+      required: true,
+      description: "Function: ({ run, results }) => string. Returns the prompt for the LLM.",
+    },
+    {
+      name: "judge",
+      type: "object",
+      required: false,
+      description: "(Optional) LLM judge for this step (can override main judge). See Judge Object section.",
+    },
+  ]}
+/>
+
+### analyze
+
+Optional analysis step that processes the input/output and any preprocessed data.
+
+**Function Mode:**
+Function: `({ run, results }) => any`
+
+<PropertiesTable
+  content={[
+    {
+      name: "run.input",
+      type: "any",
+      required: true,
+      description: "Input records provided to the scorer. If the scorer is added to an agent, this will be an array of user messages, e.g. `[{ role: 'user', content: 'hello world' }]`. If the scorer is used in a workflow, this will be the input of the workflow.",
+    },
+    {
+      name: "run.output",
+      type: "any",
+      required: true,
+      description: "Output record provided to the scorer. For agents, this is usually the agent's response. For workflows, this is the workflow's output.",
+    },
+    {
+      name: "run.runId",
+      type: "string",
+      required: true,
+      description: "Unique identifier for this scoring run.",
+    },
+    {
+      name: "run.runtimeContext",
+      type: "object",
+      required: false,
+      description: "Runtime context from the agent or workflow step being evaluated (optional).",
+    },
+    {
+      name: "results.preprocessStepResult",
+      type: "any",
+      required: false,
+      description: "Result from preprocess step, if defined (optional).",
+    },
+  ]}
+/>
+
+Returns: `any`  
+The method can return any value. The returned value will be available to subsequent steps as `analyzeStepResult`.
+
+**Prompt Object Mode:**
+<PropertiesTable
+  content={[
+    {
+      name: "description",
+      type: "string",
+      required: true,
+      description: "Description of what this analysis step does.",
+    },
+    {
+      name: "outputSchema",
+      type: "ZodSchema",
+      required: true,
+      description: "Zod schema for the expected output of the analyze step.",
+    },
+    {
+      name: "createPrompt",
+      type: "function",
+      required: true,
+      description: "Function: ({ run, results }) => string. Returns the prompt for the LLM.",
+    },
+    {
+      name: "judge",
+      type: "object",
+      required: false,
+      description: "(Optional) LLM judge for this step (can override main judge). See Judge Object section.",
+    },
+  ]}
+/>
+
+### generateScore
+
+**Required** step that computes the final numerical score.
+
+**Function Mode:**
+Function: `({ run, results }) => number`
+
+<PropertiesTable
+  content={[
+    {
+      name: "run.input",
+      type: "any",
+      required: true,
+      description: "Input records provided to the scorer. If the scorer is added to an agent, this will be an array of user messages, e.g. `[{ role: 'user', content: 'hello world' }]`. If the scorer is used in a workflow, this will be the input of the workflow.",
+    },
+    {
+      name: "run.output",
+      type: "any",
+      required: true,
+      description: "Output record provided to the scorer. For agents, this is usually the agent's response. For workflows, this is the workflow's output.",
+    },
+    {
+      name: "run.runId",
+      type: "string",
+      required: true,
+      description: "Unique identifier for this scoring run.",
+    },
+    {
+      name: "run.runtimeContext",
+      type: "object",
+      required: false,
+      description: "Runtime context from the agent or workflow step being evaluated (optional).",
+    },
+    {
+      name: "results.preprocessStepResult",
+      type: "any",
+      required: false,
+      description: "Result from preprocess step, if defined (optional).",
+    },
+    {
+      name: "results.analyzeStepResult",
+      type: "any",
+      required: false,
+      description: "Result from analyze step, if defined (optional).",
+    },
+  ]}
+/>
+
+Returns: `number`  
+The method must return a numerical score.
+
+**Prompt Object Mode:**
+<PropertiesTable
+  content={[
+    {
+      name: "description",
+      type: "string",
+      required: true,
+      description: "Description of what this scoring step does.",
+    },
+    {
+      name: "outputSchema",
+      type: "ZodSchema",
+      required: true,
+      description: "Zod schema for the expected output of the generateScore step.",
+    },
+    {
+      name: "createPrompt",
+      type: "function",
+      required: true,
+      description: "Function: ({ run, results }) => string. Returns the prompt for the LLM.",
+    },
+    {
+      name: "judge",
+      type: "object",
+      required: false,
+      description: "(Optional) LLM judge for this step (can override main judge). See Judge Object section.",
+    },
+  ]}
+/>
+
+When using prompt object mode, you must also provide a `calculateScore` function to convert the LLM output to a numerical score:
+
+<PropertiesTable
+  content={[
+    {
+      name: "calculateScore",
+      type: "function",
+      required: true,
+      description: "Function: ({ run, results, analyzeStepResult }) => number. Converts the LLM's structured output into a numerical score.",
+    },
+  ]}
+/>
+
+### generateReason
+
+Optional step that provides an explanation for the score.
+
+**Function Mode:**
+Function: `({ run, results, score }) => string`
+
+<PropertiesTable
+  content={[
+    {
+      name: "run.input",
+      type: "any",
+      required: true,
+      description: "Input records provided to the scorer. If the scorer is added to an agent, this will be an array of user messages, e.g. `[{ role: 'user', content: 'hello world' }]`. If the scorer is used in a workflow, this will be the input of the workflow.",
+    },
+    {
+      name: "run.output",
+      type: "any",
+      required: true,
+      description: "Output record provided to the scorer. For agents, this is usually the agent's response. For workflows, this is the workflow's output.",
+    },
+    {
+      name: "run.runId",
+      type: "string",
+      required: true,
+      description: "Unique identifier for this scoring run.",
+    },
+    {
+      name: "run.runtimeContext",
+      type: "object",
+      required: false,
+      description: "Runtime context from the agent or workflow step being evaluated (optional).",
+    },
+    {
+      name: "results.preprocessStepResult",
+      type: "any",
+      required: false,
+      description: "Result from preprocess step, if defined (optional).",
+    },
+    {
+      name: "results.analyzeStepResult",
+      type: "any",
+      required: false,
+      description: "Result from analyze step, if defined (optional).",
+    },
+    {
+      name: "score",
+      type: "number",
+      required: true,
+      description: "Score computed by the generateScore step.",
+    },
+  ]}
+/>
+
+Returns: `string`  
+The method must return a string explaining the score.
+
+**Prompt Object Mode:**
+<PropertiesTable
+  content={[
+    {
+      name: "description",
+      type: "string",
+      required: true,
+      description: "Description of what this reasoning step does.",
+    },
+    {
+      name: "createPrompt",
+      type: "function",
+      required: true,
+      description: "Function: ({ run, results, score }) => string. Returns the prompt for the LLM.",
+    },
+    {
+      name: "judge",
+      type: "object",
+      required: false,
+      description: "(Optional) LLM judge for this step (can override main judge). See Judge Object section.",
+    },
+  ]}
+/>
+
+All step functions can be async.

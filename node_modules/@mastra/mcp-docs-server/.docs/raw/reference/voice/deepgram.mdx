@@ -1,0 +1,166 @@
+---
+title: "Reference: Deepgram Voice | Voice Providers | Mastra Docs"
+description: "Documentation for the Deepgram voice implementation, providing text-to-speech and speech-to-text capabilities with multiple voice models and languages."
+---
+
+# Deepgram
+
+The Deepgram voice implementation in Mastra provides text-to-speech (TTS) and speech-to-text (STT) capabilities using Deepgram's API. It supports multiple voice models and languages, with configurable options for both speech synthesis and transcription.
+
+## Usage Example
+
+```typescript
+import { DeepgramVoice } from "@mastra/voice-deepgram";
+
+// Initialize with default configuration (uses DEEPGRAM_API_KEY environment variable)
+const voice = new DeepgramVoice();
+
+// Initialize with custom configuration
+const voice = new DeepgramVoice({
+  speechModel: {
+    name: "aura",
+    apiKey: "your-api-key",
+  },
+  listeningModel: {
+    name: "nova-2",
+    apiKey: "your-api-key",
+  },
+  speaker: "asteria-en",
+});
+
+// Text-to-Speech
+const audioStream = await voice.speak("Hello, world!");
+
+// Speech-to-Text
+const transcript = await voice.listen(audioStream);
+```
+
+## Constructor Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "speechModel",
+      type: "DeepgramVoiceConfig",
+      description: "Configuration for text-to-speech functionality.",
+      isOptional: true,
+      defaultValue: "{ name: 'aura' }",
+    },
+    {
+      name: "listeningModel",
+      type: "DeepgramVoiceConfig",
+      description: "Configuration for speech-to-text functionality.",
+      isOptional: true,
+      defaultValue: "{ name: 'nova' }",
+    },
+    {
+      name: "speaker",
+      type: "DeepgramVoiceId",
+      description: "Default voice to use for text-to-speech",
+      isOptional: true,
+      defaultValue: "'asteria-en'",
+    },
+  ]}
+/>
+
+### DeepgramVoiceConfig
+
+<PropertiesTable
+  content={[
+    {
+      name: "name",
+      type: "DeepgramModel",
+      description: "The Deepgram model to use",
+      isOptional: true,
+    },
+    {
+      name: "apiKey",
+      type: "string",
+      description:
+        "Deepgram API key. Falls back to DEEPGRAM_API_KEY environment variable",
+      isOptional: true,
+    },
+    {
+      name: "properties",
+      type: "Record<string, any>",
+      description: "Additional properties to pass to the Deepgram API",
+      isOptional: true,
+    },
+    {
+      name: "language",
+      type: "string",
+      description: "Language code for the model",
+      isOptional: true,
+    },
+  ]}
+/>
+
+## Methods
+
+### speak()
+
+Converts text to speech using the configured speech model and voice.
+
+<PropertiesTable
+  content={[
+    {
+      name: "input",
+      type: "string | NodeJS.ReadableStream",
+      description:
+        "Text to convert to speech. If a stream is provided, it will be converted to text first.",
+      isOptional: false,
+    },
+    {
+      name: "options",
+      type: "object",
+      description: "Additional options for speech synthesis",
+      isOptional: true,
+    },
+    {
+      name: "options.speaker",
+      type: "string",
+      description: "Override the default speaker for this request",
+      isOptional: true,
+    },
+  ]}
+/>
+
+Returns: `Promise<NodeJS.ReadableStream>`
+
+### listen()
+
+Converts speech to text using the configured listening model.
+
+<PropertiesTable
+  content={[
+    {
+      name: "audioStream",
+      type: "NodeJS.ReadableStream",
+      description: "Audio stream to transcribe",
+      isOptional: false,
+    },
+    {
+      name: "options",
+      type: "object",
+      description: "Additional options to pass to the Deepgram API",
+      isOptional: true,
+    },
+  ]}
+/>
+
+Returns: `Promise<string>`
+
+### getSpeakers()
+
+Returns a list of available voice options.
+
+<PropertiesTable
+  content={[
+    {
+      name: "voiceId",
+      type: "string",
+      description: "Unique identifier for the voice",
+      isOptional: false,
+    },
+  ]}
+/>

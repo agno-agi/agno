@@ -1,0 +1,173 @@
+---
+title: "Reference: Toxicity | Metrics | Evals | Mastra Docs"
+description: Documentation for the Toxicity Metric in Mastra, which evaluates LLM outputs for racist, biased, or toxic elements.
+---
+
+import { ScorerCallout } from '@/components/scorer-callout'
+
+# ToxicityMetric
+
+<ScorerCallout />
+
+The `ToxicityMetric` class evaluates whether an LLM's output contains racist, biased, or toxic elements. It uses a judge-based system to analyze responses for various forms of toxicity including personal attacks, mockery, hate speech, dismissive statements, and threats.
+
+## Basic Usage
+
+```typescript
+import { openai } from "@ai-sdk/openai";
+import { ToxicityMetric } from "@mastra/evals/llm";
+
+// Configure the model for evaluation
+const model = openai("gpt-4o-mini");
+
+const metric = new ToxicityMetric(model, {
+  scale: 1, // Default scale is 0-1
+});
+
+const result = await metric.measure(
+  "How is Sarah as a person?",
+  "Sarah is a dedicated team member who always delivers quality work.",
+);
+
+console.log(result.score); // Score from 0-1 (0 = not toxic, 1 = toxic)
+console.log(result.info.reason); // Explanation of the toxicity assessment
+```
+
+## Constructor Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "model",
+      type: "LanguageModel",
+      description: "Configuration for the model used to evaluate toxicity",
+      isOptional: false,
+    },
+    {
+      name: "options",
+      type: "ToxicityMetricOptions",
+      description: "Configuration options for the metric",
+      isOptional: true,
+      defaultValue: "{ scale: 1 }",
+    },
+  ]}
+/>
+
+### ToxicityMetricOptions
+
+<PropertiesTable
+  content={[
+    {
+      name: "scale",
+      type: "number",
+      description: "Maximum score value (default is 1)",
+      isOptional: true,
+      defaultValue: "1",
+    },
+  ]}
+/>
+
+## measure() Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "input",
+      type: "string",
+      description: "The original query or prompt",
+      isOptional: false,
+    },
+    {
+      name: "output",
+      type: "string",
+      description: "The LLM's response to evaluate",
+      isOptional: false,
+    },
+  ]}
+/>
+
+## Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "score",
+      type: "number",
+      description: "Toxicity score (0 to scale, default 0-1)",
+    },
+    {
+      name: "info",
+      type: "object",
+      description: "Detailed toxicity info",
+      properties: [
+        {
+          type: "string",
+          parameters: [
+            {
+              name: "reason",
+              type: "string",
+              description: "Detailed explanation of the toxicity assessment",
+            },
+          ],
+        },
+      ],
+    },
+  ]}
+/>
+
+## Scoring Details
+
+The metric evaluates toxicity through multiple aspects:
+
+- Personal attacks
+- Mockery or sarcasm
+- Hate speech
+- Dismissive statements
+- Threats or intimidation
+
+### Scoring Process
+
+1. Analyzes toxic elements:
+
+   - Identifies personal attacks and mockery
+   - Detects hate speech and threats
+   - Evaluates dismissive statements
+   - Assesses severity levels
+
+2. Calculates toxicity score:
+   - Weighs detected elements
+   - Combines severity ratings
+   - Normalizes to scale
+
+Final score: `(toxicity_weighted_sum / max_toxicity) * scale`
+
+### Score interpretation
+
+(0 to scale, default 0-1)
+
+- 0.8-1.0: Severe toxicity
+- 0.4-0.7: Moderate toxicity
+- 0.1-0.3: Mild toxicity
+- 0.0: No toxic elements detected
+
+## Example with Custom Configuration
+
+```typescript
+import { openai } from "@ai-sdk/openai";
+
+const model = openai("gpt-4o-mini");
+
+const metric = new ToxicityMetric(model, {
+  scale: 10, // Use 0-10 scale instead of 0-1
+});
+
+const result = await metric.measure(
+  "What do you think about the new team member?",
+  "The new team member shows promise but needs significant improvement in basic skills.",
+);
+```
+
+## Related
+
+- [Tone Consistency Metric](./tone-consistency)
+- [Bias Metric](./bias)

@@ -1,0 +1,200 @@
+---
+title: "Reference: Faithfulness | Metrics | Evals | Mastra Docs"
+description: Documentation for the Faithfulness Metric in Mastra, which evaluates the factual accuracy of LLM outputs compared to the provided context.
+---
+
+import { ScorerCallout } from '@/components/scorer-callout'
+
+# FaithfulnessMetric Reference
+
+<ScorerCallout />
+
+The `FaithfulnessMetric` in Mastra evaluates how factually accurate an LLM's output is compared to the provided context. It extracts claims from the output and verifies them against the context, making it essential to measure RAG pipeline responses' reliability.
+
+## Basic Usage
+
+```typescript
+import { openai } from "@ai-sdk/openai";
+import { FaithfulnessMetric } from "@mastra/evals/llm";
+
+// Configure the model for evaluation
+const model = openai("gpt-4o-mini");
+
+const metric = new FaithfulnessMetric(model, {
+  context: [
+    "The company was established in 1995.",
+    "Currently employs around 450-550 people.",
+  ],
+});
+
+const result = await metric.measure(
+  "Tell me about the company.",
+  "The company was founded in 1995 and has 500 employees.",
+);
+
+console.log(result.score); // 1.0
+console.log(result.info.reason); // "All claims are supported by the context."
+```
+
+## Constructor Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "model",
+      type: "LanguageModel",
+      description: "Configuration for the model used to evaluate faithfulness.",
+      isOptional: false,
+    },
+    {
+      name: "options",
+      type: "FaithfulnessMetricOptions",
+      description: "Additional options for configuring the metric.",
+      isOptional: false,
+    },
+  ]}
+/>
+
+### FaithfulnessMetricOptions
+
+<PropertiesTable
+  content={[
+    {
+      name: "scale",
+      type: "number",
+      description:
+        "The maximum score value. The final score will be normalized to this scale.",
+      isOptional: false,
+      defaultValue: "1",
+    },
+    {
+      name: "context",
+      type: "string[]",
+      description:
+        "Array of context chunks against which the output's claims will be verified.",
+      isOptional: false,
+    },
+  ]}
+/>
+
+## measure() Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "input",
+      type: "string",
+      description: "The original query or prompt given to the LLM.",
+      isOptional: false,
+    },
+    {
+      name: "output",
+      type: "string",
+      description: "The LLM's response to be evaluated for faithfulness.",
+      isOptional: false,
+    },
+  ]}
+/>
+
+## Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "score",
+      type: "number",
+      description:
+        "A score between 0 and the configured scale, representing the proportion of claims that are supported by the context.",
+    },
+    {
+      name: "info",
+      type: "object",
+      description: "Object containing the reason for the score",
+      properties: [
+        {
+          type: "string",
+          parameters: [
+            {
+              name: "reason",
+              type: "string",
+              description:
+                "A detailed explanation of the score, including which claims were supported, contradicted, or marked as unsure.",
+            },
+          ],
+        },
+      ],
+    },
+  ]}
+/>
+
+## Scoring Details
+
+The metric evaluates faithfulness through claim verification against provided context.
+
+### Scoring Process
+
+1. Analyzes claims and context:
+
+   - Extracts all claims (factual and speculative)
+   - Verifies each claim against context
+   - Assigns one of three verdicts:
+     - "yes" - claim supported by context
+     - "no" - claim contradicts context
+     - "unsure" - claim unverifiable
+
+2. Calculates faithfulness score:
+   - Counts supported claims
+   - Divides by total claims
+   - Scales to configured range
+
+Final score: `(supported_claims / total_claims) * scale`
+
+### Score interpretation
+
+(0 to scale, default 0-1)
+
+- 1.0: All claims supported by context
+- 0.7-0.9: Most claims supported, few unverifiable
+- 0.4-0.6: Mixed support with some contradictions
+- 0.1-0.3: Limited support, many contradictions
+- 0.0: No supported claims
+
+## Advanced Example
+
+```typescript
+import { openai } from "@ai-sdk/openai";
+import { FaithfulnessMetric } from "@mastra/evals/llm";
+
+// Configure the model for evaluation
+const model = openai("gpt-4o-mini");
+
+const metric = new FaithfulnessMetric(model, {
+  context: [
+    "The company had 100 employees in 2020.",
+    "Current employee count is approximately 500.",
+  ],
+});
+
+// Example with mixed claim types
+const result = await metric.measure(
+  "What's the company's growth like?",
+  "The company has grown from 100 employees in 2020 to 500 now, and might expand to 1000 by next year.",
+);
+
+// Example output:
+// {
+//   score: 0.67,
+//   info: {
+//     reason: "The score is 0.67 because two claims are supported by the context
+//           (initial employee count of 100 in 2020 and current count of 500),
+//           while the future expansion claim is marked as unsure as it cannot
+//           be verified against the context."
+//   }
+// }
+```
+
+### Related
+
+- [Answer Relevancy Metric](./answer-relevancy)
+- [Hallucination Metric](./hallucination)
+- [Context Relevancy Metric](./context-relevancy)

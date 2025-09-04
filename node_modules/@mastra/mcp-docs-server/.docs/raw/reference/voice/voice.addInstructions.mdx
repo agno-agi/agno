@@ -1,0 +1,72 @@
+---
+title: "Reference: voice.addInstructions() | Voice Providers | Mastra Docs"
+description: "Documentation for the addInstructions() method available in voice providers, which adds instructions to guide the voice model's behavior."
+---
+
+# voice.addInstructions()
+
+The `addInstructions()` method equips a voice provider with instructions that guide the model's behavior during real-time interactions. This is particularly useful for real-time voice providers that maintain context across a conversation.
+
+## Usage Example
+
+```typescript
+import { OpenAIRealtimeVoice } from "@mastra/voice-openai-realtime";
+import { Agent } from "@mastra/core/agent";
+import { openai } from "@ai-sdk/openai";
+
+// Initialize a real-time voice provider
+const voice = new OpenAIRealtimeVoice({
+  realtimeConfig: {
+    model: "gpt-4o-mini-realtime",
+    apiKey: process.env.OPENAI_API_KEY,
+  },
+});
+
+// Create an agent with the voice provider
+const agent = new Agent({
+  name: "Customer Support Agent",
+  instructions:
+    "You are a helpful customer support agent for a software company.",
+  model: openai("gpt-4o"),
+  voice,
+});
+
+// Add additional instructions to the voice provider
+voice.addInstructions(`
+  When speaking to customers:
+  - Always introduce yourself as the customer support agent
+  - Speak clearly and concisely
+  - Ask clarifying questions when needed
+  - Summarize the conversation at the end
+`);
+
+// Connect to the real-time service
+await voice.connect();
+```
+
+## Parameters
+
+<br />
+<PropertiesTable
+  content={[
+    {
+      name: "instructions",
+      type: "string",
+      description: "Instructions to guide the voice model's behavior",
+      isOptional: false,
+    },
+  ]}
+/>
+
+## Return Value
+
+This method does not return a value.
+
+## Notes
+
+- Instructions are most effective when they are clear, specific, and relevant to the voice interaction
+- This method is primarily used with real-time voice providers that maintain conversation context
+- If called on a voice provider that doesn't support instructions, it will log a warning and do nothing
+- Instructions added with this method are typically combined with any instructions provided by an associated Agent
+- For best results, add instructions before starting a conversation (before calling `connect()`)
+- Multiple calls to `addInstructions()` may either replace or append to existing instructions, depending on the provider implementation

@@ -1,0 +1,130 @@
+---
+title: "Reference: Context Precision Scorer | Scorers | Mastra Docs"
+description: Documentation for the Context Precision Scorer in Mastra. Evaluates the relevance and precision of retrieved context for generating expected outputs using Mean Average Precision.
+---
+
+import { PropertiesTable } from "@/components/properties-table";
+
+# Context Precision Scorer
+
+The `createContextPrecisionScorer()` function creates a scorer that evaluates how relevant and well-positioned retrieved context pieces are for generating expected outputs. It uses **Mean Average Precision (MAP)** to reward systems that place relevant context earlier in the sequence.
+
+## Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "model",
+      type: "MastraLanguageModel",
+      description: "The language model to use for evaluating context relevance",
+      required: true,
+    },
+    {
+      name: "options",
+      type: "ContextPrecisionMetricOptions",
+      description: "Configuration options for the scorer",
+      required: true,
+      children: [
+        {
+          name: "context",
+          type: "string[]",
+          description: "Array of context pieces to evaluate for relevance",
+          required: false,
+        },
+        {
+          name: "contextExtractor",
+          type: "(input, output) => string[]",
+          description: "Function to dynamically extract context from the run input and output",
+          required: false,
+        },
+        {
+          name: "scale",
+          type: "number",
+          description: "Scale factor to multiply the final score (default: 1)",
+          required: false,
+        },
+      ],
+    },
+  ]}
+/>
+
+:::note
+Either `context` or `contextExtractor` must be provided. If both are provided, `contextExtractor` takes precedence.
+:::
+
+## .run() Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "score",
+      type: "number",
+      description: "Mean Average Precision score between 0 and scale (default 0-1)",
+    },
+    {
+      name: "reason",
+      type: "string",
+      description: "Human-readable explanation of the context precision evaluation",
+    },
+  ]}
+/>
+
+## Scoring Details
+
+### Mean Average Precision (MAP)
+
+Context Precision uses **Mean Average Precision** to evaluate both relevance and positioning:
+
+1. **Context Evaluation**: Each context piece is classified as relevant or irrelevant for generating the expected output
+2. **Precision Calculation**: For each relevant context at position `i`, precision = `relevant_items_so_far / (i + 1)`
+3. **Average Precision**: Sum all precision values and divide by total relevant items
+4. **Final Score**: Multiply by scale factor and round to 2 decimals
+
+### Scoring Formula
+
+```
+MAP = (Σ Precision@k) / R
+
+Where:
+- Precision@k = (relevant items in positions 1...k) / k
+- R = total number of relevant items
+- Only calculated at positions where relevant items appear
+```
+
+### Score Interpretation
+
+- **1.0** = Perfect precision (all relevant context appears first)
+- **0.5-0.9** = Good precision with some relevant context well-positioned
+- **0.1-0.4** = Poor precision with relevant context buried or scattered
+- **0.0** = No relevant context found
+
+### Example Calculation
+
+Given context: `[relevant, irrelevant, relevant, irrelevant]`
+
+- Position 0: Relevant → Precision = 1/1 = 1.0
+- Position 1: Skip (irrelevant)  
+- Position 2: Relevant → Precision = 2/3 = 0.67
+- Position 3: Skip (irrelevant)
+
+MAP = (1.0 + 0.67) / 2 = 0.835 ≈ **0.83**
+
+## Usage Patterns
+
+### RAG System Evaluation
+Ideal for evaluating retrieved context in RAG pipelines where:
+- Context ordering matters for model performance
+- You need to measure retrieval quality beyond simple relevance
+- Early relevant context is more valuable than later relevant context
+
+### Context Window Optimization
+Use when optimizing context selection for:
+- Limited context windows
+- Token budget constraints  
+- Multi-step reasoning tasks
+
+## Related
+
+- [Answer Relevancy Scorer](/reference/scorers/answer-relevancy) - Evaluates if answers address the question
+- [Faithfulness Scorer](/reference/scorers/faithfulness) - Measures answer groundedness in context
+- [Custom Scorers](/docs/scorers/custom-scorers) - Creating your own evaluation metrics

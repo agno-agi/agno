@@ -1,0 +1,67 @@
+---
+title: "Reference: Agent.getModel() | Agents | Mastra Docs"
+description: "Documentation for the `Agent.getModel()` method in Mastra agents, which retrieves the language model that powers the agent."
+---
+
+# Agent.getModel()
+
+The `.getModel()` method retrieves the language model configured for an agent, resolving it if it's a function. This method is used to access the underlying model that powers the agent's capabilities.
+
+## Usage example
+
+```typescript copy
+await agent.getModel();
+```
+
+## Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "{ runtimeContext = new RuntimeContext() }",
+      type: "{ runtimeContext?: RuntimeContext }",
+      isOptional: true,
+      defaultValue: "new RuntimeContext()",
+      description: "Optional configuration object containing runtime context.",
+    },
+  ]}
+/>
+
+## Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "model",
+      type: "MastraLanguageModel | Promise<MastraLanguageModel>",
+      description: "The language model configured for the agent, either as a direct instance or a promise that resolves to the model.",
+    },
+  ]}
+/>
+
+## Extended usage example
+
+```typescript copy
+await agent.getModel({
+  runtimeContext: new RuntimeContext()
+});
+```
+
+### Options parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "runtimeContext",
+      type: "RuntimeContext",
+      isOptional: true,
+      defaultValue: "undefined",
+      description: "Runtime context for dependency injection and contextual information.",
+    },
+  ]}
+/>
+
+## Related
+
+- [Agents overview](../../docs/agents/overview.mdx)
+- [Runtime variables](../../docs/agents/runtime-variables.mdx)

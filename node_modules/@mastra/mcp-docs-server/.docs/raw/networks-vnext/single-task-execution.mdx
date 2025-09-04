@@ -1,0 +1,131 @@
+## Unstructured input to structured task
+
+As an example, we have an AgentNetwork with 3 primitives at its disposal:
+
+- `agent1`: A general research agent that can do research on a given topic.
+- `agent2`: A general writing agent that can write a full report based on the researched material.
+- `workflow1`: A workflow that can research a given city and write a full report based on the researched material (using both agent1 and agent2).
+
+The AgentNetwork is able to route the task to the most appropriate primitive based on the task and the context.
+To ask the AgentNetwork to act on unstructured (text) input, we can use the `generate` method.
+
+```typescript
+import { NewAgentNetwork } from '@mastra/core/network/vNext';
+import { Agent } from '@mastra/core/agent';
+import { createStep, createWorkflow } from '@mastra/core/workflows';
+import { Memory } from '@mastra/memory';
+import { openai } from '@ai-sdk/openai';
+import { LibSQLStore } from '@mastra/libsql';
+import { z } from 'zod';
+import { RuntimeContext } from '@mastra/core/runtime-context';
+
+const memory = new Memory({
+  storage: new LibSQLStore({
+    url: 'file:../mastra.db', // Or your database URL
+  }),
+});
+
+const agent1 = new Agent({
+  name: 'agent1',
+  instructions:
+    'This agent is used to do research, but not create full responses. Answer in bullet points only and be concise.',
+  description:
+    'This agent is used to do research, but not create full responses. Answer in bullet points only and be concise.',
+  model: openai('gpt-4o'),
+});
+
+const agent2 = new Agent({
+  name: 'agent2',
+  description: 'This agent is used to do text synthesis on researched material. It writes articles in full paragraphs.',
+  instructions:
+    'This agent is used to do text synthesis on researched material. Write a full report based on the researched material. Do not use bullet points. Write full paragraphs. There should not be a single bullet point in the final report. You write articles.',
+  model: openai('gpt-4o'),
+});
+
+const agentStep1 = createStep({
+  id: 'agent-step',
+  description: 'This step is used to do research and text synthesis.',
+  inputSchema: z.object({
+    city: z.string().describe('The city to research'),
+  }),
+  outputSchema: z.object({
+    text: z.string(),
+  }),
+  execute: async ({ inputData }) => {
+    const resp = await agent1.generate(inputData.city, {
+      output: z.object({
+        text: z.string(),
+      }),
+    });
+
+    return { text: resp.object.text };
+  },
+});
+
+const agentStep2 = createStep({
+  id: 'agent-step-two',
+  description: 'This step is used to do research and text synthesis.',
+  inputSchema: z.object({
+    text: z.string().describe('The city to research'),
+  }),
+  outputSchema: z.object({
+    text: z.string(),
+  }),
+  execute: async ({ inputData }) => {
+    const resp = await agent2.generate(inputData.text, {
+      output: z.object({
+        text: z.string(),
+      }),
+    });
+
+    return { text: resp.object.text };
+  },
+});
+
+const workflow1 = createWorkflow({
+  id: 'workflow1',
+  description: 'This workflow is perfect for researching a specific city.',
+  steps: [],
+  inputSchema: z.object({
+    city: z.string(),
+  }),
+  outputSchema: z.object({
+    text: z.string(),
+  }),
+})
+  .then(agentStep1)
+  .then(agentStep2)
+  .commit();
+
+const network = new NewAgentNetwork({
+  id: 'test-network',
+  name: 'Test Network',
+  instructions:
+    'You can research cities. You can also synthesize research material. You can also write a full report based on the researched material.',
+  model: openai('gpt-4o'),
+  agents: {
+    agent1,
+    agent2,
+  },
+  workflows: {
+    workflow1,
+  },
+  memory: memory,
+});
+
+const runtimeContext = new RuntimeContext();
+
+// This will call agent1, as the workflow is meant to be used with individual cities. The best primitive according to the routing agent is thus agent1 which is a general research primitive.
+console.log(await network.generate('What are the biggest cities in France? How are they like?', { runtimeContext }));
+// This will call workflow1, as it is the most suitable primitive according to the routing agent when researching individual cities.
+console.log(await network.generate('Tell me more about Paris', { runtimeContext }));
+```
+
+The AgentNetwork will call the most appropriate primitive based on the task and the context. In the case of researching specific cities, it can figure out how to turn unstructured input into structured workflow inputs based on the workflow's input schema and description. It also knows, that for any other research topic, `agent1` is likely the most appropriate primitive.
+
+### How It Works
+
+- The underlying engine is a Mastra workflow.
+- As a first step, the network uses a **routing agent** to decide which agent or workflow should handle each step.
+- The routing agent will generate a prompt and or structured input for the selected primitive.
+- The next step in the workflow is a `.branch()` that will select the right primitive, calling either an agent step or a workflow step with the input generated by the routing agent.

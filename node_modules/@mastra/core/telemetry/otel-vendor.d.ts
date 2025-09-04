@@ -1,0 +1,1 @@
+export * from './../dist/telemetry/otel-vendor.d.ts';

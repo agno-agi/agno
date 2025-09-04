@@ -1,0 +1,85 @@
+---
+title: "Handling Complex LLM Operations | Networks | Mastra"
+description: "Networks in Mastra help you execute individual or multiple Mastra primitives in a non-deterministic way using a single API."
+---
+
+# Mastra vNext Agent Network
+
+The vNext Agent Network module introduces a flexible, composable and non-deterministic way to orchestrate multiple specialized agents and workflows, enabling complex, reasoning and task completion.
+
+There are two main problem areas that this system is designed to solve:
+
+- Scenarios where a single agent is insufficient, and tasks require collaboration, routing, or sequential/parallel execution across multiple agents and workflows.
+- Scenarios where the task is not fully defined and is initiated with unstructured input. The AgentNetwork can figure out which primitive to call and turn unstructured input into a structured task.
+
+## Differences from Workflows
+
+- Workflows are linear or branched sequences of steps. This creates a deterministic flow of execution.
+- Agent Networks add a layer of non-deterministic LLM-based orchestration, allowing dynamic, multi-agent collaboration and routing. This creates a non-deterministic flow of execution.
+
+## Differences from current experimental implementation
+
+- The current implementation of AgentNetwork relies on tool calls to call other agents in the network. The vNext implementation is using Mastra workflows under the hood to break down the execution to individual tasks.
+- New methods, `.generate()` for a one-off "playbook"-like execution of a single primitive in the network, more suitable for a chat-based interface where you iterate on a solution. The `.loop()` method is still available for more complex tasks and operates much like the current implementation.
+
+## Important details
+
+- Providing memory to the AgentNetwork is _not_ optional when using the `loop` method, as it is required to store the task history. Memory is the core primitive used for any decisions on which primitives to run, as well as determine task completion.
+- Any available primitives (agents, workflows) are used based on their descriptions. The better the description, the better the routing agent will be able to select the right primitive. For workflows, the input schema is also used to determine which inputs to use when calling the workflow. More descriptive naming yields better results.
+- When primitives with overlapping capabilities are available, the routing agent will use the most specific primitive. For example, if both an agent and a workflow can do research, it will use the input schema of the worklfow to determine
+
+## Registering the network in Mastra
+
+```typescript
+const mastra = new Mastra({
+  vnext_networks: {
+    'test-network': network,
+  },
+});
+
+// using the network
+const network = mastra.vnext_getNetwork('test-network');
+
+if (!network) {
+  throw new Error('Network not found');
+}
+
+console.log(await network.generate('What are the biggest cities in France?', { runtimeContext }));
+```
+
+## Using @mastra/client-js
+
+You can use the `@mastra/client-js` package to run the network from the client side.
+
+```typescript
+import { MastraClient } from '@mastra/client-js';
+
+const client = new MastraClient();
+
+const network = client.getVNextNetwork('test-network');
+
+console.log(await network.generate('What are the biggest cities in France?', { runtimeContext }));
+```
+
+You can also stream the response
+
+```typescript
+const stream = await network.stream('What are the biggest cities in France?', { runtimeContext });
+
+for await (const chunk of stream) {
+  console.log(chunk);
+}
+```
+
+And for loops
+
+```typescript
+console.log(
+  // specifying the task, note that there is a mention here about using an agent for synthesis. This is because the routing agent can actually do some synthesis on results on its own, so this will force it to use agent2 instead
+  await network.loop(
+    'What are the biggest cities in France? Give me 3. How are they like? Find cities, then do thorough research on each city, and give me a final full report synthesizing all that information. Make sure to use an agent for synthesis.',
+    { runtimeContext },
+  ),
+);
+```
+

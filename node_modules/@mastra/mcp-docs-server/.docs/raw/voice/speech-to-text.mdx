@@ -1,0 +1,86 @@
+---
+title: Speech-to-Text (STT) in Mastra | Mastra Docs
+description: Overview of Speech-to-Text capabilities in Mastra, including configuration, usage, and integration with voice providers.
+---
+
+# Speech-to-Text (STT)
+
+Speech-to-Text (STT) in Mastra provides a standardized interface for converting audio input into text across multiple service providers.
+STT helps create voice-enabled applications that can respond to human speech, enabling hands-free interaction, accessibility for users with disabilities, and more natural human-computer interfaces.
+
+## Configuration
+
+To use STT in Mastra, you need to provide a `listeningModel` when initializing the voice provider. This includes parameters such as:
+
+- **`name`**: The specific STT model to use.
+- **`apiKey`**: Your API key for authentication.
+- **Provider-specific options**: Additional options that may be required or supported by the specific voice provider.
+
+**Note**: All of these parameters are optional. You can use the default settings provided by the voice provider, which will depend on the specific provider you are using.
+
+```typescript
+const voice = new OpenAIVoice({
+  listeningModel: {
+    name: "whisper-1",
+    apiKey: process.env.OPENAI_API_KEY,
+  },
+});
+
+// If using default settings the configuration can be simplified to:
+const voice = new OpenAIVoice();
+```
+
+## Available Providers
+
+Mastra supports several Speech-to-Text providers, each with their own capabilities and strengths:
+
+- [**OpenAI**](/reference/voice/openai/) - High-accuracy transcription with Whisper models
+- [**Azure**](/reference/voice/azure/) - Microsoft's speech recognition with enterprise-grade reliability
+- [**ElevenLabs**](/reference/voice/elevenlabs/) - Advanced speech recognition with support for multiple languages
+- [**Google**](/reference/voice/google/) - Google's speech recognition with extensive language support
+- [**Cloudflare**](/reference/voice/cloudflare/) - Edge-optimized speech recognition for low-latency applications
+- [**Deepgram**](/reference/voice/deepgram/) - AI-powered speech recognition with high accuracy for various accents
+- [**Sarvam**](/reference/voice/sarvam/) - Specialized in Indic languages and accents
+
+Each provider is implemented as a separate package that you can install as needed:
+
+```bash
+pnpm add @mastra/voice-openai  # Example for OpenAI
+```
+
+## Using the Listen Method
+
+The primary method for STT is the `listen()` method, which converts spoken audio into text. Here's how to use it:
+
+```typescript
+import { Agent } from "@mastra/core/agent";
+import { openai } from "@ai-sdk/openai";
+import { OpenAIVoice } from "@mastra/voice-openai";
+import { getMicrophoneStream } from "@mastra/node-audio";
+
+const voice = new OpenAIVoice();
+
+const agent = new Agent({
+  name: "Voice Agent",
+  instructions:
+    "You are a voice assistant that provides recommendations based on user input.",
+  model: openai("gpt-4o"),
+  voice,
+});
+
+const audioStream = getMicrophoneStream(); // Assume this function gets audio input
+
+const transcript = await agent.voice.listen(audioStream, {
+  filetype: "m4a", // Optional: specify the audio file type
+});
+
+console.log(`User said: ${transcript}`);
+
+const { text } = await agent.generate(
+  `Based on what the user said, provide them a recommendation: ${transcript}`,
+);
+
+console.log(`Recommendation: ${text}`);
+```
+
+Check out the [Adding Voice to Agents](../agents/adding-voice.mdx) documentation to learn how to use STT in an agent.

@@ -1,0 +1,144 @@
+---
+title: "Reference: CompositeVoice | Voice Providers | Mastra Docs"
+description: "Documentation for the CompositeVoice class, which enables combining multiple voice providers for flexible text-to-speech and speech-to-text operations."
+---
+
+# CompositeVoice
+
+The CompositeVoice class allows you to combine different voice providers for text-to-speech and speech-to-text operations. This is particularly useful when you want to use the best provider for each operation - for example, using OpenAI for speech-to-text and PlayAI for text-to-speech.
+
+CompositeVoice is used internally by the Agent class to provide flexible voice capabilities.
+
+## Usage Example
+
+```typescript
+import { CompositeVoice } from "@mastra/core/voice";
+import { OpenAIVoice } from "@mastra/voice-openai";
+import { PlayAIVoice } from "@mastra/voice-playai";
+
+// Create voice providers
+const openai = new OpenAIVoice();
+const playai = new PlayAIVoice();
+
+// Use OpenAI for listening (speech-to-text) and PlayAI for speaking (text-to-speech)
+const voice = new CompositeVoice({
+  input: openai,
+  output: playai,
+});
+
+// Convert speech to text using OpenAI
+const text = await voice.listen(audioStream);
+
+// Convert text to speech using PlayAI
+const audio = await voice.speak("Hello, world!");
+```
+
+## Constructor Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "config",
+      type: "object",
+      description: "Configuration object for the composite voice service",
+      isOptional: false,
+    },
+    {
+      name: "config.input",
+      type: "MastraVoice",
+      description: "Voice provider to use for speech-to-text operations",
+      isOptional: true,
+    },
+    {
+      name: "config.output",
+      type: "MastraVoice",
+      description: "Voice provider to use for text-to-speech operations",
+      isOptional: true,
+    },
+  ]}
+/>
+
+## Methods
+
+### speak()
+
+Converts text to speech using the configured speaking provider.
+
+<PropertiesTable
+  content={[
+    {
+      name: "input",
+      type: "string | NodeJS.ReadableStream",
+      description: "Text to convert to speech",
+      isOptional: false,
+    },
+    {
+      name: "options",
+      type: "object",
+      description: "Provider-specific options passed to the speaking provider",
+      isOptional: true,
+    },
+  ]}
+/>
+
+Notes:
+
+- If no speaking provider is configured, this method will throw an error
+- Options are passed through to the configured speaking provider
+- Returns a stream of audio data
+
+### listen()
+
+Converts speech to text using the configured listening provider.
+
+<PropertiesTable
+  content={[
+    {
+      name: "audioStream",
+      type: "NodeJS.ReadableStream",
+      description: "Audio stream to convert to text",
+      isOptional: false,
+    },
+    {
+      name: "options",
+      type: "object",
+      description: "Provider-specific options passed to the listening provider",
+      isOptional: true,
+    },
+  ]}
+/>
+
+Notes:
+
+- If no listening provider is configured, this method will throw an error
+- Options are passed through to the configured listening provider
+- Returns either a string or a stream of transcribed text, depending on the provider
+
+### getSpeakers()
+
+Returns a list of available voices from the speaking provider, where each node contains:
+
+<PropertiesTable
+  content={[
+    {
+      name: "voiceId",
+      type: "string",
+      description: "Unique identifier for the voice",
+      isOptional: false,
+    },
+    {
+      name: "key",
+      type: "value",
+      description:
+        "Additional voice properties that vary by provider (e.g., name, language)",
+      isOptional: true,
+    },
+  ]}
+/>
+
+Notes:
+
+- Returns voices from the speaking provider only
+- If no speaking provider is configured, returns an empty array
+- Each voice object will have at least a voiceId property
+- Additional voice properties depend on the speaking provider

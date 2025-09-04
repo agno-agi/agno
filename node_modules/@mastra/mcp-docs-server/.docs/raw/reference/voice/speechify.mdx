@@ -1,0 +1,147 @@
+---
+title: "Reference: Speechify Voice | Voice Providers | Mastra Docs"
+description: "Documentation for the Speechify voice implementation, providing text-to-speech capabilities."
+---
+
+# Speechify
+
+The Speechify voice implementation in Mastra provides text-to-speech capabilities using Speechify's API.
+
+## Usage Example
+
+```typescript
+import { SpeechifyVoice } from "@mastra/voice-speechify";
+
+// Initialize with default configuration (uses SPEECHIFY_API_KEY environment variable)
+const voice = new SpeechifyVoice();
+
+// Initialize with custom configuration
+const voice = new SpeechifyVoice({
+  speechModel: {
+    name: "simba-english",
+    apiKey: "your-api-key",
+  },
+  speaker: "george", // Default voice
+});
+
+// Convert text to speech
+const audioStream = await voice.speak("Hello, world!", {
+  speaker: "henry", // Override default voice
+});
+```
+
+## Constructor Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "speechModel",
+      type: "SpeechifyConfig",
+      description: "Configuration for text-to-speech functionality",
+      isOptional: true,
+      defaultValue: "{ name: 'simba-english' }",
+    },
+    {
+      name: "speaker",
+      type: "SpeechifyVoiceId",
+      description: "Default voice ID to use for speech synthesis",
+      isOptional: true,
+      defaultValue: "'george'",
+    },
+  ]}
+/>
+
+### SpeechifyConfig
+
+<PropertiesTable
+  content={[
+    {
+      name: "name",
+      type: "VoiceModelName",
+      description: "The Speechify model to use",
+      isOptional: true,
+      defaultValue: "'simba-english'",
+    },
+    {
+      name: "apiKey",
+      type: "string",
+      description:
+        "Speechify API key. Falls back to SPEECHIFY_API_KEY environment variable",
+      isOptional: true,
+    },
+  ]}
+/>
+
+## Methods
+
+### speak()
+
+Converts text to speech using the configured speech model and voice.
+
+<PropertiesTable
+  content={[
+    {
+      name: "input",
+      type: "string | NodeJS.ReadableStream",
+      description:
+        "Text to convert to speech. If a stream is provided, it will be converted to text first.",
+      isOptional: false,
+    },
+    {
+      name: "options.speaker",
+      type: "string",
+      description: "Override the default speaker for this request",
+      isOptional: true,
+      defaultValue: "Constructor's speaker value",
+    },
+    {
+      name: "options.model",
+      type: "VoiceModelName",
+      description: "Override the default model for this request",
+      isOptional: true,
+      defaultValue: "Constructor's model value",
+    },
+  ]}
+/>
+
+Returns: `Promise<NodeJS.ReadableStream>`
+
+### getSpeakers()
+
+Returns an array of available voice options, where each node contains:
+
+<PropertiesTable
+  content={[
+    {
+      name: "voiceId",
+      type: "string",
+      description: "Unique identifier for the voice",
+    },
+    {
+      name: "name",
+      type: "string",
+      description: "Display name of the voice",
+    },
+    {
+      name: "language",
+      type: "string",
+      description: "Language code for the voice",
+    },
+    {
+      name: "gender",
+      type: "string",
+      description: "Gender of the voice",
+    },
+  ]}
+/>
+
+### listen()
+
+This method is not supported by Speechify and will throw an error. Speechify does not provide speech-to-text functionality.
+
+## Notes
+
+- Speechify requires an API key for authentication
+- The default model is 'simba-english'
+- Speech-to-text functionality is not supported
+- Additional audio stream options can be passed through the speak() method's options parameter

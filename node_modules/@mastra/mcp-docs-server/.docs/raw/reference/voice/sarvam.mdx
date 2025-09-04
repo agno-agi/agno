@@ -1,0 +1,260 @@
+---
+title: "Reference: Sarvam Voice | Voice Providers | Mastra Docs"
+description: "Documentation for the Sarvam class, providing text-to-speech and speech-to-text capabilities."
+---
+
+# Sarvam
+
+The SarvamVoice class in Mastra provides text-to-speech and speech-to-text capabilities using Sarvam AI models.
+
+## Usage Example
+
+```typescript
+import { SarvamVoice } from "@mastra/voice-sarvam";
+
+// Initialize with default configuration using environment variables
+const voice = new SarvamVoice();
+
+// Or initialize with specific configuration
+const voiceWithConfig = new SarvamVoice({
+   speechModel: {
+    model: "bulbul:v1",
+    apiKey: process.env.SARVAM_API_KEY!,
+    language: "en-IN",
+    properties: {
+      pitch: 0,
+      pace: 1.65,
+      loudness: 1.5,
+      speech_sample_rate: 8000,
+      enable_preprocessing: false,
+      eng_interpolation_wt: 123,
+    },
+  },
+  listeningModel: {
+    model: "saarika:v2",
+    apiKey: process.env.SARVAM_API_KEY!,
+    languageCode: "en-IN",
+     filetype?: 'wav';
+  },
+  speaker: "meera", // Default voice
+});
+
+
+// Convert text to speech
+const audioStream = await voice.speak("Hello, how can I help you?");
+
+
+// Convert speech to text
+const text = await voice.listen(audioStream, {
+  filetype: "wav",
+});
+```
+
+### Sarvam API Docs -
+
+https://docs.sarvam.ai/api-reference-docs/endpoints/text-to-speech
+
+## Configuration
+
+### Constructor Options
+
+<PropertiesTable
+  content={[
+    {
+      name: "speechModel",
+      type: "SarvamVoiceConfig",
+      description: "Configuration for text-to-speech synthesis.",
+      isOptional: true,
+      defaultValue: "{ model: 'bulbul:v1', language: 'en-IN' }",
+    },
+    {
+      name: "speaker",
+      type: "SarvamVoiceId",
+      description:
+        "The speaker to be used for the output audio. If not provided, Meera will be used as default. AvailableOptions - meera, pavithra, maitreyi, arvind, amol, amartya, diya, neel, misha, vian, arjun, maya",
+      isOptional: true,
+      defaultValue: "'meera'",
+    },
+    {
+      name: "listeningModel",
+      type: "SarvamListenOptions",
+      description: "Configuration for speech-to-text recognition.",
+      isOptional: true,
+      defaultValue: "{ model: 'saarika:v2', language_code: 'unknown' }",
+    },
+  ]}
+/>
+
+### SarvamVoiceConfig
+
+<PropertiesTable
+  content={[
+    {
+      name: "apiKey",
+      type: "string",
+      description:
+        "Sarvam API key. Falls back to SARVAM_API_KEY environment variable.",
+      isOptional: true,
+    },
+    {
+      name: "model",
+      type: "SarvamTTSModel",
+      description: "Specifies the model to use for text-to-speech conversion.",
+      isOptional: true,
+      defaultValue: "'bulbul:v1'",
+    },
+    {
+      name: "language",
+      type: "SarvamTTSLanguage",
+      description:
+        "Target language for speech synthesis. Available options: hi-IN, bn-IN, kn-IN, ml-IN, mr-IN, od-IN, pa-IN, ta-IN, te-IN, en-IN, gu-IN",
+      isOptional: false,
+      defaultValue: "'en-IN'",
+    },
+    {
+      name: "properties",
+      type: "object",
+      description: "Additional voice properties for customization.",
+      isOptional: true,
+    },
+    {
+      name: "properties.pitch",
+      type: "number",
+      description:
+        "Controls the pitch of the audio. Lower values result in a deeper voice, while higher values make it sharper. The suitable range is between -0.75 and 0.75.",
+      isOptional: true,
+    },
+    {
+      name: "properties.pace",
+      type: "number",
+      description:
+        "Controls the speed of the audio. Lower values result in slower speech, while higher values make it faster. The suitable range is between 0.5 and 2.0. Default is 1.0. Required range: 0.3 <= x <= 3",
+      isOptional: true,
+    },
+    {
+      name: "properties.loudness",
+      type: "number",
+      description:
+        "Controls the loudness of the audio. Lower values result in quieter audio, while higher values make it louder. The suitable range is between 0.3 and 3.0. Required range: 0 <= x <= 3",
+      isOptional: true,
+    },
+    {
+      name: "properties.speech_sample_rate",
+      type: "8000 | 16000 | 22050",
+      description: "Audio sample rate in Hz.",
+      isOptional: true,
+    },
+    {
+      name: "properties.enable_preprocessing",
+      type: "boolean",
+      description:
+        "Controls whether normalization of English words and numeric entities (e.g., numbers, dates) is performed. Set to true for better handling of mixed-language text. Default is false.",
+      isOptional: true,
+    },
+    {
+      name: "properties.eng_interpolation_wt",
+      type: "number",
+      description: "Weight for interpolating with English speaker at encoder.",
+      isOptional: true,
+    },
+  ]}
+/>
+
+### SarvamListenOptions
+
+<PropertiesTable
+  content={[
+    {
+      name: "apiKey",
+      type: "string",
+      description:
+        "Sarvam API key. Falls back to SARVAM_API_KEY environment variable.",
+      isOptional: true,
+    },
+    {
+      name: "model",
+      type: "SarvamSTTModel",
+      description:
+        "Specifies the model to use for speech-to-text conversion. Note:- Default model is saarika:v2 . Available options: saarika:v1, saarika:v2, saarika:flash ",
+      isOptional: true,
+      defaultValue: "'saarika:v2'",
+    },
+    {
+      name: "languageCode",
+      type: "SarvamSTTLanguage",
+      description:
+        "Specifies the language of the input audio. This parameter is required to ensure accurate transcription. For the saarika:v1 model, this parameter is mandatory. For the saarika:v2 model, it is optional. unknown: Use this when the language is not known; the API will detect it automatically. Note:- that the saarika:v1 model does not support unknown language code. Available options: unknown, hi-IN, bn-IN, kn-IN, ml-IN, mr-IN, od-IN, pa-IN, ta-IN, te-IN, en-IN, gu-IN ",
+      isOptional: true,
+      defaultValue: "'unknown'",
+    },
+    {
+      name: "filetype",
+      type: "'mp3' | 'wav'",
+      description: "Audio format of the input stream.",
+      isOptional: true,
+    },
+  ]}
+/>
+
+## Methods
+
+### speak()
+
+Converts text to speech using Sarvam's text-to-speech models.
+
+<PropertiesTable
+  content={[
+    {
+      name: "input",
+      type: "string | NodeJS.ReadableStream",
+      description: "Text or text stream to convert to speech.",
+      isOptional: false,
+    },
+    {
+      name: "options.speaker",
+      type: "SarvamVoiceId",
+      description: "Voice ID to use for speech synthesis.",
+      isOptional: true,
+      defaultValue: "Constructor's speaker value",
+    },
+  ]}
+/>
+
+Returns: `Promise<NodeJS.ReadableStream>`
+
+### listen()
+
+Transcribes audio using Sarvam's speech recognition models.
+
+<PropertiesTable
+  content={[
+    {
+      name: "input",
+      type: "NodeJS.ReadableStream",
+      description: "Audio stream to transcribe.",
+      isOptional: false,
+    },
+    {
+      name: "options",
+      type: "SarvamListenOptions",
+      description: "Configuration options for speech recognition.",
+      isOptional: true,
+    },
+  ]}
+/>
+
+Returns: `Promise<string>`
+
+### getSpeakers()
+
+Returns an array of available voice options.
+
+Returns: `Promise<Array<{voiceId: SarvamVoiceId}>>`
+
+## Notes
+
+- API key can be provided via constructor options or the `SARVAM_API_KEY` environment variable
+- If no API key is provided, the constructor will throw an error
+- The service communicates with the Sarvam AI API at `https://api.sarvam.ai`
+- Audio is returned as a stream containing binary audio data
+- Speech recognition supports mp3 and wav audio formats

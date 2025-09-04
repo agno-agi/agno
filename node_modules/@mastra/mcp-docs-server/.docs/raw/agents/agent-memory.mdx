@@ -1,0 +1,196 @@
+---
+title: "Using Agent Memory | Agents | Mastra Docs"
+description: Documentation on how agents in Mastra use memory to store conversation history and contextual information.
+---
+
+# Agent Memory
+
+Agents in Mastra can leverage a powerful memory system to store conversation history, recall relevant information, and maintain persistent context across interactions. This allows agents to have more natural, stateful conversations.
+
+## Enabling Memory for an Agent
+
+To enable memory, simply instantiate the `Memory` class and pass it to your agent's configuration. You also need to install the memory package and a storage adapter:
+
+```bash npm2yarn copy
+npm install @mastra/memory@latest @mastra/libsql@latest
+```
+
+```typescript
+import { Agent } from "@mastra/core/agent";
+import { Memory } from "@mastra/memory";
+import { LibSQLStore } from "@mastra/libsql";
+import { openai } from "@ai-sdk/openai";
+
+const memory = new Memory({
+  storage: new LibSQLStore({
+    url: "file:../../memory.db",
+  }),
+});
+
+const agent = new Agent({
+  name: "MyMemoryAgent",
+  instructions: "You are a helpful assistant with memory.",
+  model: openai("gpt-4o"),
+  memory, // Attach the memory instance
+});
+```
+
+This basic setup uses the default settings. Visit the [Memory documentation](/docs/memory/overview) for more configuration info.
+
+## Dynamic Memory Configuration
+
+Similar to how you can configure dynamic [instructions, models, and tools](./dynamic-agents.mdx), you can also configure memory dynamically using runtime context. This allows you to:
+
+- Use different memory systems based on user tiers or preferences
+- Switch between memory configurations for different environments
+- Enable or disable memory features based on feature flags
+- Customize memory behavior based on user context
+
+### Example: User Tier-Based Memory
+
+```typescript
+import { Agent } from "@mastra/core/agent";
+import { Memory } from "@mastra/memory";
+import { LibSQLStore } from "@mastra/libsql";
+import { PostgresStore } from "@mastra/pg";
+import { openai } from "@ai-sdk/openai";
+
+// Create different memory instances for different user tiers
+const premiumMemory = new Memory({
+  storage: new LibSQLStore({ url: "file:premium.db" }),
+  options: {
+    semanticRecall: { topK: 10, messageRange: 5 }, // More context for premium users
+    workingMemory: { enabled: true },
+  },
+});
+
+const standardMemory = new Memory({
+  storage: new LibSQLStore({ url: "file:standard.db" }),
+  options: {
+    semanticRecall: { topK: 3, messageRange: 2 }, // Basic recall for standard users
+    workingMemory: { enabled: false },
+  },
+});
+
+const agent = new Agent({
+  name: "TieredMemoryAgent",
+  instructions: "You are a helpful assistant with tiered memory capabilities.",
+  model: openai("gpt-4o"),
+  memory: ({ runtimeContext }) => {
+    const userTier = runtimeContext.get("userTier");
+    return userTier === "premium" ? premiumMemory : standardMemory;
+  },
+});
+```
+
+### Example: Environment-Based Memory
+
+```typescript
+const agent = new Agent({
+  name: "EnvironmentAwareAgent",
+  instructions: "You are a helpful assistant.",
+  model: openai("gpt-4o"),
+  memory: ({ runtimeContext }) => {
+    const environment = runtimeContext.get("environment");
+    
+    if (environment === "test") {
+      // Use local storage for testing
+      return new Memory({
+        storage: new LibSQLStore({ url: ":memory:" }),
+        options: {
+          workingMemory: { enabled: true },
+        },
+      });
+    } else if (environment === "production") {
+      // Use production database
+      return new Memory({
+        storage: new PostgresStore({ connectionString: process.env.PRODUCTION_DB_URL }),
+        options: {
+          workingMemory: { enabled: true },
+        },
+      });
+    }
+    
+    // Development environment
+    return new Memory({
+      storage: new LibSQLStore({ url: "file:dev.db" }),
+    });
+  },
+});
+```
+
+### Example: Async Memory Configuration
+
+```typescript
+const agent = new Agent({
+  name: "AsyncMemoryAgent",
+  instructions: "You are a helpful assistant.",
+  model: openai("gpt-4o"),
+  memory: async ({ runtimeContext }) => {
+    const userId = runtimeContext.get("userId");
+    
+    // Simulate async memory setup (e.g., database lookup)
+    await new Promise(resolve => setTimeout(resolve, 10));
+    
+    return new Memory({
+      storage: new LibSQLStore({ 
+        url: `file:user_${userId}.db` 
+      }),
+    });
+  },
+});
+```
+
+### Using Dynamic Memory
+
+When using dynamic memory, pass the runtime context to your agent calls:
+
+```typescript
+import { RuntimeContext } from "@mastra/core/runtime-context";
+
+// Create runtime context with user information
+const runtimeContext = new RuntimeContext();
+runtimeContext.set("userTier", "premium");
+runtimeContext.set("environment", "production");
+
+// Use the agent with runtime context
+const response = await agent.generate("Remember my favorite color is blue.", {
+  memory: {
+    resource: "user_alice",
+    thread: { id: "preferences_thread" },
+  },
+  runtimeContext, // Pass the runtime context
+});
+```
+
+## Using Memory in Agent Calls
+
+To utilize memory during interactions, you **must** provide a `memory` object with `resource` and `thread` properties when calling the agent's `stream()` or `generate()` methods.
+
+- `resource`: Typically identifies the user or entity (e.g., `user_123`).
+- `thread`: Identifies a specific conversation thread (e.g., `support_chat_456`).
+
+```typescript
+// Example agent call using memory
+await agent.stream("Remember my favorite color is blue.", {
+  memory: {
+    resource: "user_alice",
+    thread: "preferences_thread",
+  },
+});
+
+// Later in the same thread...
+const response = await agent.stream("What's my favorite color?", {
+  memory: {
+    resource: "user_alice",
+    thread: "preferences_thread",
+  },
+});
+// Agent will use memory to recall the favorite color.
+```
+
+These IDs ensure that conversation history and context are correctly stored and retrieved for the appropriate user and conversation.
+
+## Next Steps
+
+Keep exploring Mastra's [memory capabilities](/docs/memory/overview) like threads, conversation history, semantic recall, and working memory.

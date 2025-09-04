@@ -1,0 +1,97 @@
+---
+title: "mastra init | Initialize Project | Mastra CLI"
+description: Documentation for the mastra init command, which creates a new Mastra project with interactive setup options.
+---
+
+# mastra init
+
+The `mastra init` command **initializes** Mastra in an existing project. Use this command to scaffold the necessary folders and configuration without generating a new project.
+
+## Usage
+
+```bash
+mastra init [options]
+```
+
+## Options
+
+<PropertiesTable
+  content={[
+    {
+      name: "--default",
+      type: "boolean",
+      description: "Quick start with defaults (src, OpenAI, no examples)",
+      isOptional: true,
+    },
+    {
+      name: "--dir",
+      type: "string",
+      description: "Directory for Mastra files (defaults to src/)",
+      isOptional: false,
+    },
+    {
+      name: "--components",
+      type: "string",
+      description:
+        "Comma-separated list of components (agents, tools, workflows)",
+      isOptional: false,
+    },
+    {
+      name: "--llm",
+      type: "string",
+      description:
+        "Default model provider (openai, anthropic, groq, google or cerebras)",
+      isOptional: false,
+    },
+    {
+      name: "--llm-api-key",
+      type: "string",
+      description: "API key for the model provider",
+      isOptional: false,
+    },
+    {
+      name: "--example",
+      type: "boolean",
+      description: "Include example code",
+      isOptional: true,
+    },
+    {
+      name: "--no-example",
+      type: "boolean",
+      description: "Do not include example code",
+      isOptional: true,
+    },
+    {
+      name: "--mcp",
+      type: "string",
+      description:
+        "MCP Server for code editor (cursor, cursor-global, windsurf, vscode)",
+      isOptional: false,
+    },
+    {
+      name: "--help",
+      type: "boolean",
+      description: "Display help for command",
+      isOptional: true,
+    },
+  ]}
+/>
+
+## Advanced usage
+
+### Disable analytics
+
+If you prefer not to send anonymous usage data then set the
+`MASTRA_TELEMETRY_DISABLED=1` environment variable when running the
+command:
+
+```bash copy
+MASTRA_TELEMETRY_DISABLED=1 mastra init
+```
+
+### Custom provider endpoints
+
+Initialized projects respect the `OPENAI_BASE_URL` and
+`ANTHROPIC_BASE_URL` variables if present. This lets you route provider
+traffic through proxies or private gateways when starting the dev server
+later on.

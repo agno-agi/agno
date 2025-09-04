@@ -1,0 +1,830 @@
+---
+title: "Reference: MCPClient | Tool Management | Mastra Docs"
+description: API Reference for MCPClient - A class for managing multiple Model Context Protocol servers and their tools.
+---
+
+# MCPClient
+
+The `MCPClient` class provides a way to manage multiple MCP server connections and their tools in a Mastra application. It handles connection lifecycle, tool namespacing, and provides access to tools across all configured servers.
+
+This class replaces the deprecated [`MastraMCPClient`](/reference/tools/client).
+
+## Constructor
+
+Creates a new instance of the MCPClient class.
+
+```typescript
+constructor({
+  id?: string;
+  servers: Record<string, MastraMCPServerDefinition>;
+  timeout?: number;
+}: MCPClientOptions)
+```
+
+### MCPClientOptions
+
+<br />
+<PropertiesTable
+  content={[
+    {
+      name: "id",
+      type: "string",
+      isOptional: true,
+      description:
+        "Optional unique identifier for the configuration instance. Use this to prevent memory leaks when creating multiple instances with identical configurations.",
+    },
+    {
+      name: "servers",
+      type: "Record<string, MastraMCPServerDefinition>",
+      description:
+        "A map of server configurations, where each key is a unique server identifier and the value is the server configuration.",
+    },
+    {
+      name: "timeout",
+      type: "number",
+      isOptional: true,
+      defaultValue: "60000",
+      description:
+        "Global timeout value in milliseconds for all servers unless overridden in individual server configs.",
+    },
+  ]}
+/>
+
+### MastraMCPServerDefinition
+
+Each server in the `servers` map is configured using the `MastraMCPServerDefinition` type. The transport type is detected based on the provided parameters:
+
+- If `command` is provided, it uses the Stdio transport.
+- If `url` is provided, it first attempts to use the Streamable HTTP transport and falls back to the legacy SSE transport if the initial connection fails.
+
+<br />
+<PropertiesTable
+  content={[
+    {
+      name: "command",
+      type: "string",
+      isOptional: true,
+      description: "For Stdio servers: The command to execute.",
+    },
+    {
+      name: "args",
+      type: "string[]",
+      isOptional: true,
+      description: "For Stdio servers: Arguments to pass to the command.",
+    },
+    {
+      name: "env",
+      type: "Record<string, string>",
+      isOptional: true,
+      description:
+        "For Stdio servers: Environment variables to set for the command.",
+    },
+    {
+      name: "url",
+      type: "URL",
+      isOptional: true,
+      description:
+        "For HTTP servers (Streamable HTTP or SSE): The URL of the server.",
+    },
+    {
+      name: "requestInit",
+      type: "RequestInit",
+      isOptional: true,
+      description: "For HTTP servers: Request configuration for the fetch API.",
+    },
+    {
+      name: "eventSourceInit",
+      type: "EventSourceInit",
+      isOptional: true,
+      description:
+        "For SSE fallback: Custom fetch configuration for SSE connections. Required when using custom headers with SSE.",
+    },
+    {
+      name: "logger",
+      type: "LogHandler",
+      isOptional: true,
+      description: "Optional additional handler for logging.",
+    },
+    {
+      name: "timeout",
+      type: "number",
+      isOptional: true,
+      description: "Server-specific timeout in milliseconds.",
+    },
+    {
+      name: "capabilities",
+      type: "ClientCapabilities",
+      isOptional: true,
+      description: "Server-specific capabilities configuration.",
+    },
+    {
+      name: "enableServerLogs",
+      type: "boolean",
+      isOptional: true,
+      defaultValue: "true",
+      description: "Whether to enable logging for this server.",
+    },
+  ]}
+/>
+
+## Methods
+
+### getTools()
+
+Retrieves all tools from all configured servers, with tool names namespaced by their server name (in the format `serverName_toolName`) to prevent conflicts.
+Intended to be passed onto an Agent definition.
+
+```ts
+new Agent({ tools: await mcp.getTools() });
+```
+
+### getToolsets()
+
+Returns an object mapping namespaced tool names (in the format `serverName.toolName`) to their tool implementations.
+Intended to be passed dynamically into the generate or stream method.
+
+```typescript
+const res = await agent.stream(prompt, {
+  toolsets: await mcp.getToolsets(),
+});
+```
+
+### disconnect()
+
+Disconnects from all MCP servers and cleans up resources.
+
+```typescript
+async disconnect(): Promise<void>
+```
+
+### `resources` Property
+
+The `MCPClient` instance has a `resources` property that provides access to resource-related operations.
+
+```typescript
+const mcpClient = new MCPClient({
+  /* ...servers configuration... */
+});
+
+// Access resource methods via mcpClient.resources
+const allResourcesByServer = await mcpClient.resources.list();
+const templatesByServer = await mcpClient.resources.templates();
+// ... and so on for other resource methods.
+```
+
+#### `resources.list()`
+
+Retrieves all available resources from all connected MCP servers, grouped by server name.
+
+```typescript
+async list(): Promise<Record<string, Resource[]>>
+```
+
+Example:
+
+```typescript
+const resourcesByServer = await mcpClient.resources.list();
+for (const serverName in resourcesByServer) {
+  console.log(`Resources from ${serverName}:`, resourcesByServer[serverName]);
+}
+```
+
+#### `resources.templates()`
+
+Retrieves all available resource templates from all connected MCP servers, grouped by server name.
+
+```typescript
+async templates(): Promise<Record<string, ResourceTemplate[]>>
+```
+
+Example:
+
+```typescript
+const templatesByServer = await mcpClient.resources.templates();
+for (const serverName in templatesByServer) {
+  console.log(`Templates from ${serverName}:`, templatesByServer[serverName]);
+}
+```
+
+#### `resources.read(serverName: string, uri: string)`
+
+Reads the content of a specific resource from a named server.
+
+```typescript
+async read(serverName: string, uri: string): Promise<ReadResourceResult>
+```
+
+- `serverName`: The identifier of the server (key used in the `servers` constructor option).
+- `uri`: The URI of the resource to read.
+
+Example:
+
+```typescript
+const content = await mcpClient.resources.read(
+  "myWeatherServer",
+  "weather://current",
+);
+console.log("Current weather:", content.contents[0].text);
+```
+
+#### `resources.subscribe(serverName: string, uri: string)`
+
+Subscribes to updates for a specific resource on a named server.
+
+```typescript
+async subscribe(serverName: string, uri: string): Promise<object>
+```
+
+Example:
+
+```typescript
+await mcpClient.resources.subscribe("myWeatherServer", "weather://current");
+```
+
+#### `resources.unsubscribe(serverName: string, uri: string)`
+
+Unsubscribes from updates for a specific resource on a named server.
+
+```typescript
+async unsubscribe(serverName: string, uri: string): Promise<object>
+```
+
+Example:
+
+```typescript
+await mcpClient.resources.unsubscribe("myWeatherServer", "weather://current");
+```
+
+#### `resources.onUpdated(serverName: string, handler: (params: { uri: string }) => void)`
+
+Sets a notification handler that will be called when a subscribed resource on a specific server is updated.
+
+```typescript
+async onUpdated(serverName: string, handler: (params: { uri: string }) => void): Promise<void>
+```
+
+Example:
+
+```typescript
+mcpClient.resources.onUpdated("myWeatherServer", (params) => {
+  console.log(`Resource updated on myWeatherServer: ${params.uri}`);
+  // You might want to re-fetch the resource content here
+  // await mcpClient.resources.read("myWeatherServer", params.uri);
+});
+```
+
+#### `resources.onListChanged(serverName: string, handler: () => void)`
+
+Sets a notification handler that will be called when the overall list of available resources changes on a specific server.
+
+```typescript
+async onListChanged(serverName: string, handler: () => void): Promise<void>
+```
+
+Example:
+
+```typescript
+mcpClient.resources.onListChanged("myWeatherServer", () => {
+  console.log("Resource list changed on myWeatherServer.");
+  // You should re-fetch the list of resources
+  // await mcpClient.resources.list();
+});
+```
+
+### `prompts` Property
+
+The `MCPClient` instance has a `prompts` property that provides access to prompt-related operations.
+
+```typescript
+const mcpClient = new MCPClient({
+  /* ...servers configuration... */
+});
+
+// Access prompt methods via mcpClient.prompts
+const allPromptsByServer = await mcpClient.prompts.list();
+const { prompt, messages } = await mcpClient.prompts.get({
+  serverName: "myWeatherServer",
+  name: "current",
+});
+```
+
+### `elicitation` Property
+
+The `MCPClient` instance has an `elicitation` property that provides access to elicitation-related operations. Elicitation allows MCP servers to request structured information from users.
+
+```typescript
+const mcpClient = new MCPClient({
+  /* ...servers configuration... */
+});
+
+// Set up elicitation handler
+mcpClient.elicitation.onRequest('serverName', async (request) => {
+  // Handle elicitation request from server
+  console.log('Server requests:', request.message);
+  console.log('Schema:', request.requestedSchema);
+  
+  // Return user response
+  return {
+    action: 'accept',
+    content: { name: 'John Doe', email: 'john@example.com' }
+  };
+});
+```
+
+#### `elicitation.onRequest(serverName: string, handler: ElicitationHandler)`
+
+Sets up a handler function that will be called when any connected MCP server sends an elicitation request. The handler receives the request and must return a response.
+
+**ElicitationHandler Function:**
+
+The handler function receives a request object with:
+- `message`: A human-readable message describing what information is needed
+- `requestedSchema`: A JSON schema defining the structure of the expected response
+
+The handler must return an `ElicitResult` with:
+- `action`: One of `'accept'`, `'decline'`, or `'cancel'`
+- `content`: The user's data (only when action is `'accept'`)
+
+**Example:**
+
+```typescript
+mcpClient.elicitation.onRequest('serverName', async (request) => {
+  console.log(`Server requests: ${request.message}`);
+  
+  // Example: Simple user input collection
+  if (request.requestedSchema.properties.name) {
+    // Simulate user accepting and providing data
+    return {
+      action: 'accept',
+      content: {
+        name: 'Alice Smith',
+        email: 'alice@example.com'
+      }
+    };
+  }
+  
+  // Simulate user declining the request
+  return { action: 'decline' };
+});
+```
+
+**Complete Interactive Example:**
+
+```typescript
+import { MCPClient } from '@mastra/mcp';
+import { createInterface } from 'readline';
+
+const readline = createInterface({
+  input: process.stdin,
+  output: process.stdout,
+});
+
+function askQuestion(question: string): Promise<string> {
+  return new Promise(resolve => {
+    readline.question(question, answer => resolve(answer.trim()));
+  });
+}
+
+const mcpClient = new MCPClient({
+  servers: {
+    interactiveServer: {
+      url: new URL('http://localhost:3000/mcp'),
+    },
+  },
+});
+
+// Set up interactive elicitation handler
+await mcpClient.elicitation.onRequest('interactiveServer', async (request) => {
+  console.log(`\n📋 Server Request: ${request.message}`);
+  console.log('Required information:');
+  
+  const schema = request.requestedSchema;
+  const properties = schema.properties || {};
+  const required = schema.required || [];
+  const content: Record<string, any> = {};
+  
+  // Collect input for each field
+  for (const [fieldName, fieldSchema] of Object.entries(properties)) {
+    const field = fieldSchema as any;
+    const isRequired = required.includes(fieldName);
+    
+    let prompt = `${field.title || fieldName}`;
+    if (field.description) prompt += ` (${field.description})`;
+    if (isRequired) prompt += ' *required*';
+    prompt += ': ';
+    
+    const answer = await askQuestion(prompt);
+    
+    // Handle cancellation
+    if (answer.toLowerCase() === 'cancel') {
+      return { action: 'cancel' };
+    }
+    
+    // Validate required fields
+    if (answer === '' && isRequired) {
+      console.log(`❌ ${fieldName} is required`);
+      return { action: 'decline' };
+    }
+    
+    if (answer !== '') {
+      content[fieldName] = answer;
+    }
+  }
+  
+  // Confirm submission
+  console.log('\n📝 You provided:');
+  console.log(JSON.stringify(content, null, 2));
+  
+  const confirm = await askQuestion('\nSubmit this information? (yes/no/cancel): ');
+  
+  if (confirm.toLowerCase() === 'yes' || confirm.toLowerCase() === 'y') {
+    return { action: 'accept', content };
+  } else if (confirm.toLowerCase() === 'cancel') {
+    return { action: 'cancel' };
+  } else {
+    return { action: 'decline' };
+  }
+});
+```
+
+#### `prompts.list()`
+
+Retrieves all available prompts from all connected MCP servers, grouped by server name.
+
+```typescript
+async list(): Promise<Record<string, Prompt[]>>
+```
+
+Example:
+
+```typescript
+const promptsByServer = await mcpClient.prompts.list();
+for (const serverName in promptsByServer) {
+  console.log(`Prompts from ${serverName}:`, promptsByServer[serverName]);
+}
+```
+
+#### `prompts.get({ serverName, name, args?, version? })`
+
+Retrieves a specific prompt and its messages from a server.
+
+```typescript
+async get({
+  serverName,
+  name,
+  args?,
+  version?,
+}: {
+  serverName: string;
+  name: string;
+  args?: Record<string, any>;
+  version?: string;
+}): Promise<{ prompt: Prompt; messages: PromptMessage[] }>
+```
+
+Example:
+
+```typescript
+const { prompt, messages } = await mcpClient.prompts.get({
+  serverName: "myWeatherServer",
+  name: "current",
+  args: { location: "London" },
+});
+console.log(prompt);
+console.log(messages);
+```
+
+#### `prompts.onListChanged(serverName: string, handler: () => void)`
+
+Sets a notification handler that will be called when the list of available prompts changes on a specific server.
+
+```typescript
+async onListChanged(serverName: string, handler: () => void): Promise<void>
+```
+
+Example:
+
+```typescript
+mcpClient.prompts.onListChanged("myWeatherServer", () => {
+  console.log("Prompt list changed on myWeatherServer.");
+  // You should re-fetch the list of prompts
+  // await mcpClient.prompts.list();
+});
+```
+
+## Elicitation
+
+Elicitation is a feature that allows MCP servers to request structured information from users. When a server needs additional data, it can send an elicitation request that the client handles by prompting the user. A common example is during a tool call.
+
+### How Elicitation Works
+
+1. **Server Request**: An MCP server tool calls `server.elicitation.sendRequest()` with a message and schema
+2. **Client Handler**: Your elicitation handler function is called with the request
+3. **User Interaction**: Your handler collects user input (via UI, CLI, etc.)
+4. **Response**: Your handler returns the user's response (accept/decline/cancel)
+5. **Tool Continuation**: The server tool receives the response and continues execution
+
+### Setting Up Elicitation
+
+You must set up an elicitation handler before tools that use elicitation are called:
+
+```typescript
+import { MCPClient } from '@mastra/mcp';
+
+const mcpClient = new MCPClient({
+  servers: {
+    interactiveServer: {
+      url: new URL('http://localhost:3000/mcp'),
+    },
+  },
+});
+
+// Set up elicitation handler
+mcpClient.elicitation.onRequest('interactiveServer', async (request) => {
+  // Handle the server's request for user input
+  console.log(`Server needs: ${request.message}`);
+  
+  // Your logic to collect user input
+  const userData = await collectUserInput(request.requestedSchema);
+  
+  return {
+    action: 'accept',
+    content: userData
+  };
+});
+```
+
+### Response Types
+
+Your elicitation handler must return one of three response types:
+
+- **Accept**: User provided data and confirmed submission
+  ```typescript
+  return {
+    action: 'accept',
+    content: { name: 'John Doe', email: 'john@example.com' }
+  };
+  ```
+
+- **Decline**: User explicitly declined to provide the information
+  ```typescript
+  return { action: 'decline' };
+  ```
+
+- **Cancel**: User dismissed or cancelled the request
+  ```typescript
+  return { action: 'cancel' };
+  ```
+
+### Schema-Based Input Collection
+
+The `requestedSchema` provides structure for the data the server needs:
+
+```typescript
+await mcpClient.elicitation.onRequest('interactiveServer', async (request) => {
+  const { properties, required = [] } = request.requestedSchema;
+  const content: Record<string, any> = {};
+  
+  for (const [fieldName, fieldSchema] of Object.entries(properties || {})) {
+    const field = fieldSchema as any;
+    const isRequired = required.includes(fieldName);
+    
+    // Collect input based on field type and requirements
+    const value = await promptUser({
+      name: fieldName,
+      title: field.title,
+      description: field.description,
+      type: field.type,
+      required: isRequired,
+      format: field.format,
+      enum: field.enum,
+    });
+    
+    if (value !== null) {
+      content[fieldName] = value;
+    }
+  }
+  
+  return { action: 'accept', content };
+});
+```
+
+### Best Practices
+
+- **Always handle elicitation**: Set up your handler before calling tools that might use elicitation
+- **Validate input**: Check that required fields are provided
+- **Respect user choice**: Handle decline and cancel responses gracefully
+- **Clear UI**: Make it obvious what information is being requested and why
+- **Security**: Never auto-accept requests for sensitive information
+
+## Examples
+
+### Static Tool Configuration
+
+For tools where you have a single connection to the MCP server for you entire app, use `getTools()` and pass the tools to your agent:
+
+```typescript
+import { MCPClient } from "@mastra/mcp";
+import { Agent } from "@mastra/core/agent";
+import { openai } from "@ai-sdk/openai";
+
+const mcp = new MCPClient({
+  servers: {
+    stockPrice: {
+      command: "npx",
+      args: ["tsx", "stock-price.ts"],
+      env: {
+        API_KEY: "your-api-key",
+      },
+      log: (logMessage) => {
+        console.log(`[${logMessage.level}] ${logMessage.message}`);
+      },
+    },
+    weather: {
+      url: new URL("http://localhost:8080/sse"),
+    },
+  },
+  timeout: 30000, // Global 30s timeout
+});
+
+// Create an agent with access to all tools
+const agent = new Agent({
+  name: "Multi-tool Agent",
+  instructions: "You have access to multiple tool servers.",
+  model: openai("gpt-4"),
+  tools: await mcp.getTools(),
+});
+
+// Example of using resource methods
+async function checkWeatherResource() {
+  try {
+    const weatherResources = await mcp.resources.list();
+    if (weatherResources.weather && weatherResources.weather.length > 0) {
+      const currentWeatherURI = weatherResources.weather[0].uri;
+      const weatherData = await mcp.resources.read(
+        "weather",
+        currentWeatherURI,
+      );
+      console.log("Weather data:", weatherData.contents[0].text);
+    }
+  } catch (error) {
+    console.error("Error fetching weather resource:", error);
+  }
+}
+checkWeatherResource();
+
+// Example of using prompt methods
+async function checkWeatherPrompt() {
+  try {
+    const weatherPrompts = await mcp.prompts.list();
+    if (weatherPrompts.weather && weatherPrompts.weather.length > 0) {
+      const currentWeatherPrompt = weatherPrompts.weather.find(
+        (p) => p.name === "current"
+      );
+      if (currentWeatherPrompt) {
+        console.log("Weather prompt:", currentWeatherPrompt);
+      } else {
+        console.log("Current weather prompt not found");
+      }
+    }
+  } catch (error) {
+    console.error("Error fetching weather prompt:", error);
+  }
+}
+checkWeatherPrompt();
+```
+
+### Dynamic toolsets
+
+When you need a new MCP connection for each user, use `getToolsets()` and add the tools when calling stream or generate:
+
+```typescript
+import { Agent } from "@mastra/core/agent";
+import { MCPClient } from "@mastra/mcp";
+import { openai } from "@ai-sdk/openai";
+
+// Create the agent first, without any tools
+const agent = new Agent({
+  name: "Multi-tool Agent",
+  instructions: "You help users check stocks and weather.",
+  model: openai("gpt-4"),
+});
+
+// Later, configure MCP with user-specific settings
+const mcp = new MCPClient({
+  servers: {
+    stockPrice: {
+      command: "npx",
+      args: ["tsx", "stock-price.ts"],
+      env: {
+        API_KEY: "user-123-api-key",
+      },
+      timeout: 20000, // Server-specific timeout
+    },
+    weather: {
+      url: new URL("http://localhost:8080/sse"),
+      requestInit: {
+        headers: {
+          Authorization: `Bearer user-123-token`,
+        },
+      },
+    },
+  },
+});
+
+// Pass all toolsets to stream() or generate()
+const response = await agent.stream(
+  "How is AAPL doing and what is the weather?",
+  {
+    toolsets: await mcp.getToolsets(),
+  },
+);
+```
+
+## Instance Management
+
+The `MCPClient` class includes built-in memory leak prevention for managing multiple instances:
+
+1. Creating multiple instances with identical configurations without an `id` will throw an error to prevent memory leaks
+2. If you need multiple instances with identical configurations, provide a unique `id` for each instance
+3. Call `await configuration.disconnect()` before recreating an instance with the same configuration
+4. If you only need one instance, consider moving the configuration to a higher scope to avoid recreation
+
+For example, if you try to create multiple instances with the same configuration without an `id`:
+
+```typescript
+// First instance - OK
+const mcp1 = new MCPClient({
+  servers: {
+    /* ... */
+  },
+});
+
+// Second instance with same config - Will throw an error
+const mcp2 = new MCPClient({
+  servers: {
+    /* ... */
+  },
+});
+
+// To fix, either:
+// 1. Add unique IDs
+const mcp3 = new MCPClient({
+  id: "instance-1",
+  servers: {
+    /* ... */
+  },
+});
+
+// 2. Or disconnect before recreating
+await mcp1.disconnect();
+const mcp4 = new MCPClient({
+  servers: {
+    /* ... */
+  },
+});
+```
+
+## Server Lifecycle
+
+MCPClient handles server connections gracefully:
+
+1. Automatic connection management for multiple servers
+2. Graceful server shutdown to prevent error messages during development
+3. Proper cleanup of resources when disconnecting
+
+## Using SSE Request Headers
+
+When using the legacy SSE MCP transport, you must configure both `requestInit` and `eventSourceInit` due to a bug in the MCP SDK:
+
+```ts
+const sseClient = new MCPClient({
+  servers: {
+    exampleServer: {
+      url: new URL("https://your-mcp-server.com/sse"),
+      // Note: requestInit alone isn't enough for SSE
+      requestInit: {
+        headers: {
+          Authorization: "Bearer your-token",
+        },
+      },
+      // This is also required for SSE connections with custom headers
+      eventSourceInit: {
+        fetch(input: Request | URL | string, init?: RequestInit) {
+          const headers = new Headers(init?.headers || {});
+          headers.set("Authorization", "Bearer your-token");
+          return fetch(input, {
+            ...init,
+            headers,
+          });
+        },
+      },
+    },
+  },
+});
+```
+
+## Related Information
+
+- For creating MCP servers, see the [MCPServer documentation](./mcp-server).
+- For more about the Model Context Protocol, see the [@modelcontextprotocol/sdk documentation](https://github.com/modelcontextprotocol/typescript-sdk).

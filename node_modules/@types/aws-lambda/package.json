@@ -1,0 +1,226 @@
+{
+    "name": "@types/aws-lambda",
+    "version": "8.10.152",
+    "description": "TypeScript definitions for aws-lambda",
+    "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/aws-lambda",
+    "license": "MIT",
+    "contributors": [
+        {
+            "name": "James Darbyshire",
+            "githubUsername": "darbio",
+            "url": "https://github.com/darbio"
+        },
+        {
+            "name": "Michael Skarum",
+            "githubUsername": "skarum",
+            "url": "https://github.com/skarum"
+        },
+        {
+            "name": "Stef Heyenrath",
+            "githubUsername": "StefH",
+            "url": "https://github.com/StefH"
+        },
+        {
+            "name": "Rich Buggy",
+            "githubUsername": "buggy",
+            "url": "https://github.com/buggy"
+        },
+        {
+            "name": "wwwy3y3",
+            "githubUsername": "wwwy3y3",
+            "url": "https://github.com/wwwy3y3"
+        },
+        {
+            "name": "Ishaan Malhi",
+            "githubUsername": "OrthoDex",
+            "url": "https://github.com/OrthoDex"
+        },
+        {
+            "name": "Michael Marner",
+            "githubUsername": "MichaelMarner",
+            "url": "https://github.com/MichaelMarner"
+        },
+        {
+            "name": "Daniel Cottone",
+            "githubUsername": "daniel-cottone",
+            "url": "https://github.com/daniel-cottone"
+        },
+        {
+            "name": "Kostya Misura",
+            "githubUsername": "kostya-misura",
+            "url": "https://github.com/kostya-misura"
+        },
+        {
+            "name": "Markus Tacker",
+            "githubUsername": "coderbyheart",
+            "url": "https://github.com/coderbyheart"
+        },
+        {
+            "name": "Palmi Valgeirsson",
+            "githubUsername": "palmithor",
+            "url": "https://github.com/palmithor"
+        },
+        {
+            "name": "Danilo Raisi",
+            "githubUsername": "daniloraisi",
+            "url": "https://github.com/daniloraisi"
+        },
+        {
+            "name": "Simon Buchan",
+            "githubUsername": "simonbuchan",
+            "url": "https://github.com/simonbuchan"
+        },
+        {
+            "name": "David Hayden",
+            "githubUsername": "Haydabase",
+            "url": "https://github.com/Haydabase"
+        },
+        {
+            "name": "Chris Redekop",
+            "githubUsername": "repl-chris",
+            "url": "https://github.com/repl-chris"
+        },
+        {
+            "name": "Aneil Mallavarapu",
+            "githubUsername": "aneilbaboo",
+            "url": "https://github.com/aneilbaboo"
+        },
+        {
+            "name": "Jeremy Nagel",
+            "githubUsername": "jeznag",
+            "url": "https://github.com/jeznag"
+        },
+        {
+            "name": "Louis Larry",
+            "githubUsername": "louislarry",
+            "url": "https://github.com/louislarry"
+        },
+        {
+            "name": "Daniel Papukchiev",
+            "githubUsername": "dpapukchiev",
+            "url": "https://github.com/dpapukchiev"
+        },
+        {
+            "name": "Oliver Hookins",
+            "githubUsername": "ohookins",
+            "url": "https://github.com/ohookins"
+        },
+        {
+            "name": "Trevor Leach",
+            "githubUsername": "trevor-leach",
+            "url": "https://github.com/trevor-leach"
+        },
+        {
+            "name": "James Gregory",
+            "githubUsername": "jagregory",
+            "url": "https://github.com/jagregory"
+        },
+        {
+            "name": "Erik Dalén",
+            "githubUsername": "dalen",
+            "url": "https://github.com/dalen"
+        },
+        {
+            "name": "Loïk Gaonac'h",
+            "githubUsername": "loikg",
+            "url": "https://github.com/loikg"
+        },
+        {
+            "name": "Roberto Zen",
+            "githubUsername": "skyzenr",
+            "url": "https://github.com/skyzenr"
+        },
+        {
+            "name": "Grzegorz Redlicki",
+            "githubUsername": "redlickigrzegorz",
+            "url": "https://github.com/redlickigrzegorz"
+        },
+        {
+            "name": "Juan Carbonel",
+            "githubUsername": "juancarbonel",
+            "url": "https://github.com/juancarbonel"
+        },
+        {
+            "name": "Peter McIntyre",
+            "githubUsername": "pwmcintyre",
+            "url": "https://github.com/pwmcintyre"
+        },
+        {
+            "name": "Alex Bolenok",
+            "githubUsername": "alex-bolenok-centralreach",
+            "url": "https://github.com/alex-bolenok-centralreach"
+        },
+        {
+            "name": "Marian Zange",
+            "githubUsername": "marianzange",
+            "url": "https://github.com/marianzange"
+        },
+        {
+            "name": "Alessandro Palumbo",
+            "githubUsername": "apalumbo",
+            "url": "https://github.com/apalumbo"
+        },
+        {
+            "name": "Sachin Shekhar",
+            "githubUsername": "SachinShekhar",
+            "url": "https://github.com/SachinShekhar"
+        },
+        {
+            "name": "Ivan Martos",
+            "githubUsername": "ivanmartos",
+            "url": "https://github.com/ivanmartos"
+        },
+        {
+            "name": "Zach Anthony",
+            "githubUsername": "zach-anthony",
+            "url": "https://github.com/zach-anthony"
+        },
+        {
+            "name": "Peter Savnik",
+            "githubUsername": "savnik",
+            "url": "https://github.com/savnik"
+        },
+        {
+            "name": "Benoit Boure",
+            "githubUsername": "bboure",
+            "url": "https://github.com/bboure"
+        },
+        {
+            "name": "James Lakin",
+            "githubUsername": "jamesorlakin",
+            "url": "https://github.com/jamesorlakin"
+        },
+        {
+            "name": "Ross Gerbasi",
+            "githubUsername": "aphex",
+            "url": "https://github.com/aphex"
+        },
+        {
+            "name": "Joey Kilpatrick",
+            "githubUsername": "joeykilpatrick",
+            "url": "https://github.com/joeykilpatrick"
+        },
+        {
+            "name": "Luciano Manerich Junior",
+            "githubUsername": "lmanerich",
+            "url": "https://github.com/lmanerich"
+        },
+        {
+            "name": "Luciano M. Taranto",
+            "githubUsername": "LucianoTaranto",
+            "url": "https://github.com/LucianoTaranto"
+        }
+    ],
+    "main": "",
+    "types": "index.d.ts",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "directory": "types/aws-lambda"
+    },
+    "scripts": {},
+    "dependencies": {},
+    "peerDependencies": {},
+    "typesPublisherContentHash": "7ac21f912f5d39e38f9916d81a153b602cba17acc60370d4bd76dbb98d403494",
+    "typeScriptVersion": "5.1"
+}

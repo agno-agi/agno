@@ -1,0 +1,52 @@
+{
+	"name": "exit-hook",
+	"version": "4.0.0",
+	"description": "Run some code when the process exits",
+	"license": "MIT",
+	"repository": "sindresorhus/exit-hook",
+	"funding": "https://github.com/sponsors/sindresorhus",
+	"author": {
+		"name": "Sindre Sorhus",
+		"email": "sindresorhus@gmail.com",
+		"url": "https://sindresorhus.com"
+	},
+	"type": "module",
+	"exports": {
+		"types": "./index.d.ts",
+		"default": "./index.js"
+	},
+	"engines": {
+		"node": ">=18"
+	},
+	"scripts": {
+		"test": "xo && ava && tsd"
+	},
+	"files": [
+		"index.js",
+		"index.d.ts"
+	],
+	"keywords": [
+		"exit",
+		"quit",
+		"process",
+		"hook",
+		"graceful",
+		"handler",
+		"shutdown",
+		"sigterm",
+		"sigint",
+		"terminate",
+		"kill",
+		"stop",
+		"event",
+		"signal",
+		"async",
+		"asynchronous"
+	],
+	"devDependencies": {
+		"ava": "^5.3.1",
+		"execa": "^8.0.1",
+		"tsd": "^0.28.1",
+		"xo": "^0.56.0"
+	}
+}

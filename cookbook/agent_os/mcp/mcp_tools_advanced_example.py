@@ -4,40 +4,30 @@ Example AgentOS app where the agent has MCPTools.
 AgentOS handles the lifespan of the MCPTools internally.
 """
 
-import os
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
 from agno.os import AgentOS
-from agno.tools.mcp import MCPTools, MultiMCPTools, StreamableHTTPClientParams  # noqa: F401
+from agno.tools.mcp import MCPTools  # noqa: F401
 
 # Setup the database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
-mcp_server_url = "https://api.githubcopilot.com/mcp/"
-mcp_access_token = os.getenv("GITHUB_ACCESS_TOKEN")
+mastra_mcp_tools = MCPTools(command="npx -y @mastra/mcp-docs-server", timeout_seconds=60)
 
-server_params = StreamableHTTPClientParams(
-    url=mcp_server_url,
-    headers={
-        "Authorization": f"Bearer {mcp_access_token}",
-    },
-)
-
-github_mcp_tools = MCPTools(transport="streamable-http", server_params=server_params)
 agno_mcp_tools = MCPTools(transport="streamable-http", url="https://docs-v2.agno.com/mcp")
 
 # OR
 # mcp_tools = MultiMCPTools(urls_transports=["streamable-http"], urls=["https://docs-v2.agno.com/mcp"])
 
 # Setup basic agents, teams and workflows
-agno_support_agent = Agent(
+ai_framework_agent = Agent(
     id="agno-support-agent",
     name="Agno Support Agent",
     model=Claude(id="claude-sonnet-4-0"),
     db=db,
     tools=[
-        # github_mcp_tools,
+        mastra_mcp_tools,
         agno_mcp_tools,
     ],
     add_history_to_context=True,
@@ -47,7 +37,7 @@ agno_support_agent = Agent(
 
 agent_os = AgentOS(
     description="Example app with MCP Tools",
-    agents=[agno_support_agent],
+    agents=[ai_framework_agent],
 )
 
 

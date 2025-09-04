@@ -1,0 +1,56 @@
+{
+  "name": "@ai-sdk/provider",
+  "version": "2.0.0",
+  "license": "Apache-2.0",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/**/*",
+    "CHANGELOG.md"
+  ],
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "json-schema": "^0.4.0"
+  },
+  "devDependencies": {
+    "@types/json-schema": "7.0.15",
+    "@types/node": "20.17.24",
+    "tsup": "^8",
+    "typescript": "5.8.3",
+    "@vercel/ai-tsconfig": "0.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://ai-sdk.dev/docs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vercel/ai.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vercel/ai/issues"
+  },
+  "keywords": [
+    "ai"
+  ],
+  "scripts": {
+    "build": "pnpm clean && tsup --tsconfig tsconfig.build.json",
+    "build:watch": "pnpm clean && tsup --watch",
+    "clean": "rm -rf dist *.tsbuildinfo",
+    "lint": "eslint \"./**/*.ts*\"",
+    "type-check": "tsc --build",
+    "prettier-check": "prettier --check \"./**/*.ts*\""
+  }
+}

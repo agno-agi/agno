@@ -1,0 +1,66 @@
+---
+title: "Create A Mastra Production Server"
+description: "Learn how to configure and deploy a production-ready Mastra server with custom settings for APIs, CORS, and more"
+---
+
+# Create a Mastra Production Server
+
+When deploying your Mastra application to production, it runs as an HTTP server that exposes your agents, workflows, and other functionality as API endpoints. This page covers how to configure and customize the server for a production environment.
+
+## Server Architecture
+
+Mastra uses [Hono](https://hono.dev) as its underlying HTTP server framework. When you build a Mastra application using `mastra build`, it generates a Hono-based HTTP server in the `.mastra` directory.
+
+The server provides:
+
+- API endpoints for all registered agents
+- API endpoints for all registered workflows
+- Custom API route support
+- Custom middleware support
+- Configuration of timeout
+- Configuration of port
+- Configuration of body limit
+
+See the [Middleware](/docs/server-db/middleware) and
+[Custom API Routes](/docs/server-db/custom-api-routes) pages for details on
+adding additional server behaviour.
+
+## Server configuration
+
+You can configure server `port` and `timeout` in the Mastra instance.
+
+```typescript filename="src/mastra/index.ts" copy showLineNumbers
+import { Mastra } from "@mastra/core/mastra";
+
+export const mastra = new Mastra({
+  // ...
+  server: {
+    port: 3000, // Defaults to 4111
+    timeout: 10000, // Defaults to 30000 (30s)
+  },
+});
+```
+
+The `method` option can be one of `"GET"`, `"POST"`, `"PUT"`,
+`"DELETE"` or `"ALL"`. Using `"ALL"` will cause the handler to be
+invoked for any HTTP method that matches the path.
+
+## Custom CORS Config
+
+Mastra allows you to configure CORS (Cross-Origin Resource Sharing) settings for your server.
+
+```typescript filename="src/mastra/index.ts" copy showLineNumbers
+import { Mastra } from "@mastra/core/mastra";
+
+export const mastra = new Mastra({
+  // ...
+  server: {
+    cors: {
+      origin: ["https://example.com"], // Allow specific origins or '*' for all
+      allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+      allowHeaders: ["Content-Type", "Authorization"],
+      credentials: false,
+    },
+  },
+});
+```

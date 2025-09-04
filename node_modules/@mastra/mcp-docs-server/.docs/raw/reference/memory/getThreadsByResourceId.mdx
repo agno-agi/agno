@@ -1,0 +1,81 @@
+# getThreadsByResourceId Reference
+
+The `getThreadsByResourceId` function retrieves all threads associated with a specific resource ID from storage. Threads can be sorted by creation or modification time in ascending or descending order.
+
+## Usage Example
+
+```typescript
+import { Memory } from "@mastra/core/memory";
+
+const memory = new Memory(config);
+
+// Basic usage - returns threads sorted by createdAt DESC (default)
+const threads = await memory.getThreadsByResourceId({
+  resourceId: "resource-123",
+});
+
+// Custom sorting by updatedAt in ascending order
+const threadsByUpdate = await memory.getThreadsByResourceId({
+  resourceId: "resource-123",
+  orderBy: "updatedAt",
+  sortDirection: "ASC",
+});
+```
+
+## Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "resourceId",
+      type: "string",
+      description: "The ID of the resource whose threads are to be retrieved.",
+      isOptional: false,
+    },
+    {
+      name: "orderBy",
+      type: "ThreadOrderBy",
+      description: "Field to sort threads by. Accepts 'createdAt' or 'updatedAt'. Default: 'createdAt'",
+      isOptional: true,
+    },
+    {
+      name: "sortDirection",
+      type: "ThreadSortDirection", 
+      description: "Sort order direction. Accepts 'ASC' or 'DESC'. Default: 'DESC'",
+      isOptional: true,
+    },
+  ]}
+/>
+
+## Type Definitions
+
+```typescript
+type ThreadOrderBy = 'createdAt' | 'updatedAt';
+type ThreadSortDirection = 'ASC' | 'DESC';
+
+interface ThreadSortOptions {
+  orderBy?: ThreadOrderBy;
+  sortDirection?: ThreadSortDirection;
+}
+```
+
+## Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "StorageThreadType[]",
+      type: "Promise",
+      description:
+        "A promise that resolves to an array of threads associated with the given resource ID.",
+    },
+  ]}
+/>
+
+### Related
+
+- [Memory Class Reference](/reference/memory/Memory.mdx)
+- [getThreadsByResourceIdPaginated](/reference/memory/getThreadsByResourceIdPaginated.mdx) - Paginated version
+- [Getting Started with Memory](/docs/memory/overview.mdx) (Covers threads/resources concept)
+- [createThread](/reference/memory/createThread.mdx)
+- [getThreadById](/reference/memory/getThreadById.mdx)

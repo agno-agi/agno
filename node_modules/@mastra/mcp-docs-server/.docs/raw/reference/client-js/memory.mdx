@@ -1,0 +1,130 @@
+---
+title: Mastra Client Memory API
+description: Learn how to manage conversation threads and message history in Mastra using the client-js SDK.
+---
+
+# Memory API
+
+The Memory API provides methods to manage conversation threads and message history in Mastra.
+
+### Get All Threads
+
+Retrieve all memory threads for a specific resource:
+
+```typescript
+const threads = await mastraClient.getMemoryThreads({
+  resourceId: "resource-1",
+  agentId: "agent-1",
+});
+```
+
+### Create a New Thread
+
+Create a new memory thread:
+
+```typescript
+const thread = await mastraClient.createMemoryThread({
+  title: "New Conversation",
+  metadata: { category: "support" },
+  resourceId: "resource-1",
+  agentId: "agent-1",
+});
+```
+
+### Working with a Specific Thread
+
+Get an instance of a specific memory thread:
+
+```typescript
+const thread = mastraClient.getMemoryThread("thread-id", "agent-id");
+```
+
+## Thread Methods
+
+### Get Thread Details
+
+Retrieve details about a specific thread:
+
+```typescript
+const details = await thread.get();
+```
+
+### Update Thread
+
+Update thread properties:
+
+```typescript
+const updated = await thread.update({
+  title: "Updated Title",
+  metadata: { status: "resolved" },
+  resourceid: "resource-1",
+});
+```
+
+### Delete Thread
+
+Delete a thread and its messages:
+
+```typescript
+await thread.delete();
+```
+
+## Message Operations
+
+### Save Messages
+
+Save messages to memory:
+
+```typescript
+const savedMessages = await mastraClient.saveMessageToMemory({
+  messages: [
+    {
+      role: "user",
+      content: "Hello!",
+      id: "1",
+      threadId: "thread-1",
+      createdAt: new Date(),
+      type: "text",
+    },
+  ],
+  agentId: "agent-1",
+});
+```
+
+### Retrieve Thread Messages
+
+Get messages associated with a memory thread:
+
+```typescript
+// Get all messages in the thread
+const { messages } = await thread.getMessages();
+
+// Limit the number of messages retrieved
+const { messages } = await thread.getMessages({ limit: 10 });
+```
+
+### Delete a Message
+
+Delete a specific message from a thread:
+
+```typescript
+const result = await thread.deleteMessage("message-id");
+// Returns: { success: true, message: "Message deleted successfully" }
+```
+
+### Delete Multiple Messages
+
+Delete multiple messages from a thread in a single operation:
+
+```typescript
+const result = await thread.deleteMessages(["message-1", "message-2", "message-3"]);
+// Returns: { success: true, message: "3 messages deleted successfully" }
+```
+
+### Get Memory Status
+
+Check the status of the memory system:
+
+```typescript
+const status = await mastraClient.getMemoryStatus("agent-id");
+```

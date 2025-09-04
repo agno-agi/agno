@@ -1,0 +1,43 @@
+---
+title: "Reference: Workflow.map() | Workflows | Mastra Docs"
+description: Documentation for the `Workflow.map()` method in workflows, which maps output data from a previous step to the input of a subsequent step.
+---
+
+# Workflow.map()
+
+The `.map()` method maps output data from a previous step to the input of a subsequent step, allowing you to transform data between steps.
+
+## Usage example
+
+```typescript copy
+workflow.map(async ({ inputData }) => `${inputData.value} - map`
+```
+
+## Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "mappingFunction",
+      type: "(params: { inputData: any }) => any",
+      description: "Function that transforms input data and returns the mapped result",
+      isOptional: false,
+    },
+  ]}
+/>
+
+## Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "workflow",
+      type: "Workflow",
+      description: "The workflow instance for method chaining",
+    },
+  ]}
+/>
+
+## Related
+
+- [Input data mapping](../../docs/workflows/input-data-mapping.mdx)

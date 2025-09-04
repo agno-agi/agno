@@ -1,0 +1,76 @@
+---
+title: "Reference: Workflow.createRun() | Running Workflows (Legacy) | Mastra Docs"
+description: "Documentation for the `.createRun()` method in workflows (legacy), which initializes a new workflow run instance."
+---
+
+# Workflow.createRun()
+
+The `.createRun()` method initializes a new workflow run instance. It generates a unique run ID for tracking and returns a start function that begins workflow execution when called.
+
+One reason to use `.createRun()` vs `.execute()` is to get a unique run ID for tracking, logging, or subscribing via `.watch()`.
+
+## Usage
+
+```typescript
+const { runId, start, watch } = workflow.createRun();
+
+const result = await start();
+```
+
+## Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "runId",
+      type: "string",
+      description: "Unique identifier for tracking this workflow run",
+    },
+    {
+      name: "start",
+      type: "() => Promise<LegacyWorkflowResult>",
+      description: "Function that begins workflow execution when called",
+    },
+    {
+      name: "watch",
+      type: "(callback: (record: LegacyWorkflowResult) => void) => () => void",
+      description:
+        "Function that accepts a callback function that will be called with each transition of the workflow run",
+    },
+    {
+      name: "resume",
+      type: "({stepId: string, context: Record<string, any>}) => Promise<LegacyWorkflowResult>",
+      description:
+        "Function that resumes a workflow run from a given step ID and context",
+    },
+    {
+      name: "resumeWithEvent",
+      type: "(eventName: string, data: any) => Promise<LegacyWorkflowResult>",
+      description:
+        "Function that resumes a workflow run from a given event name and data",
+    },
+  ]}
+/>
+
+## Error Handling
+
+The start function may throw validation errors if the workflow configuration is invalid:
+
+```typescript
+try {
+  const { runId, start, watch, resume, resumeWithEvent } = workflow.createRun();
+  await start({ triggerData: data });
+} catch (error) {
+  if (error instanceof ValidationError) {
+    // Handle validation errors
+    console.log(error.type); // 'circular_dependency' | 'no_terminal_path' | 'unreachable_step'
+    console.log(error.details);
+  }
+}
+```
+
+## Related
+
+- [Workflow Class Reference](./workflow.mdx)
+- [Step Class Reference](./step-class.mdx)
+- See the [Creating a Workflow](../../examples/workflows_legacy/creating-a-workflow.mdx) example for complete usage

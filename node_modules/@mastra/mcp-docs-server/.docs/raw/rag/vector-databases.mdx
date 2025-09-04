@@ -1,0 +1,493 @@
+---
+title: "Storing Embeddings in A Vector Database | Mastra Docs"
+description: Guide on vector storage options in Mastra, including embedded and dedicated vector databases for similarity search.
+---
+
+import { Tabs } from "nextra/components";
+
+## Storing Embeddings in A Vector Database
+
+After generating embeddings, you need to store them in a database that supports vector similarity search. Mastra provides a consistent interface for storing and querying embeddings across various vector databases.
+
+## Supported Databases
+
+{/*
+LLM CONTEXT: This Tabs component showcases different vector database implementations supported by Mastra.
+Each tab demonstrates the setup and configuration for a specific vector database provider.
+The tabs show consistent API patterns across different databases, helping users understand how to switch between providers.
+Each tab includes import statements, initialization code, and basic operations (createIndex, upsert) for that specific database.
+The providers include Pg Vector, Pinecone, Qdrant, Chroma, Astra, LibSQL, Upstash, Cloudflare, MongoDB, OpenSearch, and Couchbase.
+*/}
+
+<Tabs items={['MongoDB', 'Pg Vector', 'Pinecone', 'Qdrant', 'Chroma', 'Astra', 'LibSQL', 'Upstash', 'Cloudflare', 'OpenSearch', 'Couchbase', 'LanceDB']}>
+  <Tabs.Tab>
+    ```ts filename="vector-store.ts" showLineNumbers copy
+    import { MongoDBVector } from '@mastra/mongodb'
+
+    const store = new MongoDBVector({
+      uri: process.env.MONGODB_URI,
+      dbName: process.env.MONGODB_DATABASE
+    })
+    await store.createIndex({
+      indexName: "myCollection",
+      dimension: 1536,
+    });
+    await store.upsert({
+      indexName: "myCollection",
+      vectors: embeddings,
+      metadata: chunks.map(chunk => ({ text: chunk.text })),
+    });
+
+    ```
+    ### Using MongoDB Atlas Vector search
+
+    For detailed setup instructions and best practices, see the [official MongoDB Atlas Vector Search documentation](https://www.mongodb.com/docs/atlas/atlas-vector-search/vector-search-overview/?utm_campaign=devrel&utm_source=third-party-content&utm_medium=cta&utm_content=mastra-docs). 
+  </Tabs.Tab>
+
+  <Tabs.Tab>
+  ```ts filename="vector-store.ts" showLineNumbers copy
+  import { PgVector } from '@mastra/pg';
+
+  const store = new PgVector({ connectionString: process.env.POSTGRES_CONNECTION_STRING })
+
+  await store.createIndex({
+    indexName: "myCollection",
+    dimension: 1536,
+  });
+
+  await store.upsert({
+    indexName: "myCollection",
+    vectors: embeddings,
+    metadata: chunks.map(chunk => ({ text: chunk.text })),
+  });
+```
+
+### Using PostgreSQL with pgvector
+
+PostgreSQL with the pgvector extension is a good solution for teams already using PostgreSQL who want to minimize infrastructure complexity.
+For detailed setup instructions and best practices, see the [official pgvector repository](https://github.com/pgvector/pgvector).
+</Tabs.Tab>
+
+<Tabs.Tab>
+```ts filename="vector-store.ts" showLineNumbers copy
+import { PineconeVector } from '@mastra/pinecone'
+
+const store = new PineconeVector({
+  apiKey: process.env.PINECONE_API_KEY,
+})
+await store.createIndex({
+  indexName: "myCollection",
+  dimension: 1536,
+});
+await store.upsert({
+  indexName: "myCollection",
+  vectors: embeddings,
+  metadata: chunks.map(chunk => ({ text: chunk.text })),
+});
+```
+</Tabs.Tab>
+
+<Tabs.Tab>
+  ```ts filename="vector-store.ts" showLineNumbers copy
+  import { QdrantVector } from '@mastra/qdrant'
+
+  const store = new QdrantVector({
+    url: process.env.QDRANT_URL,
+    apiKey: process.env.QDRANT_API_KEY
+  })
+
+  await store.createIndex({
+    indexName: "myCollection",
+    dimension: 1536,
+  });
+
+  await store.upsert({
+    indexName: "myCollection",
+    vectors: embeddings,
+    metadata: chunks.map(chunk => ({ text: chunk.text })),
+  });
+
+```
+</Tabs.Tab>
+
+<Tabs.Tab>
+```ts filename="vector-store.ts" showLineNumbers copy
+import { ChromaVector } from '@mastra/chroma'
+
+// Running Chroma locally
+// const store = new ChromaVector()
+
+// Running on Chroma Cloud
+const store = new ChromaVector({
+  apiKey: process.env.CHROMA_API_KEY,
+  tenant: process.env.CHROMA_TENANT,
+  database: process.env.CHROMA_DATABASE
+})
+
+await store.createIndex({
+  indexName: "myCollection",
+  dimension: 1536,
+});
+
+await store.upsert({
+  indexName: "myCollection",
+  vectors: embeddings,
+  metadata: chunks.map(chunk => ({ text: chunk.text })),
+});
+```
+</Tabs.Tab>
+
+<Tabs.Tab>
+  ```ts filename="vector-store.ts" showLineNumbers copy
+  import { AstraVector } from '@mastra/astra'
+
+  const store = new AstraVector({
+    token: process.env.ASTRA_DB_TOKEN,
+    endpoint: process.env.ASTRA_DB_ENDPOINT,
+    keyspace: process.env.ASTRA_DB_KEYSPACE
+  })
+
+  await store.createIndex({
+    indexName: "myCollection",
+    dimension: 1536,
+  });
+
+  await store.upsert({
+    indexName: "myCollection",
+    vectors: embeddings,
+    metadata: chunks.map(chunk => ({ text: chunk.text })),
+  });
+
+```
+</Tabs.Tab>
+
+
+<Tabs.Tab>
+```ts filename="vector-store.ts" showLineNumbers copy
+import { LibSQLVector } from "@mastra/core/vector/libsql";
+
+const store = new LibSQLVector({
+  connectionUrl: process.env.DATABASE_URL,
+  authToken: process.env.DATABASE_AUTH_TOKEN // Optional: for Turso cloud databases
+})
+
+await store.createIndex({
+  indexName: "myCollection",
+  dimension: 1536,
+});
+
+await store.upsert({
+  indexName: "myCollection",
+  vectors: embeddings,
+  metadata: chunks.map(chunk => ({ text: chunk.text })),
+});
+```
+</Tabs.Tab>
+
+<Tabs.Tab>
+  ```ts filename="vector-store.ts" showLineNumbers copy
+  import { UpstashVector } from '@mastra/upstash'
+
+  // In upstash they refer to the store as an index
+  const store = new UpstashVector({
+    url: process.env.UPSTASH_URL,
+    token: process.env.UPSTASH_TOKEN
+  })
+
+  // There is no store.createIndex call here, Upstash creates indexes (known as namespaces in Upstash) automatically
+  // when you upsert if that namespace does not exist yet.
+  await store.upsert({
+    indexName: "myCollection", // the namespace name in Upstash
+    vectors: embeddings,
+    metadata: chunks.map(chunk => ({ text: chunk.text })),
+  });
+```
+</Tabs.Tab>
+
+<Tabs.Tab>
+```ts filename="vector-store.ts" showLineNumbers copy
+import { CloudflareVector } from '@mastra/vectorize'
+
+const store = new CloudflareVector({
+  accountId: process.env.CF_ACCOUNT_ID,
+  apiToken: process.env.CF_API_TOKEN
+})
+await store.createIndex({
+  indexName: "myCollection",
+  dimension: 1536,
+});
+await store.upsert({
+  indexName: "myCollection",
+  vectors: embeddings,
+  metadata: chunks.map(chunk => ({ text: chunk.text })),
+});
+```
+
+</Tabs.Tab>
+
+<Tabs.Tab>
+```ts filename="vector-store.ts" showLineNumbers copy
+import { OpenSearchVector } from '@mastra/opensearch'
+
+const store = new OpenSearchVector({ url: process.env.OPENSEARCH_URL })
+
+await store.createIndex({
+  indexName: "my-collection",
+  dimension: 1536,
+});
+
+await store.upsert({
+  indexName: "my-collection",
+  vectors: embeddings,
+  metadata: chunks.map(chunk => ({ text: chunk.text })),
+});
+```
+
+</Tabs.Tab>
+<Tabs.Tab>
+  ```ts filename="vector-store.ts" showLineNumbers copy
+  import { CouchbaseVector } from '@mastra/couchbase'
+
+  const store = new CouchbaseVector({
+    connectionString: process.env.COUCHBASE_CONNECTION_STRING,
+    username: process.env.COUCHBASE_USERNAME,
+    password: process.env.COUCHBASE_PASSWORD,
+    bucketName: process.env.COUCHBASE_BUCKET,
+    scopeName: process.env.COUCHBASE_SCOPE,
+    collectionName: process.env.COUCHBASE_COLLECTION,
+  })
+  await store.createIndex({
+    indexName: "myCollection",
+    dimension: 1536,
+  });
+  await store.upsert({
+    indexName: "myCollection",
+    vectors: embeddings,
+    metadata: chunks.map(chunk => ({ text: chunk.text })),
+  });
+  ```
+</Tabs.Tab>
+<Tabs.Tab>
+  ```ts filename="vector-store.ts" showLineNumbers copy
+  import { LanceVectorStore } from '@mastra/lance'
+
+  const store = await LanceVectorStore.create('/path/to/db')
+  
+  await store.createIndex({
+    tableName: "myVectors",
+    indexName: "myCollection",
+    dimension: 1536,
+  });
+  
+  await store.upsert({
+    tableName: "myVectors",
+    vectors: embeddings,
+    metadata: chunks.map(chunk => ({ text: chunk.text })),
+  });
+  ```
+
+  ### Using LanceDB
+  
+  LanceDB is an embedded vector database built on the Lance columnar format, suitable for local development or cloud deployment.
+  For detailed setup instructions and best practices, see the [official LanceDB documentation](https://lancedb.github.io/lancedb/).
+</Tabs.Tab>
+</Tabs>
+
+## Using Vector Storage
+
+Once initialized, all vector stores share the same interface for creating indexes, upserting embeddings, and querying.
+
+### Creating Indexes
+
+Before storing embeddings, you need to create an index with the appropriate dimension size for your embedding model:
+
+```ts filename="store-embeddings.ts" showLineNumbers copy
+// Create an index with dimension 1536 (for text-embedding-3-small)
+await store.createIndex({
+  indexName: "myCollection",
+  dimension: 1536,
+});
+```
+
+The dimension size must match the output dimension of your chosen embedding model. Common dimension sizes are:
+
+- OpenAI text-embedding-3-small: 1536 dimensions (or custom, e.g., 256)
+- Cohere embed-multilingual-v3: 1024 dimensions
+- Google `text-embedding-004`: 768 dimensions (or custom)
+
+> **Important**: Index dimensions cannot be changed after creation. To use a different model, delete and recreate the index with the new dimension size.
+
+### Naming Rules for Databases
+
+Each vector database enforces specific naming conventions for indexes and collections to ensure compatibility and prevent conflicts.
+
+{/*
+LLM CONTEXT: This Tabs component displays naming convention rules for different vector databases.
+Each tab explains the specific naming requirements and restrictions for that database provider.
+This helps users understand the constraints and avoid naming conflicts when creating indexes or collections.
+The tabs provide examples of valid and invalid names to clarify the rules for each database.
+*/}
+
+<Tabs items={['MongoDB', 'Pg Vector', 'Pinecone', 'Qdrant', 'Chroma', 'Astra', 'LibSQL', 'Upstash', 'Cloudflare', 'OpenSearch']}>
+  <Tabs.Tab>
+    Collection (index) names must:
+    - Start with a letter or underscore
+    - Be up to 120 bytes long
+    - Contain only letters, numbers, underscores, or dots
+    - Cannot contain `$` or the null character
+    - Example: `my_collection.123` is valid
+    - Example: `my-index` is not valid (contains hyphen)
+    - Example: `My$Collection` is not valid (contains `$`)
+  </Tabs.Tab>
+  <Tabs.Tab>
+    Index names must:
+    - Start with a letter or underscore
+    - Contain only letters, numbers, and underscores
+    - Example: `my_index_123` is valid
+    - Example: `my-index` is not valid (contains hyphen)
+  </Tabs.Tab>
+  <Tabs.Tab>
+    Index names must:
+    - Use only lowercase letters, numbers, and dashes
+    - Not contain dots (used for DNS routing)
+    - Not use non-Latin characters or emojis
+    - Have a combined length (with project ID) under 52 characters
+      - Example: `my-index-123` is valid
+      - Example: `my.index` is not valid (contains dot)
+  </Tabs.Tab>
+  <Tabs.Tab>
+    Collection names must:
+    - Be 1-255 characters long
+    - Not contain any of these special characters:
+      - `< > : " / \ | ? *`
+      - Null character (`\0`)
+      - Unit separator (`\u{1F}`)
+    - Example: `my_collection_123` is valid
+    - Example: `my/collection` is not valid (contains slash)
+  </Tabs.Tab>
+  <Tabs.Tab>
+    Collection names must:
+    - Be 3-63 characters long
+    - Start and end with a letter or number
+    - Contain only letters, numbers, underscores, or hyphens
+    - Not contain consecutive periods (..)
+    - Not be a valid IPv4 address
+    - Example: `my-collection-123` is valid
+    - Example: `my..collection` is not valid (consecutive periods)
+  </Tabs.Tab>
+  <Tabs.Tab>
+    Collection names must:
+    - Not be empty
+    - Be 48 characters or less
+    - Contain only letters, numbers, and underscores
+    - Example: `my_collection_123` is valid
+    - Example: `my-collection` is not valid (contains hyphen)
+  </Tabs.Tab>
+  <Tabs.Tab>
+    Index names must:
+    - Start with a letter or underscore
+    - Contain only letters, numbers, and underscores
+    - Example: `my_index_123` is valid
+    - Example: `my-index` is not valid (contains hyphen)
+  </Tabs.Tab>
+  <Tabs.Tab>
+    Namespace names must:
+    - Be 2-100 characters long
+    - Contain only:
+      - Alphanumeric characters (a-z, A-Z, 0-9)
+      - Underscores, hyphens, dots
+    - Not start or end with special characters (_, -, .)
+    - Can be case-sensitive
+    - Example: `MyNamespace123` is valid
+    - Example: `_namespace` is not valid (starts with underscore)
+  </Tabs.Tab>
+  <Tabs.Tab>
+    Index names must:
+    - Start with a letter
+    - Be shorter than 32 characters
+    - Contain only lowercase ASCII letters, numbers, and dashes
+    - Use dashes instead of spaces
+    - Example: `my-index-123` is valid
+    - Example: `My_Index` is not valid (uppercase and underscore)
+  </Tabs.Tab>
+  <Tabs.Tab>
+    Index names must:
+    - Use only lowercase letters
+    - Not begin with underscores or hyphens
+    - Not contain spaces, commas
+    - Not contain special characters (e.g. `:`, `"`, `*`, `+`, `/`, `\`, `|`, `?`, `#`, `>`, `<`)
+    - Example: `my-index-123` is valid
+    - Example: `My_Index` is not valid (contains uppercase letters)
+    - Example: `_myindex` is not valid (begins with underscore)
+  </Tabs.Tab>
+</Tabs>
+
+### Upserting Embeddings
+
+After creating an index, you can store embeddings along with their basic metadata:
+
+```ts filename="store-embeddings.ts" showLineNumbers copy
+// Store embeddings with their corresponding metadata
+await store.upsert({
+  indexName: "myCollection", // index name
+  vectors: embeddings, // array of embedding vectors
+  metadata: chunks.map((chunk) => ({
+    text: chunk.text, // The original text content
+    id: chunk.id, // Optional unique identifier
+  })),
+});
+```
+
+The upsert operation:
+
+- Takes an array of embedding vectors and their corresponding metadata
+- Updates existing vectors if they share the same ID
+- Creates new vectors if they don't exist
+- Automatically handles batching for large datasets
+
+For complete examples of upserting embeddings in different vector stores, see the [Upsert Embeddings](../../examples/rag/upsert/upsert-embeddings.mdx) guide.
+
+## Adding Metadata
+
+Vector stores support rich metadata (any JSON-serializable fields) for filtering and organization. Since metadata is stored with no fixed schema, use consistent field naming to avoid unexpected query results.
+
+**Important**: Metadata is crucial for vector storage - without it, you'd only have numerical embeddings with no way to return the original text or filter results. Always store at least the source text as metadata.
+
+```ts showLineNumbers copy
+// Store embeddings with rich metadata for better organization and filtering
+await store.upsert({
+  indexName: "myCollection",
+  vectors: embeddings,
+  metadata: chunks.map((chunk) => ({
+    // Basic content
+    text: chunk.text,
+    id: chunk.id,
+
+    // Document organization
+    source: chunk.source,
+    category: chunk.category,
+
+    // Temporal metadata
+    createdAt: new Date().toISOString(),
+    version: "1.0",
+
+    // Custom fields
+    language: chunk.language,
+    author: chunk.author,
+    confidenceScore: chunk.score,
+  })),
+});
+```
+
+Key metadata considerations:
+
+- Be strict with field naming - inconsistencies like 'category' vs 'Category' will affect queries
+- Only include fields you plan to filter or sort by - extra fields add overhead
+- Add timestamps (e.g., 'createdAt', 'lastUpdated') to track content freshness
+
+## Best Practices
+
+- Create indexes before bulk insertions
+- Use batch operations for large insertions (the upsert method handles batching automatically)
+- Only store metadata you'll query against
+- Match embedding dimensions to your model (e.g., 1536 for `text-embedding-3-small`)

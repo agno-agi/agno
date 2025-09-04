@@ -1,0 +1,160 @@
+---
+title: "mastra scorers | Evaluation Management | Mastra CLI"
+description: "Manage scorers for evaluating AI outputs with the Mastra CLI"
+---
+
+# mastra scorers
+
+The `mastra scorers` command provides management capabilities for evaluation scorers that measure the quality, accuracy, and performance of AI-generated outputs.
+
+## Usage
+
+```bash
+mastra scorers <command> [options]
+```
+
+## Commands
+
+### mastra scorers add
+
+Add a new scorer template to your project.
+
+```bash
+mastra scorers add [scorer-name] [options]
+```
+
+#### Options
+
+<PropertiesTable
+  content={[
+    {
+      name: "--dir",
+      type: "string", 
+      description: "Path to your Mastra directory (default: auto-detect)",
+      isOptional: true,
+    },
+    {
+      name: "--help",
+      type: "boolean",
+      description: "Display help for command",
+      isOptional: true,
+    },
+  ]}
+/>
+
+#### Examples
+
+Add a specific scorer by name:
+
+```bash copy
+mastra scorers add answer-relevancy
+```
+
+Interactive scorer selection (when no name provided):
+
+```bash copy
+mastra scorers add
+```
+
+Add scorer to custom directory:
+
+```bash copy  
+mastra scorers add toxicity-detection --dir ./custom/scorers
+```
+
+### mastra scorers list
+
+List all available scorer templates.
+
+```bash
+mastra scorers list
+```
+
+This command displays built-in scorer templates organized by category:
+
+- **Accuracy and Reliability**: answer-relevancy, bias-detection, faithfulness, hallucination, toxicity-detection
+- **Output Quality**: completeness, content-similarity, keyword-coverage, textual-difference, tone-consistency
+
+## Available Scorers
+
+When running `mastra scorers add` without specifying a scorer name, you can select from these built-in templates:
+
+### Accuracy and Reliability
+
+- **answer-relevancy**: Evaluates how relevant an AI response is to the input question
+- **bias-detection**: Identifies potential biases in AI-generated content  
+- **faithfulness**: Measures how faithful the response is to provided context
+- **hallucination**: Detects when AI generates information not grounded in the input
+- **toxicity-detection**: Identifies harmful or inappropriate content
+
+### Output Quality
+
+- **completeness**: Assesses whether the response fully addresses the input
+- **content-similarity**: Measures semantic similarity between expected and actual outputs
+- **keyword-coverage**: Evaluates coverage of expected keywords or topics
+- **textual-difference**: Measures textual differences between responses
+- **tone-consistency**: Evaluates consistency of tone and style
+
+## What It Does
+
+1. **Dependency Management**: Automatically installs `@mastra/evals` package if needed
+2. **Template Selection**: Provides interactive selection when no scorer specified  
+3. **File Generation**: Creates scorer files from built-in templates
+4. **Directory Structure**: Places scorers in `src/mastra/scorers/` or custom directory
+5. **Duplicate Detection**: Prevents overwriting existing scorer files
+
+## Integration
+
+After adding scorers, integrate them with your agents or workflows:
+
+### With Agents
+
+```typescript filename="src/mastra/agents/evaluated-agent.ts"
+import { Agent } from "@mastra/core/agent";
+import { openai } from "@ai-sdk/openai";
+import { createAnswerRelevancyScorer } from "../scorers/answer-relevancy-scorer";
+
+export const evaluatedAgent = new Agent({
+  // ... other config
+  scorers: {
+    relevancy: {
+      scorer: createAnswerRelevancyScorer({ model: openai("gpt-4o-mini") }),
+      sampling: { type: "ratio", rate: 0.5 }
+    }
+  }
+});
+```
+
+### With Workflow Steps
+
+```typescript filename="src/mastra/workflows/content-generation.ts"
+import { createWorkflow, createStep } from "@mastra/core/workflows";
+import { customStepScorer } from "../scorers/custom-step-scorer";
+
+const contentStep = createStep({
+  // ... other config
+  scorers: {
+    customStepScorer: {
+      scorer: customStepScorer(),
+      sampling: { type: "ratio", rate: 1 }
+    }
+  },
+});
+```
+
+## Testing Scorers
+
+Use the [Local Dev Playground](/docs/server-db/local-dev-playground) to test your scorers:
+
+```bash copy
+mastra dev
+```
+
+Navigate to [http://localhost:4111/](http://localhost:4111/) and access the scorers section to run individual scorers against test inputs and view detailed results.
+
+## Next Steps
+
+- Learn about scorer implementation in [Creating Custom Scorers](/docs/scorers/custom-scorers)
+- Explore built-in options in [Off-the-shelf Scorers](/docs/scorers/off-the-shelf-scorers)  
+- See [Scorers Overview](/docs/scorers/overview) for evaluation pipeline details
+- Test scorers with the [Local Dev Playground](/docs/server-db/local-dev-playground)

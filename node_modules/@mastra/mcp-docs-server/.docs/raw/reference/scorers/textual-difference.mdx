@@ -1,0 +1,76 @@
+---
+title: "Reference: Textual Difference | Scorers | Mastra Docs"
+description: Documentation for the Textual Difference Scorer in Mastra, which measures textual differences between strings using sequence matching.
+---
+
+# Textual Difference Scorer
+
+The `createTextualDifferenceScorer()` function uses sequence matching to measure the textual differences between two strings. It provides detailed information about changes, including the number of operations needed to transform one text into another.
+
+For a usage example, see the [Textual Difference Examples](/examples/scorers/textual-difference).
+
+## Parameters
+
+The `createTextualDifferenceScorer()` function does not take any options.
+
+This function returns an instance of the MastraScorer class. See the [MastraScorer reference](./mastra-scorer) for details on the `.run()` method and its input/output.
+
+## .run() Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "runId",
+      type: "string",
+      description: "The id of the run (optional).",
+    },
+    {
+      name: "analyzeStepResult",
+      type: "object",
+      description: "Object with difference metrics: { confidence: number, changes: number, lengthDiff: number }",
+    },
+    {
+      name: "score",
+      type: "number",
+      description: "Similarity ratio (0-1) where 1 indicates identical texts.",
+    },
+  ]}
+/>
+
+## Scoring Details
+
+The scorer calculates several measures:
+
+- **Similarity Ratio**: Based on sequence matching between texts (0-1)
+- **Changes**: Count of non-matching operations needed
+- **Length Difference**: Normalized difference in text lengths
+- **Confidence**: Inversely proportional to length difference
+
+### Scoring Process
+
+1. Analyzes textual differences:
+   - Performs sequence matching between input and output
+   - Counts the number of change operations required
+   - Measures length differences
+2. Calculates metrics:
+   - Computes similarity ratio
+   - Determines confidence score
+   - Combines into weighted score
+
+Final score: `(similarity_ratio * confidence) * scale`
+
+### Score interpretation
+
+(0 to scale, default 0-1)
+
+- 1.0: Identical texts - no differences
+- 0.7-0.9: Minor differences - few changes needed
+- 0.4-0.6: Moderate differences - significant changes
+- 0.1-0.3: Major differences - extensive changes
+- 0.0: Completely different texts
+
+## Related
+
+- [Content Similarity Scorer](./content-similarity)
+- [Completeness Scorer](./completeness)
+- [Keyword Coverage Scorer](./keyword-coverage)

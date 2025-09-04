@@ -1,0 +1,67 @@
+---
+title: "Reference: Agent.getWorkflows() | Agents | Mastra Docs"
+description: "Documentation for the `Agent.getWorkflows()` method in Mastra agents, which retrieves the workflows that the agent can execute."
+---
+
+# Agent.getWorkflows()
+
+The `.getWorkflows()` method retrieves the workflows configured for an agent, resolving them if they're a function. These workflows enable the agent to execute complex, multi-step processes with defined execution paths.
+
+## Usage example
+
+```typescript copy
+await agent.getWorkflows();
+```
+
+## Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "options",
+      type: "{ runtimeContext?: RuntimeContext }",
+      isOptional: true,
+      defaultValue: "{}",
+      description: "Optional configuration object containing runtime context.",
+    },
+  ]}
+/>
+
+## Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "workflows",
+      type: "Promise<Record<string, Workflow>>",
+      description: "A promise that resolves to a record of workflow names to their corresponding Workflow instances.",
+    },
+  ]}
+/>
+
+## Extended usage example
+
+```typescript copy
+await agent.getWorkflows({
+  runtimeContext: new RuntimeContext()
+});
+```
+
+### Options parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "runtimeContext",
+      type: "RuntimeContext",
+      isOptional: true,
+      defaultValue: "new RuntimeContext()",
+      description: "Runtime context for dependency injection and contextual information.",
+    },
+  ]}
+/>
+
+## Related
+
+- [Agents overview](../../docs/agents/overview.mdx)
+- [Workflows overview](../../docs/workflows/overview.mdx)

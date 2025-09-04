@@ -1,0 +1,169 @@
+---
+title: "Reference: OpenAI Voice | Voice Providers | Mastra Docs"
+description: "Documentation for the OpenAIVoice class, providing text-to-speech and speech-to-text capabilities."
+---
+
+# OpenAI
+
+The OpenAIVoice class in Mastra provides text-to-speech and speech-to-text capabilities using OpenAI's models.
+
+## Usage Example
+
+```typescript
+import { OpenAIVoice } from "@mastra/voice-openai";
+
+// Initialize with default configuration using environment variables
+const voice = new OpenAIVoice();
+
+// Or initialize with specific configuration
+const voiceWithConfig = new OpenAIVoice({
+  speechModel: {
+    name: "tts-1-hd",
+    apiKey: "your-openai-api-key",
+  },
+  listeningModel: {
+    name: "whisper-1",
+    apiKey: "your-openai-api-key",
+  },
+  speaker: "alloy", // Default voice
+});
+
+// Convert text to speech
+const audioStream = await voice.speak("Hello, how can I help you?", {
+  speaker: "nova", // Override default voice
+  speed: 1.2, // Adjust speech speed
+});
+
+// Convert speech to text
+const text = await voice.listen(audioStream, {
+  filetype: "mp3",
+});
+```
+
+## Configuration
+
+### Constructor Options
+
+<PropertiesTable
+  content={[
+    {
+      name: "speechModel",
+      type: "OpenAIConfig",
+      description: "Configuration for text-to-speech synthesis.",
+      isOptional: true,
+      defaultValue: "{ name: 'tts-1' }",
+    },
+    {
+      name: "listeningModel",
+      type: "OpenAIConfig",
+      description: "Configuration for speech-to-text recognition.",
+      isOptional: true,
+      defaultValue: "{ name: 'whisper-1' }",
+    },
+    {
+      name: "speaker",
+      type: "OpenAIVoiceId",
+      description: "Default voice ID for speech synthesis.",
+      isOptional: true,
+      defaultValue: "'alloy'",
+    },
+  ]}
+/>
+
+### OpenAIConfig
+
+<PropertiesTable
+  content={[
+    {
+      name: "name",
+      type: "'tts-1' | 'tts-1-hd' | 'whisper-1'",
+      description: "Model name. Use 'tts-1-hd' for higher quality audio.",
+      isOptional: true,
+    },
+    {
+      name: "apiKey",
+      type: "string",
+      description:
+        "OpenAI API key. Falls back to OPENAI_API_KEY environment variable.",
+      isOptional: true,
+    },
+  ]}
+/>
+
+## Methods
+
+### speak()
+
+Converts text to speech using OpenAI's text-to-speech models.
+
+<PropertiesTable
+  content={[
+    {
+      name: "input",
+      type: "string | NodeJS.ReadableStream",
+      description: "Text or text stream to convert to speech.",
+      isOptional: false,
+    },
+    {
+      name: "options.speaker",
+      type: "OpenAIVoiceId",
+      description: "Voice ID to use for speech synthesis.",
+      isOptional: true,
+      defaultValue: "Constructor's speaker value",
+    },
+    {
+      name: "options.speed",
+      type: "number",
+      description: "Speech speed multiplier.",
+      isOptional: true,
+      defaultValue: "1.0",
+    },
+  ]}
+/>
+
+Returns: `Promise<NodeJS.ReadableStream>`
+
+### listen()
+
+Transcribes audio using OpenAI's Whisper model.
+
+<PropertiesTable
+  content={[
+    {
+      name: "audioStream",
+      type: "NodeJS.ReadableStream",
+      description: "Audio stream to transcribe.",
+      isOptional: false,
+    },
+    {
+      name: "options.filetype",
+      type: "string",
+      description: "Audio format of the input stream.",
+      isOptional: true,
+      defaultValue: "'mp3'",
+    },
+  ]}
+/>
+
+Returns: `Promise<string>`
+
+### getSpeakers()
+
+Returns an array of available voice options, where each node contains:
+
+<PropertiesTable
+  content={[
+    {
+      name: "voiceId",
+      type: "string",
+      description: "Unique identifier for the voice",
+      isOptional: false,
+    },
+  ]}
+/>
+
+## Notes
+
+- API keys can be provided via constructor options or the `OPENAI_API_KEY` environment variable
+- The `tts-1-hd` model provides higher quality audio but may have slower processing times
+- Speech recognition supports multiple audio formats including mp3, wav, and webm

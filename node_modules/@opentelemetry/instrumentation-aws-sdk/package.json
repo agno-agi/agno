@@ -1,0 +1,86 @@
+{
+  "name": "@opentelemetry/instrumentation-aws-sdk",
+  "version": "0.58.0",
+  "description": "OpenTelemetry instrumentation for `aws-sdk` and `@aws-sdk/client-*` clients for various AWS services",
+  "keywords": [
+    "aws",
+    "aws-sdk",
+    "nodejs",
+    "opentelemetry"
+  ],
+  "homepage": "https://github.com/open-telemetry/opentelemetry-js-contrib/tree/main/packages/instrumentation-aws-sdk#readme",
+  "license": "Apache-2.0",
+  "author": "OpenTelemetry Authors",
+  "bugs": {
+    "url": "https://github.com/open-telemetry/opentelemetry-js-contrib/issues"
+  },
+  "main": "build/src/index.js",
+  "types": "build/src/index.d.ts",
+  "files": [
+    "build/src/**/*.js",
+    "build/src/**/*.js.map",
+    "build/src/**/*.d.ts",
+    "doc"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/open-telemetry/opentelemetry-js-contrib.git",
+    "directory": "packages/instrumentation-aws-sdk"
+  },
+  "scripts": {
+    "clean": "rimraf build/*",
+    "compile:with-dependencies": "nx run-many -t compile -p @opentelemetry/instrumentation-aws-sdk",
+    "compile": "tsc -p .",
+    "lint": "eslint . --ext=ts,js,mjs",
+    "lint:fix": "eslint . --ext=ts,js,mjs --fix",
+    "lint:readme": "node ../../scripts/lint-readme.js",
+    "prepublishOnly": "npm run compile",
+    "tdd": "npm run test -- --watch-extensions ts --watch",
+    "test": "nyc mocha --require '@opentelemetry/contrib-test-utils' 'test/**/*.test.ts'",
+    "test-all-versions": "tav",
+    "version:update": "node ../../scripts/version-update.js",
+    "watch": "tsc -w"
+  },
+  "peerDependencies": {
+    "@opentelemetry/api": "^1.3.0"
+  },
+  "dependencies": {
+    "@opentelemetry/core": "^2.0.0",
+    "@opentelemetry/instrumentation": "^0.203.0",
+    "@opentelemetry/semantic-conventions": "^1.34.0"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.587.0",
+    "@aws-sdk/client-dynamodb": "^3.85.0",
+    "@aws-sdk/client-kinesis": "^3.85.0",
+    "@aws-sdk/client-lambda": "^3.85.0",
+    "@aws-sdk/client-s3": "^3.85.0",
+    "@aws-sdk/client-secrets-manager": "^3.85.0",
+    "@aws-sdk/client-sfn": "^3.85.0",
+    "@aws-sdk/client-sns": "^3.85.0",
+    "@aws-sdk/client-sqs": "^3.85.0",
+    "@aws-sdk/types": "^3.370.0",
+    "@opentelemetry/api": "^1.3.0",
+    "@opentelemetry/contrib-test-utils": "^0.49.0",
+    "@opentelemetry/sdk-trace-base": "^2.0.0",
+    "@smithy/node-http-handler": "4.1.1",
+    "@types/mocha": "10.0.10",
+    "@types/node": "18.18.14",
+    "@types/sinon": "17.0.4",
+    "eslint": "8.7.0",
+    "expect": "29.2.0",
+    "nock": "13.3.3",
+    "nyc": "17.1.0",
+    "rimraf": "5.0.10",
+    "sinon": "15.2.0",
+    "test-all-versions": "6.1.0",
+    "typescript": "5.0.4"
+  },
+  "engines": {
+    "node": "^18.19.0 || >=20.6.0"
+  },
+  "gitHead": "5861c1dd6dd15a9d450a9f7d6d6616d533cc9a59"
+}

@@ -1,0 +1,121 @@
+{
+  "name": "ai",
+  "version": "4.3.19",
+  "description": "AI SDK by Vercel - The AI Toolkit for TypeScript and JavaScript",
+  "license": "Apache-2.0",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist/**/*",
+    "mcp-stdio/dist/**/*",
+    "react/dist/**/*",
+    "rsc/dist/**/*",
+    "test/dist/**/*",
+    "CHANGELOG.md"
+  ],
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./test": {
+      "types": "./test/dist/index.d.ts",
+      "import": "./test/dist/index.mjs",
+      "module": "./test/dist/index.mjs",
+      "require": "./test/dist/index.js"
+    },
+    "./rsc": {
+      "types": "./rsc/dist/index.d.ts",
+      "react-server": "./rsc/dist/rsc-server.mjs",
+      "import": "./rsc/dist/rsc-client.mjs"
+    },
+    "./react": {
+      "types": "./react/dist/index.d.ts",
+      "react-server": "./react/dist/index.server.mjs",
+      "import": "./react/dist/index.mjs",
+      "require": "./react/dist/index.js"
+    },
+    "./mcp-stdio": {
+      "types": "./mcp-stdio/dist/index.d.ts",
+      "import": "./mcp-stdio/dist/index.mjs",
+      "require": "./mcp-stdio/dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@ai-sdk/provider": "1.1.3",
+    "@ai-sdk/provider-utils": "2.2.8",
+    "@ai-sdk/react": "1.2.12",
+    "@ai-sdk/ui-utils": "1.2.11",
+    "@opentelemetry/api": "1.9.0",
+    "jsondiffpatch": "0.6.0"
+  },
+  "devDependencies": {
+    "@edge-runtime/vm": "^5.0.0",
+    "@types/node": "20.17.24",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "@vitejs/plugin-react": "4.3.3",
+    "eslint": "8.57.1",
+    "react-dom": "^18",
+    "react-server-dom-webpack": "18.3.0-canary-eb33bd747-20240312",
+    "tsup": "^7.2.0",
+    "typescript": "5.6.3",
+    "zod": "3.23.8",
+    "@vercel/ai-tsconfig": "0.0.0",
+    "eslint-config-vercel-ai": "0.0.0"
+  },
+  "peerDependencies": {
+    "react": "^18 || ^19 || ^19.0.0-rc",
+    "zod": "^3.23.8"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://ai-sdk.dev/docs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vercel/ai.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vercel/ai/issues"
+  },
+  "keywords": [
+    "ai",
+    "vercel",
+    "react",
+    "next",
+    "nextjs"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "build:watch": "tsup --watch",
+    "clean": "rm -rf dist && rm -rf react/dist && rm -rf rsc/dist",
+    "lint": "eslint \"./**/*.ts*\"",
+    "type-check": "tsc --noEmit",
+    "prettier-check": "prettier --check \"./**/*.ts*\"",
+    "test": "pnpm test:node && pnpm test:edge && pnpm test:ui && pnpm test:e2e",
+    "test:e2e": "playwright test",
+    "test:edge": "vitest --config vitest.edge.config.js --run",
+    "test:edge:watch": "vitest --config vitest.edge.config.js",
+    "test:node": "vitest --config vitest.node.config.js --run",
+    "test:node:watch": "vitest --config vitest.node.config.js",
+    "test:node:core": "pnpm vitest --config vitest.node.config.js --run ./core/",
+    "test:node:core:watch": "pnpm vitest --config vitest.node.config.js ./core/",
+    "test:node:util": "pnpm vitest --config vitest.node.config.js --run ./util/",
+    "test:ui": "pnpm test:ui:react",
+    "test:ui:react": "vitest --config vitest.ui.react.config.js --run",
+    "test:ui:react:watch": "vitest --config vitest.ui.react.config.js"
+  }
+}

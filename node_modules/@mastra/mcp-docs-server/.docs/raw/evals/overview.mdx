@@ -1,0 +1,106 @@
+---
+title: "Overview"
+description: "Understanding how to evaluate and measure AI agent quality using Mastra evals."
+---
+
+import { ScorerCallout } from '@/components/scorer-callout'
+
+# Testing your agents with evals
+
+<ScorerCallout />
+
+While traditional software tests have clear pass/fail conditions, AI outputs are non-deterministic — they can vary with the same input. Evals help bridge this gap by providing quantifiable metrics for measuring agent quality.
+
+Evals are automated tests that evaluate Agents outputs using model-graded, rule-based, and statistical methods. Each eval returns a normalized score between 0-1 that can be logged and compared. Evals can be customized with your own prompts and scoring functions.
+
+Evals can be run in the cloud, capturing real-time results. But evals can also be part of your CI/CD pipeline, allowing you to test and monitor your agents over time.
+
+## Types of Evals
+
+There are different kinds of evals, each serving a specific purpose. Here are some common types:
+
+1. **Textual Evals**: Evaluate accuracy, reliability, and context understanding of agent responses
+2. **Classification Evals**: Measure accuracy in categorizing data based on predefined categories
+3. **Prompt Engineering Evals**: Explore impact of different instructions and input formats
+
+## Installation
+
+To access Mastra's evals feature install the `@mastra/evals` package.
+
+```bash copy
+npm install @mastra/evals@latest
+```
+
+## Getting Started
+
+Evals need to be added to an agent. Here's an example using the summarization, content similarity, and tone consistency metrics:
+
+```typescript copy showLineNumbers filename="src/mastra/agents/index.ts"
+import { Agent } from "@mastra/core/agent";
+import { openai } from "@ai-sdk/openai";
+import { SummarizationMetric } from "@mastra/evals/llm";
+import {
+  ContentSimilarityMetric,
+  ToneConsistencyMetric,
+} from "@mastra/evals/nlp";
+
+const model = openai("gpt-4o");
+
+export const myAgent = new Agent({
+  name: "ContentWriter",
+  instructions: "You are a content writer that creates accurate summaries",
+  model,
+  evals: {
+    summarization: new SummarizationMetric(model),
+    contentSimilarity: new ContentSimilarityMetric(),
+    tone: new ToneConsistencyMetric(),
+  },
+});
+```
+
+You can view eval results in the Mastra dashboard when using `mastra dev`.
+
+## Beyond Automated Testing
+
+While automated evals are valuable, high-performing AI teams often combine them with:
+
+1. **A/B Testing**: Compare different versions with real users
+2. **Human Review**: Regular review of production data and traces
+3. **Continuous Monitoring**: Track eval metrics over time to detect regressions
+
+## Understanding Eval Results
+
+Each eval metric measures a specific aspect of your agent's output. Here's how to interpret and improve your results:
+
+### Understanding Scores
+
+For any metric:
+
+1. Check the metric documentation to understand the scoring process
+2. Look for patterns in when scores change
+3. Compare scores across different inputs and contexts
+4. Track changes over time to spot trends
+
+### Improving Results
+
+When scores aren't meeting your targets:
+
+1. Check your instructions - Are they clear? Try making them more specific
+2. Look at your context - Is it giving the agent what it needs?
+3. Simplify your prompts - Break complex tasks into smaller steps
+4. Add guardrails - Include specific rules for tricky cases
+
+### Maintaining Quality
+
+Once you're hitting your targets:
+
+1. Monitor stability - Do scores remain consistent?
+2. Document what works - Keep notes on successful approaches
+3. Test edge cases - Add examples that cover unusual scenarios
+4. Fine-tune - Look for ways to improve efficiency
+
+See [Textual Evals](/docs/evals/textual-evals) for more info on what evals can do.
+
+For more info on how to create your own evals, see the [Custom Evals](/docs/evals/custom-eval) guide.
+
+For running evals in your CI pipeline, see the [Running in CI](/docs/evals/running-in-ci) guide.

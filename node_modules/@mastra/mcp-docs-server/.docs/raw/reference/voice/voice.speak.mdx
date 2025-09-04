@@ -1,0 +1,206 @@
+---
+title: "Reference: voice.speak() | Voice Providers | Mastra Docs"
+description: "Documentation for the speak() method available in all Mastra voice providers, which converts text to speech."
+---
+
+# voice.speak()
+
+The `speak()` method is a core function available in all Mastra voice providers that converts text to speech. It takes text input and returns an audio stream that can be played or saved.
+
+## Usage Example
+
+```typescript
+import { OpenAIVoice } from "@mastra/voice-openai";
+// Initialize a voice provider
+const voice = new OpenAIVoice({
+  speaker: "alloy", // Default voice
+});
+// Basic usage with default settings
+const audioStream = await voice.speak("Hello, world!");
+// Using a different voice for this specific request
+const audioStreamWithDifferentVoice = await voice.speak("Hello again!", {
+  speaker: "nova",
+});
+// Using provider-specific options
+const audioStreamWithOptions = await voice.speak("Hello with options!", {
+  speaker: "echo",
+  speed: 1.2, // OpenAI-specific option
+});
+// Using a text stream as input
+import { Readable } from "stream";
+const textStream = Readable.from(["Hello", " from", " a", " stream!"]);
+const audioStreamFromTextStream = await voice.speak(textStream);
+```
+
+## Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "input",
+      type: "string | NodeJS.ReadableStream",
+      description:
+        "Text to convert to speech. Can be a string or a readable stream of text.",
+      isOptional: false,
+    },
+    {
+      name: "options",
+      type: "object",
+      description: "Options for speech synthesis",
+      isOptional: true,
+    },
+    {
+      name: "options.speaker",
+      type: "string",
+      description:
+        "Voice ID to use for this specific request. Overrides the default speaker set in the constructor.",
+      isOptional: true,
+    },
+  ]}
+/>
+
+## Return Value
+
+Returns a `Promise<NodeJS.ReadableStream | void>` where:
+
+- `NodeJS.ReadableStream`: A stream of audio data that can be played or saved
+- `void`: When using a realtime voice provider that emits audio through events instead of returning it directly
+
+## Provider-Specific Options
+
+Each voice provider may support additional options specific to their implementation. Here are some examples:
+
+### OpenAI
+
+<PropertiesTable
+  content={[
+    {
+      name: "options.speed",
+      type: "number",
+      description:
+        "Speech speed multiplier. Values between 0.25 and 4.0 are supported.",
+      isOptional: true,
+      defaultValue: "1.0",
+    },
+  ]}
+/>
+
+### ElevenLabs
+
+<PropertiesTable
+  content={[
+    {
+      name: "options.stability",
+      type: "number",
+      description:
+        "Voice stability. Higher values result in more stable, less expressive speech.",
+      isOptional: true,
+      defaultValue: "0.5",
+    },
+    {
+      name: "options.similarity_boost",
+      type: "number",
+      description: "Voice clarity and similarity to the original voice.",
+      isOptional: true,
+      defaultValue: "0.75",
+    },
+  ]}
+/>
+
+### Google
+
+<PropertiesTable
+  content={[
+    {
+      name: "options.languageCode",
+      type: "string",
+      description: "Language code for the voice (e.g., 'en-US').",
+      isOptional: true,
+    },
+    {
+      name: "options.audioConfig",
+      type: "object",
+      description:
+        "Audio configuration options from Google Cloud Text-to-Speech API.",
+      isOptional: true,
+      defaultValue: "{ audioEncoding: 'LINEAR16' }",
+    },
+  ]}
+/>
+
+### Murf
+
+<PropertiesTable
+  content={[
+    {
+      name: "options.properties.rate",
+      type: "number",
+      description: "Speech rate multiplier.",
+      isOptional: true,
+    },
+    {
+      name: "options.properties.pitch",
+      type: "number",
+      description: "Voice pitch adjustment.",
+      isOptional: true,
+    },
+    {
+      name: "options.properties.format",
+      type: "'MP3' | 'WAV' | 'FLAC' | 'ALAW' | 'ULAW'",
+      description: "Output audio format.",
+      isOptional: true,
+    },
+  ]}
+/>
+
+## Realtime Voice Providers
+
+When using realtime voice providers like `OpenAIRealtimeVoice`, the `speak()` method behaves differently:
+
+- Instead of returning an audio stream, it emits a 'speaking' event with the audio data
+- You need to register an event listener to receive the audio chunks
+
+```typescript
+import { OpenAIRealtimeVoice } from "@mastra/voice-openai-realtime";
+import Speaker from "@mastra/node-speaker";
+
+const speaker = new Speaker({
+  sampleRate: 24100, // Audio sample rate in Hz - standard for high-quality audio on MacBook Pro
+  channels: 1, // Mono audio output (as opposed to stereo which would be 2)
+  bitDepth: 16, // Bit depth for audio quality - CD quality standard (16-bit resolution)
+});
+
+const voice = new OpenAIRealtimeVoice();
+await voice.connect();
+// Register event listener for audio chunks
+voice.on("speaker", (stream) => {
+  // Handle audio chunk (e.g., play it or save it)
+  stream.pipe(speaker);
+});
+// This will emit 'speaking' events instead of returning a stream
+await voice.speak("Hello, this is realtime speech!");
+```
+
+## Using with CompositeVoice
+
+When using `CompositeVoice`, the `speak()` method delegates to the configured speaking provider:
+
+```typescript
+import { CompositeVoice } from "@mastra/core/voice";
+import { OpenAIVoice } from "@mastra/voice-openai";
+import { PlayAIVoice } from "@mastra/voice-playai";
+const voice = new CompositeVoice({
+  speakProvider: new PlayAIVoice(),
+  listenProvider: new OpenAIVoice(),
+});
+// This will use the PlayAIVoice provider
+const audioStream = await voice.speak("Hello, world!");
+```
+
+## Notes
+
+- The behavior of `speak()` may vary slightly between providers, but all implementations follow the same basic interface.
+- When using a realtime voice provider, the method might not return an audio stream directly but instead emit a 'speaking' event.
+- If a text stream is provided as input, the provider will typically convert it to a string before processing.
+- The audio format of the returned stream depends on the provider. Common formats include MP3, WAV, and OGG.
+- For best performance, consider closing or ending the audio stream when you're done with it.

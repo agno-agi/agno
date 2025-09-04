@@ -1,0 +1,87 @@
+---
+title: "Reference: start() | Running Workflows (Legacy) | Mastra Docs"
+description: "Documentation for the `start()` method in workflows, which begins execution of a workflow run."
+---
+
+# start()
+
+The start function begins execution of a workflow run. It processes all steps in the defined workflow order, handling parallel execution, branching logic, and step dependencies.
+
+## Usage
+
+```typescript copy showLineNumbers
+const { runId, start } = workflow.createRun();
+const result = await start({
+  triggerData: { inputValue: 42 },
+});
+```
+
+## Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "config",
+      type: "object",
+      description: "Configuration for starting the workflow run",
+      isOptional: true,
+    },
+  ]}
+/>
+
+### config
+
+<PropertiesTable
+  content={[
+    {
+      name: "triggerData",
+      type: "Record<string, any>",
+      description: "Initial data that matches the workflow's triggerSchema",
+      isOptional: false,
+    },
+  ]}
+/>
+
+## Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "results",
+      type: "Record<string, any>",
+      description: "Combined output from all completed workflow steps",
+    },
+    {
+      name: "status",
+      type: "'completed' | 'error' | 'suspended'",
+      description: "Final status of the workflow run",
+    },
+  ]}
+/>
+
+## Error Handling
+
+The start function may throw several types of validation errors:
+
+```typescript copy showLineNumbers
+try {
+  const result = await start({ triggerData: data });
+} catch (error) {
+  if (error instanceof ValidationError) {
+    console.log(error.type); // 'circular_dependency' | 'no_terminal_path' | 'unreachable_step'
+    console.log(error.details);
+  }
+}
+```
+
+## Related
+
+- [Example: Creating a Workflow](../../examples/workflows_legacy/creating-a-workflow.mdx)
+- [Example: Suspend and Resume](../../examples/workflows_legacy/suspend-and-resume.mdx)
+- [createRun Reference](./createRun.mdx)
+- [Workflow Class Reference](./workflow.mdx)
+- [Step Class Reference](./step-class.mdx)
+
+```
+
+```

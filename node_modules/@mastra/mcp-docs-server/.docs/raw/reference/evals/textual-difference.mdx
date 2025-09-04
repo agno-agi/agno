@@ -1,0 +1,172 @@
+---
+title: "Reference: Textual Difference | Evals | Mastra Docs"
+description: Documentation for the Textual Difference Metric in Mastra, which measures textual differences between strings using sequence matching.
+---
+
+import { ScorerCallout } from '@/components/scorer-callout'
+
+# TextualDifferenceMetric
+
+<ScorerCallout />
+
+The `TextualDifferenceMetric` class uses sequence matching to measure the textual differences between two strings. It provides detailed information about changes, including the number of operations needed to transform one text into another.
+
+## Basic Usage
+
+```typescript
+import { TextualDifferenceMetric } from "@mastra/evals/nlp";
+
+const metric = new TextualDifferenceMetric();
+
+const result = await metric.measure(
+  "The quick brown fox",
+  "The fast brown fox",
+);
+
+console.log(result.score); // Similarity ratio from 0-1
+console.log(result.info); // Detailed change metrics
+```
+
+## measure() Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "input",
+      type: "string",
+      description: "The original text to compare against",
+      isOptional: false,
+    },
+    {
+      name: "output",
+      type: "string",
+      description: "The text to evaluate for differences",
+      isOptional: false,
+    },
+  ]}
+/>
+
+## Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "score",
+      type: "number",
+      description: "Similarity ratio (0-1) where 1 indicates identical texts",
+    },
+    {
+      name: "info",
+      description: "Detailed metrics about the differences",
+      properties: [
+        {
+          type: "number",
+          parameters: [
+            {
+              name: "confidence",
+              type: "number",
+              description:
+                "Confidence score based on length difference between texts (0-1)",
+            },
+          ],
+        },
+        {
+          type: "number",
+          parameters: [
+            {
+              name: "ratio",
+              type: "number",
+              description: "Raw similarity ratio between the texts",
+            },
+          ],
+        },
+        {
+          type: "number",
+          parameters: [
+            {
+              name: "changes",
+              type: "number",
+              description:
+                "Number of change operations (insertions, deletions, replacements)",
+            },
+          ],
+        },
+        {
+          type: "number",
+          parameters: [
+            {
+              name: "lengthDiff",
+              type: "number",
+              description:
+                "Normalized difference in length between input and output (0-1)",
+            },
+          ],
+        },
+      ],
+    },
+  ]}
+/>
+
+## Scoring Details
+
+The metric calculates several measures:
+
+- **Similarity Ratio**: Based on sequence matching between texts (0-1)
+- **Changes**: Count of non-matching operations needed
+- **Length Difference**: Normalized difference in text lengths
+- **Confidence**: Inversely proportional to length difference
+
+### Scoring Process
+
+1. Analyzes textual differences:
+
+   - Performs sequence matching between input and output
+   - Counts the number of change operations required
+   - Measures length differences
+
+2. Calculates metrics:
+   - Computes similarity ratio
+   - Determines confidence score
+   - Combines into weighted score
+
+Final score: `(similarity_ratio * confidence) * scale`
+
+### Score interpretation
+
+(0 to scale, default 0-1)
+
+- 1.0: Identical texts - no differences
+- 0.7-0.9: Minor differences - few changes needed
+- 0.4-0.6: Moderate differences - significant changes
+- 0.1-0.3: Major differences - extensive changes
+- 0.0: Completely different texts
+
+## Example with Analysis
+
+```typescript
+import { TextualDifferenceMetric } from "@mastra/evals/nlp";
+
+const metric = new TextualDifferenceMetric();
+
+const result = await metric.measure(
+  "Hello world! How are you?",
+  "Hello there! How is it going?",
+);
+
+// Example output:
+// {
+//   score: 0.65,
+//   info: {
+//     confidence: 0.95,
+//     ratio: 0.65,
+//     changes: 2,
+//     lengthDiff: 0.05
+//   }
+// }
+```
+
+## Related
+
+- [Content Similarity Metric](./content-similarity)
+- [Completeness Metric](./completeness)
+- [Keyword Coverage Metric](./keyword-coverage)

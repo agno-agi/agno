@@ -1,0 +1,92 @@
+---
+title: "Reference: Keyword Coverage | Scorers | Mastra Docs"
+description: Documentation for the Keyword Coverage Scorer in Mastra, which evaluates how well LLM outputs cover important keywords from the input.
+---
+
+# Keyword Coverage Scorer
+
+The `createKeywordCoverageScorer()` function evaluates how well an LLM's output covers the important keywords from the input. It analyzes keyword presence and matches while ignoring common words and stop words.
+
+For a usage example, see the [Keyword Coverage Examples](/examples/scorers/keyword-coverage).
+
+## Parameters
+
+The `createKeywordCoverageScorer()` function does not take any options.
+
+This function returns an instance of the MastraScorer class. See the [MastraScorer reference](./mastra-scorer) for details on the `.run()` method and its input/output.
+
+## .run() Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "runId",
+      type: "string",
+      description: "The id of the run (optional).",
+    },
+    {
+      name: "preprocessStepResult",
+      type: "object",
+      description: "Object with extracted keywords: { referenceKeywords: Set<string>, responseKeywords: Set<string> }",
+    },
+    {
+      name: "analyzeStepResult",
+      type: "object",
+      description: "Object with keyword coverage: { totalKeywords: number, matchedKeywords: number }",
+    },
+    {
+      name: "score",
+      type: "number",
+      description: "Coverage score (0-1) representing the proportion of matched keywords.",
+    },
+  ]}
+/>
+
+## Scoring Details
+
+The scorer evaluates keyword coverage by matching keywords with the following features:
+
+- Common word and stop word filtering (e.g., "the", "a", "and")
+- Case-insensitive matching
+- Word form variation handling
+- Special handling of technical terms and compound words
+
+### Scoring Process
+
+1. Processes keywords from input and output:
+   - Filters out common words and stop words
+   - Normalizes case and word forms
+   - Handles special terms and compounds
+2. Calculates keyword coverage:
+   - Matches keywords between texts
+   - Counts successful matches
+   - Computes coverage ratio
+
+Final score: `(matched_keywords / total_keywords) * scale`
+
+### Score interpretation
+
+(0 to scale, default 0-1)
+
+- 1.0: Perfect keyword coverage
+- 0.7-0.9: Good coverage with most keywords present
+- 0.4-0.6: Moderate coverage with some keywords missing
+- 0.1-0.3: Poor coverage with many keywords missing
+- 0.0: No keyword matches
+
+## Special Cases
+
+The scorer handles several special cases:
+
+- Empty input/output: Returns score of 1.0 if both empty, 0.0 if only one is empty
+- Single word: Treated as a single keyword
+- Technical terms: Preserves compound technical terms (e.g., "React.js", "machine learning")
+- Case differences: "JavaScript" matches "javascript"
+- Common words: Ignored in scoring to focus on meaningful keywords
+
+## Related
+
+- [Completeness Scorer](./completeness)
+- [Content Similarity Scorer](./content-similarity)
+- [Answer Relevancy Scorer](./answer-relevancy)
+- [Textual Difference Scorer](./textual-difference)

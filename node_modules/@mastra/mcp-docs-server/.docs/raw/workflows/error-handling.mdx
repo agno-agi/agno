@@ -1,0 +1,213 @@
+---
+title: "Error Handling in Workflows | Workflows | Mastra Docs"
+description: "Learn how to handle errors in Mastra workflows using step retries, conditional branching, and monitoring."
+---
+
+# Error Handling
+
+Mastra provides a built-in retry mechanism for workflows or steps that fail due to transient errors. This is particularly useful for steps that interact with external services or resources that might experience temporary unavailability.
+
+## Workflow-level using `retryConfig`
+
+You can configure retries at the workflow level, which applies to all steps in the workflow:
+
+```typescript {8-11} filename="src/mastra/workflows/test-workflow.ts" showLineNumbers copy
+import { createWorkflow, createStep } from "@mastra/core/workflows";
+import { z } from "zod";
+
+const step1 = createStep({...});
+
+export const testWorkflow = createWorkflow({
+  // ...
+  retryConfig: {
+    attempts: 5,
+    delay: 2000
+  }
+})
+  .then(step1)
+  .commit();
+```
+
+## Step-level using `retries`
+
+You can configure retries for individual steps using the `retries` property. This overrides the workflow-level retry configuration for that specific step:
+
+```typescript {17} filename="src/mastra/workflows/test-workflow.ts" showLineNumbers copy
+import { createWorkflow, createStep } from "@mastra/core/workflows";
+import { z } from "zod";
+
+const step1 = createStep({
+  // ...
+  execute: async () => {
+    const response = await // ...
+
+    if (!response.ok) {
+      throw new Error('Error');
+    }
+
+    return {
+      value: ""
+    };
+  },
+  retries: 3
+});
+```
+
+## Conditional branching
+
+You can create alternative workflow paths based on the success or failure of previous steps using conditional logic:
+
+```typescript {15,19,33-34} filename="src/mastra/workflows/test-workflow.ts" showLineNumbers copy
+import { createWorkflow, createStep } from "@mastra/core/workflows";
+import { z } from "zod";
+
+const step1 = createStep({
+  // ...
+  execute: async () => {
+    try {
+      const response = await // ...
+
+      if (!response.ok) {
+        throw new Error('error');
+      }
+
+      return {
+        status: "ok"
+      };
+    } catch (error) {
+      return {
+        status: "error"
+      };
+    }
+  }
+});
+
+const step2 = createStep({...});
+const fallback = createStep({...});
+
+export const testWorkflow = createWorkflow({
+  // ...
+})
+  .then(step1)
+  .branch([
+    [async ({ inputData: { status } }) => status === "ok", step2],
+    [async ({ inputData: { status } }) => status === "error", fallback]
+  ])
+  .commit();
+```
+
+## Check previous step results
+
+Use `getStepResult()` to inspect a previous step’s results.
+
+```typescript {10} filename="src/mastra/workflows/test-workflow.ts" showLineNumbers copy
+import { createStep } from "@mastra/core/workflows";
+import { z } from "zod";
+
+const step1 = createStep({...});
+
+const step2 = createStep({
+  // ...
+  execute: async ({ getStepResult }) => {
+
+    const step1Result = getStepResult(step1);
+
+    return {
+      value: ""
+    };
+  }
+});
+```
+
+## Exiting early with `bail()`
+
+Use `bail()` in a step to exit early with a successful result. This returns the provided payload as the step output and ends workflow execution.
+
+```typescript {7} filename="src/mastra/workflows/test-workflow.ts" showLineNumbers copy
+import { createWorkflow, createStep } from "@mastra/core/workflows";
+import { z } from "zod";
+
+const step1 = createStep({
+  id: 'step1',
+  execute: async ({ bail }) => {
+    return bail({ result: 'bailed' });
+  },
+  inputSchema: z.object({ value: z.string() }),
+  outputSchema: z.object({ result: z.string() }),
+});
+
+export const testWorkflow = createWorkflow({...})
+  .then(step1)
+  .commit();
+```
+
+## Exiting early with `Error()`
+
+Use `throw new Error()` in a step to exit with an error.
+
+```typescript {7} filename="src/mastra/workflows/test-workflow.ts" showLineNumbers copy
+import { createWorkflow, createStep } from "@mastra/core/workflows";
+import { z } from "zod";
+
+const step1 = createStep({
+  id: 'step1',
+  execute: async () => {
+    throw new Error('error');
+  },
+  inputSchema: z.object({ value: z.string() }),
+  outputSchema: z.object({ result: z.string() }),
+});
+
+export const testWorkflow = createWorkflow({...})
+  .then(step1)
+  .commit();
+```
+
+## Monitor errors with `watch()`
+
+You can monitor workflows for errors using the `watch` method:
+
+```typescript {11} filename="src/test-workflow.ts" showLineNumbers copy
+import { mastra } from "../src/mastra";
+
+const workflow = mastra.getWorkflow("testWorkflow");
+const run = await workflow.createRunAsync();
+
+run.watch((event) => {
+  const {
+    payload: { currentStep }
+  } = event;
+
+  console.log(currentStep?.payload?.status);
+});
+
+```
+
+## Monitor errors with `stream()`
+
+You can monitor workflows for errors using `stream`:
+
+```typescript {11} filename="src/test-workflow.ts" showLineNumbers copy
+import { mastra } from "../src/mastra";
+
+const workflow = mastra.getWorkflow("testWorkflow");
+
+const run = await workflow.createRunAsync();
+
+const stream = await run.stream({
+  inputData: {
+    value: "initial data"
+  }
+});
+
+for await (const chunk of stream.stream) {
+  console.log(chunk.payload.output.stats);
+}
+
+```
+
+## Related
+
+- [Control Flow](./control-flow.mdx)
+- [Conditional Branching](./control-flow.mdx#conditional-logic-with-branch)
+- [Running Workflows](../../examples/workflows/running-workflows.mdx)

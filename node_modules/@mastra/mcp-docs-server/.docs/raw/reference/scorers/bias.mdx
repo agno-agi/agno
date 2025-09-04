@@ -1,0 +1,127 @@
+---
+title: "Reference: Bias | Scorers | Mastra Docs"
+description: Documentation for the Bias Scorer in Mastra, which evaluates LLM outputs for various forms of bias, including gender, political, racial/ethnic, or geographical bias.
+---
+
+# Bias Scorer
+The `createBiasScorer()` function accepts a single options object with the following properties:
+
+For a usage example, see the [Bias Examples](/examples/scorers/bias).
+
+## Parameters
+
+
+<PropertiesTable
+  content={[
+    {
+      name: "model",
+      type: "LanguageModel",
+      required: true,
+      description: "Configuration for the model used to evaluate bias.",
+    },
+    {
+      name: "scale",
+      type: "number",
+      required: false,
+      defaultValue: "1",
+      description: "Maximum score value.",
+    },
+  ]}
+/>
+
+This function returns an instance of the MastraScorer class. The `.run()` method accepts the same input as other scorers (see the [MastraScorer reference](./mastra-scorer)), but the return value includes LLM-specific fields as documented below.
+
+## .run() Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "runId",
+      type: "string",
+      description: "The id of the run (optional).",
+    },
+    {
+      name: "preprocessStepResult",
+      type: "object",
+      description: "Object with extracted opinions: { opinions: string[] }",
+    },
+    {
+      name: "preprocessPrompt",
+      type: "string",
+      description: "The prompt sent to the LLM for the preprocess step (optional).",
+    },
+    {
+      name: "analyzeStepResult",
+      type: "object",
+      description: "Object with results: { results: Array<{ result: 'yes' | 'no', reason: string }> }",
+    },
+    {
+      name: "analyzePrompt",
+      type: "string",
+      description: "The prompt sent to the LLM for the analyze step (optional).",
+    },
+    {
+      name: "score",
+      type: "number",
+      description: "Bias score (0 to scale, default 0-1). Higher scores indicate more bias.",
+    },
+    {
+      name: "reason",
+      type: "string",
+      description: "Explanation of the score.",
+    },
+    {
+      name: "generateReasonPrompt",
+      type: "string",
+      description: "The prompt sent to the LLM for the generateReason step (optional).",
+    },
+  ]}
+/>
+
+## Bias Categories
+
+The scorer evaluates several types of bias:
+
+1. **Gender Bias**: Discrimination or stereotypes based on gender
+2. **Political Bias**: Prejudice against political ideologies or beliefs
+3. **Racial/Ethnic Bias**: Discrimination based on race, ethnicity, or national origin
+4. **Geographical Bias**: Prejudice based on location or regional stereotypes
+
+## Scoring Details
+
+The scorer evaluates bias through opinion analysis based on:
+
+- Opinion identification and extraction
+- Presence of discriminatory language
+- Use of stereotypes or generalizations
+- Balance in perspective presentation
+- Loaded or prejudicial terminology
+
+### Scoring Process
+
+1. Extracts opinions from text:
+   - Identifies subjective statements
+   - Excludes factual claims
+   - Includes cited opinions
+2. Evaluates each opinion:
+   - Checks for discriminatory language
+   - Assesses stereotypes and generalizations
+   - Analyzes perspective balance
+
+Final score: `(biased_opinions / total_opinions) * scale`
+
+### Score interpretation
+
+(0 to scale, default 0-1)
+
+- 1.0: Complete bias - all opinions contain bias
+- 0.7-0.9: Significant bias - majority of opinions show bias
+- 0.4-0.6: Moderate bias - mix of biased and neutral opinions
+- 0.1-0.3: Minimal bias - most opinions show balanced perspective
+- 0.0: No detectable bias - opinions are balanced and neutral
+
+## Related
+
+- [Toxicity Scorer](./toxicity)
+- [Faithfulness Scorer](./faithfulness)
+- [Hallucination Scorer](./hallucination)

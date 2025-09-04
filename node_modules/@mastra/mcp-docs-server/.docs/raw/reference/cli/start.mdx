@@ -1,0 +1,50 @@
+---
+title: 'mastra start'
+description: 'Start your built Mastra application'
+---
+
+# mastra start
+
+Start your built Mastra application. This command is used to run your built Mastra application in production mode.
+Telemetry is enabled by default.
+
+## Usage
+After building your project with `mastra build` run:
+
+```bash
+mastra start [options]
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `-d, --dir <path>` | Path to your built Mastra output directory (default: .mastra/output) |
+| `-e, --env <env>` | Custom env file to include in the start (default: .env.production, .env) |
+| `-nt, --no-telemetry` | Disable telemetry on start |
+
+## Examples
+
+Start the application with default settings:
+
+```bash
+mastra start
+```
+
+Start from a custom output directory:
+
+```bash
+mastra start --dir ./my-output
+```
+
+Start with a custom environment file:
+
+```bash
+mastra start --env .env.staging
+```
+
+Start with telemetry disabled:
+
+```bash
+mastra start -nt
+```

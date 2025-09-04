@@ -1,0 +1,160 @@
+---
+title: Mastra Client Agents API
+description: Learn how to interact with Mastra AI agents, including generating responses, streaming interactions, and managing agent tools using the client-js SDK.
+---
+
+# Agents API
+
+The Agents API provides methods to interact with Mastra AI agents, including generating responses, streaming interactions, and managing agent tools.
+
+## Getting All Agents
+
+Retrieve a list of all available agents:
+
+```typescript
+const agents = await mastraClient.getAgents();
+```
+
+## Working with a Specific Agent
+
+Get an instance of a specific agent:
+
+```typescript
+const agent = mastraClient.getAgent("agent-id");
+```
+
+## Agent Methods
+
+### Get Agent Details
+
+Retrieve detailed information about an agent:
+
+```typescript
+const details = await agent.details();
+```
+
+### Generate Response
+
+Generate a response from the agent:
+
+```typescript
+const response = await agent.generate({
+  messages: [
+    {
+      role: "user",
+      content: "Hello, how are you?",
+    },
+  ],
+  threadId: "thread-1", // Optional: Thread ID for conversation context
+  resourceid: "resource-1", // Optional: Resource ID
+  output: {}, // Optional: Output configuration
+});
+```
+
+### Stream Response
+
+Stream responses from the agent for real-time interactions:
+
+```typescript
+const response = await agent.stream({
+  messages: [
+    {
+      role: "user",
+      content: "Tell me a story",
+    },
+  ],
+});
+
+// Process data stream with the processDataStream util
+response.processDataStream({
+  onTextPart: (text) => {
+    process.stdout.write(text);
+  },
+  onFilePart: (file) => {
+    console.log(file);
+  },
+  onDataPart: (data) => {
+    console.log(data);
+  },
+  onErrorPart: (error) => {
+    console.error(error);
+  },
+});
+
+// Process text stream with the processTextStream util
+// (used with structured output)
+ response.processTextStream({
+      onTextPart: text => {
+        process.stdout.write(text);
+      },
+});
+
+// You can also read from response body directly
+const reader = response.body.getReader();
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+  console.log(new TextDecoder().decode(value));
+}
+```
+
+### Client tools
+
+Client-side tools allow you to execute custom functions on the client side when the agent requests them.
+
+#### Basic Usage
+
+```typescript
+import { createTool } from '@mastra/core/tools';
+import { z } from 'zod';
+
+const colorChangeTool = createTool({
+  id: 'changeColor',
+  description: 'Changes the background color',
+  inputSchema: z.object({
+    color: z.string(),
+  }),
+  execute: async ({ context }) => {
+    document.body.style.backgroundColor = context.color;
+    return { success: true };
+  }
+})
+
+
+// Use with generate
+const response = await agent.generate({
+  messages: 'Change the background to blue',
+  clientTools: {colorChangeTool},
+});
+
+// Use with stream
+const response = await agent.stream({
+  messages: 'Change the background to green',
+  clientTools: {colorChangeTool},
+});
+
+response.processDataStream({
+  onTextPart: (text) => console.log(text),
+  onToolCallPart: (toolCall) => console.log('Tool called:', toolCall.toolName),
+});
+```
+
+### Get Agent Tool
+
+Retrieve information about a specific tool available to the agent:
+
+```typescript
+const tool = await agent.getTool("tool-id");
+```
+
+### Get Agent Evaluations
+
+Get evaluation results for the agent:
+
+```typescript
+// Get CI evaluations
+const evals = await agent.evals();
+
+// Get live evaluations
+const liveEvals = await agent.liveEvals();
+```

@@ -1,0 +1,96 @@
+---
+title: "Reference: Content Similarity | Scorers | Mastra Docs"
+description: Documentation for the Content Similarity Scorer in Mastra, which measures textual similarity between strings and provides a matching score.
+---
+
+# Content Similarity Scorer
+
+The `createContentSimilarityScorer()` function measures the textual similarity between two strings, providing a score that indicates how closely they match. It supports configurable options for case sensitivity and whitespace handling.
+
+For a usage example, see the [Content Similarity Examples](/examples/scorers/content-similarity).
+
+## Parameters
+
+The `createContentSimilarityScorer()` function accepts a single options object with the following properties:
+
+<PropertiesTable
+  content={[
+    {
+      name: "ignoreCase",
+      type: "boolean",
+      required: false,
+      defaultValue: "true",
+      description: "Whether to ignore case differences when comparing strings.",
+    },
+    {
+      name: "ignoreWhitespace",
+      type: "boolean",
+      required: false,
+      defaultValue: "true",
+      description: "Whether to normalize whitespace when comparing strings.",
+    },
+  ]}
+/>
+
+This function returns an instance of the MastraScorer class. See the [MastraScorer reference](./mastra-scorer) for details on the `.run()` method and its input/output.
+
+## .run() Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "runId",
+      type: "string",
+      description: "The id of the run (optional).",
+    },
+    {
+      name: "preprocessStepResult",
+      type: "object",
+      description: "Object with processed input and output: { processedInput: string, processedOutput: string }",
+    },
+    {
+      name: "analyzeStepResult",
+      type: "object",
+      description: "Object with similarity: { similarity: number }",
+    },
+    {
+      name: "score",
+      type: "number",
+      description: "Similarity score (0-1) where 1 indicates perfect similarity.",
+    },
+  ]}
+/>
+
+## Scoring Details
+
+The scorer evaluates textual similarity through character-level matching and configurable text normalization.
+
+### Scoring Process
+
+1. Normalizes text:
+   - Case normalization (if ignoreCase: true)
+   - Whitespace normalization (if ignoreWhitespace: true)
+2. Compares processed strings using string-similarity algorithm:
+   - Analyzes character sequences
+   - Aligns word boundaries
+   - Considers relative positions
+   - Accounts for length differences
+
+Final score: `similarity_value * scale`
+
+### Score interpretation
+
+(0 to scale, default 0-1)
+
+- 1.0: Perfect match - identical texts
+- 0.7-0.9: High similarity - mostly matching content
+- 0.4-0.6: Moderate similarity - partial matches
+- 0.1-0.3: Low similarity - few matching patterns
+- 0.0: No similarity - completely different texts
+
+## Related
+
+- [Completeness Scorer](./completeness)
+- [Textual Difference Scorer](./textual-difference)
+- [Answer Relevancy Scorer](./answer-relevancy)
+- [Keyword Coverage Scorer](./keyword-coverage)

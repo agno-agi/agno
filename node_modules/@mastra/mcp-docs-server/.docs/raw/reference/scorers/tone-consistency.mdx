@@ -1,0 +1,75 @@
+---
+title: "Reference: Tone Consistency | Scorers | Mastra Docs"
+description: Documentation for the Tone Consistency Scorer in Mastra, which evaluates emotional tone and sentiment consistency in text.
+---
+
+# Tone Consistency Scorer
+
+The `createToneScorer()` function evaluates the text's emotional tone and sentiment consistency. It can operate in two modes: comparing tone between input/output pairs or analyzing tone stability within a single text.
+
+For a usage example, see the [Tone Consistency Examples](/examples/scorers/tone-consistency).
+
+## Parameters
+
+The `createToneScorer()` function does not take any options.
+
+This function returns an instance of the MastraScorer class. See the [MastraScorer reference](./mastra-scorer) for details on the `.run()` method and its input/output.
+
+## .run() Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "runId",
+      type: "string",
+      description: "The id of the run (optional).",
+    },
+    {
+      name: "analyzeStepResult",
+      type: "object",
+      description: "Object with tone metrics: { responseSentiment: number, referenceSentiment: number, difference: number } (for comparison mode) OR { avgSentiment: number, sentimentVariance: number } (for stability mode)",
+    },
+    {
+      name: "score",
+      type: "number",
+      description: "Tone consistency/stability score (0-1).",
+    },
+  ]}
+/>
+
+## Scoring Details
+
+The scorer evaluates sentiment consistency through tone pattern analysis and mode-specific scoring.
+
+### Scoring Process
+
+1. Analyzes tone patterns:
+   - Extracts sentiment features
+   - Computes sentiment scores
+   - Measures tone variations
+2. Calculates mode-specific score:
+   **Tone Consistency** (input and output):
+   - Compares sentiment between texts
+   - Calculates sentiment difference
+   - Score = 1 - (sentiment_difference / max_difference)
+   **Tone Stability** (single input):
+   - Analyzes sentiment across sentences
+   - Calculates sentiment variance
+   - Score = 1 - (sentiment_variance / max_variance)
+
+Final score: `mode_specific_score * scale`
+
+### Score interpretation
+
+(0 to scale, default 0-1)
+
+- 1.0: Perfect tone consistency/stability
+- 0.7-0.9: Strong consistency with minor variations
+- 0.4-0.6: Moderate consistency with noticeable shifts
+- 0.1-0.3: Poor consistency with major tone changes
+- 0.0: No consistency - completely different tones
+
+## Related
+
+- [Content Similarity Scorer](./content-similarity)
+- [Toxicity Scorer](./toxicity)

@@ -1,0 +1,91 @@
+---
+title: "Upstash Storage | Storage System | Mastra Core"
+description: Documentation for the Upstash storage implementation in Mastra.
+---
+import { Callout } from 'nextra/components'
+
+# Upstash Storage
+
+The Upstash storage implementation provides a serverless-friendly storage solution using Upstash's Redis-compatible key-value store.
+
+<Callout type="warning">
+  **Important:** When using Mastra with Upstash, the pay-as-you-go model can result in unexpectedly high costs due to the high volume of Redis commands generated during agent conversations. We strongly recommend using a **fixed pricing plan** for predictable costs. See [Upstash pricing](https://upstash.com/pricing/redis) for details and [GitHub issue #5850](https://github.com/mastra-ai/mastra/issues/5850) for context.
+</Callout>
+
+## Installation
+
+```bash copy
+npm install @mastra/upstash@latest
+```
+
+## Usage
+
+```typescript copy showLineNumbers
+import { UpstashStore } from "@mastra/upstash";
+
+const storage = new UpstashStore({
+  url: process.env.UPSTASH_URL,
+  token: process.env.UPSTASH_TOKEN,
+});
+```
+
+## Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "url",
+      type: "string",
+      description: "Upstash Redis URL",
+      isOptional: false,
+    },
+    {
+      name: "token",
+      type: "string",
+      description: "Upstash Redis authentication token",
+      isOptional: false,
+    },
+    {
+      name: "prefix",
+      type: "string",
+      description: "Key prefix for all stored items",
+      isOptional: true,
+      defaultValue: "mastra:",
+    },
+  ]}
+/>
+
+## Additional Notes
+
+### Key Structure
+
+The Upstash storage implementation uses a key-value structure:
+
+- Thread keys: `{prefix}thread:{threadId}`
+- Message keys: `{prefix}message:{messageId}`
+- Metadata keys: `{prefix}metadata:{entityId}`
+
+### Serverless Benefits
+
+Upstash storage is particularly well-suited for serverless deployments:
+
+- No connection management needed
+- Pay-per-request pricing
+- Global replication options
+- Edge-compatible
+
+### Data Persistence
+
+Upstash provides:
+
+- Automatic data persistence
+- Point-in-time recovery
+- Cross-region replication options
+
+### Performance Considerations
+
+For optimal performance:
+
+- Use appropriate key prefixes to organize data
+- Monitor Redis memory usage
+- Consider data expiration policies if needed

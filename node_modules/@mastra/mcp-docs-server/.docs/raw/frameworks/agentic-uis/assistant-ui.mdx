@@ -1,0 +1,118 @@
+---
+title: Using with Assistant UI
+description: "Learn how to integrate Assistant UI with Mastra"
+---
+
+import { Callout, FileTree, Steps } from 'nextra/components'
+
+# Using with Assistant UI
+
+[Assistant UI](https://assistant-ui.com) is the TypeScript/React library for AI Chat.
+Built on shadcn/ui and Tailwind CSS, it enables developers to create beautiful, enterprise-grade chat experiences in minutes.
+
+<Callout type="info">
+For a full-stack integration approach where Mastra runs directly in your Next.js API routes, see the [Full-Stack Integration Guide](https://www.assistant-ui.com/docs/runtimes/mastra/full-stack-integration) on Assistant UI's documentation site.
+</Callout>
+
+## Integration Guide
+
+Run Mastra as a standalone server and connect your Next.js frontend (with Assistant UI) to its API endpoints.
+
+<Steps>
+### Create Standalone Mastra Server
+
+Set up your directory structure. A possible directory structure could look like this:
+
+<FileTree>
+    <FileTree.Folder name="project-root" defaultOpen>
+        <FileTree.Folder name="mastra-server" defaultOpen>
+            <FileTree.Folder name="src">
+                <FileTree.Folder name="mastra" />
+            </FileTree.Folder>
+            <FileTree.File name="package.json" />
+        </FileTree.Folder>
+        <FileTree.Folder name="nextjs-frontend">
+            <FileTree.File name="package.json" />
+        </FileTree.Folder>
+    </FileTree.Folder>
+</FileTree>
+
+Bootstrap your Mastra server:
+
+```bash copy
+npx create-mastra@latest
+```
+
+This command will launch an interactive wizard to help you scaffold a new Mastra project, including prompting you for a project name and setting up basic configurations.
+Follow the prompts to create your server project.
+
+You now have a basic Mastra server project ready. You should have the following files and folders:
+
+<FileTree>
+    <FileTree.Folder name="src" defaultOpen>
+      <FileTree.Folder name="mastra" defaultOpen>
+        <FileTree.File name="index.ts" />
+        <FileTree.Folder name="agents" defaultOpen>
+          <FileTree.File name="weather-agent.ts" />
+        </FileTree.Folder>
+        <FileTree.Folder name="tools" defaultOpen>
+          <FileTree.File name="weather-tool.ts" />
+        </FileTree.Folder>
+        <FileTree.Folder name="workflows" defaultOpen>
+          <FileTree.File name="weather-workflow.ts" />
+        </FileTree.Folder>
+      </FileTree.Folder>
+    </FileTree.Folder>
+</FileTree>
+
+<Callout>
+Ensure that you have set the appropriate environment variables for your LLM provider in the `.env` file.
+</Callout>
+
+### Run the Mastra Server
+
+Run the Mastra server using the following command:
+
+```bash copy
+npm run dev
+```
+
+By default, the Mastra server will run on `http://localhost:4111`. Your `weatherAgent` should now be accessible via a POST request endpoint, typically `http://localhost:4111/api/agents/weatherAgent/stream`. Keep this server running for the next steps where we'll set up the Assistant UI frontend to connect to it.
+
+### Initialize Assistant UI
+
+Create a new `assistant-ui` project with the following command.
+
+```bash copy
+npx assistant-ui@latest create
+```
+
+<Callout>For detailed setup instructions, including adding API keys, basic configuration, and manual setup steps, please refer to [assistant-ui's official documentation](https://assistant-ui.com/docs).</Callout>
+
+### Configure Frontend API Endpoint
+
+The default Assistant UI setup configures the chat runtime to use a local API route (`/api/chat`) within the Next.js project. Since our Mastra agent is running on a separate server, we need to update the frontend to point to that server's endpoint.
+
+Find the `useChatRuntime` hook in the `assistant-ui` project, typically at `app/assistant.tsx` and change the `api` property to the full URL of your Mastra agent's stream endpoint:
+
+```typescript showLineNumbers copy filename="app/assistant.tsx" {2}
+const runtime = useChatRuntime({
+    api: "http://localhost:4111/api/agents/weatherAgent/stream",
+});
+```
+
+Now, the Assistant UI frontend will send chat requests directly to your running Mastra server.
+
+### Run the Application
+
+You're ready to connect the pieces! Make sure both the Mastra server and the Assistant UI frontend are running. Start the Next.js development server:
+
+```bash copy
+npm run dev
+```
+
+You should now be able to chat with your agent in the browser.
+
+</Steps>
+
+Congratulations! You have successfully integrated Mastra with Assistant UI using a separate server approach. Your Assistant UI frontend now communicates with a standalone Mastra agent server.

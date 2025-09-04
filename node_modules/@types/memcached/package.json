@@ -1,0 +1,27 @@
+{
+    "name": "@types/memcached",
+    "version": "2.2.10",
+    "description": "TypeScript definitions for memcached",
+    "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/memcached",
+    "license": "MIT",
+    "contributors": [
+        {
+            "name": "KentarouTakeda",
+            "githubUsername": "KentarouTakeda",
+            "url": "https://github.com/KentarouTakeda"
+        }
+    ],
+    "main": "",
+    "types": "index.d.ts",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "directory": "types/memcached"
+    },
+    "scripts": {},
+    "dependencies": {
+        "@types/node": "*"
+    },
+    "typesPublisherContentHash": "b8516cbae42eea9ebb767ca22b6c92c672eca921de906d543348572d079c7962",
+    "typeScriptVersion": "4.5"
+}

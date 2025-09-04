@@ -1,0 +1,73 @@
+---
+title: "Reference: Keywords AI Integration | Mastra Observability Docs"
+description: Documentation for integrating Keywords AI (an observability platform for LLM applications) with Mastra.
+---
+
+## Keywords AI
+
+[Keywords AI](https://docs.keywordsai.co/get-started/overview) is a full-stack LLM engineering platform that helps developers and PMs build reliable AI products faster. In a shared workspace, product teams can build, monitor, and improve AI performance.
+
+This tutorial shows how to set up Keywords AI tracing with [Mastra](https://mastra.ai/) to monitor and trace your AI-powered applications.
+
+To help you get started quickly, we’ve provided a pre-built example. You can find the code [on GitHub](https://github.com/Keywords-AI/keywordsai-example-projects/tree/main/mastra-ai-weather-agent).
+
+
+## Setup
+
+Here's the tutorial about the Mastra Weather Agent example.
+
+### 1. Install Dependencies
+
+```bash copy
+pnpm install
+```
+
+### 2. Environment Variables
+
+Copy the example environment file and add your API keys:
+
+```bash copy
+cp .env.local.example .env.local
+```
+
+Update .env.local with your credentials: 
+
+```bash .env.local copy
+OPENAI_API_KEY=your-openai-api-key
+KEYWORDSAI_API_KEY=your-keywordsai-api-key
+KEYWORDSAI_BASE_URL=https://api.keywordsai.co
+```
+
+### 3. Setup Mastra client with Keywords AI tracing
+
+Configure with KeywordsAI telemetry in `src/mastra/index.ts`:
+
+```typescript filename="src/mastra/index.ts" showLineNumbers copy
+
+import { Mastra } from "@mastra/core/mastra";
+import { KeywordsAIExporter } from "@keywordsai/exporter-vercel";
+
+telemetry: {
+  serviceName: "keywordai-mastra-example",
+  enabled: true,
+  export: {
+    type: "custom",
+    exporter: new KeywordsAIExporter({
+      apiKey: process.env.KEYWORDSAI_API_KEY,
+      baseUrl: process.env.KEYWORDSAI_BASE_URL,
+      debug: true,
+    })
+  }
+}
+```
+
+### 3. Run the Project
+
+```bash copy
+mastra dev
+```
+This opens the Mastra playground where you can interact with the weather agent.
+
+## Observability
+
+Once configured, you can view your traces and analytics in the [Keywords AI platform](https://platform.keywordsai.co/platform/traces).

@@ -1,0 +1,115 @@
+---
+title: "mastra build | Production Bundle | Mastra CLI"
+description: "Build your Mastra project for production deployment"
+---
+
+# mastra build
+
+The `mastra build` command bundles your Mastra project into a production-ready Hono server. Hono is a lightweight, type-safe web framework that makes it easy to deploy Mastra agents as HTTP endpoints with middleware support.
+
+## Usage
+
+```bash
+mastra build [options]
+```
+
+## Options
+
+<PropertiesTable
+  content={[
+    {
+      name: "--dir",
+      type: "string",
+      description: "Path to your Mastra Folder",
+      isOptional: true,
+    },
+    {
+      name: "--root",
+      type: "string",
+      description: "Path to your root folder",
+      isOptional: true,
+    },
+    {
+      name: "--tools",
+      type: "string",
+      description: "Comma-separated list of paths to tool files to include",
+      isOptional: true,
+    },
+    {
+      name: "--help",
+      type: "boolean",
+      description: "display help for command",
+      isOptional: true,
+    },
+  ]}
+/>
+
+## Advanced usage
+
+### Limit parallelism
+
+For CI or when running in resource constrained environments you can cap
+how many expensive tasks run at once by setting `MASTRA_CONCURRENCY`.
+
+```bash copy
+MASTRA_CONCURRENCY=2 mastra build
+```
+
+Unset it to allow the CLI to base concurrency on the host capabilities.
+
+### Disable telemetry
+
+To opt out of anonymous build analytics set:
+
+```bash copy
+MASTRA_TELEMETRY_DISABLED=1 mastra build
+```
+
+### Custom provider endpoints
+
+Build time respects the same `OPENAI_BASE_URL` and `ANTHROPIC_BASE_URL`
+variables that `mastra dev` does. They are forwarded by the AI SDK to
+any workflows or tools that call the providers.
+
+## What It Does
+
+1. Locates your Mastra entry file (either `src/mastra/index.ts` or `src/mastra/index.js`)
+2. Creates a `.mastra` output directory
+3. Bundles your code using Rollup with:
+   - Tree shaking for optimal bundle size
+   - Node.js environment targeting
+   - Source map generation for debugging
+   - Excluding test files (named `.test.`, `.spec.` or inside `__tests__` directory)
+
+## Example
+
+```bash copy
+# Build from current directory
+mastra build
+
+# Build from specific directory
+mastra build --dir ./my-mastra-project
+```
+
+## Output
+
+The command generates a production bundle in the `.mastra` directory, which includes:
+
+- A Hono-based HTTP server with your Mastra agents exposed as endpoints
+- Bundled JavaScript files optimized for production
+- Source maps for debugging
+- Required dependencies
+
+This output is suitable for:
+
+- Deploying to cloud servers (EC2, Digital Ocean)
+- Running in containerized environments
+- Using with container orchestration systems
+
+## Deployers
+
+When a Deployer is used, the build output is automatically prepared for the target platform e.g
+
+- [Vercel Deployer](/reference/deployer/vercel)
+- [Netlify Deployer](/reference/deployer/netlify)
+- [Cloudflare Deployer](/reference/deployer/cloudflare)

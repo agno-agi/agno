@@ -1,0 +1,16 @@
+import DiffPatcher from './diffpatcher.js';
+import dateReviver from './date-reviver.js';
+import type { Delta, Options } from './types.js';
+import type Context from './contexts/context.js';
+import type DiffContext from './contexts/diff.js';
+import type PatchContext from './contexts/patch.js';
+import type ReverseContext from './contexts/reverse.js';
+export { DiffPatcher, dateReviver };
+export type * from './types.js';
+export type { Context, DiffContext, PatchContext, ReverseContext };
+export declare function create(options?: Options): DiffPatcher;
+export declare function diff(left: unknown, right: unknown): Delta;
+export declare function patch(left: unknown, delta: Delta): unknown;
+export declare function unpatch(right: unknown, delta: Delta): unknown;
+export declare function reverse(delta: Delta): Delta;
+export declare function clone(value: unknown): unknown;

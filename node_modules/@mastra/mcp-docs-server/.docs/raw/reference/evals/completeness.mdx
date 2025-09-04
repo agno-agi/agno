@@ -1,0 +1,184 @@
+---
+title: "Reference: Completeness | Metrics | Evals | Mastra Docs"
+description: Documentation for the Completeness Metric in Mastra, which evaluates how thoroughly LLM outputs cover key elements present in the input.
+---
+
+import { ScorerCallout } from '@/components/scorer-callout'
+
+# CompletenessMetric
+
+<ScorerCallout />
+
+The `CompletenessMetric` class evaluates how thoroughly an LLM's output covers the key elements present in the input. It analyzes nouns, verbs, topics, and terms to determine coverage and provides a detailed completeness score.
+
+## Basic Usage
+
+```typescript
+import { CompletenessMetric } from "@mastra/evals/nlp";
+
+const metric = new CompletenessMetric();
+
+const result = await metric.measure(
+  "Explain how photosynthesis works in plants using sunlight, water, and carbon dioxide.",
+  "Plants use sunlight to convert water and carbon dioxide into glucose through photosynthesis.",
+);
+
+console.log(result.score); // Coverage score from 0-1
+console.log(result.info); // Object containing detailed metrics about element coverage
+```
+
+## measure() Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "input",
+      type: "string",
+      description: "The original text containing key elements to be covered",
+      isOptional: false,
+    },
+    {
+      name: "output",
+      type: "string",
+      description: "The LLM's response to evaluate for completeness",
+      isOptional: false,
+    },
+  ]}
+/>
+
+## Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "score",
+      type: "number",
+      description:
+        "Completeness score (0-1) representing the proportion of input elements covered in the output",
+    },
+    {
+      name: "info",
+      type: "object",
+      description: "Object containing detailed metrics about element coverage",
+      properties: [
+        {
+          type: "string[]",
+          parameters: [
+            {
+              name: "inputElements",
+              type: "string[]",
+              description: "Array of key elements extracted from the input",
+            },
+          ],
+        },
+        {
+          type: "string[]",
+          parameters: [
+            {
+              name: "outputElements",
+              type: "string[]",
+              description: "Array of key elements found in the output",
+            },
+          ],
+        },
+        {
+          type: "string[]",
+          parameters: [
+            {
+              name: "missingElements",
+              type: "string[]",
+              description: "Array of input elements not found in the output",
+            },
+          ],
+        },
+        {
+          type: "object",
+          parameters: [
+            {
+              name: "elementCounts",
+              type: "object",
+              description: "Count of elements in input and output",
+            },
+          ],
+        },
+      ],
+    },
+  ]}
+/>
+
+## Element Extraction Details
+
+The metric extracts and analyzes several types of elements:
+
+- Nouns: Key objects, concepts, and entities
+- Verbs: Actions and states (converted to infinitive form)
+- Topics: Main subjects and themes
+- Terms: Individual significant words
+
+The extraction process includes:
+
+- Normalization of text (removing diacritics, converting to lowercase)
+- Splitting camelCase words
+- Handling of word boundaries
+- Special handling of short words (3 characters or less)
+- Deduplication of elements
+
+## Scoring Details
+
+The metric evaluates completeness through linguistic element coverage analysis.
+
+### Scoring Process
+
+1. Extracts key elements:
+
+   - Nouns and named entities
+   - Action verbs
+   - Topic-specific terms
+   - Normalized word forms
+
+2. Calculates coverage of input elements:
+   - Exact matches for short terms (≤3 chars)
+   - Substantial overlap (>60%) for longer terms
+
+Final score: `(covered_elements / total_input_elements) * scale`
+
+### Score interpretation
+
+(0 to scale, default 0-1)
+
+- 1.0: Complete coverage - contains all input elements
+- 0.7-0.9: High coverage - includes most key elements
+- 0.4-0.6: Partial coverage - contains some key elements
+- 0.1-0.3: Low coverage - missing most key elements
+- 0.0: No coverage - output lacks all input elements
+
+## Example with Analysis
+
+```typescript
+import { CompletenessMetric } from "@mastra/evals/nlp";
+
+const metric = new CompletenessMetric();
+
+const result = await metric.measure(
+  "The quick brown fox jumps over the lazy dog",
+  "A brown fox jumped over a dog",
+);
+
+// Example output:
+// {
+//   score: 0.75,
+//   info: {
+//     inputElements: ["quick", "brown", "fox", "jump", "lazy", "dog"],
+//     outputElements: ["brown", "fox", "jump", "dog"],
+//     missingElements: ["quick", "lazy"],
+//     elementCounts: { input: 6, output: 4 }
+//   }
+// }
+```
+
+## Related
+
+- [Answer Relevancy Metric](./answer-relevancy)
+- [Content Similarity Metric](./content-similarity)
+- [Textual Difference Metric](./textual-difference)
+- [Keyword Coverage Metric](./keyword-coverage)

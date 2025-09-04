@@ -1,0 +1,49 @@
+---
+title: "Reference: Workflow.sendEvent() | Workflows | Mastra Docs"
+description: Documentation for the `Workflow.sendEvent()` method in workflows, which resumes execution when an event is sent.
+---
+
+# Workflow.sendEvent()
+
+The `.sendEvent()` resumes execution when an event is sent.
+
+## Usage example
+
+```typescript copy
+workflow.sendEvent('event-name', step1);
+```
+
+## Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "eventName",
+      type: "string",
+      description: "The name of the event to send",
+      isOptional: false,
+    },
+    {
+      name: "step",
+      type: "Step",
+      description: "The step to resume after the event is sent",
+      isOptional: false,
+    },
+  ]}
+/>
+
+## Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "workflow",
+      type: "Workflow",
+      description: "The workflow instance for method chaining",
+    },
+  ]}
+/>
+
+## Related
+
+- [Sleep & Events](../../docs/workflows/pausing-execution.mdx)

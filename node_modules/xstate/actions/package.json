@@ -1,0 +1,8 @@
+{
+  "main": "dist/xstate-actions.cjs.js",
+  "module": "dist/xstate-actions.esm.js",
+  "umd:main": "dist/xstate-actions.umd.min.js",
+  "preconstruct": {
+    "umdName": "XStateActions"
+  }
+}

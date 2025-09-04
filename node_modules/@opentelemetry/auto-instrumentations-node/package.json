@@ -1,0 +1,110 @@
+{
+  "name": "@opentelemetry/auto-instrumentations-node",
+  "version": "0.62.2",
+  "description": "Metapackage which bundles opentelemetry node core and contrib instrumentations",
+  "author": "OpenTelemetry Authors",
+  "homepage": "https://github.com/open-telemetry/opentelemetry-js-contrib/tree/main/packages/auto-instrumentations-node#readme",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": "^18.19.0 || >=20.6.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "build/src/index.js",
+  "types": "build/src/index.d.ts",
+  "exports": {
+    ".": "./build/src/index.js",
+    "./register": "./build/src/register.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/open-telemetry/opentelemetry-js-contrib.git",
+    "directory": "packages/auto-instrumentations-node"
+  },
+  "scripts": {
+    "clean": "rimraf build/*",
+    "compile": "tsc -p .",
+    "compile:with-dependencies": "nx run-many -t compile -p @opentelemetry/auto-instrumentations-node",
+    "lint": "eslint . --ext=ts,js,mjs",
+    "lint:fix": "eslint . --ext=ts,js,mjs --fix",
+    "prepublishOnly": "npm run compile",
+    "tdd": "yarn test -- --watch-extensions ts --watch",
+    "test": "nyc mocha 'test/**/*.ts'",
+    "watch": "tsc -w"
+  },
+  "bugs": {
+    "url": "https://github.com/open-telemetry/opentelemetry-js-contrib/issues"
+  },
+  "peerDependencies": {
+    "@opentelemetry/api": "^1.4.1",
+    "@opentelemetry/core": "^2.0.0"
+  },
+  "devDependencies": {
+    "@opentelemetry/api": "^1.4.1",
+    "@opentelemetry/core": "^2.0.0",
+    "@types/mocha": "10.0.10",
+    "@types/node": "18.18.14",
+    "@types/sinon": "17.0.4",
+    "nyc": "17.1.0",
+    "rimraf": "5.0.10",
+    "sinon": "15.2.0",
+    "typescript": "5.0.4"
+  },
+  "dependencies": {
+    "@opentelemetry/instrumentation": "^0.203.0",
+    "@opentelemetry/instrumentation-amqplib": "^0.50.0",
+    "@opentelemetry/instrumentation-aws-lambda": "^0.54.1",
+    "@opentelemetry/instrumentation-aws-sdk": "^0.58.0",
+    "@opentelemetry/instrumentation-bunyan": "^0.49.0",
+    "@opentelemetry/instrumentation-cassandra-driver": "^0.49.0",
+    "@opentelemetry/instrumentation-connect": "^0.47.0",
+    "@opentelemetry/instrumentation-cucumber": "^0.19.0",
+    "@opentelemetry/instrumentation-dataloader": "^0.21.1",
+    "@opentelemetry/instrumentation-dns": "^0.47.0",
+    "@opentelemetry/instrumentation-express": "^0.52.0",
+    "@opentelemetry/instrumentation-fastify": "^0.48.0",
+    "@opentelemetry/instrumentation-fs": "^0.23.0",
+    "@opentelemetry/instrumentation-generic-pool": "^0.47.0",
+    "@opentelemetry/instrumentation-graphql": "^0.51.0",
+    "@opentelemetry/instrumentation-grpc": "^0.203.0",
+    "@opentelemetry/instrumentation-hapi": "^0.50.0",
+    "@opentelemetry/instrumentation-http": "^0.203.0",
+    "@opentelemetry/instrumentation-ioredis": "^0.51.0",
+    "@opentelemetry/instrumentation-kafkajs": "^0.13.0",
+    "@opentelemetry/instrumentation-knex": "^0.48.0",
+    "@opentelemetry/instrumentation-koa": "^0.51.0",
+    "@opentelemetry/instrumentation-lru-memoizer": "^0.48.0",
+    "@opentelemetry/instrumentation-memcached": "^0.47.0",
+    "@opentelemetry/instrumentation-mongodb": "^0.56.0",
+    "@opentelemetry/instrumentation-mongoose": "^0.50.0",
+    "@opentelemetry/instrumentation-mysql": "^0.49.0",
+    "@opentelemetry/instrumentation-mysql2": "^0.50.0",
+    "@opentelemetry/instrumentation-nestjs-core": "^0.49.0",
+    "@opentelemetry/instrumentation-net": "^0.47.0",
+    "@opentelemetry/instrumentation-oracledb": "^0.29.0",
+    "@opentelemetry/instrumentation-pg": "^0.56.1",
+    "@opentelemetry/instrumentation-pino": "^0.50.1",
+    "@opentelemetry/instrumentation-redis": "^0.52.0",
+    "@opentelemetry/instrumentation-restify": "^0.49.0",
+    "@opentelemetry/instrumentation-router": "^0.48.0",
+    "@opentelemetry/instrumentation-runtime-node": "^0.17.1",
+    "@opentelemetry/instrumentation-socket.io": "^0.50.0",
+    "@opentelemetry/instrumentation-tedious": "^0.22.0",
+    "@opentelemetry/instrumentation-undici": "^0.14.0",
+    "@opentelemetry/instrumentation-winston": "^0.48.1",
+    "@opentelemetry/resource-detector-alibaba-cloud": "^0.31.3",
+    "@opentelemetry/resource-detector-aws": "^2.3.0",
+    "@opentelemetry/resource-detector-azure": "^0.10.0",
+    "@opentelemetry/resource-detector-container": "^0.7.3",
+    "@opentelemetry/resource-detector-gcp": "^0.37.0",
+    "@opentelemetry/resources": "^2.0.0",
+    "@opentelemetry/sdk-node": "^0.203.0"
+  },
+  "files": [
+    "build/src/**/*.js",
+    "build/src/**/*.js.map",
+    "build/src/**/*.d.ts"
+  ],
+  "gitHead": "5861c1dd6dd15a9d450a9f7d6d6616d533cc9a59"
+}

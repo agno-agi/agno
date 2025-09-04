@@ -1,0 +1,56 @@
+---
+title: "Reference: voice.close() | Voice Providers | Mastra Docs"
+description: "Documentation for the close() method available in voice providers, which disconnects from real-time voice services."
+---
+
+# voice.close()
+
+The `close()` method disconnects from a real-time voice service and cleans up resources. This is important for properly ending voice sessions and preventing resource leaks.
+
+## Usage Example
+
+```typescript
+import { OpenAIRealtimeVoice } from "@mastra/voice-openai-realtime";
+import { getMicrophoneStream } from "@mastra/node-audio";
+
+// Initialize a real-time voice provider
+const voice = new OpenAIRealtimeVoice({
+  realtimeConfig: {
+    model: "gpt-4o-mini-realtime",
+    apiKey: process.env.OPENAI_API_KEY,
+  },
+});
+
+// Connect to the real-time service
+await voice.connect();
+
+// Start a conversation
+voice.speak("Hello, I'm your AI assistant!");
+
+// Stream audio from a microphone
+const microphoneStream = getMicrophoneStream();
+voice.send(microphoneStream);
+
+// When the conversation is complete
+setTimeout(() => {
+  // Close the connection and clean up resources
+  voice.close();
+  console.log("Voice session ended");
+}, 60000); // End after 1 minute
+```
+
+## Parameters
+
+This method does not accept any parameters.
+
+## Return Value
+
+This method does not return a value.
+
+## Notes
+
+- Always call `close()` when you're done with a real-time voice session to free up resources
+- After calling `close()`, you'll need to call `connect()` again if you want to start a new session
+- This method is primarily used with real-time voice providers that maintain persistent connections
+- If called on a voice provider that doesn't support real-time connections, it will log a warning and do nothing
+- Failing to close connections can lead to resource leaks and potential billing issues with voice service providers

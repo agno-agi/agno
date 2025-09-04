@@ -1,0 +1,70 @@
+---
+title: "Reference: suspend() | Control Flow | Mastra Docs"
+description: "Documentation for the suspend function in Mastra workflows, which pauses execution until resumed."
+---
+
+# suspend()
+
+Pauses workflow execution at the current step until explicitly resumed. The workflow state is persisted and can be continued later.
+
+## Usage Example
+
+```typescript
+const approvalStep = new LegacyStep({
+  id: "needsApproval",
+  execute: async ({ context, suspend }) => {
+    if (context.steps.amount > 1000) {
+      await suspend();
+    }
+    return { approved: true };
+  },
+});
+```
+
+## Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "metadata",
+      type: "Record<string, any>",
+      description: "Optional data to store with the suspended state",
+      isOptional: true,
+    },
+  ]}
+/>
+
+## Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "Promise<void>",
+      type: "Promise",
+      description: "Resolves when the workflow is successfully suspended",
+    },
+  ]}
+/>
+
+## Additional Examples
+
+Suspend with metadata:
+
+```typescript
+const reviewStep = new LegacyStep({
+  id: "review",
+  execute: async ({ context, suspend }) => {
+    await suspend({
+      reason: "Needs manager approval",
+      requestedBy: context.user,
+    });
+    return { reviewed: true };
+  },
+});
+```
+
+### Related
+
+- [Suspend & Resume Workflows](../../docs/workflows-legacy/suspend-and-resume.mdx)
+- [.resume()](./resume.mdx)
+- [.watch()](./watch.mdx)

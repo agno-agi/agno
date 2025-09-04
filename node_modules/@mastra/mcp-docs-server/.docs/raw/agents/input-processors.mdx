@@ -1,0 +1,282 @@
+---
+title: "Input Processors"
+description: "Learn how to use input processors to intercept and modify agent messages before they reach the language model."
+---
+
+# Input Processors
+
+Input Processors allow you to intercept, modify, validate, or filter messages _before_ they are sent to the language model. This is useful for implementing guardrails, content moderation, message transformation, and security controls.
+
+Processors operate on the messages in your conversation thread. They can modify, filter, or validate content, and even abort the request entirely if certain conditions are met.
+
+## Built-in Processors
+
+Mastra provides several built-in processors for common use cases:
+
+### `UnicodeNormalizer`
+
+This processor normalizes Unicode text to ensure consistent formatting and remove potentially problematic characters.
+
+```typescript copy showLineNumbers {9-11}
+import { Agent } from "@mastra/core/agent";
+import { UnicodeNormalizer } from "@mastra/core/processors";
+import { openai } from "@ai-sdk/openai";
+
+const agent = new Agent({
+  name: 'normalized-agent',
+  instructions: 'You are a helpful assistant',
+  model: openai("gpt-4o"),
+  inputProcessors: [
+    new UnicodeNormalizer({
+      stripControlChars: true,
+      collapseWhitespace: true,
+    }),
+  ],
+});
+```
+
+Available options:
+- `stripControlChars`: Remove control characters (default: false)
+- `preserveEmojis`: Keep emojis intact (default: true) 
+- `collapseWhitespace`: Collapse multiple spaces/newlines (default: true)
+- `trim`: Remove leading/trailing whitespace (default: true)
+
+### `ModerationProcessor`
+
+This processor provides content moderation using an LLM to detect inappropriate content across multiple categories.
+
+```typescript copy showLineNumbers {5-13}
+import { ModerationProcessor } from "@mastra/core/processors";
+
+const agent = new Agent({
+  inputProcessors: [
+    new ModerationProcessor({
+      model: openai("gpt-4.1-nano"), // Use a fast, cost-effective model
+      threshold: 0.7, // Confidence threshold for flagging
+      strategy: 'block', // Block flagged content
+      categories: ['hate', 'harassment', 'violence'], // Custom categories
+    }),
+  ],
+});
+```
+
+Available options:
+- `model`: Language model for moderation analysis (required)
+- `categories`: Array of categories to check (default: ['hate','hate/threatening','harassment','harassment/threatening','self-harm','self-harm/intent','self-harm/instructions','sexual','sexual/minors','violence','violence/graphic'])
+- `threshold`: Confidence threshold for flagging (0-1, default: 0.5)
+- `strategy`: Action when content is flagged (default: 'block')
+- `customInstructions`: Custom instructions for the moderation agent
+
+Strategies available:
+- `block`: Reject the request with an error (default)
+- `warn`: Log warning but allow content through
+- `filter`: Remove flagged messages but continue processing
+
+### `PromptInjectionDetector`
+
+This processor detects and prevents prompt injection attacks, jailbreaks, and system manipulation attempts.
+
+```typescript copy showLineNumbers {5-12}
+import { PromptInjectionDetector } from "@mastra/core/processors";
+
+const agent = new Agent({
+  inputProcessors: [
+    new PromptInjectionDetector({
+      model: openai("gpt-4.1-nano"),
+      threshold: 0.8, // Higher threshold for fewer false positives
+      strategy: 'rewrite', // Attempt to neutralize while preserving intent
+      detectionTypes: ['injection', 'jailbreak', 'system-override'],
+    }),
+  ],
+});
+```
+
+Available options:
+- `model`: Language model for injection detection (required)
+- `detectionTypes`: Array of injection types to detect (default: ['injection', 'jailbreak', 'system-override'])
+- `threshold`: Confidence threshold for flagging (0-1, default: 0.7)
+- `strategy`: Action when injection is detected (default: 'block')
+- `instructions`: Custom detection instructions for the agent
+- `includeScores`: Whether to include confidence scores in logs (default: false)
+
+Strategies available:
+- `block`: Reject the request (default)
+- `warn`: Log warning but allow through
+- `filter`: Remove flagged messages
+- `rewrite`: Attempt to neutralize the injection while preserving legitimate intent
+
+### `PIIDetector`
+
+This processor detects and optionally redacts personally identifiable information (PII) from messages.
+
+```typescript copy showLineNumbers {5-14}
+import { PIIDetector } from "@mastra/core/processors";
+
+const agent = new Agent({
+  inputProcessors: [
+    new PIIDetector({
+      model: openai("gpt-4.1-nano"),
+      threshold: 0.6,
+      strategy: 'redact', // Automatically redact detected PII
+      detectionTypes: ['email', 'phone', 'credit-card', 'ssn', 'api-key', 'crypto-wallet', 'iban'],
+      redactionMethod: 'mask', // Preserve format while masking
+      preserveFormat: true, // Keep original structure in redacted values
+      includeDetections: true, // Log details for compliance auditing
+    }),
+  ],
+});
+```
+
+Available options:
+- `model`: Language model for PII detection (required)
+- `detectionTypes`: Array of PII types to detect (default: ['email', 'phone', 'credit-card', 'ssn', 'api-key', 'ip-address', 'name', 'address', 'date-of-birth', 'url', 'uuid', 'crypto-wallet', 'iban'])
+- `threshold`: Confidence threshold for flagging (0-1, default: 0.6)
+- `strategy`: Action when PII is detected (default: 'block')
+- `redactionMethod`: How to redact PII ('mask', 'hash', 'remove', 'placeholder', default: 'mask')
+- `preserveFormat`: Maintain PII structure during redaction (default: true)
+- `includeDetections`: Include detection details in logs for compliance (default: false)
+- `instructions`: Custom detection instructions for the agent
+
+Strategies available:
+- `block`: Reject requests containing PII (default)
+- `warn`: Log warning but allow through
+- `filter`: Remove messages containing PII
+- `redact`: Replace PII with placeholder values
+
+### `LanguageDetector`
+
+This processor detects the language of incoming messages and can automatically translate them to a target language.
+
+```typescript copy showLineNumbers {5-12}
+import { LanguageDetector } from "@mastra/core/processors";
+
+const agent = new Agent({
+  inputProcessors: [
+    new LanguageDetector({
+      model: openai("gpt-4o-mini"),
+      targetLanguages: ['English', 'en'], // Accept English content
+      strategy: 'translate', // Auto-translate non-English content
+      threshold: 0.8, // High confidence threshold
+    }),
+  ],
+});
+```
+
+Available options:
+- `model`: Language model for detection and translation (required)
+- `targetLanguages`: Array of target languages (language names or ISO codes)
+- `threshold`: Confidence threshold for language detection (0-1, default: 0.7)
+- `strategy`: Action when non-target language is detected (default: 'detect')
+- `preserveOriginal`: Keep original content in metadata (default: true)
+- `instructions`: Custom detection instructions for the agent
+
+Strategies available:
+- `detect`: Only detect language, don't translate (default)
+- `translate`: Automatically translate to target language
+- `block`: Reject content not in target language
+- `warn`: Log warning but allow content through
+
+## Applying Multiple Processors
+
+You can chain multiple processors. They execute sequentially in the order they appear in the `inputProcessors` array. The output of one processor becomes the input for the next.
+
+**Order matters!** Generally, it's best practice to place text normalization first, security checks next, and content modification last.
+
+```typescript copy showLineNumbers {9-18}
+import { Agent } from "@mastra/core/agent";
+import { 
+  UnicodeNormalizer, 
+  ModerationProcessor, 
+  PromptInjectionDetector,
+  PIIDetector 
+} from "@mastra/core/processors";
+
+const secureAgent = new Agent({
+  inputProcessors: [
+    // 1. Normalize text first
+    new UnicodeNormalizer({ stripControlChars: true }),
+    // 2. Check for security threats
+    new PromptInjectionDetector({ model: openai("gpt-4.1-nano") }),
+    // 3. Moderate content
+    new ModerationProcessor({ model: openai("gpt-4.1-nano") }),
+    // 4. Handle PII last
+    new PIIDetector({ model: openai("gpt-4.1-nano"), strategy: 'redact' }),
+  ],
+});
+```
+
+## Creating Custom Processors
+
+You can create custom processors by implementing the `Processor` interface. A Processor can be used for input processing when it implements the `processInput` method.
+
+```typescript copy showLineNumbers {4-19,23-26}
+import type { Processor, MastraMessageV2, TripWire } from "@mastra/core/processors";
+
+class MessageLengthLimiter implements Processor {
+  readonly name = 'message-length-limiter';
+  
+  constructor(private maxLength: number = 1000) {}
+
+  processInput({ messages, abort }: { 
+    messages: MastraMessageV2[]; 
+    abort: (reason?: string) => never 
+  }): MastraMessageV2[] {
+    // Check total message length
+    try {
+      const totalLength = messages.reduce((sum, msg) => {
+        return sum + msg.content.parts
+          .filter(part => part.type === 'text')
+          .reduce((partSum, part) => partSum + (part as any).text.length, 0);
+      }, 0);
+      
+      if (totalLength > this.maxLength) {
+        abort(`Message too long: ${totalLength} characters (max: ${this.maxLength})`); // throws a TripWire error
+      }
+    } catch (error) {
+      if (error instanceof TripWire) {
+        throw error; // Re-throw tripwire errors
+      }
+      throw new Error(`Length validation failed: ${error instanceof Error ? error.message : 'Unknown error'}`); // application level throw a standard error
+    }
+    
+    return messages;
+  }
+}
+
+// Use the custom processor
+const agent = new Agent({
+  inputProcessors: [
+    new MessageLengthLimiter(2000), // Limit to 2000 characters
+  ],
+});
+```
+
+When creating custom processors:
+- Always return the `messages` array (potentially modified)
+- Use `abort(reason)` to terminate processing early. Abort is used to simulate blocking a message. errors thrown with `abort` will be an instance of TripWire. For code/application level errors, throw standard errors.
+- Mutate the input messages directly, make sure to mutate both the parts and content of a message.
+- Keep processors focused on a single responsibility
+- If using an agent inside your processor, use a fast model, limit the size of the response from it as much as possible (every token slows down the response exponentially), and make the system prompt as concise as possible, these are both latency bottlenecks.
+
+## Integration with Agent Methods
+
+Input processors work with the `generate()`, `stream()`, and `streamVNext()` methods. The entire processor pipeline completes before the agent begins generating or streaming a response.
+
+```typescript copy showLineNumbers
+// Processors run before generate()
+const result = await agent.generate('Hello');
+
+// Processors also run before streamVNext()
+const stream = await agent.streamVNext('Hello');
+for await (const chunk of stream) {
+  console.log(chunk);
+}
+```
+
+If any processor calls `abort()`, the request terminates immediately and subsequent processors are not executed. The agent returns a 200 response with details (`result.tripwireReason`) about why the request was blocked.
+
+## Output Processors
+
+While input processors handle user messages before they reach the language model, **output processors** handle the LLM's responses after generation but before they're returned to the user. This is useful for response validation, content filtering, and safety controls on LLM-generated content.
+
+See the [Output Processors documentation](/docs/agents/output-processors) for details on processing LLM responses. 

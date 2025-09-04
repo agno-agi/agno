@@ -1,0 +1,114 @@
+---
+title: "Reference: Answer Relevancy | Scorers | Mastra Docs"
+description: Documentation for the Answer Relevancy Scorer in Mastra, which evaluates how well LLM outputs address the input query.
+---
+
+# Answer Relevancy Scorer
+
+The `createAnswerRelevancyScorer()` function accepts a single options object with the following properties:
+
+For usage example, see the [Answer Relevancy Examples](/examples/scorers/answer-relevancy).
+
+## Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "model",
+      type: "LanguageModel",
+      required: true,
+      description: "Configuration for the model used to evaluate relevancy.",
+    },
+    {
+      name: "uncertaintyWeight",
+      type: "number",
+      required: false,
+      defaultValue: "0.3",
+      description: "Weight given to 'unsure' verdicts in scoring (0-1).",
+    },
+    {
+      name: "scale",
+      type: "number",
+      required: false,
+      defaultValue: "1",
+      description: "Maximum score value.",
+    },
+  ]}
+/>
+
+This function returns an instance of the MastraScorer class. The `.run()` method accepts the same input as other scorers (see the [MastraScorer reference](./mastra-scorer)), but the return value includes LLM-specific fields as documented below.
+
+## .run() Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "runId",
+      type: "string",
+      description: "The id of the run (optional).",
+    },
+    {
+      name: "score",
+      type: "number",
+      description: "Relevancy score (0 to scale, default 0-1)",
+    },
+    {
+      name: "preprocessPrompt",
+      type: "string",
+      description: "The prompt sent to the LLM for the preprocess step (optional).",
+    },
+    {
+      name: "preprocessStepResult",
+      type: "object",
+      description: "Object with extracted statements: { statements: string[] }",
+    },
+    {
+      name: "analyzePrompt",
+      type: "string",
+      description: "The prompt sent to the LLM for the analyze step (optional).",
+    },
+    {
+      name: "analyzeStepResult",
+      type: "object",
+      description: "Object with results: { results: Array<{ result: 'yes' | 'unsure' | 'no', reason: string }> }",
+    },
+    {
+      name: "generateReasonPrompt",
+      type: "string",
+      description: "The prompt sent to the LLM for the reason step (optional).",
+    },
+    {
+      name: "reason",
+      type: "string",
+      description: "Explanation of the score.",
+    },
+  ]}
+/>
+
+## Scoring Details
+
+The scorer evaluates relevancy through query-answer alignment, considering completeness and detail level, but not factual correctness.
+
+### Scoring Process
+
+1. **Statement Preprocess:**
+   - Breaks output into meaningful statements while preserving context.
+2. **Relevance Analysis:**
+   - Each statement is evaluated as:
+     - "yes": Full weight for direct matches
+     - "unsure": Partial weight (default: 0.3) for approximate matches
+     - "no": Zero weight for irrelevant content
+3. **Score Calculation:**
+   - `((direct + uncertainty * partial) / total_statements) * scale`
+
+### Score Interpretation
+
+- 1.0: Perfect relevance - complete and accurate
+- 0.7-0.9: High relevance - minor gaps or imprecisions
+- 0.4-0.6: Moderate relevance - significant gaps
+- 0.1-0.3: Low relevance - major issues
+- 0.0: No relevance - incorrect or off-topic
+
+## Related
+
+- [Faithfulness Scorer](./faithfulness)

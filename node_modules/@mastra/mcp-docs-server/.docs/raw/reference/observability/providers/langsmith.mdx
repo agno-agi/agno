@@ -1,0 +1,48 @@
+---
+title: "Reference: LangSmith Integration | Mastra Observability Docs"
+description: Documentation for integrating LangSmith with Mastra, a platform for debugging, testing, evaluating, and monitoring LLM applications.
+---
+
+# LangSmith
+
+LangSmith is LangChain's platform for debugging, testing, evaluating, and monitoring LLM applications.
+
+> **Note**: Currently, this integration only traces AI-related calls in your application. Other types of operations are not captured in the telemetry data.
+
+## Configuration
+
+To use LangSmith with Mastra, you'll need to configure the following environment variables:
+
+```env
+LANGSMITH_TRACING=true
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_API_KEY=your-api-key
+LANGSMITH_PROJECT=your-project-name
+```
+
+## Implementation
+
+Here's how to configure Mastra to use LangSmith:
+
+```typescript
+import { Mastra } from "@mastra/core";
+import { AISDKExporter } from "langsmith/vercel";
+
+export const mastra = new Mastra({
+  // ... other config
+  telemetry: {
+    serviceName: "your-service-name",
+    enabled: true,
+    export: {
+      type: "custom",
+      exporter: new AISDKExporter(),
+    },
+  },
+});
+```
+
+## Dashboard
+
+Access your traces and analytics in the LangSmith dashboard at [smith.langchain.com](https://smith.langchain.com)
+
+> **Note**: Even if you run your workflows, you may not see data appearing in a new project. You will need to sort by Name column to see all projects, select your project, then filter by LLM Calls instead of Root Runs.

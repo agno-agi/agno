@@ -1,0 +1,211 @@
+---
+title: "Reference: Tool Call Accuracy | Scorers | Mastra Docs"
+description: Documentation for the Tool Call Accuracy Scorers in Mastra, which evaluate whether LLM outputs call the correct tools from available options.
+---
+
+# Tool Call Accuracy Scorers
+
+Mastra provides two tool call accuracy scorers for evaluating whether an LLM selects the correct tools from available options:
+
+1. **Code-based scorer** - Deterministic evaluation using exact tool matching
+2. **LLM-based scorer** - Semantic evaluation using AI to assess appropriateness
+
+For usage examples, see the [Tool Call Accuracy Examples](/examples/scorers/tool-call-accuracy).
+
+## Code-Based Tool Call Accuracy Scorer
+
+The `createToolCallAccuracyScorerCode()` function from `@mastra/evals/scorers/code` provides deterministic binary scoring based on exact tool matching and supports both strict and lenient evaluation modes, as well as tool calling order validation.
+
+### Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "expectedTool",
+      type: "string",
+      description: "The name of the tool that should be called for the given task. Ignored when expectedToolOrder is provided.",
+      required: false,
+    },
+    {
+      name: "strictMode",
+      type: "boolean",
+      description: "Controls evaluation strictness. For single tool mode: only exact single tool calls accepted. For order checking mode: tools must match exactly with no extra tools allowed.",
+      required: false,
+      default: "false",
+    },
+    {
+      name: "expectedToolOrder",
+      type: "string[]",
+      description: "Array of tool names in the expected calling order. When provided, enables order checking mode and ignores expectedTool parameter.",
+      required: false,
+    },
+  ]}
+/>
+
+This function returns an instance of the MastraScorer class. See the [MastraScorer reference](./mastra-scorer) for details on the `.run()` method and its input/output.
+
+### Evaluation Modes
+
+The code-based scorer operates in two distinct modes:
+
+#### Single Tool Mode
+
+When `expectedToolOrder` is not provided, the scorer evaluates single tool selection:
+
+- **Standard Mode (strictMode: false)**: Returns `1` if the expected tool is called, regardless of other tools
+- **Strict Mode (strictMode: true)**: Returns `1` only if exactly one tool is called and it matches the expected tool
+
+#### Order Checking Mode
+
+When `expectedToolOrder` is provided, the scorer validates tool calling sequence:
+
+- **Strict Order (strictMode: true)**: Tools must be called in exactly the specified order with no extra tools
+- **Flexible Order (strictMode: false)**: Expected tools must appear in correct relative order (extra tools allowed)
+
+### Examples
+
+```typescript
+import { createToolCallAccuracyScorerCode } from '@mastra/evals/scorers/code';
+
+// Single tool validation
+const scorer = createToolCallAccuracyScorerCode({
+  expectedTool: 'weather-tool'
+});
+
+// Strict single tool (no other tools allowed)
+const strictScorer = createToolCallAccuracyScorerCode({
+  expectedTool: 'calculator-tool',
+  strictMode: true
+});
+
+// Tool order validation
+const orderScorer = createToolCallAccuracyScorerCode({
+  expectedTool: 'search-tool', // ignored when order is specified
+  expectedToolOrder: ['search-tool', 'weather-tool'],
+  strictMode: true // exact match required
+});
+```
+
+## LLM-Based Tool Call Accuracy Scorer
+
+The `createToolCallAccuracyScorerLLM()` function from `@mastra/evals/scorers/llm` uses an LLM to evaluate whether the tools called by an agent are appropriate for the given user request, providing semantic evaluation rather than exact matching.
+
+### Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "model",
+      type: "MastraLanguageModel",
+      description: "The LLM model to use for evaluating tool appropriateness",
+      required: true,
+    },
+    {
+      name: "availableTools",
+      type: "Array<{name: string, description: string}>",
+      description: "List of available tools with their descriptions for context",
+      required: true,
+    },
+  ]}
+/>
+
+### Features
+
+The LLM-based scorer provides:
+
+- **Semantic Evaluation**: Understands context and user intent
+- **Appropriateness Assessment**: Distinguishes between "helpful" and "appropriate" tools
+- **Clarification Handling**: Recognizes when agents appropriately ask for clarification
+- **Missing Tool Detection**: Identifies tools that should have been called
+- **Reasoning Generation**: Provides explanations for scoring decisions
+
+### Evaluation Process
+
+1. **Extract Tool Calls**: Identifies tools mentioned in agent output
+2. **Analyze Appropriateness**: Evaluates each tool against user request
+3. **Generate Score**: Calculates score based on appropriate vs total tool calls
+4. **Generate Reasoning**: Provides human-readable explanation
+
+### Examples
+
+```typescript
+import { createToolCallAccuracyScorerLLM } from '@mastra/evals/scorers/llm';
+import { openai } from '@ai-sdk/openai';
+
+const llmScorer = createToolCallAccuracyScorerLLM({
+  model: openai('gpt-4o-mini'),
+  availableTools: [
+    {
+      name: 'weather-tool',
+      description: 'Get current weather information for any location'
+    },
+    {
+      name: 'search-tool',
+      description: 'Search the web for information'
+    },
+    {
+      name: 'calendar-tool',
+      description: 'Check calendar events and scheduling'
+    }
+  ]
+});
+
+const result = await llmScorer.run(agentRun);
+console.log(result.score); // 0.0 to 1.0
+console.log(result.reason); // Explanation of the score
+```
+
+## Choosing Between Scorers
+
+### Use the Code-Based Scorer When:
+
+- You need **deterministic, reproducible** results
+- You want to test **exact tool matching**
+- You need to validate **specific tool sequences**
+- Speed and cost are priorities (no LLM calls)
+- You're running automated tests
+
+### Use the LLM-Based Scorer When:
+
+- You need **semantic understanding** of appropriateness
+- Tool selection depends on **context and intent**
+- You want to handle **edge cases** like clarification requests
+- You need **explanations** for scoring decisions
+- You're evaluating **production agent behavior**
+
+## Scoring Details
+
+### Code-Based Scoring
+
+- **Binary scores**: Always returns 0 or 1
+- **Deterministic**: Same input always produces same output
+- **Fast**: No external API calls
+
+### LLM-Based Scoring
+
+- **Fractional scores**: Returns values between 0.0 and 1.0
+- **Context-aware**: Considers user intent and appropriateness
+- **Explanatory**: Provides reasoning for scores
+
+## Use Cases
+
+### Code-Based Scorer Use Cases
+
+- **Unit Testing**: Verify specific tool selection behavior
+- **Regression Testing**: Ensure tool selection doesn't change
+- **Workflow Validation**: Check tool sequences in multi-step processes
+- **CI/CD Pipelines**: Fast, deterministic validation
+
+### LLM-Based Scorer Use Cases
+
+- **Quality Assurance**: Evaluate production agent behavior
+- **A/B Testing**: Compare different agent implementations
+- **User Intent Alignment**: Ensure tools match user needs
+- **Edge Case Handling**: Evaluate clarification and error scenarios
+
+## Related
+
+- [Answer Relevancy Scorer](./answer-relevancy)
+- [Completeness Scorer](./completeness)
+- [Faithfulness Scorer](./faithfulness)
+- [Custom Scorers](/docs/scorers/custom-scorers)

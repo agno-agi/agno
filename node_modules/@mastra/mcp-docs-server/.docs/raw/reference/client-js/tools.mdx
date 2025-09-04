@@ -1,0 +1,49 @@
+---
+title: Mastra Client Tools API
+description: Learn how to interact with and execute tools available in the Mastra platform using the client-js SDK.
+---
+
+# Tools API
+
+The Tools API provides methods to interact with and execute tools available in the Mastra platform.
+
+## Getting All Tools
+
+Retrieve a list of all available tools:
+
+```typescript
+const tools = await mastraClient.getTools();
+```
+
+## Working with a Specific Tool
+
+Get an instance of a specific tool:
+
+```typescript
+const tool = mastraClient.getTool("tool-id");
+```
+
+## Tool Methods
+
+### Get Tool Details
+
+Retrieve detailed information about a tool:
+
+```typescript
+const details = await tool.details();
+```
+
+### Execute Tool
+
+Execute a tool with specific arguments:
+
+```typescript
+const result = await tool.execute({
+  args: {
+    param1: "value1",
+    param2: "value2",
+  },
+  threadId: "thread-1", // Optional: Thread context
+  resourceid: "resource-1", // Optional: Resource identifier
+});
+```

@@ -1,0 +1,53 @@
+{
+  "name": "@opentelemetry/sql-common",
+  "version": "0.41.0",
+  "description": "Utilities for SQL instrumentations",
+  "main": "build/src/index.js",
+  "types": "build/src/index.d.ts",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "lint": "eslint . --ext .ts",
+    "lint:fix": "eslint . --ext .ts --fix",
+    "compile": "tsc --build tsconfig.json",
+    "prewatch": "npm run precompile",
+    "prepublishOnly": "npm run compile",
+    "test": "nyc mocha 'test/**/*.test.ts'",
+    "watch": "tsc -w"
+  },
+  "repository": "open-telemetry/opentelemetry-js-contrib",
+  "keywords": [
+    "opentelemetry",
+    "contrib",
+    "sql"
+  ],
+  "files": [
+    "build/**/*.js",
+    "build/**/*.js.map",
+    "build/**/*.d.ts"
+  ],
+  "author": "OpenTelemetry Authors",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": "^18.19.0 || >=20.6.0"
+  },
+  "bugs": {
+    "url": "https://github.com/open-telemetry/opentelemetry-js-contrib/issues"
+  },
+  "homepage": "https://github.com/open-telemetry/opentelemetry-js-contrib/tree/main/packages/sql-common#readme",
+  "peerDependencies": {
+    "@opentelemetry/api": "^1.1.0"
+  },
+  "dependencies": {
+    "@opentelemetry/core": "^2.0.0"
+  },
+  "devDependencies": {
+    "@opentelemetry/api": "^1.1.0",
+    "@types/mocha": "^10.0.0",
+    "@types/node": "18.18.14",
+    "nyc": "15.1.0",
+    "typescript": "5.0.4"
+  },
+  "gitHead": "32abc4c3c01d0e78e10022c74b6805b06e0e1fe7"
+}

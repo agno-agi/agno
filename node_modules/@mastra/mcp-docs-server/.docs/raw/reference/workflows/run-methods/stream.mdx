@@ -1,0 +1,87 @@
+---
+title: "Reference: Run.stream() | Workflows | Mastra Docs"
+description: Documentation for the `Run.stream()` method in workflows, which allows you to monitor the execution of a workflow run as a stream.
+---
+
+# Run.stream()
+
+The `.stream()` method allows you to monitor the execution of a workflow run, providing real-time updates on the status of steps.
+
+## Usage example
+
+```typescript showLineNumbers copy
+const run = await workflow.createRunAsync();
+
+const stream = await run.stream({
+  inputData: {
+    value: "initial data",
+  },
+});
+```
+
+## Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "inputData",
+      type: "z.infer<TInput>",
+      description: "Input data that matches the workflow's input schema",
+      isOptional: true,
+    },
+    {
+      name: "runtimeContext",
+      type: "RuntimeContext",
+      description: "Runtime context data to use during workflow execution",
+      isOptional: true,
+    },
+  ]}
+/>
+
+## Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "stream",
+      type: "ReadableStream<StreamEvent>",
+      description: "A readable stream that emits workflow execution events in real-time",
+    },
+    {
+      name: "getWorkflowState",
+      type: "() => Promise<WorkflowResult<TOutput, TSteps>>",
+      description: "A function that returns a promise resolving to the final workflow result",
+    },
+  ]}
+/>
+
+## Extended usage example
+
+```typescript showLineNumbers copy
+const { getWorkflowState } = await run.stream({
+  inputData: {
+    value: "initial data"
+  }
+});
+
+const result = await getWorkflowState();
+```
+
+## Stream Events
+
+The stream emits various event types during workflow execution. Each event has a `type` field and a `payload` containing relevant data:
+
+- **`start`**: Workflow execution begins
+- **`step-start`**: A step begins execution
+- **`tool-call`**: A tool call is initiated
+- **`tool-call-streaming-start`**: Tool call streaming begins
+- **`tool-call-delta`**: Incremental tool output updates
+- **`step-result`**: A step completes with results
+- **`step-finish`**: A step finishes execution
+- **`finish`**: Workflow execution completes
+
+
+## Related
+
+- [Workflows overview](../../../docs/workflows/overview.mdx#run-workflow)
+- [Workflow.createRunAsync()](../create-run.mdx)

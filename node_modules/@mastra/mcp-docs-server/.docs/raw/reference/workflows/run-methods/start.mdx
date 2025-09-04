@@ -1,0 +1,80 @@
+---
+title: "Reference: Run.start() | Workflows | Mastra Docs"
+description: Documentation for the `Run.start()` method in workflows, which starts a workflow run with input data.
+---
+
+# Run.start()
+
+The `.start()` method starts a workflow run with input data, allowing you to execute the workflow from the beginning.
+
+## Usage example
+
+```typescript showLineNumbers copy
+const run = await workflow.createRunAsync();
+
+const result = await run.start({
+  inputData: {
+    value: "initial data",
+  },
+});
+```
+
+## Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "inputData",
+      type: "z.infer<TInput>",
+      description: "Input data that matches the workflow's input schema",
+      isOptional: true,
+    },
+    {
+      name: "runtimeContext",
+      type: "RuntimeContext",
+      description: "Runtime context data to use during workflow execution",
+      isOptional: true,
+    },
+    {
+      name: "writableStream",
+      type: "WritableStream<ChunkType>",
+      description: "Optional writable stream for streaming workflow output",
+      isOptional: true,
+    },
+  ]}
+/>
+
+## Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "result",
+      type: "Promise<WorkflowResult<TOutput, TSteps>>",
+      description: "A promise that resolves to the workflow execution result containing step outputs and status",
+    },
+  ]}
+/>
+
+## Extended usage example
+
+```typescript showLineNumbers copy
+import { RuntimeContext } from "@mastra/core/runtime-context";
+
+const run = await workflow.createRunAsync();
+
+const runtimeContext = new RuntimeContext();
+runtimeContext.set("variable", false);
+
+const result = await run.start({
+  inputData: {
+    value: "initial data"
+  },
+  runtimeContext
+});
+```
+
+## Related
+
+- [Workflows overview](../../../docs/workflows/overview.mdx#run-workflow)
+- [Workflow.createRunAsync()](../create-run.mdx)

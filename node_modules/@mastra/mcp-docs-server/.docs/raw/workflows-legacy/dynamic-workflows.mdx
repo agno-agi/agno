@@ -1,0 +1,237 @@
+---
+title: "Dynamic Workflows (Legacy) | Mastra Docs"
+description: "Learn how to create dynamic workflows within legacy workflow steps, allowing for flexible workflow creation based on runtime conditions."
+---
+
+# Dynamic Workflows (Legacy)
+
+This guide demonstrates how to create dynamic workflows within a workflow step. This advanced pattern allows you to create and execute workflows on the fly based on runtime conditions.
+
+## Overview
+
+Dynamic workflows are useful when you need to create workflows based on runtime data.
+
+## Implementation
+
+The key to creating dynamic workflows is accessing the Mastra instance from within a step's `execute` function and using it to create and run a new workflow.
+
+### Basic Example
+
+```typescript
+import { Mastra } from "@mastra/core";
+import { LegacyStep, LegacyWorkflow } from "@mastra/core/workflows/legacy";
+import { z } from "zod";
+
+const isMastra = (mastra: any): mastra is Mastra => {
+  return mastra && typeof mastra === "object" && mastra instanceof Mastra;
+};
+
+// Step that creates and runs a dynamic workflow
+const createDynamicWorkflow = new LegacyStep({
+  id: "createDynamicWorkflow",
+  outputSchema: z.object({
+    dynamicWorkflowResult: z.any(),
+  }),
+  execute: async ({ context, mastra }) => {
+    if (!mastra) {
+      throw new Error("Mastra instance not available");
+    }
+
+    if (!isMastra(mastra)) {
+      throw new Error("Invalid Mastra instance");
+    }
+
+    const inputData = context.triggerData.inputData;
+
+    // Create a new dynamic workflow
+    const dynamicWorkflow = new LegacyWorkflow({
+      name: "dynamic-workflow",
+      mastra, // Pass the mastra instance to the new workflow
+      triggerSchema: z.object({
+        dynamicInput: z.string(),
+      }),
+    });
+
+    // Define steps for the dynamic workflow
+    const dynamicStep = new LegacyStep({
+      id: "dynamicStep",
+      execute: async ({ context }) => {
+        const dynamicInput = context.triggerData.dynamicInput;
+        return {
+          processedValue: `Processed: ${dynamicInput}`,
+        };
+      },
+    });
+
+    // Build and commit the dynamic workflow
+    dynamicWorkflow.step(dynamicStep).commit();
+
+    // Create a run and execute the dynamic workflow
+    const run = dynamicWorkflow.createRun();
+    const result = await run.start({
+      triggerData: {
+        dynamicInput: inputData,
+      },
+    });
+
+    let dynamicWorkflowResult;
+
+    if (result.results["dynamicStep"]?.status === "success") {
+      dynamicWorkflowResult =
+        result.results["dynamicStep"]?.output.processedValue;
+    } else {
+      throw new Error("Dynamic workflow failed");
+    }
+
+    // Return the result from the dynamic workflow
+    return {
+      dynamicWorkflowResult,
+    };
+  },
+});
+
+// Main workflow that uses the dynamic workflow creator
+const mainWorkflow = new LegacyWorkflow({
+  name: "main-workflow",
+  triggerSchema: z.object({
+    inputData: z.string(),
+  }),
+  mastra: new Mastra(),
+});
+
+mainWorkflow.step(createDynamicWorkflow).commit();
+
+// Register the workflow with Mastra
+export const mastra = new Mastra({
+  legacy_workflows: { mainWorkflow },
+});
+
+const run = mainWorkflow.createRun();
+const result = await run.start({
+  triggerData: {
+    inputData: "test",
+  },
+});
+```
+
+## Advanced Example: Workflow Factory
+
+You can create a workflow factory that generates different workflows based on input parameters:
+
+```typescript
+const isMastra = (mastra: any): mastra is Mastra => {
+  return mastra && typeof mastra === "object" && mastra instanceof Mastra;
+};
+
+const workflowFactory = new LegacyStep({
+  id: "workflowFactory",
+  inputSchema: z.object({
+    workflowType: z.enum(["simple", "complex"]),
+    inputData: z.string(),
+  }),
+  outputSchema: z.object({
+    result: z.any(),
+  }),
+  execute: async ({ context, mastra }) => {
+    if (!mastra) {
+      throw new Error("Mastra instance not available");
+    }
+
+    if (!isMastra(mastra)) {
+      throw new Error("Invalid Mastra instance");
+    }
+
+    // Create a new dynamic workflow based on the type
+    const dynamicWorkflow = new LegacyWorkflow({
+      name: `dynamic-${context.workflowType}-workflow`,
+      mastra,
+      triggerSchema: z.object({
+        input: z.string(),
+      }),
+    });
+
+    if (context.workflowType === "simple") {
+      // Simple workflow with a single step
+      const simpleStep = new Step({
+        id: "simpleStep",
+        execute: async ({ context }) => {
+          return {
+            result: `Simple processing: ${context.triggerData.input}`,
+          };
+        },
+      });
+
+      dynamicWorkflow.step(simpleStep).commit();
+    } else {
+      // Complex workflow with multiple steps
+      const step1 = new LegacyStep({
+        id: "step1",
+        outputSchema: z.object({
+          intermediateResult: z.string(),
+        }),
+        execute: async ({ context }) => {
+          return {
+            intermediateResult: `First processing: ${context.triggerData.input}`,
+          };
+        },
+      });
+
+      const step2 = new LegacyStep({
+        id: "step2",
+        execute: async ({ context }) => {
+          const intermediate = context.getStepResult(step1).intermediateResult;
+          return {
+            finalResult: `Second processing: ${intermediate}`,
+          };
+        },
+      });
+
+      dynamicWorkflow.step(step1).then(step2).commit();
+    }
+
+    // Execute the dynamic workflow
+    const run = dynamicWorkflow.createRun();
+    const result = await run.start({
+      triggerData: {
+        input: context.inputData,
+      },
+    });
+
+    // Return the appropriate result based on workflow type
+    if (context.workflowType === "simple") {
+      return {
+        // @ts-ignore
+        result: result.results["simpleStep"]?.output,
+      };
+    } else {
+      return {
+        // @ts-ignore
+        result: result.results["step2"]?.output,
+      };
+    }
+  },
+});
+```
+
+## Important Considerations
+
+1. **Mastra Instance**: The `mastra` parameter in the `execute` function provides access to the Mastra instance, which is essential for creating dynamic workflows.
+
+2. **Error Handling**: Always check if the Mastra instance is available before attempting to create a dynamic workflow.
+
+3. **Resource Management**: Dynamic workflows consume resources, so be mindful of creating too many workflows in a single execution.
+
+4. **Workflow Lifecycle**: Dynamic workflows are not automatically registered with the main Mastra instance. They exist only for the duration of the step execution unless you explicitly register them.
+
+5. **Debugging**: Debugging dynamic workflows can be challenging. Consider adding detailed logging to track their creation and execution.
+
+## Use Cases
+
+- **Conditional Workflow Selection**: Choose different workflow patterns based on input data
+- **Parameterized Workflows**: Create workflows with dynamic configurations
+- **Workflow Templates**: Use templates to generate specialized workflows
+- **Multi-tenant Applications**: Create isolated workflows for different tenants
+
+## Conclusion
+
+Dynamic workflows provide a powerful way to create flexible, adaptable workflow systems. By leveraging the Mastra instance within step execution, you can create workflows that respond to runtime conditions and requirements.

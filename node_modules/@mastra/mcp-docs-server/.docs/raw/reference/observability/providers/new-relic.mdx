@@ -1,0 +1,40 @@
+---
+title: "Reference: New Relic Integration | Mastra Observability Docs"
+description: Documentation for integrating New Relic with Mastra, a comprehensive observability platform supporting OpenTelemetry for full-stack monitoring.
+---
+
+# New Relic
+
+New Relic is a comprehensive observability platform that supports OpenTelemetry (OTLP) for full-stack monitoring.
+
+## Configuration
+
+To use New Relic with Mastra via OTLP, configure these environment variables:
+
+```env
+OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.nr-data.net:4317
+OTEL_EXPORTER_OTLP_HEADERS="api-key=your_license_key"
+```
+
+## Implementation
+
+Here's how to configure Mastra to use New Relic:
+
+```typescript
+import { Mastra } from "@mastra/core";
+
+export const mastra = new Mastra({
+  // ... other config
+  telemetry: {
+    serviceName: "your-service-name",
+    enabled: true,
+    export: {
+      type: "otlp",
+    },
+  },
+});
+```
+
+## Dashboard
+
+View your telemetry data in the New Relic One dashboard at [one.newrelic.com](https://one.newrelic.com)

@@ -1,0 +1,69 @@
+{
+  "name": "@opentelemetry/instrumentation-aws-lambda",
+  "version": "0.54.1",
+  "description": "OpenTelemetry instrumentation for AWS Lambda function invocations",
+  "main": "build/src/index.js",
+  "types": "build/src/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/open-telemetry/opentelemetry-js-contrib.git",
+    "directory": "packages/instrumentation-aws-lambda"
+  },
+  "scripts": {
+    "test": "nyc mocha 'test/**/*.test.ts'",
+    "tdd": "npm run test -- --watch-extensions ts --watch",
+    "clean": "rimraf build/*",
+    "lint": "eslint . --ext=ts,js,mjs",
+    "lint:fix": "eslint . --ext=ts,js,mjs --fix",
+    "lint:readme": "node ../../scripts/lint-readme.js",
+    "prepublishOnly": "npm run compile",
+    "version:update": "node ../../scripts/version-update.js",
+    "compile:with-dependencies": "nx run-many -t compile -p @opentelemetry/instrumentation-aws-lambda",
+    "compile": "tsc -p ."
+  },
+  "keywords": [
+    "aws-lambda",
+    "instrumentation",
+    "nodejs",
+    "opentelemetry",
+    "profiling",
+    "tracing"
+  ],
+  "author": "OpenTelemetry Authors",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": "^18.19.0 || >=20.6.0"
+  },
+  "files": [
+    "build/src/**/*.js",
+    "build/src/**/*.js.map",
+    "build/src/**/*.d.ts"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@opentelemetry/api": "^1.3.0"
+  },
+  "devDependencies": {
+    "@opentelemetry/api": "^1.3.0",
+    "@opentelemetry/core": "^2.0.0",
+    "@opentelemetry/propagator-aws-xray": "^2.1.1",
+    "@opentelemetry/propagator-aws-xray-lambda": "^0.55.1",
+    "@opentelemetry/sdk-metrics": "^2.0.0",
+    "@opentelemetry/sdk-trace-base": "^2.0.0",
+    "@opentelemetry/sdk-trace-node": "^2.0.0",
+    "@types/mocha": "10.0.10",
+    "@types/node": "18.18.14",
+    "nyc": "17.1.0",
+    "rimraf": "5.0.10",
+    "typescript": "5.0.4"
+  },
+  "dependencies": {
+    "@opentelemetry/instrumentation": "^0.203.0",
+    "@opentelemetry/semantic-conventions": "^1.27.0",
+    "@types/aws-lambda": "8.10.152"
+  },
+  "homepage": "https://github.com/open-telemetry/opentelemetry-js-contrib/tree/main/packages/instrumentation-aws-lambda#readme",
+  "gitHead": "5861c1dd6dd15a9d450a9f7d6d6616d533cc9a59"
+}

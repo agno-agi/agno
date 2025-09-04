@@ -1,0 +1,89 @@
+---
+title: "Reference: Completeness | Scorers | Mastra Docs"
+description: Documentation for the Completeness Scorer in Mastra, which evaluates how thoroughly LLM outputs cover key elements present in the input.
+---
+
+# Completeness Scorer
+
+The `createCompletenessScorer()` function evaluates how thoroughly an LLM's output covers the key elements present in the input. It analyzes nouns, verbs, topics, and terms to determine coverage and provides a detailed completeness score.
+
+For a usage example, see the [Completeness Examples](/examples/scorers/completeness).
+
+## Parameters
+
+The `createCompletenessScorer()` function does not take any options.
+
+This function returns an instance of the MastraScorer class. See the [MastraScorer reference](./mastra-scorer) for details on the `.run()` method and its input/output.
+
+## .run() Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "runId",
+      type: "string",
+      description: "The id of the run (optional).",
+    },
+    {
+      name: "preprocessStepResult",
+      type: "object",
+      description: "Object with extracted elements and coverage details: { inputElements: string[], outputElements: string[], missingElements: string[], elementCounts: { input: number, output: number } }",
+    },
+    {
+      name: "score",
+      type: "number",
+      description: "Completeness score (0-1) representing the proportion of input elements covered in the output.",
+    },
+  ]}
+/>
+
+## Element Extraction Details
+
+The scorer extracts and analyzes several types of elements:
+
+- Nouns: Key objects, concepts, and entities
+- Verbs: Actions and states (converted to infinitive form)
+- Topics: Main subjects and themes
+- Terms: Individual significant words
+
+The extraction process includes:
+
+- Normalization of text (removing diacritics, converting to lowercase)
+- Splitting camelCase words
+- Handling of word boundaries
+- Special handling of short words (3 characters or less)
+- Deduplication of elements
+
+## Scoring Details
+
+The scorer evaluates completeness through linguistic element coverage analysis.
+
+### Scoring Process
+
+1. Extracts key elements:
+   - Nouns and named entities
+   - Action verbs
+   - Topic-specific terms
+   - Normalized word forms
+2. Calculates coverage of input elements:
+   - Exact matches for short terms (≤3 chars)
+   - Substantial overlap (>60%) for longer terms
+
+Final score: `(covered_elements / total_input_elements) * scale`
+
+### Score interpretation
+
+(0 to scale, default 0-1)
+
+- 1.0: Complete coverage - contains all input elements
+- 0.7-0.9: High coverage - includes most key elements
+- 0.4-0.6: Partial coverage - contains some key elements
+- 0.1-0.3: Low coverage - missing most key elements
+- 0.0: No coverage - output lacks all input elements
+
+## Related
+
+- [Answer Relevancy Scorer](./answer-relevancy)
+- [Content Similarity Scorer](./content-similarity)
+- [Textual Difference Scorer](./textual-difference)
+- [Keyword Coverage Scorer](./keyword-coverage)

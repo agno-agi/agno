@@ -1,0 +1,40 @@
+---
+title: "Reference: Braintrust | Observability | Mastra Docs"
+description: Documentation for integrating Braintrust with Mastra, an evaluation and monitoring platform for LLM applications.
+---
+
+# Braintrust
+
+Braintrust is an evaluation and monitoring platform for LLM applications.
+
+## Configuration
+
+To use Braintrust with Mastra, configure these environment variables:
+
+```env
+OTEL_EXPORTER_OTLP_ENDPOINT=https://api.braintrust.dev/otel
+OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <Your API Key>, x-bt-parent=project_id:<Your Project ID>"
+```
+
+## Implementation
+
+Here's how to configure Mastra to use Braintrust:
+
+```typescript
+import { Mastra } from "@mastra/core";
+
+export const mastra = new Mastra({
+  // ... other config
+  telemetry: {
+    serviceName: "your-service-name",
+    enabled: true,
+    export: {
+      type: "otlp",
+    },
+  },
+});
+```
+
+## Dashboard
+
+Access your Braintrust dashboard at [braintrust.dev](https://www.braintrust.dev/)

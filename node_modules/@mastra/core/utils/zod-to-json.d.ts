@@ -1,0 +1,1 @@
+export * from './../dist/zod-to-json.d.ts';

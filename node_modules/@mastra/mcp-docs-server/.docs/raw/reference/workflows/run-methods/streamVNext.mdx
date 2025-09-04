@@ -1,0 +1,99 @@
+---
+title: "Reference: Run.streamVNext() | Workflows | Mastra Docs"
+description: Documentation for the `Run.streamVNext()` method in workflows, which enables real-time streaming of responses.
+---
+
+import { StreamVNextCallout } from "@/components/streamVNext-callout.tsx"
+
+# Run.streamVNext() (Experimental)
+
+<StreamVNextCallout />
+
+The `.streamVNext()` method enables real-time streaming of responses from a workflow. This enhanced streaming capability will eventually replace the current `stream()` method.
+
+## Usage example
+
+```typescript showLineNumbers copy
+const run = await workflow.createRunAsync();
+
+const stream = run.streamVNext({
+  inputData: {
+    value: "initial data",
+  },
+});
+```
+
+## Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "inputData",
+      type: "z.infer<TInput>",
+      description: "Input data that matches the workflow's input schema",
+      isOptional: true,
+    },
+    {
+      name: "runtimeContext",
+      type: "RuntimeContext",
+      description: "Runtime context data to use during workflow execution",
+      isOptional: true,
+    },
+  ]}
+/>
+
+## Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "stream",
+      type: "MastraWorkflowStream<ChunkType>",
+      description: "A custom stream that extends ReadableStream<ChunkType> with additional workflow-specific properties",
+    },
+    {
+      name: "stream.status",
+      type: "Promise<RunStatus>",
+      description: "A promise that resolves to the current workflow run status",
+    },
+    {
+      name: "stream.result",
+      type: "Promise<WorkflowResult<TOutput, TSteps>>",
+      description: "A promise that resolves to the final workflow result",
+    },
+    {
+      name: "stream.usage",
+      type: "Promise<{ promptTokens: number; completionTokens: number; totalTokens: number }>",
+      description: "A promise that resolves to token usage statistics",
+    },
+  ]}
+/>
+
+## Extended usage example
+
+```typescript showLineNumbers copy
+const run = await workflow.createRunAsync();
+
+const stream = run.streamVNext({
+  inputData: {
+    value: "initial data",
+  },
+});
+
+const result = await stream.result;
+```
+
+## Stream Events
+
+The stream emits various event types during workflow execution. Each event has a `type` field and a `payload` containing relevant data:
+
+- **`start`**: Workflow execution begins
+- **`step-start`**: A step begins execution
+- **`step-output`**: Custom output from a step
+- **`step-result`**: A step completes with results
+- **`finish`**: Workflow execution completes with usage statistics
+
+## Related
+
+- [Workflows overview](../../../docs/workflows/overview.mdx#run-workflow)
+- [Workflow.createRunAsync()](../create-run.mdx)

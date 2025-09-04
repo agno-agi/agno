@@ -1,0 +1,156 @@
+---
+title: "Model Providers | Getting Started | Mastra Docs"
+description: "Learn how to configure and use different model providers with Mastra."
+---
+
+import { Callout } from 'nextra/components'
+
+# Model Providers
+
+Model providers are used to interact with different language models. Mastra uses [Vercel's AI SDK](https://sdk.vercel.ai) as a model routing layer to provide a similar syntax for many models:
+
+```typescript showLineNumbers copy {1,7} filename="src/mastra/agents/weather-agent.ts"
+import { openai } from "@ai-sdk/openai";
+import { Agent } from "@mastra/core/agent";
+
+const agent = new Agent({
+  name: "WeatherAgent",
+  instructions: "Instructions for the agent...",
+  model: openai("gpt-4-turbo"),
+});
+
+const result = await agent.generate("What is the weather like?");
+```
+
+## Types of AI SDK model providers
+
+Model providers from the AI SDK can be grouped into three main categories:
+
+- [Official providers maintained by the AI SDK team](/docs/getting-started/model-providers#official-providers)
+- [OpenAI-compatible providers](/docs/getting-started/model-providers#openai-compatible-providers)
+- [Community providers](/docs/getting-started/model-providers#community-providers)
+
+> You can find a list of all available model providers in the [AI SDK documentation](https://ai-sdk.dev/providers/ai-sdk-providers).
+
+<Callout>
+AI SDK model providers are packages that need to be installed in your Mastra project.
+The default model provider selected during the installation process is installed in the project.
+
+If you want to use a different model provider, you need to install it in your project as well.
+</Callout>
+
+Here are some examples of how Mastra agents can be configured to use the different types of model providers:
+
+### Official providers
+
+Official model providers are maintained by the AI SDK team.
+Their packages are usually prefixed with `@ai-sdk/`, e.g. `@ai-sdk/anthropic`, `@ai-sdk/openai`, etc.
+
+```typescript showLineNumbers copy {1,7} filename="src/mastra/agents/weather-agent.ts"
+import { openai } from "@ai-sdk/openai";
+import { Agent } from "@mastra/core/agent";
+
+const agent = new Agent({
+  name: "WeatherAgent",
+  instructions: "Instructions for the agent...",
+  model: openai("gpt-4-turbo"),
+});
+```
+
+Additional configuration may be done by importing a helper function from the AI SDK provider.
+Here's an example using the OpenAI provider:
+
+```typescript showLineNumbers copy filename="src/mastra/agents/weather-agent.ts" {1,4-8,13}
+import { createOpenAI } from "@ai-sdk/openai";
+import { Agent } from "@mastra/core/agent"
+
+const openai = createOpenAI({
+    baseUrl: "<your-custom-base-url>",
+    apiKey: "<your-custom-api-key>",
+    ...otherOptions
+});
+
+const agent = new Agent({
+    name: "WeatherAgent",
+    instructions: "Instructions for the agent...",
+    model: openai("<model-name>"),
+});
+```
+
+### OpenAI-compatible providers
+
+Some language model providers implement the OpenAI API. For these providers, you can use the [`@ai-sdk/openai-compatible`](https://www.npmjs.com/package/@ai-sdk/openai-compatible) provider.
+
+Here's the general setup and provider instance creation:
+
+```typescript showLineNumbers copy filename="src/mastra/agents/weather-agent.ts" {1,4-14,19}
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { Agent } from "@mastra/core/agent";
+
+const openaiCompatible = createOpenAICompatible({
+    name: "<model-name>",
+    baseUrl: "<base-url>",
+    apiKey: "<api-key>",
+    headers: {},
+    queryParams: {},
+    fetch: async (url, options) => {
+        // custom fetch logic
+        return fetch(url, options);
+    }
+});
+
+const agent = new Agent({
+    name: "WeatherAgent",
+    instructions: "Instructions for the agent...",
+    model: openaiCompatible("<model-name>"),
+});
+```
+
+For more information on the OpenAI-compatible provider, please refer to the [AI SDK documentation](https://ai-sdk.dev/providers/openai-compatible-providers).
+
+### Community providers
+
+The AI SDK provides a [Language Model Specification](https://github.com/vercel/ai/tree/main/packages/provider/src/language-model/v1).
+Following this specification, you can create your own model provider compatible with the AI SDK.
+
+Some community providers have implemented this specification and are compatible with the AI SDK.
+We will look at one such provider, the Ollama provider available in the [`ollama-ai-provider`](https://github.com/sgomez/ollama-ai-provider) package.
+
+Here's an example:
+
+```typescript showLineNumbers copy filename="src/mastra/agents/weather-agent.ts" {1,7}
+import { ollama } from "ollama-ai-provider";
+import { Agent } from "@mastra/core/agent";
+
+const agent = new Agent({
+    name: "WeatherAgent",
+    instructions: "Instructions for the agent...",
+    model: ollama("llama3.2:latest"),
+});
+```
+
+You can also configure the Ollama provider like so:
+
+```typescript showLineNumbers copy filename="src/mastra/agents/weather-agent.ts" {1,4-7,12}
+import { createOllama } from "ollama-ai-provider";
+import { Agent } from "@mastra/core/agent";
+
+const ollama = createOllama({
+    baseUrl: "<your-custom-base-url>",
+    ...otherOptions,
+});
+
+const agent = new Agent({
+    name: "WeatherAgent",
+    instructions: "Instructions for the agent...",
+    model: ollama("llama3.2:latest"),
+});
+```
+
+For more information on the Ollama provider and other available community providers, please refer to the [AI SDK documentation](https://ai-sdk.dev/providers/community-providers).
+
+<Callout>
+While this example shows how to use the Ollama provider, other providers like `openrouter`, `azure`, etc. may also be used.
+</Callout>
+
+Different AI providers may have different options for configuration. Please refer to the [AI SDK documentation](https://ai-sdk.dev/providers/ai-sdk-providers) for more information.

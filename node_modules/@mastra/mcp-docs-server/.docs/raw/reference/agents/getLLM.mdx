@@ -1,0 +1,74 @@
+---
+title: "Reference: Agent.getLLM() | Agents | Mastra Docs"
+description: "Documentation for the `Agent.getLLM()` method in Mastra agents, which retrieves the language model instance."
+---
+
+# Agent.getLLM()
+
+The `.getLLM()` method retrieves the language model instance configured for an agent, resolving it if it's a function. This method provides access to the underlying LLM that powers the agent's capabilities.
+
+## Usage example
+
+```typescript copy
+await agent.getLLM();
+```
+
+## Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "options",
+      type: "{ runtimeContext?: RuntimeContext; model?: MastraLanguageModel | DynamicArgument<MastraLanguageModel> }",
+      isOptional: true,
+      defaultValue: "{}",
+      description: "Optional configuration object containing runtime context and optional model override.",
+    },
+  ]}
+/>
+
+## Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "llm",
+      type: "MastraLLMV1 | Promise<MastraLLMV1>",
+      description: "The language model instance configured for the agent, either as a direct instance or a promise that resolves to the LLM.",
+    },
+  ]}
+/>
+
+## Extended usage example
+
+```typescript copy
+await agent.getLLM({
+  runtimeContext: new RuntimeContext(),
+  model: openai('gpt-4')
+});
+```
+
+### Options parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "runtimeContext",
+      type: "RuntimeContext",
+      isOptional: true,
+      defaultValue: "new RuntimeContext()",
+      description: "Runtime context for dependency injection and contextual information.",
+    },
+    {
+      name: "model",
+      type: "MastraLanguageModel | DynamicArgument<MastraLanguageModel>",
+      isOptional: true,
+      description: "Optional model override. If provided, this model will be used used instead of the agent's configured model.",
+    },
+  ]}
+/>
+
+## Related
+
+- [Agents overview](../../docs/agents/overview.mdx)
+- [Runtime variables](../../docs/agents/runtime-variables.mdx)

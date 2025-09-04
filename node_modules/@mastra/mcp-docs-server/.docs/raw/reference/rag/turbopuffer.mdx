@@ -1,0 +1,249 @@
+---
+title: "Reference: Turbopuffer Vector Store | Vector Databases | RAG | Mastra Docs"
+description: Documentation for integrating Turbopuffer with Mastra, a high-performance vector database for efficient similarity search.
+---
+
+# Turbopuffer Vector Store
+
+The TurbopufferVector class provides vector search using [Turbopuffer](https://turbopuffer.com/), a high-performance vector database optimized for RAG applications. Turbopuffer offers fast vector similarity search with advanced filtering capabilities and efficient storage management.
+
+## Constructor Options
+
+<PropertiesTable
+  content={[
+    {
+      name: "apiKey",
+      type: "string",
+      description: "The API key to authenticate with Turbopuffer",
+    },
+    {
+      name: "baseUrl",
+      type: "string",
+      isOptional: true,
+      defaultValue: "https://api.turbopuffer.com",
+      description: "The base URL for the Turbopuffer API",
+    },
+    {
+      name: "connectTimeout",
+      type: "number",
+      isOptional: true,
+      defaultValue: "10000",
+      description:
+        "The timeout to establish a connection, in ms. Only applicable in Node and Deno.",
+    },
+    {
+      name: "connectionIdleTimeout",
+      type: "number",
+      isOptional: true,
+      defaultValue: "60000",
+      description:
+        "The socket idle timeout, in ms. Only applicable in Node and Deno.",
+    },
+    {
+      name: "warmConnections",
+      type: "number",
+      isOptional: true,
+      defaultValue: "0",
+      description:
+        "The number of connections to open initially when creating a new client.",
+    },
+    {
+      name: "compression",
+      type: "boolean",
+      isOptional: true,
+      defaultValue: "true",
+      description:
+        "Whether to compress requests and accept compressed responses.",
+    },
+    {
+      name: "schemaConfigForIndex",
+      type: "function",
+      isOptional: true,
+      description:
+        "A callback function that takes an index name and returns a config object for that index. This allows you to define explicit schemas per index.",
+    },
+  ]}
+/>
+
+## Methods
+
+### createIndex()
+
+<PropertiesTable
+  content={[
+    {
+      name: "indexName",
+      type: "string",
+      description: "Name of the index to create",
+    },
+    {
+      name: "dimension",
+      type: "number",
+      description: "Vector dimension (must match your embedding model)",
+    },
+    {
+      name: "metric",
+      type: "'cosine' | 'euclidean' | 'dotproduct'",
+      isOptional: true,
+      defaultValue: "cosine",
+      description: "Distance metric for similarity search",
+    },
+  ]}
+/>
+
+### upsert()
+
+<PropertiesTable
+  content={[
+    {
+      name: "vectors",
+      type: "number[][]",
+      description: "Array of embedding vectors",
+    },
+    {
+      name: "metadata",
+      type: "Record<string, any>[]",
+      isOptional: true,
+      description: "Metadata for each vector",
+    },
+    {
+      name: "ids",
+      type: "string[]",
+      isOptional: true,
+      description: "Optional vector IDs (auto-generated if not provided)",
+    },
+  ]}
+/>
+
+### query()
+
+<PropertiesTable
+  content={[
+    {
+      name: "indexName",
+      type: "string",
+      description: "Name of the index to query",
+    },
+    {
+      name: "queryVector",
+      type: "number[]",
+      description: "Query vector to find similar vectors",
+    },
+    {
+      name: "topK",
+      type: "number",
+      isOptional: true,
+      defaultValue: "10",
+      description: "Number of results to return",
+    },
+    {
+      name: "filter",
+      type: "Record<string, any>",
+      isOptional: true,
+      description: "Metadata filters for the query",
+    },
+    {
+      name: "includeVector",
+      type: "boolean",
+      isOptional: true,
+      defaultValue: "false",
+      description: "Whether to include vectors in the results",
+    },
+  ]}
+/>
+
+### listIndexes()
+
+Returns an array of index names as strings.
+
+### describeIndex()
+
+<PropertiesTable
+  content={[
+    {
+      name: "indexName",
+      type: "string",
+      description: "Name of the index to describe",
+    },
+  ]}
+/>
+
+Returns:
+
+```typescript copy
+interface IndexStats {
+  dimension: number;
+  count: number;
+  metric: "cosine" | "euclidean" | "dotproduct";
+}
+```
+
+### deleteIndex()
+
+<PropertiesTable
+  content={[
+    {
+      name: "indexName",
+      type: "string",
+      description: "Name of the index to delete",
+    },
+  ]}
+/>
+
+## Response Types
+
+Query results are returned in this format:
+
+```typescript copy
+interface QueryResult {
+  id: string;
+  score: number;
+  metadata: Record<string, any>;
+  vector?: number[]; // Only included if includeVector is true
+}
+```
+
+## Schema Configuration
+
+The `schemaConfigForIndex` option allows you to define explicit schemas for different indexes:
+
+```typescript copy
+schemaConfigForIndex: (indexName: string) => {
+  // Mastra's default embedding model and index for memory messages:
+  if (indexName === "memory_messages_384") {
+    return {
+      dimensions: 384,
+      schema: {
+        thread_id: {
+          type: "string",
+          filterable: true,
+        },
+      },
+    };
+  } else {
+    throw new Error(`TODO: add schema for index: ${indexName}`);
+  }
+};
+```
+
+## Error Handling
+
+The store throws typed errors that can be caught:
+
+```typescript copy
+try {
+  await store.query({
+    indexName: "index_name",
+    queryVector: queryVector,
+  });
+} catch (error) {
+  if (error instanceof VectorStoreError) {
+    console.log(error.code); // 'connection_failed' | 'invalid_dimension' | etc
+    console.log(error.details); // Additional error context
+  }
+}
+```
+
+## Related
+
+- [Metadata Filters](./metadata-filters)

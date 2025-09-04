@@ -1,0 +1,248 @@
+---
+title: "Reference: Prompt Alignment | Metrics | Evals | Mastra Docs"
+description: Documentation for the Prompt Alignment Metric in Mastra, which evaluates how well LLM outputs adhere to given prompt instructions.
+---
+
+import { ScorerCallout } from '@/components/scorer-callout'
+
+# PromptAlignmentMetric
+
+<ScorerCallout />
+
+The `PromptAlignmentMetric` class evaluates how strictly an LLM's output follows a set of given prompt instructions. It uses a judge-based system to verify each instruction is followed exactly and provides detailed reasoning for any deviations.
+
+## Basic Usage
+
+```typescript
+import { openai } from "@ai-sdk/openai";
+import { PromptAlignmentMetric } from "@mastra/evals/llm";
+
+// Configure the model for evaluation
+const model = openai("gpt-4o-mini");
+
+const instructions = [
+  "Start sentences with capital letters",
+  "End each sentence with a period",
+  "Use present tense",
+];
+
+const metric = new PromptAlignmentMetric(model, {
+  instructions,
+  scale: 1,
+});
+
+const result = await metric.measure(
+  "describe the weather",
+  "The sun is shining. Clouds float in the sky. A gentle breeze blows.",
+);
+
+console.log(result.score); // Alignment score from 0-1
+console.log(result.info.reason); // Explanation of the score
+```
+
+## Constructor Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "model",
+      type: "LanguageModel",
+      description:
+        "Configuration for the model used to evaluate instruction alignment",
+      isOptional: false,
+    },
+    {
+      name: "options",
+      type: "PromptAlignmentOptions",
+      description: "Configuration options for the metric",
+      isOptional: false,
+    },
+  ]}
+/>
+
+### PromptAlignmentOptions
+
+<PropertiesTable
+  content={[
+    {
+      name: "instructions",
+      type: "string[]",
+      description: "Array of instructions that the output should follow",
+      isOptional: false,
+    },
+    {
+      name: "scale",
+      type: "number",
+      description: "Maximum score value",
+      isOptional: true,
+      defaultValue: "1",
+    },
+  ]}
+/>
+
+## measure() Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "input",
+      type: "string",
+      description: "The original prompt or query",
+      isOptional: false,
+    },
+    {
+      name: "output",
+      type: "string",
+      description: "The LLM's response to evaluate",
+      isOptional: false,
+    },
+  ]}
+/>
+
+## Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "score",
+      type: "number",
+      description: "Alignment score (0 to scale, default 0-1)",
+    },
+    {
+      name: "info",
+      type: "object",
+      description:
+        "Object containing detailed metrics about instruction compliance",
+      properties: [
+        {
+          type: "string",
+          parameters: [
+            {
+              name: "reason",
+              type: "string",
+              description:
+                "Detailed explanation of the score and instruction compliance",
+            },
+          ],
+        },
+      ],
+    },
+  ]}
+/>
+
+## Scoring Details
+
+The metric evaluates instruction alignment through:
+
+- Applicability assessment for each instruction
+- Strict compliance evaluation for applicable instructions
+- Detailed reasoning for all verdicts
+- Proportional scoring based on applicable instructions
+
+### Instruction Verdicts
+
+Each instruction receives one of three verdicts:
+
+- "yes": Instruction is applicable and completely followed
+- "no": Instruction is applicable but not followed or only partially followed
+- "n/a": Instruction is not applicable to the given context
+
+### Scoring Process
+
+1. Evaluates instruction applicability:
+
+   - Determines if each instruction applies to the context
+   - Marks irrelevant instructions as "n/a"
+   - Considers domain-specific requirements
+
+2. Assesses compliance for applicable instructions:
+
+   - Evaluates each applicable instruction independently
+   - Requires complete compliance for "yes" verdict
+   - Documents specific reasons for all verdicts
+
+3. Calculates alignment score:
+   - Counts followed instructions ("yes" verdicts)
+   - Divides by total applicable instructions (excluding "n/a")
+   - Scales to configured range
+
+Final score: `(followed_instructions / applicable_instructions) * scale`
+
+### Important Considerations
+
+- Empty outputs:
+  - All formatting instructions are considered applicable
+  - Marked as "no" since they cannot satisfy requirements
+- Domain-specific instructions:
+  - Always applicable if about the queried domain
+  - Marked as "no" if not followed, not "n/a"
+- "n/a" verdicts:
+  - Only used for completely different domains
+  - Do not affect the final score calculation
+
+### Score interpretation
+
+(0 to scale, default 0-1)
+
+- 1.0: All applicable instructions followed perfectly
+- 0.7-0.9: Most applicable instructions followed
+- 0.4-0.6: Mixed compliance with applicable instructions
+- 0.1-0.3: Limited compliance with applicable instructions
+- 0.0: No applicable instructions followed
+
+## Example with Analysis
+
+```typescript
+import { openai } from "@ai-sdk/openai";
+import { PromptAlignmentMetric } from "@mastra/evals/llm";
+
+// Configure the model for evaluation
+const model = openai("gpt-4o-mini");
+
+const metric = new PromptAlignmentMetric(model, {
+  instructions: [
+    "Use bullet points for each item",
+    "Include exactly three examples",
+    "End each point with a semicolon"
+  ],
+  scale: 1
+});
+
+const result = await metric.measure(
+  "List three fruits",
+  "• Apple is red and sweet;
+• Banana is yellow and curved;
+• Orange is citrus and round."
+);
+
+// Example output:
+// {
+//   score: 1.0,
+//   info: {
+//     reason: "The score is 1.0 because all instructions were followed exactly:
+//           bullet points were used, exactly three examples were provided, and
+//           each point ends with a semicolon."
+//   }
+// }
+
+const result2 = await metric.measure(
+  "List three fruits",
+  "1. Apple
+2. Banana
+3. Orange and Grape"
+);
+
+// Example output:
+// {
+//   score: 0.33,
+//   info: {
+//     reason: "The score is 0.33 because: numbered lists were used instead of bullet points,
+//           no semicolons were used, and four fruits were listed instead of exactly three."
+//   }
+// }
+```
+
+## Related
+
+- [Answer Relevancy Metric](./answer-relevancy)
+- [Keyword Coverage Metric](./keyword-coverage)

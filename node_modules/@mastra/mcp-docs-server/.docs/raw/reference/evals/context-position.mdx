@@ -1,0 +1,198 @@
+---
+title: "Reference: Context Position | Metrics | Evals | Mastra Docs"
+description: Documentation for the Context Position Metric in Mastra, which evaluates the ordering of context nodes based on their relevance to the query and output.
+---
+
+import { ScorerCallout } from '@/components/scorer-callout'
+
+# ContextPositionMetric
+
+<ScorerCallout />
+
+The `ContextPositionMetric` class evaluates how well context nodes are ordered based on their relevance to the query and output. It uses position-weighted scoring to emphasize the importance of having the most relevant context pieces appear earlier in the sequence.
+
+## Basic Usage
+
+```typescript
+import { openai } from "@ai-sdk/openai";
+import { ContextPositionMetric } from "@mastra/evals/llm";
+
+// Configure the model for evaluation
+const model = openai("gpt-4o-mini");
+
+const metric = new ContextPositionMetric(model, {
+  context: [
+    "Photosynthesis is a biological process used by plants to create energy from sunlight.",
+    "The process of photosynthesis produces oxygen as a byproduct.",
+    "Plants need water and nutrients from the soil to grow.",
+  ],
+});
+
+const result = await metric.measure(
+  "What is photosynthesis?",
+  "Photosynthesis is the process by which plants convert sunlight into energy.",
+);
+
+console.log(result.score); // Position score from 0-1
+console.log(result.info.reason); // Explanation of the score
+```
+
+## Constructor Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "model",
+      type: "ModelConfig",
+      description:
+        "Configuration for the model used to evaluate context positioning",
+      isOptional: false,
+    },
+    {
+      name: "options",
+      type: "ContextPositionMetricOptions",
+      description: "Configuration options for the metric",
+      isOptional: false,
+    },
+  ]}
+/>
+
+### ContextPositionMetricOptions
+
+<PropertiesTable
+  content={[
+    {
+      name: "scale",
+      type: "number",
+      description: "Maximum score value",
+      isOptional: true,
+      defaultValue: "1",
+    },
+    {
+      name: "context",
+      type: "string[]",
+      description: "Array of context pieces in their retrieval order",
+      isOptional: false,
+    },
+  ]}
+/>
+
+## measure() Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "input",
+      type: "string",
+      description: "The original query or prompt",
+      isOptional: false,
+    },
+    {
+      name: "output",
+      type: "string",
+      description: "The generated response to evaluate",
+      isOptional: false,
+    },
+  ]}
+/>
+
+## Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "score",
+      type: "number",
+      description: "Position score (0 to scale, default 0-1)",
+    },
+    {
+      name: "info",
+      type: "object",
+      description: "Object containing the reason for the score",
+      properties: [
+        {
+          type: "string",
+          parameters: [
+            {
+              name: "reason",
+              type: "string",
+              description: "Detailed explanation of the score",
+            },
+          ],
+        },
+      ],
+    },
+  ]}
+/>
+
+## Scoring Details
+
+The metric evaluates context positioning through binary relevance assessment and position-based weighting.
+
+### Scoring Process
+
+1. Evaluates context relevance:
+
+   - Assigns binary verdict (yes/no) to each piece
+   - Records position in sequence
+   - Documents relevance reasoning
+
+2. Applies position weights:
+   - Earlier positions weighted more heavily (weight = 1/(position + 1))
+   - Sums weights of relevant pieces
+   - Normalizes by maximum possible score
+
+Final score: `(weighted_sum / max_possible_sum) * scale`
+
+### Score interpretation
+
+(0 to scale, default 0-1)
+
+- 1.0: Optimal - most relevant context first
+- 0.7-0.9: Good - relevant context mostly early
+- 0.4-0.6: Mixed - relevant context scattered
+- 0.1-0.3: Suboptimal - relevant context mostly later
+- 0.0: Poor ordering - relevant context at end or missing
+
+## Example with Analysis
+
+```typescript
+import { openai } from "@ai-sdk/openai";
+import { ContextPositionMetric } from "@mastra/evals/llm";
+
+// Configure the model for evaluation
+const model = openai("gpt-4o-mini");
+
+const metric = new ContextPositionMetric(model, {
+  context: [
+    "A balanced diet is important for health.",
+    "Exercise strengthens the heart and improves blood circulation.",
+    "Regular physical activity reduces stress and anxiety.",
+    "Exercise equipment can be expensive.",
+  ],
+});
+
+const result = await metric.measure(
+  "What are the benefits of exercise?",
+  "Regular exercise improves cardiovascular health and mental wellbeing.",
+);
+
+// Example output:
+// {
+//   score: 0.5,
+//   info: {
+//     reason: "The score is 0.5 because while the second and third contexts are highly
+//           relevant to the benefits of exercise, they are not optimally positioned at
+//           the beginning of the sequence. The first and last contexts are not relevant
+//           to the query, which impacts the position-weighted scoring."
+//   }
+// }
+```
+
+## Related
+
+- [Context Precision Metric](./context-precision)
+- [Answer Relevancy Metric](./answer-relevancy)
+- [Completeness Metric](./completeness)
+
+* [Context Relevancy Metric](./context-relevancy)

@@ -1,0 +1,81 @@
+---
+title: "Reference: voice.send() | Voice Providers | Mastra Docs"
+description: "Documentation for the send() method available in real-time voice providers, which streams audio data for continuous processing."
+---
+
+# voice.send()
+
+The `send()` method streams audio data in real-time to voice providers for continuous processing. This method is essential for real-time speech-to-speech conversations, allowing you to send microphone input directly to the AI service.
+
+## Usage Example
+
+```typescript
+import { OpenAIRealtimeVoice } from "@mastra/voice-openai-realtime";
+import Speaker from "@mastra/node-speaker";
+import { getMicrophoneStream } from "@mastra/node-audio";
+
+const speaker = new Speaker({
+  sampleRate: 24100, // Audio sample rate in Hz - standard for high-quality audio on MacBook Pro
+  channels: 1, // Mono audio output (as opposed to stereo which would be 2)
+  bitDepth: 16, // Bit depth for audio quality - CD quality standard (16-bit resolution)
+});
+
+// Initialize a real-time voice provider
+const voice = new OpenAIRealtimeVoice({
+  realtimeConfig: {
+    model: "gpt-4o-mini-realtime",
+    apiKey: process.env.OPENAI_API_KEY,
+  },
+});
+
+// Connect to the real-time service
+await voice.connect();
+
+// Set up event listeners for responses
+voice.on("writing", ({ text, role }) => {
+  console.log(`${role}: ${text}`);
+});
+
+voice.on("speaker", (stream) => {
+  stream.pipe(speaker);
+});
+
+// Get microphone stream (implementation depends on your environment)
+const microphoneStream = getMicrophoneStream();
+
+// Send audio data to the voice provider
+await voice.send(microphoneStream);
+
+// You can also send audio data as Int16Array
+const audioBuffer = getAudioBuffer(); // Assume this returns Int16Array
+await voice.send(audioBuffer);
+```
+
+## Parameters
+
+<br />
+<PropertiesTable
+  content={[
+    {
+      name: "audioData",
+      type: "NodeJS.ReadableStream | Int16Array",
+      description:
+        "Audio data to send to the voice provider. Can be a readable stream (like a microphone stream) or an Int16Array of audio samples.",
+      isOptional: false,
+    },
+  ]}
+/>
+
+## Return Value
+
+Returns a `Promise<void>` that resolves when the audio data has been accepted by the voice provider.
+
+## Notes
+
+- This method is only implemented by real-time voice providers that support speech-to-speech capabilities
+- If called on a voice provider that doesn't support this functionality, it will log a warning and resolve immediately
+- You must call `connect()` before using `send()` to establish the WebSocket connection
+- The audio format requirements depend on the specific voice provider
+- For continuous conversation, you typically call `send()` to transmit user audio, then `answer()` to trigger the AI response
+- The provider will typically emit 'writing' events with transcribed text as it processes the audio
+- When the AI responds, the provider will emit 'speaking' events with the audio response

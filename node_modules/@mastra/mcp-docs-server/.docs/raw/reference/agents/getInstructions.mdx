@@ -1,0 +1,67 @@
+---
+title: "Reference: Agent.getInstructions() | Agents | Mastra Docs"
+description: "Documentation for the `Agent.getInstructions()` method in Mastra agents, which retrieves the instructions that guide the agent's behavior."
+---
+
+# Agent.getInstructions()
+
+The `.getInstructions()` method retrieves the instructions configured for an agent, resolving them if they're a function. These instructions guide the agent's behavior and define its capabilities and constraints.
+
+## Usage example
+
+```typescript copy
+await agent.getInstructions();
+```
+
+## Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "options",
+      type: "{ runtimeContext?: RuntimeContext }",
+      isOptional: true,
+      defaultValue: "{}",
+      description: "Optional configuration object containing runtime context.",
+    },
+  ]}
+/>
+
+## Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "instructions",
+      type: "string | Promise<string>",
+      description: "The instructions configured for the agent, either as a direct string or a promise that resolves to the instructions.",
+    },
+  ]}
+/>
+
+## Extended usage example
+
+```typescript copy
+await agent.getInstructions({
+  runtimeContext: new RuntimeContext()
+});
+```
+
+### Options parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "runtimeContext",
+      type: "RuntimeContext",
+      isOptional: true,
+      defaultValue: "undefined",
+      description: "Runtime context for dependency injection and contextual information.",
+    },
+  ]}
+/>
+
+## Related
+
+- [Agents overview](../../docs/agents/overview.mdx)
+- [Runtime variables](../../docs/agents/runtime-variables.mdx)

@@ -1,0 +1,94 @@
+---
+title: "Netlify Deployer"
+description: "Learn how to deploy a Mastra application to Netlify using the Mastra NetlifyDeployer"
+---
+
+import { FileTree } from "nextra/components";
+
+# NetlifyDeployer
+
+The `NetlifyDeployer` class handles deployment of standalone Mastra applications to Netlify. It manages configuration, deployment, and extends the base [Deployer](/reference/deployer/deployer) class with Netlify specific functionality.
+
+## Installation
+
+```bash copy
+npm install @mastra/deployer-netlify@latest
+```
+
+## Usage example
+
+```typescript filename="src/mastra/index.ts" showLineNumbers copy
+import { Mastra } from "@mastra/core/mastra";
+import { NetlifyDeployer } from "@mastra/deployer-netlify";
+
+export const mastra = new Mastra({
+  // ...
+  deployer: new NetlifyDeployer()
+});
+```
+
+> See the [NetlifyDeployer](/reference/deployer/netlify) API reference for all available configuration options.
+
+## Continuous integration
+
+After connecting your Mastra project’s Git repository to Netlify, update the project settings. In the Netlify dashboard, go to **Project configuration** > **Build & deploy** > **Continuous deployment**, and under **Build settings**, set the following:
+
+- **Build command**: `npm run build` (optional)
+
+### Environment variables
+
+Before your first deployment, make sure to add any environment variables used by your application. For example, if you're using OpenAI as the LLM, you'll need to set `OPENAI_API_KEY` in your Netlify project settings.
+
+> See [Environment variables overview](https://docs.netlify.com/environment-variables/overview/) for more details.
+
+
+Your project is now configured with automatic deployments which occur whenever you push to the configured branch of your GitHub repository.
+
+
+## Manual deployment
+
+Manual deployments are also possible using the [Netlify CLI](https://docs.netlify.com/cli/get-started/). With the Netlify CLI installed run the following from your project root to deploy your application.
+
+```bash copy
+netlify deploy --prod
+```
+
+> You can also run `netlify dev` from your project root to test your Mastra application locally.
+
+## Build output
+
+The build output for Mastra applications using the `NetlifyDeployer` includes all agents, tools, and workflows in your project, along with Mastra specific files required to run your application on Netlify.
+
+<FileTree>
+  <FileTree.Folder name=".netlify" defaultOpen>
+    <FileTree.Folder name="v1" defaultOpen>
+      <FileTree.Folder name="functions" defaultOpen>
+        <FileTree.Folder name="api" defaultOpen>
+          <FileTree.File name="index.mjs" />
+        </FileTree.Folder>
+      </FileTree.Folder>
+    <FileTree.File name="config.json" />
+    </FileTree.Folder>
+  </FileTree.Folder>
+  <FileTree.File name="package.json" />
+</FileTree>
+
+
+The `NetlifyDeployer` automatically generates a `config.json` configuration file in `.netlify/v1` with the following settings:
+
+```json
+{
+  "redirects": [
+    {
+      "force": true,
+      "from": "/*",
+      "to": "/.netlify/functions/api/:splat",
+      "status": 200
+    }
+  ]
+}
+```
+
+## Next steps
+
+- [Mastra Client SDK](/docs/client-js/overview)

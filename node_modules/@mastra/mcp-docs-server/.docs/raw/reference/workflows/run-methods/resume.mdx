@@ -1,0 +1,83 @@
+---
+title: "Reference: Run.resume() | Workflows | Mastra Docs"
+description: Documentation for the `Run.resume()` method in workflows, which resumes a suspended workflow run with new data.
+---
+
+# Run.resume()
+
+The `.resume()` method resumes a suspended workflow run with new data, allowing you to continue execution from a specific step.
+
+## Usage example
+
+```typescript showLineNumbers copy
+const run = await workflow.createRunAsync();
+
+const result = await run.start({ inputData: { value: "initial data" } });
+
+if (result.status === "suspended") {
+  const resumedResults = await run.resume({
+    resumeData: { value: "resume data" }
+  });
+}
+```
+## Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "resumeData",
+      type: "z.infer<TResumeSchema>",
+      description: "Data for resuming the suspended step",
+      isOptional: true,
+    },
+    {
+      name: "step",
+      type: "Step<string, any, any, TResumeSchema, any, TEngineType> | [...Step<string, any, any, any, any, TEngineType>[], Step<string, any, any, TResumeSchema, any, TEngineType>] | string | string[]",
+      description: "The step(s) to resume execution from. Can be a Step instance, array of Steps, step ID string, or array of step ID strings",
+      isOptional: true,
+    },
+    {
+      name: "runtimeContext",
+      type: "RuntimeContext",
+      description: "Runtime context data to use when resuming",
+      isOptional: true,
+    },
+    {
+      name: "runCount",
+      type: "number",
+      description: "Optional run count for nested workflow execution",
+      isOptional: true,
+    },
+  ]}
+/>
+
+## Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "result",
+      type: "Promise<WorkflowResult<TOutput, TSteps>>",
+      description: "A promise that resolves to the workflow execution result containing step outputs and status",
+    },
+  ]}
+/>
+
+## Extended usage example
+
+```typescript showLineNumbers copy
+if (result.status === "suspended") {
+  const resumedResults = await run.resume({
+    step: result.suspended[0],
+    resumeData: { value: "resume data" }
+  });
+}
+```
+> **Note**: When exactly one step is suspended, you can omit the `step` parameter and the workflow will automatically resume that step. For workflows with multiple suspended steps, you must explicitly specify which step to resume.
+
+## Related
+
+- [Workflows overview](../../../docs/workflows/overview.mdx#run-workflow)
+- [Workflow.createRunAsync()](../create-run.mdx)
+- [Suspend and resume](../../../docs/workflows/suspend-and-resume.mdx)
+- [Human in the loop example](../../../examples/workflows/human-in-the-loop.mdx)

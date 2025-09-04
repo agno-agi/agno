@@ -1,0 +1,32 @@
+{
+    "name": "@types/pg-pool",
+    "version": "2.0.6",
+    "description": "TypeScript definitions for pg-pool",
+    "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/pg-pool",
+    "license": "MIT",
+    "contributors": [
+        {
+            "name": "Leo Liang",
+            "githubUsername": "aleung",
+            "url": "https://github.com/aleung"
+        },
+        {
+            "name": "Nikita Tokarchuk",
+            "githubUsername": "mainnika",
+            "url": "https://github.com/mainnika"
+        }
+    ],
+    "main": "",
+    "types": "index.d.ts",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "directory": "types/pg-pool"
+    },
+    "scripts": {},
+    "dependencies": {
+        "@types/pg": "*"
+    },
+    "typesPublisherContentHash": "a71a1da73d5edbec032d886ba9a5936a273370f5f21af8824ef498837362b18b",
+    "typeScriptVersion": "4.5"
+}

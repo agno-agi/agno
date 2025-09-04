@@ -1,0 +1,72 @@
+{
+  "name": "@opentelemetry/resource-detector-gcp",
+  "version": "0.37.0",
+  "description": "OpenTelemetry SDK resource detector for GCP",
+  "main": "build/src/index.js",
+  "module": "build/esm/index.js",
+  "types": "build/src/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/open-telemetry/opentelemetry-js-contrib.git",
+    "directory": "packages/resource-detector-gcp"
+  },
+  "scripts": {
+    "clean": "tsc --build --clean tsconfig.json tsconfig.esm.json",
+    "setup:dev": "nx run-many -t compile -p @opentelemetry/resource-detector-gcp",
+    "compile": "tsc --build tsconfig.json tsconfig.esm.json",
+    "lint": "eslint . --ext .ts",
+    "lint:fix": "eslint . --ext .ts --fix",
+    "prepublishOnly": "npm run compile",
+    "test": "nyc mocha 'test/**/*.test.ts'",
+    "tdd": "npm run test -- --watch-extensions ts --watch",
+    "watch": "tsc --build --watch tsconfig.json tsconfig.esm.json"
+  },
+  "keywords": [
+    "opentelemetry",
+    "nodejs",
+    "resources",
+    "stats",
+    "profiling"
+  ],
+  "author": "OpenTelemetry Authors",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": "^18.19.0 || >=20.6.0"
+  },
+  "files": [
+    "build/src/**/*.js",
+    "build/src/**/*.js.map",
+    "build/src/**/*.d.ts",
+    "build/esm/**/*.js",
+    "build/esm/**/*.js.map",
+    "build/esm/**/*.d.ts"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@opentelemetry/api": "^1.0.0",
+    "@opentelemetry/contrib-test-utils": "^0.49.0",
+    "@opentelemetry/instrumentation-http": "^0.203.0",
+    "@opentelemetry/sdk-trace-base": "^2.0.0",
+    "@types/mocha": "10.0.10",
+    "@types/node": "18.18.14",
+    "@types/semver": "7.5.8",
+    "nock": "13.3.3",
+    "nyc": "17.1.0",
+    "rimraf": "5.0.10",
+    "typescript": "5.0.4"
+  },
+  "peerDependencies": {
+    "@opentelemetry/api": "^1.0.0"
+  },
+  "dependencies": {
+    "@opentelemetry/core": "^2.0.0",
+    "@opentelemetry/resources": "^2.0.0",
+    "@opentelemetry/semantic-conventions": "^1.27.0",
+    "gcp-metadata": "^6.0.0"
+  },
+  "homepage": "https://github.com/open-telemetry/opentelemetry-js-contrib/tree/main/packages/resource-detector-gcp#readme",
+  "sideEffects": false,
+  "gitHead": "e7960a2061c0a039ffa57ed8dbb73d605d65f4f6"
+}

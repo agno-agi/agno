@@ -1,0 +1,228 @@
+---
+title: "Templates Reference"
+description: "Complete guide to creating, using, and contributing Mastra templates"
+---
+
+import { FileTree, Tabs, Callout } from 'nextra/components'
+
+## Overview
+
+This reference provides comprehensive information about Mastra templates, including how to use existing templates, create your own, and contribute to the community ecosystem.
+
+Mastra templates are pre-built project structures that demonstrate specific use cases and patterns. They provide:
+
+- **Working examples** - Complete, functional Mastra applications
+- **Best practices** - Proper project structure and coding conventions
+- **Educational resources** - Learn Mastra patterns through real implementations
+- **Quick starts** - Bootstrap projects faster than building from scratch
+
+## Using Templates
+
+### Installation
+
+Install a template using the `create-mastra` command:
+
+```bash copy
+npx create-mastra@latest --template template-name
+```
+
+This creates a complete project with all necessary code and configuration.
+
+### Setup Process
+
+After installation:
+
+1. **Navigate to project directory**:
+
+   ```bash copy
+   cd your-project-name
+   ```
+
+2. **Configure environment variables**:
+
+   ```bash copy
+   cp .env.example .env
+   ```
+
+   Edit `.env` with required API keys as documented in the template's README.
+
+3. **Install dependencies** (if not done automatically):
+
+   ```bash copy
+   npm install
+   ```
+
+4. **Start development server**:
+
+   ```bash copy
+   npm run dev
+   ```
+
+### Template Structure
+
+All templates follow this standardized structure:
+
+<FileTree>
+  <FileTree.Folder name="template-name" defaultOpen>
+    <FileTree.Folder name="src" defaultOpen>
+      <FileTree.Folder name="mastra" defaultOpen>
+        <FileTree.Folder name="agents">
+          <FileTree.File name="example-agent.ts" />
+        </FileTree.Folder>
+        <FileTree.Folder name="tools">
+          <FileTree.File name="example-tool.ts" />
+        </FileTree.Folder>
+        <FileTree.Folder name="workflows">
+          <FileTree.File name="example-workflow.ts" />
+        </FileTree.Folder>
+        <FileTree.File name="index.ts" />
+      </FileTree.Folder>
+    </FileTree.Folder>
+    <FileTree.File name=".env.example" />
+    <FileTree.File name="package.json" />
+    <FileTree.File name="README.md" />
+    <FileTree.File name="tsconfig.json" />
+  </FileTree.Folder>
+</FileTree>
+
+## Creating Templates
+
+### Requirements
+
+Templates must meet these technical requirements:
+
+#### Project Structure
+
+- **Mastra code location**: All Mastra code must be in `src/mastra/` directory
+- **Component organization**:
+  - Agents: `src/mastra/agents/`
+  - Tools: `src/mastra/tools/`
+  - Workflows: `src/mastra/workflows/`
+  - Main config: `src/mastra/index.ts`
+
+#### TypeScript Configuration
+
+Use the standard Mastra TypeScript configuration:
+
+```json filename="tsconfig.json"
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "outDir": "dist"
+  },
+  "include": ["src/**/*"]
+}
+```
+
+#### Environment Configuration
+
+Include a `.env.example` file with all required environment variables:
+
+```bash filename=".env.example"
+# LLM provider API keys (choose one or more)
+OPENAI_API_KEY=your_openai_api_key_here
+ANTHROPIC_API_KEY=your_anthropic_api_key_here
+GOOGLE_GENERATIVE_AI_API_KEY=your_google_api_key_here
+
+# Other service API keys as needed
+OTHER_SERVICE_API_KEY=your_api_key_here
+```
+
+### Code Standards
+
+#### LLM Provider
+
+We recommend using OpenAI, Anthropic, or Google model providers for templates. Choose the provider that best fits your use case:
+
+```typescript filename="src/mastra/agents/example-agent.ts"
+import { Agent } from '@mastra/core/agent';
+import { openai } from '@ai-sdk/openai';
+// Or use: import { anthropic } from '@ai-sdk/anthropic';
+// Or use: import { google } from '@ai-sdk/google';
+
+const agent = new Agent({
+  name: 'example-agent',
+  model: openai('gpt-4'), // or anthropic('') or google('')
+  instructions: 'Your agent instructions here',
+  // ... other configuration
+});
+```
+
+#### Compatibility Requirements
+
+Templates must be:
+
+- **Single projects** - Not monorepos with multiple applications
+- **Framework-free** - No Next.js, Express, or other web framework boilerplate
+- **Mastra-focused** - Demonstrate Mastra functionality without additional layers
+- **Mergeable** - Structure code for easy integration into existing projects
+- **Node.js compatible** - Support Node.js 18 and higher
+- **ESM modules** - Use ES modules (`"type": "module"` in package.json)
+
+### Documentation Requirements
+
+#### README Structure
+
+Every template must include a comprehensive README:
+
+```markdown filename="README.md"
+# Template Name
+
+Brief description of what the template demonstrates.
+
+## Overview
+
+Detailed explanation of the template's functionality and use case.
+
+## Setup
+
+1. Copy `.env.example` to `.env` and fill in your API keys
+2. Install dependencies: `npm install`
+3. Run the project: `npm run dev`
+
+## Environment Variables
+
+- `OPENAI_API_KEY`: Your OpenAI API key. Get one at [OpenAI Platform](https://platform.openai.com/api-keys)
+- `ANTHROPIC_API_KEY`: Your Anthropic API key. Get one at [Anthropic Console](https://console.anthropic.com/settings/keys)
+- `GOOGLE_GENERATIVE_AI_API_KEY`: Your Google AI API key. Get one at [Google AI Studio](https://makersuite.google.com/app/apikey)
+- `OTHER_API_KEY`: Description of what this key is for
+
+## Usage
+
+Instructions on how to use the template and examples of expected behavior.
+
+## Customization
+
+Guidelines for modifying the template for different use cases.
+```
+
+#### Code Comments
+
+Include clear comments explaining:
+
+- Complex logic or algorithms
+- API integrations and their purpose
+- Configuration options and their effects
+- Example usage patterns
+
+### Quality Standards
+
+Templates must demonstrate:
+
+- **Code quality** - Clean, well-commented, maintainable code
+- **Error handling** - Proper handling for external APIs and user inputs
+- **Type safety** - Full TypeScript typing with Zod validation
+- **Testing** - Verified functionality with fresh installations
+
+For information on contributing your own templates to the Mastra ecosystem, see the [Contributing Templates](/docs/community/contributing-templates) guide in the community section.
+
+<Callout type="info">
+  Templates provide an excellent way to learn Mastra patterns and accelerate development. Contributing templates helps the entire community build better AI applications.
+</Callout>

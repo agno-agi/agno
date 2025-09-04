@@ -1,0 +1,99 @@
+# createThread
+
+Creates a new conversation thread in the memory system. Each thread represents a distinct conversation or context and can contain multiple messages.
+
+## Usage Example
+
+```typescript
+import { Memory } from "@mastra/memory";
+
+const memory = new Memory({
+  /* config */
+});
+const thread = await memory.createThread({
+  resourceId: "user-123",
+  title: "Support Conversation",
+  metadata: {
+    category: "support",
+    priority: "high",
+  },
+});
+```
+
+## Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "resourceId",
+      type: "string",
+      description:
+        "Identifier for the resource this thread belongs to (e.g., user ID, project ID)",
+      isOptional: false,
+    },
+    {
+      name: "threadId",
+      type: "string",
+      description:
+        "Optional custom ID for the thread. If not provided, one will be generated.",
+      isOptional: true,
+    },
+    {
+      name: "title",
+      type: "string",
+      description: "Optional title for the thread",
+      isOptional: true,
+    },
+    {
+      name: "metadata",
+      type: "Record<string, unknown>",
+      description: "Optional metadata to associate with the thread",
+      isOptional: true,
+    },
+  ]}
+/>
+
+## Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "id",
+      type: "string",
+      description: "Unique identifier of the created thread",
+    },
+    {
+      name: "resourceId",
+      type: "string",
+      description: "Resource ID associated with the thread",
+    },
+    {
+      name: "title",
+      type: "string",
+      description: "Title of the thread (if provided)",
+    },
+    {
+      name: "createdAt",
+      type: "Date",
+      description: "Timestamp when the thread was created",
+    },
+    {
+      name: "updatedAt",
+      type: "Date",
+      description: "Timestamp when the thread was last updated",
+    },
+    {
+      name: "metadata",
+      type: "Record<string, unknown>",
+      description: "Additional metadata associated with the thread",
+    },
+  ]}
+/>
+
+### Related
+
+- [Memory Class Reference](/reference/memory/Memory.mdx)
+- [Getting Started with Memory](/docs/memory/overview.mdx) (Covers threads concept)
+- [getThreadById](/reference/memory/getThreadById.mdx)
+- [getThreadsByResourceId](/reference/memory/getThreadsByResourceId.mdx)
+- [query](/reference/memory/query.mdx)

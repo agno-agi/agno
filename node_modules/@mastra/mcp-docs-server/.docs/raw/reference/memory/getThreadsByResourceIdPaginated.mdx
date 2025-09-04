@@ -1,0 +1,187 @@
+# getThreadsByResourceIdPaginated Reference
+
+The `getThreadsByResourceIdPaginated` function retrieves threads associated with a specific resource ID with pagination support. This method addresses performance and memory usage concerns when dealing with large numbers of threads by returning results in manageable chunks with metadata for navigation.
+
+## Usage Example
+
+```typescript
+import { Memory } from "@mastra/core/memory";
+
+const memory = new Memory(config);
+
+// Basic usage with default parameters
+const result = await memory.getThreadsByResourceIdPaginated({
+  resourceId: "resource-123",
+  page: 0,
+  perPage: 100,
+});
+
+console.log(result.threads);
+console.log(result.total);
+console.log(result.hasMore);
+
+// Custom pagination with sorting
+const customResult = await memory.getThreadsByResourceIdPaginated({
+  resourceId: "resource-123",
+  page: 2,
+  perPage: 50,
+  orderBy: "updatedAt",
+  sortDirection: "ASC",
+});
+
+// Process paginated results
+let currentPage = 0;
+let hasMorePages = true;
+
+while (hasMorePages) {
+  const pageResult = await memory.getThreadsByResourceIdPaginated({
+    resourceId: "user-456",
+    page: currentPage,
+    perPage: 25,
+    orderBy: "createdAt",
+    sortDirection: "DESC",
+  });
+  
+  // Process threads
+  pageResult.threads.forEach(thread => {
+    console.log(`Thread: ${thread.id}, Created: ${thread.createdAt}`);
+  });
+  
+  hasMorePages = pageResult.hasMore;
+  currentPage++;
+}
+```
+
+## Parameters
+
+<PropertiesTable
+  content={[
+    {
+      name: "resourceId",
+      type: "string",
+      description: "The ID of the resource whose threads are to be retrieved.",
+      isOptional: false,
+    },
+    {
+      name: "page",
+      type: "number",
+      description: "Page number to retrieve. Must be a positive integer.",
+      isOptional: false,
+    },
+    {
+      name: "perPage",
+      type: "number",
+      description: "Number of threads to return per page. Must be a positive integer.",
+      isOptional: false,
+    },
+    {
+      name: "orderBy",
+      type: "ThreadOrderBy",
+      description: "Field to sort threads by. Accepts 'createdAt' or 'updatedAt'. Default: 'createdAt'",
+      isOptional: true,
+    },
+    {
+      name: "sortDirection",
+      type: "ThreadSortDirection", 
+      description: "Sort order direction. Accepts 'ASC' or 'DESC'. Default: 'DESC'",
+      isOptional: true,
+    },
+  ]}
+/>
+
+## Type Definitions
+
+```typescript
+type ThreadOrderBy = 'createdAt' | 'updatedAt';
+type ThreadSortDirection = 'ASC' | 'DESC';
+
+interface ThreadSortOptions {
+  orderBy?: ThreadOrderBy;
+  sortDirection?: ThreadSortDirection;
+}
+
+interface PaginationInfo {
+  total: number;      // Total number of threads across all pages
+  page: number;       // Current page number
+  perPage: number;    // Number of threads per page
+  hasMore: boolean;   // Whether additional pages exist
+}
+```
+
+## Returns
+
+<PropertiesTable
+  content={[
+    {
+      name: "threads",
+      type: "StorageThreadType[]",
+      description: "Array of threads for the current page, sorted according to the specified criteria.",
+    },
+    {
+      name: "total",
+      type: "number",
+      description: "Total number of threads associated with the resource ID across all pages.",
+    },
+    {
+      name: "page",
+      type: "number",
+      description: "Current page number.",
+    },
+    {
+      name: "perPage",
+      type: "number",
+      description: "Number of threads returned per page as specified in the request.",
+    },
+    {
+      name: "hasMore",
+      type: "boolean",
+      description: "Indicates whether additional pages of results are available.",
+    },
+  ]}
+/>
+
+## Technical Notes
+
+### Performance Considerations
+
+This method executes database-level pagination using LIMIT/OFFSET operations (or equivalent), which provides better performance and memory usage compared to retrieving all threads and paginating in application code.
+
+### Default Values
+
+- `orderBy`: Defaults to `"createdAt"`
+- `sortDirection`: Defaults to `"DESC"` (newest first)
+
+### Relationship to getThreadsByResourceId
+
+The paginated version (`getThreadsByResourceIdPaginated`) complements the existing `getThreadsByResourceId` method:
+
+- Use `getThreadsByResourceId` when you need all threads for a resource
+- Use `getThreadsByResourceIdPaginated` when working with potentially large thread collections or implementing UI pagination
+
+Both methods support the same sorting options for consistency.
+
+### Error Handling
+
+```typescript
+try {
+  const result = await memory.getThreadsByResourceIdPaginated({
+    resourceId: "resource-123",
+    page: 0,
+    perPage: 100,
+  });
+  
+  if (result.threads.length === 0) {
+    console.log("No threads found for this resource");
+  }
+} catch (error) {
+  console.error("Failed to retrieve paginated threads:", error);
+}
+```
+
+### Related
+
+- [Memory Class Reference](/reference/memory/Memory.mdx)
+- [getThreadsByResourceId](/reference/memory/getThreadsByResourceId.mdx) - Non-paginated version
+- [Getting Started with Memory](/docs/memory/overview.mdx) (Covers threads/resources concept)
+- [createThread](/reference/memory/createThread.mdx)
+- [getThreadById](/reference/memory/getThreadById.mdx)

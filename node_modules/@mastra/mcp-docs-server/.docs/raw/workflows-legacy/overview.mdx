@@ -1,0 +1,180 @@
+---
+title: "Handling Complex LLM Operations | Workflows (Legacy) | Mastra"
+description: "Workflows in Mastra help you orchestrate complex sequences of operations with features like branching, parallel execution, resource suspension, and more."
+---
+
+# Handling Complex LLM Operations with Workflows (Legacy)
+
+All the legacy workflow documentation is available on the links below.
+
+- [Steps](/docs/workflows-legacy/steps.mdx)
+- [Control Flow](/docs/workflows-legacy/control-flow.mdx)
+- [Variables](/docs/workflows-legacy/variables.mdx)
+- [Suspend & Resume](/docs/workflows-legacy/suspend-and-resume.mdx)
+- [Dynamic Workflows](/docs/workflows-legacy/dynamic-workflows.mdx)
+- [Error Handling](/docs/workflows-legacy/error-handling.mdx)
+- [Nested Workflows](/docs/workflows-legacy/nested-workflows.mdx)
+- [Runtime/Dynamic Variables](/docs/workflows-legacy/runtime-variables.mdx)
+
+Workflows in Mastra help you orchestrate complex sequences of operations with features like branching, parallel execution, resource suspension, and more.
+
+## When to use workflows
+
+Most AI applications need more than a single call to a language model. You may want to run multiple steps, conditionally skip certain paths, or even pause execution altogether until you receive user input. Sometimes your agent tool calling is not accurate enough.
+
+Mastra's workflow system provides:
+
+- A standardized way to define steps and link them together.
+- Support for both simple (linear) and advanced (branching, parallel) paths.
+- Debugging and observability features to track each workflow run.
+
+## Example
+
+To create a workflow, you define one or more steps, link them, and then commit the workflow before starting it.
+
+### Breaking Down the Workflow (Legacy)
+
+Let's examine each part of the workflow creation process:
+
+#### 1. Creating the Workflow
+
+Here's how you define a workflow in Mastra. The `name` field determines the workflow's API endpoint (`/workflows/$NAME/`), while the `triggerSchema` defines the structure of the workflow's trigger data:
+
+```ts filename="src/mastra/workflow/index.ts"
+import { LegacyStep, LegacyWorkflow } from "@mastra/core/workflows/legacy";
+
+const myWorkflow = new LegacyWorkflow({
+  name: "my-workflow",
+  triggerSchema: z.object({
+    inputValue: z.number(),
+  }),
+});
+```
+
+#### 2. Defining Steps
+
+Now, we'll define the workflow's steps. Each step can have its own input and output schemas. Here, `stepOne` doubles an input value, and `stepTwo` increments that result if `stepOne` was successful. (To keep things simple, we aren't making any LLM calls in this example):
+
+```ts filename="src/mastra/workflow/index.ts"
+const stepOne = new LegacyStep({
+  id: "stepOne",
+  outputSchema: z.object({
+    doubledValue: z.number(),
+  }),
+  execute: async ({ context }) => {
+    const doubledValue = context.triggerData.inputValue * 2;
+    return { doubledValue };
+  },
+});
+
+const stepTwo = new LegacyStep({
+  id: "stepTwo",
+  execute: async ({ context }) => {
+    const doubledValue = context.getStepResult(stepOne)?.doubledValue;
+    if (!doubledValue) {
+      return { incrementedValue: 0 };
+    }
+    return {
+      incrementedValue: doubledValue + 1,
+    };
+  },
+});
+```
+
+#### 3. Linking Steps
+
+Now, let's create the control flow, and "commit" (finalize the workflow). In this case, `stepOne` runs first and is followed by `stepTwo`.
+
+```ts filename="src/mastra/workflow/index.ts"
+myWorkflow.step(stepOne).then(stepTwo).commit();
+```
+
+### Register the Workflow
+
+Register your workflow with Mastra to enable logging and telemetry:
+
+```ts showLineNumbers filename="src/mastra/index.ts"
+import { Mastra } from "@mastra/core";
+
+export const mastra = new Mastra({
+  legacy_workflows: { myWorkflow },
+});
+```
+
+The workflow can also have the mastra instance injected into the context in the case where you need to create dynamic workflows:
+
+```ts filename="src/mastra/workflow/index.ts"
+import { Mastra } from "@mastra/core";
+import { LegacyWorkflow } from "@mastra/core/workflows/legacy";
+
+const mastra = new Mastra();
+
+const myWorkflow = new LegacyWorkflow({
+  name: "my-workflow",
+  mastra,
+});
+```
+
+### Executing the Workflow
+
+Execute your workflow programmatically or via API:
+
+```ts showLineNumbers filename="src/mastra/run-workflow.ts" copy
+import { mastra } from "./index";
+
+// Get the workflow
+const myWorkflow = mastra.legacy_getWorkflow("myWorkflow");
+const { runId, start } = myWorkflow.createRun();
+
+// Start the workflow execution
+await start({ triggerData: { inputValue: 45 } });
+```
+
+Or use the API (requires running `mastra dev`):
+
+// Create workflow run
+
+```bash
+curl --location 'http://localhost:4111/api/workflows/myWorkflow/start-async' \
+     --header 'Content-Type: application/json' \
+     --data '{
+       "inputValue": 45
+     }'
+```
+
+This example shows the essentials: define your workflow, add steps, commit the workflow, then execute it.
+
+## Defining Steps
+
+The basic building block of a workflow [is a step](./steps.mdx). Steps are defined using schemas for inputs and outputs, and can fetch prior step results.
+
+## Control Flow
+
+Workflows let you define a [control flow](./control-flow.mdx) to chain steps together in with parallel steps, branching paths, and more.
+
+## Workflow Variables
+
+When you need to map data between steps or create dynamic data flows, [workflow variables](./variables.mdx) provide a powerful mechanism for passing information from one step to another and accessing nested properties within step outputs.
+
+## Suspend and Resume
+
+When you need to pause execution for external data, user input, or asynchronous events, Mastra [supports suspension at any step](./suspend-and-resume.mdx), persisting the state of the workflow so you can resume it later.
+
+## Observability and Debugging
+
+Mastra workflows automatically [log the input and output of each step within a workflow run](../../reference/observability/otel-config.mdx), allowing you to send this data to your preferred logging, telemetry, or observability tools.
+
+You can:
+
+- Track the status of each step (e.g., `success`, `error`, or `suspended`).
+- Store run-specific metadata for analysis.
+- Integrate with third-party observability platforms like Datadog or New Relic by forwarding logs.
+
+## More Resources
+
+- [Sequential Steps workflow example](../../examples/workflows_legacy/sequential-steps.mdx)
+- [Parallel Steps workflow example](../../examples/workflows_legacy/parallel-steps.mdx)
+- [Branching Paths workflow example](../../examples/workflows_legacy/branching-paths.mdx)
+- [Workflow Variables example](../../examples/workflows_legacy/workflow-variables.mdx)
+- [Cyclical Dependencies workflow example](../../examples/workflows_legacy/cyclical-dependencies.mdx)
+- [Suspend and Resume workflow example](../../examples/workflows_legacy/suspend-and-resume.mdx)

@@ -1,0 +1,71 @@
+{
+  "name": "json-schema-to-zod",
+  "version": "2.6.1",
+  "description": "Converts JSON schema objects or files into Zod schemas",
+  "types": "./dist/types/index.d.ts",
+  "bin": "./dist/cjs/cli.js",
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/esm/index.js",
+  "exports": {
+    "import": {
+      "types": "./dist/types/index.d.ts",
+      "default": "./dist/esm/index.js"
+    },
+    "require": {
+      "types": "./dist/types/index.d.ts",
+      "default": "./dist/cjs/index.js"
+    }
+  },
+  "scripts": {
+    "build:types": "tsc -p tsconfig.types.json",
+    "build:cjs": "tsc -p tsconfig.cjs.json && node postcjs.js",
+    "build:esm": "tsc -p tsconfig.esm.json && node postesm.js",
+    "build": "npm i && npm run gen && npm test && rimraf ./dist && npm run build:types && npm run build:cjs && npm run build:esm",
+    "dry": "npm run build && npm pub --dry-run",
+    "dev": "tsx watch test/index.ts",
+    "gen": "tsx ./createIndex.ts",
+    "test": "tsx test/index.ts"
+  },
+  "c8": {
+    "exclude": [
+      "dist",
+      "createIndex.ts",
+      "jest.config.js",
+      "postcjs.js",
+      "postesm.js",
+      "test"
+    ]
+  },
+  "keywords": ["zod", "json", "schema", "converter", "cli"],
+  "author": "Stefan Terdell",
+  "contributors": [
+    "Chen (https://github.com/werifu)",
+    "Nuno Carduso (https://github.com/ncardoso-barracuda)",
+    "Lars Strojny (https://github.com/lstrojny)",
+    "Navtoj Chahal (https://github.com/navtoj)",
+    "Ben McCann (https://github.com/benmccann)",
+    "Dmitry Zakharov (https://github.com/DZakh)",
+    "Michel Turpin (https://github.com/grimly)",
+    "David Barratt (https://github.com/davidbarratt)",
+    "pevisscher (https://github.com/pevisscher)",
+    "Aidin Abedi (https://github.com/aidinabedi)",
+    "Brett Zamir (https://github.com/brettz9)",
+    "vForgeOne (https://github.com/vforgeone)",
+    "Adrian Ordonez (https://github.com/adrianord)",
+    "Jonas Reucher (https://github.com/Mantls)"
+  ],
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/StefanTerdell/json-schema-to-zod"
+  },
+  "devDependencies": {
+    "@types/json-schema": "^7.0.15",
+    "@types/node": "^20.9.0",
+    "fast-diff": "^1.3.0",
+    "rimraf": "^5.0.5",
+    "tsx": "^4.1.1",
+    "typescript": "^5.2.2",
+    "zod": "^3.22.4"
+  }
+}
