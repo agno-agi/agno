@@ -42,7 +42,7 @@ from agno.run.agent import (
     RunOutput,
     RunOutputEvent,
 )
-from agno.run.base import RunStatus
+from agno.run.base import CustomEvent, RunStatus
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
@@ -3065,9 +3065,7 @@ class Agent:
                     stream_intermediate_steps=stream_intermediate_steps,
                     workflow_context=workflow_context,
                 )
-
-            # Yielding custom events
-            else:
+            elif isinstance(model_response_event, CustomEvent):
                 yield model_response_event  # type: ignore
 
         # Determine reasoning completed
@@ -3149,9 +3147,7 @@ class Agent:
                     workflow_context=workflow_context,
                 ):
                     yield event
-
-            # Yielding custom events
-            else:
+            elif isinstance(model_response_event, CustomEvent):
                 yield model_response_event  # type: ignore
 
         if stream_intermediate_steps and reasoning_state["reasoning_started"]:

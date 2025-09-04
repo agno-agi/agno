@@ -41,7 +41,7 @@ from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
-from agno.run.base import RunStatus
+from agno.run.base import CustomEvent, RunStatus
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
@@ -1937,16 +1937,19 @@ class Team:
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
         ):
-            yield from self._handle_model_response_chunk(
-                session=session,
-                run_response=run_response,
-                full_model_response=full_model_response,
-                model_response_event=model_response_event,
-                reasoning_state=reasoning_state,
-                stream_intermediate_steps=stream_intermediate_steps,
-                parse_structured_output=self.should_parse_structured_output,
-                workflow_context=workflow_context,
-            )
+            if isinstance(model_response_event, ModelResponse):
+                yield from self._handle_model_response_chunk(
+                    session=session,
+                    run_response=run_response,
+                    full_model_response=full_model_response,
+                    model_response_event=model_response_event,
+                    reasoning_state=reasoning_state,
+                    stream_intermediate_steps=stream_intermediate_steps,
+                    parse_structured_output=self.should_parse_structured_output,
+                    workflow_context=workflow_context,
+                )
+            elif isinstance(model_response_event, CustomEvent):
+                yield model_response_event  # type: ignore
 
         # 3. Update TeamRunOutput
         run_response.created_at = full_model_response.created_at
@@ -2018,17 +2021,20 @@ class Team:
             stream_model_response=stream_model_response,
         )  # type: ignore
         async for model_response_event in model_stream:
-            for chunk in self._handle_model_response_chunk(
-                session=session,
-                run_response=run_response,
-                full_model_response=full_model_response,
-                model_response_event=model_response_event,
-                reasoning_state=reasoning_state,
-                stream_intermediate_steps=stream_intermediate_steps,
-                parse_structured_output=self.should_parse_structured_output,
-                workflow_context=workflow_context,
-            ):
-                yield chunk
+            if isinstance(model_response_event, ModelResponse):
+                for event in self._handle_model_response_chunk(
+                    session=session,
+                    run_response=run_response,
+                    full_model_response=full_model_response,
+                    model_response_event=model_response_event,
+                    reasoning_state=reasoning_state,
+                    stream_intermediate_steps=stream_intermediate_steps,
+                    parse_structured_output=self.should_parse_structured_output,
+                    workflow_context=workflow_context,
+                ):
+                    yield event
+            elif isinstance(model_response_event, CustomEvent):
+                yield model_response_event  # type: ignore
 
         # Handle structured outputs
         if (self.output_schema is not None) and not self.use_json_mode and (full_model_response.parsed is not None):
