@@ -54,25 +54,29 @@ class OpenAIEmbedder(Embedder):
         }
         if self.user is not None:
             _request_params["user"] = self.user
-        if self.id.startswith("text-embedding-3"):
+        if self.id.startswith("text-embedding-3")  or self.dimensions is not None:
             _request_params["dimensions"] = self.dimensions
         if self.request_params:
             _request_params.update(self.request_params)
         return self.client.embeddings.create(**_request_params)
 
     def get_embedding(self, text: str) -> List[float]:
-        response: CreateEmbeddingResponse = self.response(text=text)
         try:
+            response: CreateEmbeddingResponse = self.response(text=text)
             return response.data[0].embedding
         except Exception as e:
             logger.warning(e)
             return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
-        response: CreateEmbeddingResponse = self.response(text=text)
+        try:
+            response: CreateEmbeddingResponse = self.response(text=text)
 
-        embedding = response.data[0].embedding
-        usage = response.usage
-        if usage:
-            return embedding, usage.model_dump()
-        return embedding, None
+            embedding = response.data[0].embedding
+            usage = response.usage
+            if usage:
+                return embedding, usage.model_dump()
+            return embedding, None
+        except Exception as e:
+            logger.warning(e)
+            return [], None

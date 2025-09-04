@@ -387,6 +387,9 @@ class Milvus(VectorDb):
         else:
             for document in documents:
                 document.embed(embedder=self.embedder)
+                if not document.embedding:
+                    log_debug(f"Failed to embed document: {document.name}; meta data: {document.meta_data}")
+                    continue
                 cleaned_content = document.content.replace("\x00", "\ufffd")
                 doc_id = md5(cleaned_content.encode()).hexdigest()
 
