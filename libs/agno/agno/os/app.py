@@ -137,11 +137,11 @@ class AgentOS:
                     @asynccontextmanager
                     async def combined_lifespan(app: FastAPI):
                         # Run both lifespans
-                        async with self.lifespan(app):
-                            async with self.mcp_app.lifespan(app):
+                        async with self.lifespan(app):  # type: ignore
+                            async with self.mcp_app.lifespan(app):  # type: ignore
                                 yield
 
-                    final_lifespan = combined_lifespan
+                    final_lifespan = combined_lifespan  # type: ignore
 
                 self.fastapi_app = self._make_app(lifespan=final_lifespan)
             else:
