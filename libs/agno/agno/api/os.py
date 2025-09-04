@@ -10,7 +10,7 @@ def log_os_telemetry(launch: OSLaunch) -> None:
         try:
             response = api_client.post(
                 ApiRoutes.AGENT_OS_LAUNCH,
-                json={"launch": launch.model_dump(exclude_none=True)},
+                json=launch.model_dump(exclude_none=True),
             )
             response.raise_for_status()
         except Exception as e:

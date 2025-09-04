@@ -103,6 +103,7 @@ def test_tool_use_tool_call_limit():
         tools=[
             YFinanceTools(
                 include_tools=[
+                    "get_current_stock_price",
                     "get_company_news",
                 ],
                 cache_results=True,
@@ -252,7 +253,6 @@ def test_tool_call_pydantic_parameters():
         tools=[research_topic],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run(
