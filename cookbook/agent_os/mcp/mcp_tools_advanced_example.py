@@ -13,12 +13,20 @@ from agno.tools.mcp import MCPTools  # noqa: F401
 # Setup the database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
-mastra_mcp_tools = MCPTools(command="npx -y @mastra/mcp-docs-server", timeout_seconds=60)
+mastra_mcp_tools = MCPTools(
+    command="npx -y @mastra/mcp-docs-server", timeout_seconds=60
+)
 
-agno_mcp_tools = MCPTools(transport="streamable-http", url="https://docs-v2.agno.com/mcp")
+agno_mcp_tools = MCPTools(
+    transport="streamable-http", url="https://docs-v2.agno.com/mcp"
+)
 
-# OR
-# mcp_tools = MultiMCPTools(urls_transports=["streamable-http"], urls=["https://docs-v2.agno.com/mcp"])
+# You can also use MultiMCPTools to connect to multiple MCP servers at once:
+#
+# mcp_tools = MultiMCPTools(
+#     commands=["npx -y @mastra/mcp-docs-server"],
+#     urls=["https://docs-v2.agno.com/mcp"],
+# )
 
 # Setup basic agents, teams and workflows
 ai_framework_agent = Agent(
