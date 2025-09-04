@@ -24,10 +24,8 @@ async def run_agent(message: str) -> None:
             markdown=True,
         )
         await agent.aprint_response(input=message, stream=True, markdown=True)
-        
+
+
 # Example usage
 if __name__ == "__main__":
     asyncio.run(run_agent("Which agents do I have in my AgentOS?"))
-
-
-

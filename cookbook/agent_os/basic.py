@@ -10,7 +10,6 @@ from agno.workflow.workflow import Workflow
 
 # Setup the database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
-db2 = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai2")
 
 # Setup basic agents, teams and workflows
 basic_agent = Agent(
@@ -35,7 +34,7 @@ basic_workflow = Workflow(
     id="basic-workflow",
     name="Basic Workflow",
     description="Just a simple workflow",
-    db=db2,
+    db=db,
     steps=[
         Step(
             name="step1",

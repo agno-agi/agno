@@ -3,10 +3,10 @@
 import logging
 from typing import TYPE_CHECKING
 
+from fastmcp import FastMCP
 from fastmcp.server.http import (
     StarletteWithLifespan,
 )
-from fastmcp import FastMCP
 
 from agno.os.schema import (
     AgentSummaryResponse,
