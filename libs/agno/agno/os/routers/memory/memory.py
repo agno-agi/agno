@@ -28,7 +28,7 @@ def get_memory_router(dbs: dict[str, BaseDb], settings: AgnoAPISettings = AgnoAP
 
 
 def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
-    @router.post("/memories", response_model=UserMemorySchema, status_code=200)
+    @router.post("/memories", response_model=UserMemorySchema, status_code=200, operation_id="create_memory")
     async def create_memory(
         payload: UserMemoryCreateSchema,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
@@ -48,14 +48,14 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
 
         return UserMemorySchema.from_dict(user_memory)  # type: ignore
 
-    @router.delete("/memories/{memory_id}", status_code=204)
+    @router.delete("/memories/{memory_id}", status_code=204, operation_id="delete_memory")
     async def delete_memory(
         memory_id: str = Path(), db_id: Optional[str] = Query(default=None, description="The ID of the database to use")
     ) -> None:
         db = get_db(dbs, db_id)
         db.delete_user_memory(memory_id=memory_id)
 
-    @router.delete("/memories", status_code=204)
+    @router.delete("/memories", status_code=204, operation_id="delete_memories")
     async def delete_memories(
         request: DeleteMemoriesRequest,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
@@ -63,7 +63,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         db = get_db(dbs, db_id)
         db.delete_user_memories(memory_ids=request.memory_ids)
 
-    @router.get("/memories", response_model=PaginatedResponse[UserMemorySchema], status_code=200)
+    @router.get(
+        "/memories", response_model=PaginatedResponse[UserMemorySchema], status_code=200, operation_id="get_memories"
+    )
     async def get_memories(
         user_id: Optional[str] = Query(default=None, description="Filter memories by user ID"),
         agent_id: Optional[str] = Query(default=None, description="Filter memories by agent ID"),
@@ -99,7 +101,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
             ),
         )
 
-    @router.get("/memories/{memory_id}", response_model=UserMemorySchema, status_code=200)
+    @router.get("/memories/{memory_id}", response_model=UserMemorySchema, status_code=200, operation_id="get_memory")
     async def get_memory(
         memory_id: str = Path(),
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
@@ -111,14 +113,16 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
 
         return UserMemorySchema.from_dict(user_memory)  # type: ignore
 
-    @router.get("/memories/topics", response_model=List[str], status_code=200)
+    @router.get("/memories/topics", response_model=List[str], status_code=200, operation_id="get_memory_topics")
     async def get_topics(
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> List[str]:
         db = get_db(dbs, db_id)
         return db.get_all_memory_topics()
 
-    @router.patch("/memories/{memory_id}", response_model=UserMemorySchema, status_code=200)
+    @router.patch(
+        "/memories/{memory_id}", response_model=UserMemorySchema, status_code=200, operation_id="update_memory"
+    )
     async def update_memory(
         payload: UserMemoryCreateSchema,
         memory_id: str = Path(),
@@ -139,7 +143,12 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
 
         return UserMemorySchema.from_dict(user_memory)  # type: ignore
 
-    @router.get("/user_memory_stats", response_model=PaginatedResponse[UserStatsSchema], status_code=200)
+    @router.get(
+        "/user_memory_stats",
+        response_model=PaginatedResponse[UserStatsSchema],
+        status_code=200,
+        operation_id="get_user_memory_stats",
+    )
     async def get_user_memory_stats(
         limit: Optional[int] = Query(default=20, description="Number of items to return"),
         page: Optional[int] = Query(default=1, description="Page number"),

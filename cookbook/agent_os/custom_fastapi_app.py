@@ -18,9 +18,9 @@ from starlette.middleware.cors import CORSMiddleware
 # Setup the database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
-# Setup basic agents, teams and workflows
 web_research_agent = Agent(
-    name="Basic Agent",
+    id="web-research-agent",
+    name="Web Research Agent",
     model=Claude(id="claude-sonnet-4-0"),
     db=db,
     tools=[DuckDuckGoTools()],
@@ -36,7 +36,7 @@ app: FastAPI = FastAPI(
     version="1.0.0",
 )
 
-# Add Middlewares
+# Add Middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
