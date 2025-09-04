@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Dict
 
@@ -187,6 +187,12 @@ class BaseRunOutputEvent:
     @property
     def is_cancelled(self):
         return False
+
+
+@dataclass
+class CustomEvent(BaseRunOutputEvent):
+    event: str = "CustomEvent"
+    data: Dict[Any, Any] = field(default_factory=dict)
 
 
 class RunStatus(str, Enum):

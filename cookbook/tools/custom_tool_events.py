@@ -4,14 +4,8 @@ import asyncio
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from agno.run.base import CustomEvent
 from agno.tools import tool
-
-
-class CustomEvent:
-    """Example custom event. We will make our custom tool yield this."""
-
-    event: str = "CustomEvent"
-    data: dict = {}
 
 
 # Make sure to set show_result=True for our tool events to be shown.
@@ -19,7 +13,7 @@ class CustomEvent:
 async def custom_tool():
     """Example custom tool that simply yields a custom event."""
 
-    yield CustomEvent()
+    yield CustomEvent(data={"foo": "bar"})
 
 
 # Setup an Agent and pass our custom tool.

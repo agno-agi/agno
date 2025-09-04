@@ -26,6 +26,7 @@ from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run.agent import RunContentEvent, RunOutput, RunOutputEvent
+from agno.run.base import CustomEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
@@ -1229,7 +1230,10 @@ class Model(ABC):
                 else:
                     function_call_output += str(item)
                     if function_call.function.show_result:
-                        yield ModelResponse(content=str(item))
+                        if isinstance(item, CustomEvent):
+                            yield item  # type: ignore
+                        else:
+                            yield ModelResponse(content=str(item))
         else:
             from agno.tools.function import ToolResult
 
@@ -1629,7 +1633,10 @@ class Model(ABC):
                     else:
                         function_call_output += str(item)
                         if function_call.function.show_result:
-                            yield item
+                            if isinstance(item, CustomEvent):
+                                yield item  # type: ignore
+                            else:
+                                yield ModelResponse(content=str(item))
             else:
                 function_call_output = str(function_call.result)
                 if function_call.function.show_result:
