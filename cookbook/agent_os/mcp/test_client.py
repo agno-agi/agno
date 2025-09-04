@@ -8,33 +8,26 @@ python cookbook/agent_os/mcp/enable_mcp.py
 
 import asyncio
 
-from fastmcp import Client
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
+from agno.tools.mcp import MCPTools
 
-# HTTP server
-client = Client("http://localhost:7777/llm/mcp")
-
-
-async def main():
-    async with client:
-        # Basic server interaction
-        await client.ping()
-
-        # List available operations
-        tools = await client.list_tools()
-        print("\nAvailable tools:")
-        print(tools)
-
-        resources = await client.list_resources()
-        print("\nAvailable resources:")
-        print(resources)
-
-        prompts = await client.list_prompts()
-        print("\nAvailable prompts:")
-        print(prompts)
-
-        # Execute operations
-        result = await client.read_resource("agent-os://configuration")
-        print(result)
+# This is the URL of the MCP server we want to use.
+server_url = "http://localhost:7777/mcp"
 
 
-asyncio.run(main())
+async def run_agent(message: str) -> None:
+    async with MCPTools(transport="streamable-http", url=server_url) as mcp_tools:
+        agent = Agent(
+            model=OpenAIChat(id="gpt-4o"),
+            tools=[mcp_tools],
+            markdown=True,
+        )
+        await agent.aprint_response(input=message, stream=True, markdown=True)
+        
+# Example usage
+if __name__ == "__main__":
+    asyncio.run(run_agent("Which agents do I have in my AgentOS?"))
+
+
+

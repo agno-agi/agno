@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from fastmcp.server.http import (
     StarletteWithLifespan,
 )
+from fastmcp import FastMCP
 
 from agno.os.schema import (
     AgentSummaryResponse,
@@ -26,12 +27,10 @@ def get_mcp_server(
 ) -> StarletteWithLifespan:
     """Attach MCP routes to the provided router."""
 
-    from fastmcp import FastMCP
-
     # Create an MCP server
     mcp = FastMCP(os.name or "AgentOS")
 
-    @mcp.resource("agent-os://configuration")
+    @mcp.tool(name="get_agentos_config", description="Get the configuration of the AgentOS", tags=["core"])
     async def config() -> ConfigResponse:
         return ConfigResponse(
             os_id=os.os_id or "AgentOS",
