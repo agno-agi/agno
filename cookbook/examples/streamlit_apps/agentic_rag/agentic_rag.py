@@ -36,8 +36,8 @@ from agno.db.postgres import PostgresDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.tools.duckduckgo import DuckDuckGoTools
+from agno.utils.streamlit import get_model_from_id
 from agno.vectordb.pgvector import PgVector
-from utils import get_model_from_id
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 

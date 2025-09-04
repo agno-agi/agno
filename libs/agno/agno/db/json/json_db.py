@@ -375,8 +375,6 @@ class JsonDb(BaseDb):
 
             self._write_json_file(self.session_table_name, sessions)
 
-            log_debug(f"Upserted session with id '{session.session_id}'")
-
             if not deserialize:
                 return session_dict
 
@@ -579,8 +577,6 @@ class JsonDb(BaseDb):
                 memories.append(memory_dict)
 
             self._write_json_file(self.memory_table_name, memories)
-
-            log_debug(f"Upserted user memory with id '{memory.memory_id}'")
 
             if not deserialize:
                 return memory_dict
@@ -873,8 +869,6 @@ class JsonDb(BaseDb):
                 knowledge_items.append(knowledge_dict)
 
             self._write_json_file(self.knowledge_table_name, knowledge_items)
-
-            log_debug(f"Upserted knowledge source with id '{knowledge_row.id}'")
 
             return knowledge_row
 

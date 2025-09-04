@@ -19,7 +19,7 @@ from agno.utilities.logging import logger, set_log_level_to_debug
 
 infra_cli = typer.Typer(
     name="infra",
-    short_help="Manage Infrastructure",
+    short_help="Manage Agent Infrastructure",
     help="""\b
 Use `ag infra [COMMAND]` to create, setup, start or stop your infrastructure.
 Run `ag infra [COMMAND] --help` for more info.
@@ -32,20 +32,20 @@ Run `ag infra [COMMAND] --help` for more info.
 )
 
 
-@infra_cli.command(short_help="Create a new infrastructure in the current directory.")
+@infra_cli.command(short_help="Create a new Agno Infra project in the current directory.")
 def create(
     name: Optional[str] = typer.Option(
         None,
         "-n",
         "--name",
-        help="Name of the new infrastructure.",
+        help="Name of the new Agno Infra project directory (e.g. `my-infra`).",
         show_default=False,
     ),
     template: Optional[str] = typer.Option(
         None,
         "-t",
         "--template",
-        help="Starter template for the Infra.",
+        help="Starter template for the Agno Infra project.",
         show_default=False,
     ),
     url: Optional[str] = typer.Option(
@@ -66,8 +66,8 @@ def create(
     Create a new Agentic Infrastructure project in the current directory using a starter template
     \b
     Examples:
-    > ag infra create -t agent-infra-docker                -> Create an `agent-infra-docker` in the current directory
-    > ag infra create -t agent-infra-docker -n my-agent-infra   -> Create an `agent-infra-docker` named `my-agent-infra` in the current directory
+    > ag infra create -t agent-infra-docker                      -> Create an `agent-infra-docker` in the current directory
+    > ag infra create -t agent-infra-docker -n my-agent-infra    -> Create an `agent-infra-docker` named `my-agent-infra` in the current directory
     """
     if print_debug_log:
         set_log_level_to_debug()
@@ -151,7 +151,7 @@ def up(
     from agno.cli.config import AgnoCliConfig
     from agno.cli.operator import initialize_agno_cli
     from agno.infra.helpers import get_infra_dir_path
-    from agno.infra.operator import setup_infra, start_infra
+    from agno.infra.operator import setup_infra_config_from_dir, start_infra
     from agno.utilities.resource_filter import parse_resource_filter
 
     agno_config: Optional[AgnoCliConfig] = AgnoCliConfig.from_saved_config()
@@ -165,13 +165,13 @@ def up(
     # Workspace to start
     infra_to_start: Optional[InfraConfig] = None
 
-    # If there is an existing workspace at current path, use that workspace
+    # If there is an existing infra project at current path, use that infra project
     current_path: Path = Path(".").resolve()
     infra_at_current_path: Optional[InfraConfig] = agno_config.get_infra_config_by_path(current_path)
     if infra_at_current_path is not None:
-        logger.debug(f"Found infra at: {infra_at_current_path.infra_root_path}")
+        logger.debug(f"Found Agno Infra project at: {infra_at_current_path.infra_root_path}")
         if str(infra_at_current_path.infra_root_path) != agno_config.active_infra_dir:
-            logger.debug(f"Updating active Infra to {infra_at_current_path.infra_root_path}")
+            logger.debug(f"Updating active Agno Infra project to {infra_at_current_path.infra_root_path}")
             agno_config.set_active_infra_dir(infra_at_current_path.infra_root_path)
         infra_to_start = infra_at_current_path
 
@@ -182,7 +182,7 @@ def up(
         if infra_infra_dir_path is not None:
             logger.debug(f"Found Infra directory: {infra_infra_dir_path}")
             logger.debug(f"Setting up a Infra at: {current_path}")
-            infra_to_start = setup_infra(infra_root_path=current_path)
+            infra_to_start = setup_infra_config_from_dir(infra_root_path=current_path)
             print_info("")
 
     # If there's no Infra at current path, check if an active Infra exists
@@ -316,7 +316,7 @@ def down(
     from agno.cli.config import AgnoCliConfig
     from agno.cli.operator import initialize_agno_cli
     from agno.infra.helpers import get_infra_dir_path
-    from agno.infra.operator import setup_infra, stop_infra
+    from agno.infra.operator import setup_infra_config_from_dir, stop_infra
     from agno.utilities.resource_filter import parse_resource_filter
 
     agno_config: Optional[AgnoCliConfig] = AgnoCliConfig.from_saved_config()
@@ -346,7 +346,7 @@ def down(
         if infra_infra_dir_path is not None:
             logger.debug(f"Found infra directory: {infra_infra_dir_path}")
             logger.debug(f"Setting up a Infra at: {current_path}")
-            infra_to_stop = setup_infra(infra_root_path=current_path)
+            infra_to_stop = setup_infra_config_from_dir(infra_root_path=current_path)
             print_info("")
 
     # If there's no Infra at current path, check if an active Infra exists
@@ -483,7 +483,7 @@ def patch(
     from agno.cli.config import AgnoCliConfig
     from agno.cli.operator import initialize_agno_cli
     from agno.infra.helpers import get_infra_dir_path
-    from agno.infra.operator import setup_infra, update_infra
+    from agno.infra.operator import setup_infra_config_from_dir, update_infra
     from agno.utilities.resource_filter import parse_resource_filter
 
     agno_config: Optional[AgnoCliConfig] = AgnoCliConfig.from_saved_config()
@@ -513,7 +513,7 @@ def patch(
         if infra_infra_dir_path is not None:
             logger.debug(f"Found infra directory: {infra_infra_dir_path}")
             logger.debug(f"Setting up a Infra at: {current_path}")
-            infra_to_patch = setup_infra(infra_root_path=current_path)
+            infra_to_patch = setup_infra_config_from_dir(infra_root_path=current_path)
             print_info("")
 
     # If there's no Infra at current path, check if an active Infra exists

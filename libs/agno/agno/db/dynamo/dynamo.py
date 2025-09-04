@@ -506,8 +506,6 @@ class DynamoDb(BaseDb):
             item = serialize_to_dynamo_item(serialized_session)
             self.client.put_item(TableName=table_name, Item=item)
 
-            log_debug(f"Upserted session with id '{session.session_id}'")
-
             return deserialize_session_result(serialized_session, session, deserialize)
 
         except Exception as e:
@@ -851,8 +849,6 @@ class DynamoDb(BaseDb):
             item = serialize_to_dynamo_item(memory_dict)
 
             self.client.put_item(TableName=table_name, Item=item)
-
-            log_debug(f"Upserted user memory with id '{memory.memory_id}'")
 
             if not deserialize:
                 return memory_dict
@@ -1529,8 +1525,6 @@ class DynamoDb(BaseDb):
             item = serialize_knowledge_row(knowledge_row)
 
             self.client.put_item(TableName=table_name, Item=item)
-
-            log_debug(f"Upserted knowledge content with id '{knowledge_row.id}'")
 
             return knowledge_row
 

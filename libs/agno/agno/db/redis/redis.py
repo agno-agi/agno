@@ -572,8 +572,6 @@ class RedisDb(BaseDb):
                 if not success:
                     return None
 
-                log_debug(f"Upserted session with id '{session.session_id}'")
-
                 if not deserialize:
                     return data
 
@@ -1139,8 +1137,6 @@ class RedisDb(BaseDb):
         try:
             data = knowledge_row.model_dump()
             success = self._store_record("knowledge", knowledge_row.id, data)  # type: ignore
-
-            log_debug(f"Upserted knowledge content with id '{knowledge_row.id}'")
 
             return knowledge_row if success else None
 

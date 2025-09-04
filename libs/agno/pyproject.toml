@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.0.0a1"
+version = "2.0.0a2"
 description = "Agno: a lightweight library for building Multi-Agent Systems"
 requires-python = ">=3.7,<4"
 readme = "README.md"
@@ -372,6 +372,7 @@ module = [
   "exa_py.*",
   "fastapi.*",
   "fastembed.*",
+  "fastmcp.*",
   "filetype.*",
   "firecrawl.*",
   "github.*",

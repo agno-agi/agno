@@ -95,7 +95,7 @@ def test_set_id_from_name():
     team_id = team.id
 
     assert team_id is not None
-    assert is_valid_uuid(team_id)
+    assert team_id == "test-name"
 
     team.id = None
     team.set_id()
