@@ -300,7 +300,7 @@ class Workflow:
 
     def initialize_workflow(self):
         if self.id is None:
-            self.id = self.set_id()
+            self.set_id()
             log_debug(f"Generated new workflow_id: {self.id}")
 
     def _initialize_session(
