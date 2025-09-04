@@ -31,7 +31,6 @@ agno_support_agent = Agent(
 agent_os = AgentOS(
     description="Example app with MCP Tools",
     agents=[agno_support_agent],
-    enable_mcp=True,
 )
 
 
