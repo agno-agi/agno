@@ -4220,17 +4220,18 @@ class Team:
                 if func.entrypoint is not None
             )
 
-            # Only collect media if functions actually need them
-            joint_images = self._collect_joint_images(run_response.input, session) if needs_media else None
-            joint_files = self._collect_joint_files(run_response.input) if needs_media else None
-            joint_audios = self._collect_joint_audios(run_response.input, session) if needs_media else None
-            joint_videos = self._collect_joint_videos(run_response.input, session) if needs_media else None
+            if needs_media:
+                # Only collect media if functions actually need them
+                joint_images = self._collect_joint_images(run_response.input, session)
+                joint_files = self._collect_joint_files(run_response.input)
+                joint_audios = self._collect_joint_audios(run_response.input, session)
+                joint_videos = self._collect_joint_videos(run_response.input, session)
 
-            for func in self._functions_for_model.values():
-                func._images = joint_images
-                func._files = joint_files
-                func._audios = joint_audios
-                func._videos = joint_videos
+                for func in self._functions_for_model.values():
+                    func._images = joint_images
+                    func._files = joint_files
+                    func._audios = joint_audios
+                    func._videos = joint_videos
 
     def get_members_system_message_content(self, indent: int = 0) -> str:
         system_message_content = ""
