@@ -1,7 +1,7 @@
 """Router for MCP interface providing Model Context Protocol endpoints."""
 
 import logging
-from typing import List, Optional, TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, List, Optional
 from uuid import uuid4
 
 from fastmcp import FastMCP
@@ -9,44 +9,18 @@ from fastmcp.server.http import (
     StarletteWithLifespan,
 )
 
-from agno.db.base import BaseDb, SessionType
+from agno.db.base import SessionType
 from agno.db.schemas import UserMemory
-from agno.knowledge.content import Content, FileData
+from agno.os.routers.memory.schemas import (
+    UserMemorySchema,
+)
 from agno.os.schema import (
-    AgentSessionDetailSchema,
     AgentSummaryResponse,
     ConfigResponse,
-    DeleteSessionRequest,
     InterfaceResponse,
-    PaginatedResponse,
-    PaginationInfo,
-    RunSchema,
     SessionSchema,
-    SortOrder,
-    TeamRunSchema,
-    TeamSessionDetailSchema,
     TeamSummaryResponse,
-    WorkflowRunSchema,
-    WorkflowSessionDetailSchema,
     WorkflowSummaryResponse,
-)
-from agno.os.routers.evals.schemas import (
-    DeleteEvalRunsRequest,
-    EvalRunInput,
-    EvalSchema,
-    UpdateEvalRunRequest,
-)
-from agno.os.routers.evals.utils import run_accuracy_eval, run_performance_eval, run_reliability_eval
-from agno.os.routers.knowledge.schemas import (
-    ContentResponseSchema,
-    ContentStatus,
-    ContentStatusResponse,
-    ContentUpdateSchema,
-)
-from agno.os.routers.memory.schemas import (
-    DeleteMemoriesRequest,
-    UserMemoryCreateSchema,
-    UserMemorySchema,
 )
 from agno.os.utils import (
     get_agent_by_id,
@@ -56,6 +30,8 @@ from agno.os.utils import (
     get_workflow_by_id,
 )
 from agno.run.agent import RunOutput
+from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -71,7 +47,12 @@ def get_mcp_server(
     # Create an MCP server
     mcp = FastMCP(os.name or "AgentOS")
 
-    @mcp.tool(name="get_agentos_config", description="Get the configuration of the AgentOS", tags=["core"], output_schema=ConfigResponse.model_json_schema())  # type: ignore
+    @mcp.tool(
+        name="get_agentos_config",
+        description="Get the configuration of the AgentOS",
+        tags=["core"],
+        output_schema=ConfigResponse.model_json_schema(),
+    )  # type: ignore
     async def config() -> ConfigResponse:
         return ConfigResponse(
             os_id=os.os_id or "AgentOS",
@@ -92,7 +73,7 @@ def get_mcp_server(
                 for interface in os.interfaces
             ],
         )
-        
+
     @mcp.tool(name="run_agent", description="Run an agent", tags=["core"])  # type: ignore
     async def run_agent(agent_id: str, message: str) -> RunOutput:
         agent = get_agent_by_id(agent_id, os.agents)
@@ -101,14 +82,14 @@ def get_mcp_server(
         return agent.run(message)
 
     @mcp.tool(name="run_team", description="Run a team", tags=["core"])  # type: ignore
-    async def run_team(team_id: str, message: str) -> RunOutput:
+    async def run_team(team_id: str, message: str) -> TeamRunOutput:
         team = get_team_by_id(team_id, os.teams)
         if team is None:
             raise Exception(f"Team {team_id} not found")
         return team.run(message)
 
     @mcp.tool(name="run_workflow", description="Run a workflow", tags=["core"])  # type: ignore
-    async def run_workflow(workflow_id: str, message: str) -> RunOutput:
+    async def run_workflow(workflow_id: str, message: str) -> WorkflowRunOutput:
         workflow = get_workflow_by_id(workflow_id, os.workflows)
         if workflow is None:
             raise Exception(f"Workflow {workflow_id} not found")
@@ -121,8 +102,8 @@ def get_mcp_server(
         db_id: str,
         user_id: Optional[str] = None,
         sort_by: str = "created_at",
-        sort_order: SortOrder = "desc",
-    ) -> PaginatedResponse[SessionSchema]:
+        sort_order: str = "desc",
+    ):
         db = get_db(os.dbs, db_id)
         sessions = db.get_sessions(
             session_type=SessionType.AGENT,
@@ -143,8 +124,8 @@ def get_mcp_server(
         db_id: str,
         user_id: Optional[str] = None,
         sort_by: str = "created_at",
-        sort_order: SortOrder = "desc",
-    ) -> PaginatedResponse[SessionSchema]:
+        sort_order: str = "desc",
+    ):
         db = get_db(os.dbs, db_id)
         sessions = db.get_sessions(
             session_type=SessionType.TEAM,
@@ -158,6 +139,7 @@ def get_mcp_server(
         return {
             "data": sessions,  # type: ignore
         }
+
     # Memory Management Tools
     @mcp.tool(name="create_memory", description="Create a new user memory", tags=["memory"])  # type: ignore
     async def create_memory(
@@ -179,15 +161,15 @@ def get_mcp_server(
         if not user_memory:
             raise Exception("Failed to create memory")
 
-        return user_memory
+        return UserMemorySchema.from_dict(user_memory.to_dict())  # type: ignore
 
     @mcp.tool(name="get_memories_for_user", description="Get a list of memories for a user", tags=["memory"])  # type: ignore
     async def get_memories(
         user_id: str,
         sort_by: str = "updated_at",
-        sort_order: SortOrder = "desc",
+        sort_order: str = "desc",
         db_id: Optional[str] = None,
-    ) -> PaginatedResponse[UserMemorySchema]:
+    ):
         db = get_db(os.dbs, db_id)
         user_memories = db.get_user_memories(
             user_id=user_id,
@@ -232,26 +214,28 @@ def get_mcp_server(
     @mcp.tool(name="get_content", description="Get paginated list of knowledge content", tags=["knowledge"])  # type: ignore
     async def get_content(
         sort_by: str = "created_at",
-        sort_order: SortOrder = "desc",
+        sort_order: str = "desc",
         db_id: Optional[str] = None,
-    ) -> PaginatedResponse[ContentResponseSchema]:
-        knowledge = get_knowledge_instance_by_db_id(os.knowledge_instances if hasattr(os, 'knowledge_instances') else [], db_id)
+    ):
+        knowledge = get_knowledge_instance_by_db_id(
+            os.knowledge_instances if hasattr(os, "knowledge_instances") else [], db_id
+        )
         contents, count = knowledge.get_content(sort_by=sort_by, sort_order=sort_order)
 
         return {
             "data": [
-                    {
-                        "id": content.id,
-                        "name": content.name,
-                        "description": content.description,
-                        "file_type": content.file_type,
-                        "size": content.size,
-                        "metadata": content.metadata,
-                        "status": content.status,
-                        "status_message": content.status_message,
-                        "created_at": content.created_at,
-                        "updated_at": content.updated_at,
-                    }
+                {
+                    "id": content.id,
+                    "name": content.name,
+                    "description": content.description,
+                    "file_type": content.file_type,
+                    "size": content.size,
+                    "metadata": content.metadata,
+                    "status": content.status,
+                    "status_message": content.status_message,
+                    "created_at": content.created_at,
+                    "updated_at": content.updated_at,
+                }
                 for content in contents
             ]
         }
@@ -261,10 +245,11 @@ def get_mcp_server(
         content_id: str,
         db_id: str,
     ) -> str:
-        knowledge = get_knowledge_instance_by_db_id(os.knowledge_instances if hasattr(os, 'knowledge_instances') else [], db_id)
+        knowledge = get_knowledge_instance_by_db_id(
+            os.knowledge_instances if hasattr(os, "knowledge_instances") else [], db_id
+        )
         knowledge.remove_content_by_id(content_id=content_id)
         return "Successfully deleted content"
-
 
     mcp_app = mcp.http_app(path="/mcp")
     return mcp_app
