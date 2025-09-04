@@ -43,4 +43,4 @@ if __name__ == "__main__":
     http://localhost:7777/mcp
 
     """
-    agent_os.serve(app="enable_mcp:app", reload=True)
+    agent_os.serve(app="enable_mcp_example:app", reload=True)

@@ -8,7 +8,7 @@ python cookbook/agent_os/mcp/enable_mcp.py
 
 import asyncio
 
-from fastmcp import Client, FastMCP
+from fastmcp import Client
 
 # HTTP server
 client = Client("http://localhost:7777/llm/mcp")
