@@ -1876,7 +1876,7 @@ class Team:
 
             raise Exception(f"Failed after {num_attempts} attempts.")
 
-    def _store_media(self, run_response: RunOutput, model_response: ModelResponse):
+    def _store_media(self, run_response: TeamRunOutput, model_response: ModelResponse):
         """Store media from model response in run_response for persistence"""
         # Handle generated media fields from ModelResponse (generated media)
         if model_response.images is not None:
@@ -3004,7 +3004,7 @@ class Team:
             except Exception as e:
                 log_warning(f"Failed to convert response to JSON: {e}")
 
-    def _scrub_media_from_run_output(self, run_response: RunOutput) -> None:
+    def _scrub_media_from_run_output(self, run_response: TeamRunOutput) -> None:
         """
         Completely remove all media from RunOutput when store_media=False.
         This includes media in input, output artifacts, and all messages.
