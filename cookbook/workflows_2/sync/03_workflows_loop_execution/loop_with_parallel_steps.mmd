@@ -1,0 +1,37 @@
+flowchart TD
+    Start(["Advanced Research and Content Workflow"])
+    loop_1["Research Loop with Parallel Execution<br/>Max: 3"]
+    Start --> loop_1
+    parallel_2["Parallel Research & Analysis<br/>(3 parallel steps)"]
+    loop_1 --> parallel_2
+    merge_3[Merge]
+    step_4["Research HackerNews<br/>Research Agent (4 tools)"]
+    parallel_2 --> step_4
+    step_4 --> merge_3
+    step_5["Research Web<br/>Research Agent (4 tools)"]
+    parallel_2 --> step_5
+    step_5 --> merge_3
+    step_6["Trend Analysis<br/>Analysis Agent (0 tools)"]
+    parallel_2 --> step_6
+    step_6 --> merge_3
+    step_7["Sentiment Analysis<br/>Analysis Agent (0 tools)"]
+    merge_3 --> step_7
+    step_7 -.->|Loop| loop_1
+    step_8["Create Content<br/>Content Agent (0 tools)"]
+    step_7 --> step_8
+    End([End])
+    step_8 --> End
+
+    %% Styling
+    classDef startEnd fill:#e1f5fe
+    classDef condition fill:#fff3e0
+    classDef step fill:#f3e5f5
+    classDef team fill:#e8f5e8
+    classDef agent fill:#fff8e1
+    classDef function fill:#fce4ec
+    classDef loop fill:#e3f2fd
+    classDef parallel fill:#f1f8e9
+    classDef router fill:#fef7e0
+    classDef steps fill:#f8f9fa
+    classDef merge fill:#eeeeee
+    class Start,End startEnd
