@@ -117,13 +117,6 @@ if __name__ == "__main__":
             writer_agent,
         ],
     )
-    # content_creation_workflow.print_response(
-    #     input="AI trends in 2024",
-    #     additional_data={
-    #         "topic": "AI, AI agents, AI workflows",
-    #     },
-    #     markdown=True,
-    # )
     
     workflow_tools = WorkflowTools(
         workflow=content_creation_workflow,

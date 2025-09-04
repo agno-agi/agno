@@ -5,13 +5,11 @@
 """
 
 import asyncio
-from typing import List
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.reasoning import MemoryTools
 from agno.db.sqlite import SqliteDb
 from agno.tools.duckduckgo import DuckDuckGoTools
-from pydantic import BaseModel
 
 db = SqliteDb(db_file="tmp/memory.db")
 

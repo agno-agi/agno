@@ -1,13 +1,16 @@
 import json
 from textwrap import dedent
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error
 from agno.workflow.workflow import Workflow
 from agno.workflow.workflow import WorkflowRunOutput
 from pydantic import BaseModel
-from agno.media import Audio, Image, Video, File
+
+class RunWorkflowInput(BaseModel):
+    input_data: str
+    additional_data: Optional[Dict[str, Any]] = None
 
 
 class WorkflowTools(Toolkit):
@@ -87,8 +90,7 @@ class WorkflowTools(Toolkit):
     def run_workflow(
         self, 
         session_state: Dict[str, Any], 
-        input_data: str,
-        additional_data: Optional[Dict[str, Any]] = None,
+        input: RunWorkflowInput,
     ) -> str:
         """Use this tool to execute the workflow with the specified inputs and parameters.
         
@@ -99,18 +101,18 @@ class WorkflowTools(Toolkit):
             additional_data: The additional data for the workflow. This is a dictionary of key-value pairs that will be passed to the workflow. E.g. {"topic": "food", "style": "Humour"}
         """
         try:
-            log_debug(f"Running workflow with input: {input_data}")
+            log_debug(f"Running workflow with input: {input.input_data}")
             
             user_id = session_state.get("current_user_id")
             session_id = session_state.get("current_session_id")
 
             # Execute the workflow
             result: WorkflowRunOutput = self.workflow.run(
-                input=input_data,
+                input=input.input_data,
                 user_id=user_id,
                 session_id=session_id,
                 session_state=session_state,
-                additional_data=additional_data,
+                additional_data=input.additional_data,
             )
 
             if "workflow_results" not in session_state:
