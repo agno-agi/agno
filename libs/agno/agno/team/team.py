@@ -715,6 +715,9 @@ class Team:
         return session_id, user_id, session_state  # type: ignore
 
     def initialize_team(self, debug_mode: Optional[bool] = None) -> None:
+        # Make sure for the team, we are using the team logger
+        use_team_logger()
+
         self._set_default_model()
 
         # Set debug mode
@@ -737,9 +740,6 @@ class Team:
 
         for member in self.members:
             self._initialize_member(member, debug_mode=self.debug_mode)
-
-        # Make sure for the team, we are using the team logger
-        use_team_logger()
 
     def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
         if not self.tools:

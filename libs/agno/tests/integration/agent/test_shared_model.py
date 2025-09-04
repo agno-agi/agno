@@ -44,7 +44,17 @@ def test_tools_available_to_agents(web_agent, finance_agent):
         # Get the tools passed to invoke
         tools = mock_invoke.call_args[1].get("tools", [])
         tool_names = [tool["function"]["name"] for tool in tools]
-        assert tool_names == ["get_current_stock_price"]
+        assert tool_names == [
+            "get_current_stock_price",
+            "get_company_info",
+            "get_stock_fundamentals",
+            "get_income_statements",
+            "get_key_financial_ratios",
+            "get_analyst_recommendations",
+            "get_company_news",
+            "get_technical_indicators",
+            "get_historical_stock_prices",
+        ]
 
     with patch.object(web_agent.model, "invoke", wraps=web_agent.model.invoke) as mock_invoke:
         web_agent.run("What is currently happening in the news?")
