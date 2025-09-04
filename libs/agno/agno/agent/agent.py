@@ -272,6 +272,8 @@ class Agent:
     response_model: Optional[Type[BaseModel]] = None
     # Provide a secondary model to parse the response from the primary model
     parser_model: Optional[Model] = None
+    # Provide a local function to parse the response
+    parser_function: Optional[Callable[..., Any]] = None
     # Provide a prompt for the parser model
     parser_model_prompt: Optional[str] = None
     # Provide an output model to structure the response from the main model
@@ -416,6 +418,7 @@ class Agent:
         delay_between_retries: int = 1,
         exponential_backoff: bool = False,
         parser_model: Optional[Model] = None,
+        parser_function: Optional[Callable[..., Any]] = None,
         parser_model_prompt: Optional[str] = None,
         response_model: Optional[Type[BaseModel]] = None,
         parse_response: bool = True,
@@ -522,6 +525,7 @@ class Agent:
         self.delay_between_retries = delay_between_retries
         self.exponential_backoff = exponential_backoff
         self.parser_model = parser_model
+        self.parser_function = parser_function
         self.parser_model_prompt = parser_model_prompt
         self.response_model = response_model
         self.parse_response = parse_response
@@ -557,6 +561,13 @@ class Agent:
         self.debug_level = debug_level
         self.monitoring = monitoring
         self.telemetry = telemetry
+
+        # Validate mutually exclusive parsing options
+        if self.parser_function is not None and (self.response_model is not None or self.parser_model is not None):
+            raise ValueError(
+                "parser_function cannot be used together with response_model or parser_model. "
+                "Provide only parser_function to fully control parsing."
+            )
 
         # --- Params not to be set by user ---
         self.session_metrics: Optional[SessionMetrics] = None
@@ -696,7 +707,12 @@ class Agent:
 
     @property
     def should_parse_structured_output(self) -> bool:
-        return self.response_model is not None and self.parse_response and self.parser_model is None
+        return (
+            self.response_model is not None
+            and self.parse_response
+            and self.parser_model is None
+            and self.parser_function is None
+        )
 
     def add_tool(self, tool: Union[Toolkit, Callable, Function, Dict]):
         if not self.tools:
@@ -802,8 +818,12 @@ class Agent:
         # If an output model is provided, generate output using the output model
         self._generate_response_with_output_model(model_response, run_messages)
 
-        # If a parser model is provided, structure the response separately
-        self._parse_response_with_parser_model(model_response, run_messages)
+        # If a parser function is provided, use it to structure the response and skip parser model
+        if self.parser_function is not None:
+            self._parse_response_with_parser_function(model_response, run_messages)
+        else:
+            # If a parser model is provided, structure the response separately
+            self._parse_response_with_parser_model(model_response, run_messages)
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
@@ -915,10 +935,16 @@ class Agent:
                 run_response=run_response, run_messages=run_messages
             )
 
-        # If a parser model is provided, structure the response separately
-        yield from self._parse_response_with_parser_model_stream(
-            run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
-        )
+        # If a parser function is provided, use it to structure the response and skip parser model
+        if self.parser_function is not None:
+            yield from self._parse_response_with_parser_function_stream(
+                run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
+            )
+        else:
+            # If a parser model is provided, structure the response separately
+            yield from self._parse_response_with_parser_model_stream(
+                run_response=run_response, stream_intermediate_steps=stream_intermediate_steps
+            )
 
         # 3. Add the run to memory
         self._add_run_to_memory(
@@ -1076,7 +1102,9 @@ class Agent:
 
         # Prepare arguments for the model
         self.set_default_model()
-        response_format = self._get_response_format() if self.parser_model is None else None
+        response_format = (
+            self._get_response_format() if (self.parser_model is None and self.parser_function is None) else None
+        )
         self.model = cast(Model, self.model)
 
         self.determine_tools_for_model(
@@ -1244,8 +1272,12 @@ class Agent:
         # If an output model is provided, generate output using the output model
         await self._agenerate_response_with_output_model(model_response=model_response, run_messages=run_messages)
 
-        # If a parser model is provided, structure the response separately
-        await self._aparse_response_with_parser_model(model_response=model_response, run_messages=run_messages)
+        # If a parser function is provided, use it to structure the response and skip parser model
+        if self.parser_function is not None:
+            await self._aparse_response_with_parser_function(model_response=model_response, run_messages=run_messages)
+        else:
+            # If a parser model is provided, structure the response separately
+            await self._aparse_response_with_parser_model(model_response=model_response, run_messages=run_messages)
 
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
@@ -1480,7 +1512,9 @@ class Agent:
 
         # Prepare arguments for the model
         self.set_default_model()
-        response_format = self._get_response_format() if self.parser_model is None else None
+        response_format = (
+            self._get_response_format() if (self.parser_model is None and self.parser_function is None) else None
+        )
         self.model = cast(Model, self.model)
 
         self.determine_tools_for_model(
@@ -6345,6 +6379,26 @@ class Agent:
         else:
             log_warning("A response model is required to parse the response with a parser model")
 
+    def _parse_response_with_parser_function(self, model_response: ModelResponse, run_messages: RunMessages) -> None:
+        """Parse the model response using a local parser function."""
+        if self.parser_function is None:
+            return
+
+        try:
+            parsed_value: Any
+            if asyncio.iscoroutinefunction(self.parser_function):  # type: ignore[arg-type]
+                # Avoid awaiting in sync path
+                raise RuntimeError("parser_function is async; use async run to leverage it")
+
+            parsed_value = self.parser_function(  # type: ignore[misc]
+                model_response.content
+            )
+
+            model_response.content = parsed_value
+            return
+        except Exception as e:
+            log_warning(f"parser_function failed: {e}")
+
     async def _aparse_response_with_parser_model(
         self, model_response: ModelResponse, run_messages: RunMessages
     ) -> None:
@@ -6364,6 +6418,29 @@ class Agent:
             )
         else:
             log_warning("A response model is required to parse the response with a parser model")
+
+    async def _aparse_response_with_parser_function(
+        self, model_response: ModelResponse, run_messages: RunMessages
+    ) -> None:
+        """Parse the model response using a local parser function (async)."""
+        if self.parser_function is None:
+            return
+
+        try:
+            parsed_value: Any
+            if asyncio.iscoroutinefunction(self.parser_function):  # type: ignore[arg-type]
+                parsed_value = await self.parser_function(  # type: ignore[misc]
+                    model_response.content
+                )
+            else:
+                parsed_value = self.parser_function(  # type: ignore[misc]
+                    model_response.content
+                )
+
+            model_response.content = parsed_value
+            return
+        except Exception as e:
+            log_warning(f"parser_function failed: {e}")
 
     def _parse_response_with_parser_model_stream(
         self, run_response: RunResponse, stream_intermediate_steps: bool = True
@@ -6409,6 +6486,8 @@ class Agent:
             else:
                 log_warning("A response model is required to parse the response with a parser model")
 
+    
+
     async def _aparse_response_with_parser_model_stream(
         self, run_response: RunResponse, stream_intermediate_steps: bool = True
     ):
@@ -6453,6 +6532,18 @@ class Agent:
                     yield self._handle_event(create_parser_model_response_completed_event(run_response), run_response)
             else:
                 log_warning("A response model is required to parse the response with a parser model")
+
+    def _parse_response_with_parser_function_stream(
+        self, run_response: RunResponse, stream_intermediate_steps: bool = True
+    ):
+        """Apply parser_function once after main/output model streaming."""
+        if self.parser_function is None:
+            return
+
+        model_response = ModelResponse(content=run_response.content)
+        self._parse_response_with_parser_function(model_response, run_response.messages)
+        if model_response.content is not None:
+            run_response.content = model_response.content
 
     def _generate_response_with_output_model(self, model_response: ModelResponse, run_messages: RunMessages) -> None:
         """Parse the model response using the output model."""
