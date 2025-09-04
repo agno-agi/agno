@@ -25,7 +25,7 @@ from typing import (
     get_args,
     overload,
 )
-from uuid import NAMESPACE_DNS, uuid4, uuid5
+from uuid import uuid4
 
 from pydantic import BaseModel
 
@@ -563,7 +563,7 @@ class Team:
         """
         if self.id is None:
             if self.name is not None:
-                self.id = str(uuid5(NAMESPACE_DNS, self.name))
+                self.id = self.name.lower().replace(" ", "-")
             else:
                 self.id = str(uuid4())
 

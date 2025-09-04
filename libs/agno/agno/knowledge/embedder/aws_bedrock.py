@@ -272,7 +272,7 @@ class AwsBedrockEmbedder(Embedder):
                     contentType="application/json",
                     accept="application/json",
                 )
-                response_body = json.loads(response["body"].read().decode("utf-8"))
+                response_body = json.loads((await response["body"].read()).decode("utf-8"))
 
                 # Extract embeddings using the same logic as get_embedding
                 if "embeddings" in response_body:
@@ -308,7 +308,7 @@ class AwsBedrockEmbedder(Embedder):
                     contentType="application/json",
                     accept="application/json",
                 )
-                response_body = json.loads(response["body"].read().decode("utf-8"))
+                response_body = json.loads((await response["body"].read()).decode("utf-8"))
 
                 embedding: List[float] = []
                 # Extract embeddings using the same logic as get_embedding_and_usage

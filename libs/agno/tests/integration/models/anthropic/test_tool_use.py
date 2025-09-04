@@ -100,7 +100,14 @@ async def test_async_tool_use_stream():
 def test_tool_use_tool_call_limit():
     agent = Agent(
         model=Claude(id="claude-3-5-haiku-20241022"),
-        tools=[YFinanceTools(company_news=True, cache_results=True)],
+        tools=[
+            YFinanceTools(
+                include_tools=[
+                    "get_company_news",
+                ],
+                cache_results=True,
+            )
+        ],
         tool_call_limit=1,
         markdown=True,
         telemetry=False,
@@ -227,6 +234,34 @@ def test_tool_call_custom_tool_optional_parameters():
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
     assert "70" in response.content
+
+
+def test_tool_call_pydantic_parameters():
+    from pydantic import BaseModel, Field
+
+    class ResearchRequest(BaseModel):
+        topic: str = Field(description="Research topic")
+        depth: int = Field(description="Research depth 1-10")
+        sources: list[str] = Field(description="Preferred sources")
+
+    def research_topic(request: ResearchRequest) -> str:
+        return f"Researching {request.topic}"
+
+    agent = Agent(
+        model=Claude(id="claude-3-5-haiku-20241022"),
+        tools=[research_topic],
+        markdown=True,
+        telemetry=False,
+        monitoring=False,
+    )
+
+    response = agent.run(
+        "Research the topic 'AI' with a depth of 5 and sources from https://arxiv.org/pdf/2307.06435 and https://arxiv.org/pdf/2502.09601"
+    )
+
+    # Verify tool usage
+    assert any(msg.tool_calls for msg in response.messages)
+    assert response.content is not None
 
 
 def test_tool_call_list_parameters():

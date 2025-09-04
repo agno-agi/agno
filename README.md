@@ -1,5 +1,5 @@
 <div align="center" id="top">
-  <a href="https://docs.agno.com">
+  <a href="https://docs-v2.agno.com">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="https://agno-public.s3.us-east-1.amazonaws.com/assets/logo-dark.svg">
       <source media="(prefers-color-scheme: light)" srcset="https://agno-public.s3.us-east-1.amazonaws.com/assets/logo-light.svg">
@@ -8,54 +8,52 @@
   </a>
 </div>
 <div align="center">
-  <a href="https://docs.agno.com">📚 Documentation</a> &nbsp;|&nbsp;
-  <a href="https://docs.agno.com/examples/introduction">💡 Examples</a> &nbsp;|&nbsp;
+  <a href="https://docs-v2.agno.com">📚 Documentation</a> &nbsp;|&nbsp;
+  <a href="https://docs-v2.agno.com/examples/introduction">💡 Examples</a> &nbsp;|&nbsp;
   <a href="https://github.com/agno-agi/agno/stargazers">🌟 Star Us</a>
 </div>
 
 ## What is Agno?
 
-[Agno](https://docs.agno.com) is a full-stack framework for building Multi-Agent Systems with memory, knowledge and reasoning.
+[Agno](https://docs.agno.com) is a high-performance runtime for multi-agent systems. Use it to build, run and manage secure agent systems in your cloud.
 
-Use Agno to build the 5 levels of Agentic Systems:
-- Level 1: Agents with tools and instructions.
-- Level 2: Agents with knowledge and storage.
-- Level 3: Agents with memory and reasoning.
-- Level 4: Agent Teams that can reason and collaborate.
-- Level 5: Agentic Workflows with state and determinism.
+**Agno gives you:**
 
-Example: Level 1 Reasoning Agent that uses the YFinance API to answer questions:
+1. The fastest framework for building agents, multi-agent teams and agentic workflows.
+2. A high-performance runtime for your agents, teams and workflows called the AgentOS.
+3. A powerful platform for testing, monitoring and managing your agent system.
 
-```python reasoning_finance_agent.py
+### Example: Reasoning Agent that uses the DuckDuckGo API to answer questions:
+
+```python reasoning_web_search_agent.py
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.tools.reasoning import ReasoningTools
-from agno.tools.yfinance import YFinanceTools
+from agno.tools.duckduckgo import DuckDuckGoTools
 
 reasoning_agent = Agent(
     model=Claude(id="claude-sonnet-4-20250514"),
     tools=[
         ReasoningTools(add_instructions=True),
-        YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True, company_news=True),
+        DuckDuckGoTools(),
     ],
-    instructions="Use tables to display data.",
+    instructions="Search the web for information",
     markdown=True,
 )
 ```
 
-https://github.com/user-attachments/assets/4ef27ba6-a781-4fb0-b49c-bfd838123c83
-
 ## Get Started
 
-If you're new to Agno, read the documentation to build your [first Agent](https://docs.agno.com/introduction/agents), chat with it on the [playground](https://docs.agno.com/introduction/playground) and monitor it on [agno.com](https://docs.agno.com/introduction/monitoring).
+If you're new to Agno, read the documentation to build your [first Agent](https://docs-v2.agno.com/introduction/first-agent) and interact with it on [AgentOS](https://docs-v2.agno.com/agent-os/introduction).
 
-After that, checkout the [Examples Gallery](https://docs.agno.com/examples) and build real-world applications with Agno.
+After that, checkout the [Examples Gallery](https://docs-v2.agno.com/examples) and build real-world applications with Agno.
+
 
 ## Why Agno?
 
 Agno will help you build best-in-class, highly-performant agentic systems, saving you hours of research and boilerplate. Here are some key features that set Agno apart:
 
-- **Model Agnostic**: Agno provides a unified interface to 23+ model providers, no lock-in.
+- **Model Agnostic**: Agno provides a unified interface to 25+ model providers, no lock-in.
 - **Highly performant**: Agents instantiate in **~3μs** and use **~6.5Kib** memory on average.
 - **Reasoning is a first class citizen**: Reasoning improves reliability and is a must-have for complex autonomous agents. Agno supports 3 approaches to reasoning: Reasoning Models, `ReasoningTools` or our custom `chain-of-thought` approach.
 - **Natively Multi-Modal**: Agno Agents are natively multi-modal, they accept text, image, audio and video as input and generate text, image, audio and video as output.
@@ -72,36 +70,50 @@ Agno will help you build best-in-class, highly-performant agentic systems, savin
 pip install -U agno
 ```
 
-## Example - Reasoning Agent
+## Example - Documentation Support Agent
 
 Let's build a Reasoning Agent to get a sense of Agno's capabilities.
 
-Save this code to a file: `reasoning_agent.py`.
+Save this code to a file: `documentation_support_agent.py`.
 
 ```python
+import asyncio
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.tools.reasoning import ReasoningTools
-from agno.tools.yfinance import YFinanceTools
+from agno.tools.mcp import MCPTools
 
-agent = Agent(
-    model=Claude(id="claude-sonnet-4-20250514"),
-    tools=[
-        ReasoningTools(add_instructions=True),
-        YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True, company_news=True),
-    ],
-    instructions=[
-        "Use tables to display data",
-        "Only output the report, no other text",
-    ],
-    markdown=True,
-)
-agent.print_response(
-    "Write a report on NVDA",
-    stream=True,
-    show_full_reasoning=True,
-    stream_intermediate_steps=True,
-)
+async def run_agent(message: str) -> None:
+  agno_tools = MCPTools(
+    transport="streamable-http",
+    # You can use any MCP server you want
+    url="https://docs-v2.agno.com/mcp"
+  )
+  await agno_tools.connect()
+
+  agent = Agent(
+      model=Claude(id="claude-sonnet-4-20250514"),
+      tools=[
+          ReasoningTools(add_instructions=True),
+          agno_tools,
+      ],
+      instructions=[
+          "Use tables to display data",
+          "Only output the report, no other text",
+      ],
+      markdown=True,
+  )
+  await agent.aprint_response(
+      message,
+      stream=True,
+      show_full_reasoning=True,
+      stream_intermediate_steps=True,
+  )
+
+  await agno_tools.close()
+
+if __name__ == "__main__":
+  asyncio.run(run_agent("What is AgentOS and how can I use it?"))
 ```
 
 Then create a virtual environment, install dependencies, export your `ANTHROPIC_API_KEY` and run the agent.
@@ -110,16 +122,14 @@ Then create a virtual environment, install dependencies, export your `ANTHROPIC_
 uv venv --python 3.12
 source .venv/bin/activate
 
-uv pip install agno anthropic yfinance
+uv pip install agno anthropic
 
 export ANTHROPIC_API_KEY=sk-ant-api03-xxxx
 
-python reasoning_agent.py
+python documentation_support_agent.py
 ```
 
-We can see the Agent is reasoning through the task, using the `ReasoningTools` and `YFinanceTools` to gather information. This is how the output looks like:
-
-https://github.com/user-attachments/assets/bbb99955-9848-49a9-9732-3e19d77b2ff8
+We can see the Agent is reasoning through the task, using the `ReasoningTools` and `MCPTools` to gather information. 
 
 ## Example - Multi Agent Teams
 
@@ -129,32 +139,31 @@ Agents are the atomic unit of work, and work best when they have a narrow scope 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.yfinance import YFinanceTools
+from agno.tools.hackernews import HackerNewsTools
 from agno.team import Team
 
 web_agent = Agent(
     name="Web Agent",
     role="Search the web for information",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5-nano"),
     tools=[DuckDuckGoTools()],
     instructions="Always include sources",
     markdown=True,
 )
 
-finance_agent = Agent(
-    name="Finance Agent",
-    role="Get financial data",
-    model=OpenAIChat(id="gpt-4o"),
-    tools=[YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)],
-    instructions="Use tables to display data",
+hackernews_agent = Agent(
+    name="HackerNews Agent",
+    role="Get top stories from hackernews",
+    model=OpenAIChat(id="gpt-5-nano"),
+    tools=[HackerNewsTools()],
 
     markdown=True,
 )
 
 agent_team = Team(
     mode="coordinate",
-    members=[web_agent, finance_agent],
-    model=OpenAIChat(id="gpt-4o"),
+    members=[web_agent, hackernews_agent],
+    model=OpenAIChat(id="gpt-5-nano"),
     instructions=["Always include sources", "Use tables to display data"],
 
     markdown=True,
@@ -166,12 +175,12 @@ agent_team.print_response("What's the market outlook and financial performance o
 Install dependencies and run the Agent team:
 
 ```shell
-pip install ddgs yfinance
+pip install ddgs
 
 python agent_team.py
 ```
 
-[View this example in the cookbook](./cookbook/getting_started/05_agent_team.py)
+[View another example in this cookbook](./cookbook/getting_started/17_agent_team.py)
 
 ## Performance
 
@@ -226,7 +235,7 @@ Given that each framework is different and we won't be able to tune their perfor
 
 ## Complete Documentation Index
 
-For LLMs and AI assistants to understand and navigate Agno's complete documentation, we provide an [LLMs.txt](https://docs.agno.com/llms.txt) or [LLMs-Full.txt](https://docs.agno.com/llms-full.txt) file.
+For LLMs and AI assistants to understand and navigate Agno's complete documentation, we provide an [LLMs.txt](https://docs-v2.agno.com/llms.txt) or [LLMs-Full.txt](https://docs-v2.agno.com/llms-full.txt) file.
 
 This file is specifically formatted for AI systems to efficiently parse and reference our documentation.
 
@@ -236,21 +245,21 @@ When building Agno agents, using Agno documentation as a source in Cursor is a g
 
 1. In Cursor, go to the "Cursor Settings" menu.
 2. Find the "Indexing & Docs" section.
-3. Add `https://docs.agno.com/llms-full.txt` to the list of documentation URLs.
+3. Add `https://docs-v2.agno.com/llms-full.txt` to the list of documentation URLs.
 4. Save the changes.
 
 Now, Cursor will have access to the Agno documentation.
 
 ## Documentation, Community & More examples
 
-- Docs: <a href="https://docs.agno.com" target="_blank" rel="noopener noreferrer">docs.agno.com</a>
-- Cookbook: <a href="https://github.com/agno-agi/agno/tree/main/cookbook" target="_blank" rel="noopener noreferrer">Cookbook</a>
+- Docs: <a href="https://docs-v2.agno.com" target="_blank" rel="noopener noreferrer">docs-v2.agno.com</a>
+- Cookbook: <a href="https://github.com/agno-agi/agno/tree/v2.0/cookbook" target="_blank" rel="noopener noreferrer">Cookbook</a>
 - Community forum: <a href="https://community.agno.com/" target="_blank" rel="noopener noreferrer">community.agno.com</a>
 - Discord: <a href="https://discord.gg/4MtYHHrgA8" target="_blank" rel="noopener noreferrer">discord</a>
 
 ## Contributions
 
-We welcome contributions, read our [contributing guide](https://github.com/agno-agi/agno/blob/main/CONTRIBUTING.md) to get started.
+We welcome contributions, read our [contributing guide](https://github.com/agno-agi/agno/blob/v2.0/CONTRIBUTING.md) to get started.
 
 ## Telemetry
 

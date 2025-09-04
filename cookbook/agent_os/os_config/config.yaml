@@ -1,16 +1,14 @@
 chat:
   quick_prompts:
-    basic-agent:
+    marketing-agent:
       - "What can you do?"
-      - "What tools do you have?"
-      - "Tell me about AgentOS"
-    basic-team:
-      - "Which members are in the team?"
-    basic-workflow:
-      - "What are the steps in the workflow?"
+      - "How is our latest post working?"
+      - "Tell me about our active marketing campaigns"
 memory:
-  display_name: Default Memory Page Name
   dbs:
     - db_id: db-0001
       domain_config:
-        display_name: Postgres Memory
+        display_name: Main app user memories
+    - db_id: db-0002
+      domain_config:
+        display_name: Support flow user memories

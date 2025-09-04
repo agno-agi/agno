@@ -532,8 +532,6 @@ class FirestoreDb(BaseDb):
                 return None
             deserialized_session = deserialize_session_json_fields(result)
 
-            log_debug(f"Upserted session with id '{session.session_id}'")
-
             if not deserialize:
                 return deserialized_session
 
@@ -843,8 +841,6 @@ class FirestoreDb(BaseDb):
                 doc_ref = collection_ref.document()
 
             doc_ref.set(update_doc, merge=True)
-
-            log_debug(f"Upserted user memory with id '{memory.memory_id}'")
 
             if not deserialize:
                 return update_doc
@@ -1169,8 +1165,6 @@ class FirestoreDb(BaseDb):
                 doc_ref = collection_ref.document()
 
             doc_ref.set(update_doc, merge=True)
-
-            log_debug(f"Upserted knowledge source with id '{knowledge_row.id}'")
 
             return knowledge_row
 

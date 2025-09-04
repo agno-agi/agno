@@ -8,7 +8,6 @@ from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.yfinance import YFinanceTools
 from openinference.instrumentation.agno import AgnoInstrumentor
-from opentelemetry import trace as trace_api
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -27,10 +26,9 @@ os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = f"Authorization=Basic {LANGFUSE_AUTH}
 
 tracer_provider = TracerProvider()
 tracer_provider.add_span_processor(SimpleSpanProcessor(OTLPSpanExporter()))
-trace_api.set_tracer_provider(tracer_provider=tracer_provider)
 
 # Start instrumenting agno
-AgnoInstrumentor().instrument()
+AgnoInstrumentor().instrument(tracer_provider=tracer_provider)
 
 # First agent for market data
 market_data_agent = Agent(

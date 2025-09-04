@@ -995,8 +995,6 @@ class SqliteDb(BaseDb):
                 if row is None:
                     return None
 
-            log_debug(f"Upserted user memory with id '{memory.memory_id}'")
-
             memory_raw = row._mapping
             if not memory_raw or not deserialize:
                 return memory_raw
@@ -1357,8 +1355,6 @@ class SqliteDb(BaseDb):
                     .on_conflict_do_update(index_elements=["id"], set_=update_fields)
                 )
                 sess.execute(stmt)
-
-            log_debug(f"Upserted knowledge content with id '{knowledge_row.id}'")
 
             return knowledge_row
 
