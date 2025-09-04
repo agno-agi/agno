@@ -610,8 +610,6 @@ class PostgresDb(BaseDb):
                     row = result.fetchone()
                     session_dict = dict(row._mapping)
 
-                    log_debug(f"Upserted agent session with id '{session_dict.get('session_id')}'")
-
                     if session_dict is None or not deserialize:
                         return session_dict
                     return AgentSession.from_dict(session_dict)
@@ -648,8 +646,6 @@ class PostgresDb(BaseDb):
                     row = result.fetchone()
                     session_dict = dict(row._mapping)
 
-                    log_debug(f"Upserted team session with id '{session_dict.get('session_id')}'")
-
                     if session_dict is None or not deserialize:
                         return session_dict
                     return TeamSession.from_dict(session_dict)
@@ -685,8 +681,6 @@ class PostgresDb(BaseDb):
                     result = sess.execute(stmt)
                     row = result.fetchone()
                     session_dict = dict(row._mapping)
-
-                    log_debug(f"Upserted workflow session with id '{session_dict.get('session_id')}'")
 
                     if session_dict is None or not deserialize:
                         return session_dict
@@ -1032,8 +1026,6 @@ class PostgresDb(BaseDb):
                 row = result.fetchone()
 
             memory_raw = dict(row._mapping)
-
-            log_debug(f"Upserted user memory with id '{memory.memory_id}'")
 
             if not memory_raw or not deserialize:
                 return memory_raw
@@ -1404,8 +1396,6 @@ class PostgresDb(BaseDb):
                         .on_conflict_do_update(index_elements=["id"], set_=update_fields)
                     )
                     sess.execute(stmt)
-
-            log_debug(f"Upserted knowledge row with id '{knowledge_row.id}'")
 
             return knowledge_row
 

@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from agno.infra.settings import InfraSettings
 
@@ -74,6 +74,8 @@ class InfraBase(BaseModel):
     cached_infra_dir: Optional[Path] = None
     cached_env_file_data: Optional[Dict[str, Any]] = None
     cached_secret_file_data: Optional[Dict[str, Any]] = None
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def get_group_name(self) -> Optional[str]:
         return self.group or self.name

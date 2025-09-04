@@ -4,7 +4,7 @@ from typing import Optional
 from agno.base.app import InfraApp
 
 
-@dataclass
+@dataclass(init=False)
 class DbApp(InfraApp):
     db_user: Optional[str] = None
     db_password: Optional[str] = None

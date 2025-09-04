@@ -504,8 +504,6 @@ class MongoDb(BaseDb):
 
                 session = deserialize_session_json_fields(result)  # type: ignore
 
-                log_debug("Upserted session'")
-
                 if not deserialize:
                     return session
 
@@ -537,8 +535,6 @@ class MongoDb(BaseDb):
 
                 session = deserialize_session_json_fields(result)  # type: ignore
 
-                log_debug(f"Upserted session with id '{session.session_id}'")
-
                 if not deserialize:
                     return session
 
@@ -569,8 +565,6 @@ class MongoDb(BaseDb):
                     return None
 
                 session = deserialize_session_json_fields(result)  # type: ignore
-
-                log_debug(f"Upserted session with id '{session.session_id}'")
 
                 if not deserialize:
                     return session
