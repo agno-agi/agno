@@ -1,8 +1,0 @@
-{
-  "extends": "./declarations.json",
-  "compilerOptions": {
-    "declarationDir": "../dist/esm/types",
-    "module": "ESNext",
-    "outDir": "../dist/esm"
-  }
-}

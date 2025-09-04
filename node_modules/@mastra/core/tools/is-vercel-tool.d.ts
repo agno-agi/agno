@@ -1,1 +1,0 @@
-export * from './../dist/tools/is-vercel-tool.d.ts';

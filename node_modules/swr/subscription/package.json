@@ -1,6 +1,0 @@
-{
-  "main": "../dist/subscription/index.js",
-  "module": "../dist/subscription/index.mjs",
-  "types": "../dist/subscription/index.d.ts",
-  "private": true
-}

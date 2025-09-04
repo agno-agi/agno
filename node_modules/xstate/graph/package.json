@@ -1,8 +1,0 @@
-{
-  "main": "dist/xstate-graph.cjs.js",
-  "module": "dist/xstate-graph.esm.js",
-  "umd:main": "dist/xstate-graph.umd.min.js",
-  "preconstruct": {
-    "umdName": "XStateGraph"
-  }
-}

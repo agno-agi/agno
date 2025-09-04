@@ -1,8 +1,0 @@
-{
-  "extends": "./base.json",
-  "compilerOptions": {
-    "declaration": true,
-    "emitDeclarationOnly": true
-  },
-  "include": ["../src/*"]
-}

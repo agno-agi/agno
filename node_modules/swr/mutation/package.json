@@ -1,6 +1,0 @@
-{
-  "main": "../dist/mutation/index.js",
-  "module": "../dist/mutation/index.mjs",
-  "types": "../dist/mutation/index.d.ts",
-  "private": true
-}

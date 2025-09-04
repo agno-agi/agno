@@ -1,9 +1,0 @@
-{
-  "github": {
-    "release": true
-  },
-  "npm": {
-    "tag": "next"
-  },
-  "preReleaseId": "beta"
-}

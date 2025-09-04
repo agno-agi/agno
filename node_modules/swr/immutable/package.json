@@ -1,6 +1,0 @@
-{
-  "main": "../dist/immutable/index.js",
-  "module": "../dist/immutable/index.mjs",
-  "types": "../dist/immutable/index.d.ts",
-  "private": true
-}

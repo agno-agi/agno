@@ -1,7 +1,0 @@
-providers:
-  - airtap-playwright
-
-browsers:
-  - name: chromium
-    supports:
-      headless: true

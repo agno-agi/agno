@@ -1,8 +1,0 @@
-{
-  "extends": "./declarations.json",
-  "compilerOptions": {
-    "declarationDir": "../dist/umd/types",
-    "module": "UMD",
-    "outDir": "../dist/umd"
-  }
-}
