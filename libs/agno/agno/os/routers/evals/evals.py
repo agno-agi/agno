@@ -37,7 +37,9 @@ def get_eval_router(
 def attach_routes(
     router: APIRouter, dbs: dict[str, BaseDb], agents: Optional[List[Agent]] = None, teams: Optional[List[Team]] = None
 ) -> APIRouter:
-    @router.get("/eval-runs", response_model=PaginatedResponse[EvalSchema], status_code=200)
+    @router.get(
+        "/eval-runs", response_model=PaginatedResponse[EvalSchema], status_code=200, operation_id="get_eval_runs"
+    )
     async def get_eval_runs(
         agent_id: Optional[str] = Query(default=None, description="Agent ID"),
         team_id: Optional[str] = Query(default=None, description="Team ID"),
@@ -76,7 +78,7 @@ def attach_routes(
             ),
         )
 
-    @router.get("/eval-runs/{eval_run_id}", response_model=EvalSchema, status_code=200)
+    @router.get("/eval-runs/{eval_run_id}", response_model=EvalSchema, status_code=200, operation_id="get_eval_run")
     async def get_eval_run(
         eval_run_id: str,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
@@ -88,7 +90,7 @@ def attach_routes(
 
         return EvalSchema.from_dict(eval_run)  # type: ignore
 
-    @router.delete("/eval-runs", status_code=204)
+    @router.delete("/eval-runs", status_code=204, operation_id="delete_eval_runs")
     async def delete_eval_runs(
         request: DeleteEvalRunsRequest,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
@@ -99,7 +101,9 @@ def attach_routes(
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to delete eval runs: {e}")
 
-    @router.patch("/eval-runs/{eval_run_id}", response_model=EvalSchema, status_code=200)
+    @router.patch(
+        "/eval-runs/{eval_run_id}", response_model=EvalSchema, status_code=200, operation_id="update_eval_run"
+    )
     async def update_eval_run(
         eval_run_id: str,
         request: UpdateEvalRunRequest,
@@ -116,7 +120,7 @@ def attach_routes(
 
         return EvalSchema.from_dict(eval_run)  # type: ignore
 
-    @router.post("/eval-runs", response_model=EvalSchema, status_code=200)
+    @router.post("/eval-runs", response_model=EvalSchema, status_code=200, operation_id="run_eval")
     async def run_eval(
         eval_run_input: EvalRunInput,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),

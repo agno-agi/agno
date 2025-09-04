@@ -311,7 +311,7 @@ def get_base_router(
 
     # -- Main Routes ---
 
-    @router.get("/health", tags=["Core"])
+    @router.get("/health", tags=["Core"], operation_id="health_check")
     async def health_check():
         return JSONResponse(content={"status": "ok"})
 
@@ -320,6 +320,7 @@ def get_base_router(
         response_model=ConfigResponse,
         response_model_exclude_none=True,
         tags=["Core"],
+        operation_id="get_config",
     )
     async def config() -> ConfigResponse:
         return ConfigResponse(
@@ -347,6 +348,7 @@ def get_base_router(
         response_model=List[Model],
         response_model_exclude_none=True,
         tags=["Core"],
+        operation_id="get_models",
     )
     async def get_models():
         """Return the list of all models used by agents and teams in the contextual OS"""
@@ -368,7 +370,7 @@ def get_base_router(
 
     # -- Agent routes ---
 
-    @router.post("/agents/{agent_id}/runs", tags=["Agents"])
+    @router.post("/agents/{agent_id}/runs", tags=["Agents"], operation_id="create_agent_run")
     async def create_agent_run(
         agent_id: str,
         message: str = Form(...),
@@ -475,6 +477,7 @@ def get_base_router(
     @router.post(
         "/agents/{agent_id}/runs/{run_id}/cancel",
         tags=["Agents"],
+        operation_id="cancel_agent_run",
     )
     async def cancel_agent_run(
         agent_id: str,
@@ -492,6 +495,7 @@ def get_base_router(
     @router.post(
         "/agents/{agent_id}/runs/{run_id}/continue",
         tags=["Agents"],
+        operation_id="continue_agent_run",
     )
     async def continue_agent_run(
         agent_id: str,
@@ -555,6 +559,7 @@ def get_base_router(
         response_model=List[AgentResponse],
         response_model_exclude_none=True,
         tags=["Agents"],
+        operation_id="get_agents",
     )
     async def get_agents():
         """Return the list of all Agents present in the contextual OS"""
@@ -572,6 +577,7 @@ def get_base_router(
         response_model=AgentResponse,
         response_model_exclude_none=True,
         tags=["Agents"],
+        operation_id="get_agent",
     )
     async def get_agent(agent_id: str):
         agent = get_agent_by_id(agent_id, os.agents)
@@ -582,7 +588,7 @@ def get_base_router(
 
     # -- Team routes ---
 
-    @router.post("/teams/{team_id}/runs", tags=["Teams"])
+    @router.post("/teams/{team_id}/runs", tags=["Teams"], operation_id="create_team_run")
     async def create_team_run(
         team_id: str,
         message: str = Form(...),
@@ -686,6 +692,7 @@ def get_base_router(
     @router.post(
         "/teams/{team_id}/runs/{run_id}/cancel",
         tags=["Teams"],
+        operation_id="cancel_team_run",
     )
     async def cancel_team_run(
         team_id: str,
@@ -705,6 +712,7 @@ def get_base_router(
         response_model=List[TeamResponse],
         response_model_exclude_none=True,
         tags=["Teams"],
+        operation_id="get_teams",
     )
     async def get_teams():
         """Return the list of all Teams present in the contextual OS"""
@@ -722,6 +730,7 @@ def get_base_router(
         response_model=TeamResponse,
         response_model_exclude_none=True,
         tags=["Teams"],
+        operation_id="get_team",
     )
     async def get_team(team_id: str):
         team = get_team_by_id(team_id, os.teams)
@@ -762,6 +771,7 @@ def get_base_router(
         response_model=List[WorkflowResponse],
         response_model_exclude_none=True,
         tags=["Workflows"],
+        operation_id="get_workflows",
     )
     async def get_workflows():
         if os.workflows is None:
@@ -774,6 +784,7 @@ def get_base_router(
         response_model=WorkflowResponse,
         response_model_exclude_none=True,
         tags=["Workflows"],
+        operation_id="get_workflow",
     )
     async def get_workflow(workflow_id: str):
         workflow = get_workflow_by_id(workflow_id, os.workflows)
@@ -782,7 +793,7 @@ def get_base_router(
 
         return WorkflowResponse.from_workflow(workflow)
 
-    @router.post("/workflows/{workflow_id}/runs", tags=["Workflows"])
+    @router.post("/workflows/{workflow_id}/runs", tags=["Workflows"], operation_id="create_workflow_run")
     async def create_workflow_run(
         workflow_id: str,
         message: str = Form(...),
@@ -828,7 +839,9 @@ def get_base_router(
             # Handle unexpected runtime errors
             raise HTTPException(status_code=500, detail=f"Error running workflow: {str(e)}")
 
-    @router.post("/workflows/{workflow_id}/runs/{run_id}/cancel", tags=["Workflows"])
+    @router.post(
+        "/workflows/{workflow_id}/runs/{run_id}/cancel", tags=["Workflows"], operation_id="cancel_workflow_run"
+    )
     async def cancel_workflow_run(workflow_id: str, run_id: str):
         workflow = get_workflow_by_id(workflow_id, os.workflows)
 

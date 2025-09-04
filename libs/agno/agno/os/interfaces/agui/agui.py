@@ -22,7 +22,7 @@ class AGUI(BaseInterface):
         if not self.agent and not self.team:
             raise ValueError("AGUI requires an agent and a team")
 
-    def get_router(self, use_async: bool = True, **kwargs) -> APIRouter:
+    def get_router(self, **kwargs) -> APIRouter:
         # Cannot be overridden
         self.router = APIRouter(tags=["AGUI"])
 

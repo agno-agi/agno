@@ -21,8 +21,7 @@ db2 = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai2", id="db-
 
 # Setup basic agents, teams and workflows
 basic_agent = Agent(
-    id="basic-agent",
-    name="Basic Agent",
+    name="Marketing Agent",
     db=db,
     enable_session_summaries=True,
     enable_user_memories=True,
@@ -55,32 +54,27 @@ basic_workflow = Workflow(
 
 # Setup our AgentOS app
 agent_os = AgentOS(
-    description="Example AgentOS",
-    os_id="basic-os",
+    description="Your AgentOS",
+    os_id="0001",
     agents=[basic_agent],
-    teams=[basic_team],
-    workflows=[basic_workflow],
     interfaces=[Whatsapp(agent=basic_agent), Slack(agent=basic_agent)],
     # Configuration for the AgentOS
     config=AgentOSConfig(
         chat=ChatConfig(
             quick_prompts={
-                "basic-agent": [
+                "marketing-agent": [
                     "What can you do?",
-                    "What tools do you have?",
-                    "Tell me about AgentOS",
+                    "How is our latest post working?",
+                    "Tell me about our active marketing campaigns",
                 ],
-                "basic-team": ["Which members are in the team?"],
-                "basic-workflow": ["What are the steps in the workflow?"],
             },
         ),
         memory=MemoryConfig(
-            display_name="Default Memory Page Name",
             dbs=[
                 DatabaseConfig(
                     db_id=db.id,
                     domain_config=MemoryDomainConfig(
-                        display_name="Postgres Memory",
+                        display_name="Main app user memories",
                     ),
                 )
             ],

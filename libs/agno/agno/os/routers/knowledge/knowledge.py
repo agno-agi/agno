@@ -37,7 +37,9 @@ def get_knowledge_router(
 
 
 def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> APIRouter:
-    @router.post("/knowledge/content", response_model=ContentResponseSchema, status_code=202)
+    @router.post(
+        "/knowledge/content", response_model=ContentResponseSchema, status_code=202, operation_id="upload_content"
+    )
     async def upload_content(
         background_tasks: BackgroundTasks,
         name: Optional[str] = Form(None),
@@ -126,7 +128,12 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         )
         return response
 
-    @router.patch("/knowledge/content/{content_id}", response_model=ContentResponseSchema, status_code=200)
+    @router.patch(
+        "/knowledge/content/{content_id}",
+        response_model=ContentResponseSchema,
+        status_code=200,
+        operation_id="update_content",
+    )
     async def update_content(
         content_id: str = Path(..., description="Content ID"),
         name: Optional[str] = Form(None, description="Content name"),
@@ -172,7 +179,12 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
 
         return ContentResponseSchema.from_dict(updated_content_dict)
 
-    @router.get("/knowledge/content", response_model=PaginatedResponse[ContentResponseSchema], status_code=200)
+    @router.get(
+        "/knowledge/content",
+        response_model=PaginatedResponse[ContentResponseSchema],
+        status_code=200,
+        operation_id="get_content",
+    )
     def get_content(
         limit: Optional[int] = Query(default=20, description="Number of content entries to return"),
         page: Optional[int] = Query(default=1, description="Page number"),
@@ -209,7 +221,12 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             ),
         )
 
-    @router.get("/knowledge/content/{content_id}", response_model=ContentResponseSchema, status_code=200)
+    @router.get(
+        "/knowledge/content/{content_id}",
+        response_model=ContentResponseSchema,
+        status_code=200,
+        operation_id="get_content_by_id",
+    )
     def get_content_by_id(
         content_id: str,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
@@ -241,6 +258,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         response_model=ContentResponseSchema,
         status_code=200,
         response_model_exclude_none=True,
+        operation_id="delete_content_by_id",
     )
     def delete_content_by_id(
         content_id: str,
@@ -254,7 +272,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
             id=content_id,
         )
 
-    @router.delete("/knowledge/content", status_code=200)
+    @router.delete("/knowledge/content", status_code=200, operation_id="delete_all_content")
     def delete_all_content(
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ):
@@ -263,7 +281,12 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         knowledge.remove_all_content()
         return "success"
 
-    @router.get("/knowledge/content/{content_id}/status", status_code=200, response_model=ContentStatusResponse)
+    @router.get(
+        "/knowledge/content/{content_id}/status",
+        status_code=200,
+        response_model=ContentStatusResponse,
+        operation_id="get_content_status",
+    )
     def get_content_status(
         content_id: str,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
@@ -301,7 +324,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
 
         return ContentStatusResponse(status=status, status_message=status_message or "")
 
-    @router.get("/knowledge/config", status_code=200)
+    @router.get("/knowledge/config", status_code=200, operation_id="get_knowledge_config")
     def get_config(
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> ConfigResponseSchema:

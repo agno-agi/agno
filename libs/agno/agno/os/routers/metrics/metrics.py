@@ -20,7 +20,7 @@ def get_metrics_router(dbs: dict[str, BaseDb], settings: AgnoAPISettings = AgnoA
 
 
 def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
-    @router.get("/metrics", response_model=MetricsResponse, status_code=200)
+    @router.get("/metrics", response_model=MetricsResponse, status_code=200, operation_id="get_metrics")
     async def get_metrics(
         starting_date: Optional[date] = Query(default=None, description="Starting date to filter metrics (YYYY-MM-DD)"),
         ending_date: Optional[date] = Query(default=None, description="Ending date to filter metrics (YYYY-MM-DD)"),
@@ -40,7 +40,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error getting metrics: {str(e)}")
 
-    @router.post("/metrics/refresh", response_model=List[DayAggregatedMetrics], status_code=200)
+    @router.post(
+        "/metrics/refresh", response_model=List[DayAggregatedMetrics], status_code=200, operation_id="refresh_metrics"
+    )
     async def calculate_metrics(
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> List[DayAggregatedMetrics]:
