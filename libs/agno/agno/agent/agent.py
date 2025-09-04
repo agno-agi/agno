@@ -3030,7 +3030,7 @@ class Agent:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
         workflow_context: Optional[Dict] = None,
-    ) -> Iterator[RunOutputEvent]:
+    ) -> Iterator[Union[RunOutputEvent, CustomEvent]]:
         self.model = cast(Model, self.model)
 
         reasoning_state = {
@@ -3066,7 +3066,7 @@ class Agent:
                     workflow_context=workflow_context,
                 )
             elif isinstance(model_response_event, CustomEvent):
-                yield model_response_event  # type: ignore
+                yield model_response_event
 
         # Determine reasoning completed
         if stream_intermediate_steps and reasoning_state["reasoning_started"]:
@@ -3109,7 +3109,7 @@ class Agent:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
         workflow_context: Optional[Dict] = None,
-    ) -> AsyncIterator[RunOutputEvent]:
+    ) -> AsyncIterator[Union[RunOutputEvent, CustomEvent]]:
         self.model = cast(Model, self.model)
 
         reasoning_state = {
@@ -3148,7 +3148,7 @@ class Agent:
                 ):
                     yield event
             elif isinstance(model_response_event, CustomEvent):
-                yield model_response_event  # type: ignore
+                yield model_response_event
 
         if stream_intermediate_steps and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []

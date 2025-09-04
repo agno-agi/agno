@@ -1914,7 +1914,7 @@ class Team:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
         workflow_context: Optional[Dict] = None,
-    ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
+    ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent, CustomEvent]]:
         self.model = cast(Model, self.model)
 
         reasoning_state = {
@@ -1949,7 +1949,7 @@ class Team:
                     workflow_context=workflow_context,
                 )
             elif isinstance(model_response_event, CustomEvent):
-                yield model_response_event  # type: ignore
+                yield model_response_event
 
         # 3. Update TeamRunOutput
         run_response.created_at = full_model_response.created_at
@@ -1997,7 +1997,7 @@ class Team:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
         workflow_context: Optional[Dict] = None,
-    ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent]]:
+    ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, CustomEvent]]:
         self.model = cast(Model, self.model)
 
         reasoning_state = {
@@ -2034,7 +2034,7 @@ class Team:
                 ):
                     yield event
             elif isinstance(model_response_event, CustomEvent):
-                yield model_response_event  # type: ignore
+                yield model_response_event
 
         # Handle structured outputs
         if (self.output_schema is not None) and not self.use_json_mode and (full_model_response.parsed is not None):
