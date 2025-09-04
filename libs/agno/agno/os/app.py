@@ -38,7 +38,6 @@ from agno.os.utils import generate_id
 from agno.team.team import Team
 from agno.tools.mcp import MCPTools, MultiMCPTools
 from agno.workflow.workflow import Workflow
-from agno.utils.log import log_info
 
 
 @asynccontextmanager
