@@ -46,7 +46,6 @@ async def mcp_lifespan(app, mcp_tools: List[Union[MCPTools, MultiMCPTools]]):
     """Manage MCP connection lifecycle inside a FastAPI app"""
     # Startup logic: connect to all contextual MCP servers
     for tool in mcp_tools:
-        log_info(f"Connecting to MCP tool: {tool.name}")
         await tool.connect()
 
     yield

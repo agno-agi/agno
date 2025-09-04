@@ -4,16 +4,27 @@ Example AgentOS app where the agent has MCPTools.
 AgentOS handles the lifespan of the MCPTools internally.
 """
 
+import os
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
 from agno.models.anthropic import Claude
 from agno.os import AgentOS
-from agno.tools.mcp import MCPTools, MultiMCPTools  # noqa: F401
+from agno.tools.mcp import MCPTools, MultiMCPTools, StreamableHTTPClientParams  # noqa: F401
 
 # Setup the database
 db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
-github_mcp_tools = MCPTools(transport="stdio", command="npx -y @modelcontextprotocol/server-github", include_tools=["search_code", "search_issues"])
+mcp_server_url = "https://api.githubcopilot.com/mcp/"
+mcp_access_token = os.getenv("GITHUB_ACCESS_TOKEN")
+
+server_params = StreamableHTTPClientParams(
+    url=mcp_server_url,
+    headers={
+        "Authorization": f"Bearer {mcp_access_token}",
+    },
+)
+
+github_mcp_tools = MCPTools(transport="streamable-http", server_params=server_params)
 agno_mcp_tools = MCPTools(transport="streamable-http", url="https://docs-v2.agno.com/mcp")
 
 # OR
@@ -25,7 +36,10 @@ agno_support_agent = Agent(
     name="Agno Support Agent",
     model=Claude(id="claude-sonnet-4-0"),
     db=db,
-    tools=[github_mcp_tools, agno_mcp_tools],
+    tools=[
+        # github_mcp_tools,
+        agno_mcp_tools,
+    ],
     add_history_to_context=True,
     num_history_runs=3,
     markdown=True,
