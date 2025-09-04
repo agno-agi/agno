@@ -412,6 +412,9 @@ def get_async_playground_router(
                         else:
                             # If no knowledge base, treat as direct file input
                             input_files.append(FileMedia(content=contents))
+                    elif agent.filestore is not None:
+                        contents = await file.read()
+                        agent.filestore.add(contents, file.filename, file.content_type)
                     else:
                         raise HTTPException(status_code=400, detail="Unsupported file type")
 
