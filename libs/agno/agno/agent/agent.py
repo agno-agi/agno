@@ -7172,10 +7172,12 @@ class Agent:
             image_artifacts = []
             for img in images:
                 try:
+                    artifact_id = img.id if hasattr(img, "id") and img.id else str(uuid4())
+
                     if img.url:
-                        image_artifacts.append(ImageArtifact(id=str(uuid4()), url=img.url))
+                        image_artifacts.append(ImageArtifact(id=artifact_id, url=img.url))
                     elif img.content:
-                        image_artifacts.append(ImageArtifact(id=str(uuid4()), content=img.content))
+                        image_artifacts.append(ImageArtifact(id=artifact_id, content=img.content))
                 except Exception as e:
                     log_warning(f"Error creating ImageArtifact: {e}")
                     continue
@@ -7185,10 +7187,12 @@ class Agent:
             video_artifacts = []
             for vid in videos:
                 try:
+                    artifact_id = vid.id if hasattr(vid, "id") and vid.id else str(uuid4())
+
                     if vid.url:
-                        video_artifacts.append(VideoArtifact(id=str(uuid4()), url=vid.url))
+                        video_artifacts.append(VideoArtifact(id=artifact_id, url=vid.url))
                     elif vid.content:
-                        video_artifacts.append(VideoArtifact(id=str(uuid4()), content=vid.content))
+                        video_artifacts.append(VideoArtifact(id=artifact_id, content=vid.content))
                 except Exception as e:
                     log_warning(f"Error creating VideoArtifact: {e}")
                     continue
@@ -7198,10 +7202,12 @@ class Agent:
             audio_artifacts = []
             for aud in audios:
                 try:
+                    artifact_id = aud.id if hasattr(aud, "id") and aud.id else str(uuid4())
+
                     if aud.url:
-                        audio_artifacts.append(AudioArtifact(id=str(uuid4()), url=aud.url))
+                        audio_artifacts.append(AudioArtifact(id=artifact_id, url=aud.url))
                     elif aud.content:
-                        audio_artifacts.append(AudioArtifact(id=str(uuid4()), content=aud.content))
+                        audio_artifacts.append(AudioArtifact(id=artifact_id, content=aud.content))
                 except Exception as e:
                     log_warning(f"Error creating AudioArtifact: {e}")
                     continue

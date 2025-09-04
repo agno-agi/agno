@@ -370,8 +370,9 @@ def get_base_router(
 
     # -- Agent routes ---
 
-    @router.post("/agents/{agent_id}/runs", tags=["Agents"], operation_id="create_agent_run", 
-        response_model_exclude_none=True)
+    @router.post(
+        "/agents/{agent_id}/runs", tags=["Agents"], operation_id="create_agent_run", response_model_exclude_none=True
+    )
     async def create_agent_run(
         agent_id: str,
         message: str = Form(...),
@@ -591,7 +592,9 @@ def get_base_router(
 
     # -- Team routes ---
 
-    @router.post("/teams/{team_id}/runs", tags=["Teams"], operation_id="create_team_run", response_model_exclude_none=True)
+    @router.post(
+        "/teams/{team_id}/runs", tags=["Teams"], operation_id="create_team_run", response_model_exclude_none=True
+    )
     async def create_team_run(
         team_id: str,
         message: str = Form(...),
@@ -798,7 +801,12 @@ def get_base_router(
 
         return WorkflowResponse.from_workflow(workflow)
 
-    @router.post("/workflows/{workflow_id}/runs", tags=["Workflows"], operation_id="create_workflow_run", response_model_exclude_none=True)
+    @router.post(
+        "/workflows/{workflow_id}/runs",
+        tags=["Workflows"],
+        operation_id="create_workflow_run",
+        response_model_exclude_none=True,
+    )
     async def create_workflow_run(
         workflow_id: str,
         message: str = Form(...),
