@@ -30,7 +30,7 @@ def get_mcp_server(
     # Create an MCP server
     mcp = FastMCP(os.name or "AgentOS")
 
-    @mcp.tool(name="get_agentos_config", description="Get the configuration of the AgentOS", tags=["core"])
+    @mcp.tool(name="get_agentos_config", description="Get the configuration of the AgentOS", tags=["core"])  # type: ignore
     async def config() -> ConfigResponse:
         return ConfigResponse(
             os_id=os.os_id or "AgentOS",
