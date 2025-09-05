@@ -110,7 +110,6 @@ class Mem0Tools(Toolkit):
                 messages_list,
                 user_id=resolved_user_id,
                 infer=self.infer,
-                output_format="v1.1",
             )
             return json.dumps(result)
         except Exception as e:
@@ -131,7 +130,6 @@ class Mem0Tools(Toolkit):
             results = self.client.search(
                 query=query,
                 user_id=resolved_user_id,
-                output_format="v1.1",
             )
 
             if isinstance(results, dict) and "results" in results:
@@ -159,7 +157,6 @@ class Mem0Tools(Toolkit):
         try:
             results = self.client.get_all(
                 user_id=resolved_user_id,
-                output_format="v1.1",
             )
 
             if isinstance(results, dict) and "results" in results:
