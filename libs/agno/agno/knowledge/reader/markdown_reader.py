@@ -3,12 +3,23 @@ import uuid
 from pathlib import Path
 from typing import IO, Any, List, Optional, Union
 
-from agno.knowledge.chunking.markdown import MarkdownChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_info, logger
+
+# Try to import MarkdownChunking, fallback to FixedSizeChunking if not available
+try:
+    from agno.knowledge.chunking.markdown import MarkdownChunking
+
+    DEFAULT_CHUNKING_STRATEGY = MarkdownChunking()
+    MARKDOWN_CHUNKING_AVAILABLE = True
+except ImportError:
+    from agno.knowledge.chunking.fixed import FixedSizeChunking
+
+    DEFAULT_CHUNKING_STRATEGY = FixedSizeChunking()
+    MARKDOWN_CHUNKING_AVAILABLE = False
 
 
 class MarkdownReader(Reader):
@@ -17,14 +28,19 @@ class MarkdownReader(Reader):
     @classmethod
     def get_supported_chunking_strategies(self) -> List[ChunkingStrategyType]:
         """Get the list of supported chunking strategies for Markdown readers."""
-        return [
-            ChunkingStrategyType.MARKDOWN_CHUNKING,
-            ChunkingStrategyType.AGENTIC_CHUNKING,
+        strategies = [
             ChunkingStrategyType.DOCUMENT_CHUNKING,
+            ChunkingStrategyType.AGENTIC_CHUNKING,
             ChunkingStrategyType.RECURSIVE_CHUNKING,
             ChunkingStrategyType.SEMANTIC_CHUNKING,
             ChunkingStrategyType.FIXED_SIZE_CHUNKING,
         ]
+
+        # Only include MarkdownChunking if it's available
+        if MARKDOWN_CHUNKING_AVAILABLE:
+            strategies.insert(0, ChunkingStrategyType.MARKDOWN_CHUNKING)
+
+        return strategies
 
     @classmethod
     def get_supported_content_types(self) -> List[ContentType]:
@@ -32,10 +48,14 @@ class MarkdownReader(Reader):
 
     def __init__(
         self,
-        chunking_strategy: Optional[ChunkingStrategy] = MarkdownChunking(),
+        chunking_strategy: Optional[ChunkingStrategy] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
     ) -> None:
+        # Use the default chunking strategy if none provided
+        if chunking_strategy is None:
+            chunking_strategy = DEFAULT_CHUNKING_STRATEGY
+
         super().__init__(chunking_strategy=chunking_strategy, name=name, description=description)
 
     def read(self, file: Union[Path, IO[Any]], name: Optional[str] = None) -> List[Document]:

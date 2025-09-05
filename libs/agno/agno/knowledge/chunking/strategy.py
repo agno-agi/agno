@@ -35,13 +35,13 @@ class ChunkingStrategy(ABC):
 class ChunkingStrategyType(str, Enum):
     """Enumeration of available chunking strategies."""
 
-    AGENTIC_CHUNKING = "AgenticChunking"
-    DOCUMENT_CHUNKING = "DocumentChunking"
-    RECURSIVE_CHUNKING = "RecursiveChunking"
-    SEMANTIC_CHUNKING = "SemanticChunking"
-    FIXED_SIZE_CHUNKING = "FixedSizeChunking"
-    ROW_CHUNKING = "RowChunking"
-    MARKDOWN_CHUNKING = "MarkdownChunking"
+    AGENTIC_CHUNKING = "AgenticChunker"
+    DOCUMENT_CHUNKING = "DocumentChunker"
+    RECURSIVE_CHUNKING = "RecursiveChunker"
+    SEMANTIC_CHUNKING = "SemanticChunker"
+    FIXED_SIZE_CHUNKING = "FixedSizeChunker"
+    ROW_CHUNKING = "RowChunker"
+    MARKDOWN_CHUNKING = "MarkdownChunker"
 
     @classmethod
     def from_string(cls, strategy_name: str) -> "ChunkingStrategyType":
