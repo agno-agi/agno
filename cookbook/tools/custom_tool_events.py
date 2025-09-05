@@ -10,7 +10,7 @@ from agno.run.agent import CustomEvent
 from agno.tools import tool
 
 
-# Our custom event, extending the CustomEvent class.
+# Our custom event, extending the CustomEvent class
 @dataclass
 class CustomerProfileEvent(CustomEvent):
     """CustomEvent for customer profile."""
@@ -20,8 +20,8 @@ class CustomerProfileEvent(CustomEvent):
     customer_phone: Optional[str] = None
 
 
-# Our custom tool. Make sure to set show_result=True for our tool events to be shown.
-@tool(show_result=True)
+# Our custom tool
+@tool()
 async def get_customer_profile():
     """Example custom tool that simply yields a custom event."""
 
@@ -41,7 +41,7 @@ agent = Agent(
 
 
 async def run_agent():
-    # Running the Agent: it should call our custom tool and yield the custom event.
+    # Running the Agent: it should call our custom tool and yield the custom event
     async for event in agent.arun(
         "Hello, can you get me the customer profile for customer with ID 123?",
         stream=True,

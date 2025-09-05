@@ -46,6 +46,8 @@ class WorkflowRunEvent(str, Enum):
 
     step_output = "StepOutput"
 
+    custom_event = "CustomEvent"
+
 
 @dataclass
 class BaseWorkflowRunOutputEvent:
@@ -380,6 +382,13 @@ class StepOutputEvent(BaseWorkflowRunOutputEvent):
         return self.step_output.stop if self.step_output else False
 
 
+@dataclass
+class CustomEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when a custom event is produced"""
+
+    event: str = WorkflowRunEvent.custom_event.value
+
+
 # Union type for all workflow run response events
 WorkflowRunOutputEvent = Union[
     WorkflowStartedEvent,
@@ -402,6 +411,7 @@ WorkflowRunOutputEvent = Union[
     StepsExecutionStartedEvent,
     StepsExecutionCompletedEvent,
     StepOutputEvent,
+    CustomEvent,
 ]
 
 

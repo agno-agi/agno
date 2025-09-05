@@ -40,6 +40,8 @@ class TeamRunEvent(str, Enum):
     output_model_response_started = "TeamOutputModelResponseStarted"
     output_model_response_completed = "TeamOutputModelResponseCompleted"
 
+    custom_event = "CustomEvent"
+
 
 @dataclass
 class BaseTeamRunEvent(BaseRunOutputEvent):
@@ -213,6 +215,11 @@ class OutputModelResponseCompletedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.output_model_response_completed.value
 
 
+@dataclass
+class CustomEvent(BaseTeamRunEvent):
+    event: str = TeamRunEvent.custom_event.value
+
+
 TeamRunOutputEvent = Union[
     RunStartedEvent,
     RunContentEvent,
@@ -231,6 +238,7 @@ TeamRunOutputEvent = Union[
     ParserModelResponseCompletedEvent,
     OutputModelResponseStartedEvent,
     OutputModelResponseCompletedEvent,
+    CustomEvent,
 ]
 
 # Map event string to dataclass for team events
@@ -252,6 +260,7 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.parser_model_response_completed.value: ParserModelResponseCompletedEvent,
     TeamRunEvent.output_model_response_started.value: OutputModelResponseStartedEvent,
     TeamRunEvent.output_model_response_completed.value: OutputModelResponseCompletedEvent,
+    TeamRunEvent.custom_event.value: CustomEvent,
 }
 
 

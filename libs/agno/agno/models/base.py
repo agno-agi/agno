@@ -1169,7 +1169,7 @@ class Model(ABC):
         function_call: FunctionCall,
         function_call_results: List[Message],
         additional_input: Optional[List[Message]] = None,
-    ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent, CustomEvent]]:
+    ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         # Start function call
         function_call_timer = Timer()
         function_call_timer.start()
@@ -1223,8 +1223,8 @@ class Model(ABC):
                         if function_call.function.show_result:
                             yield ModelResponse(content=item.content)
 
-                    elif isinstance(item, CustomEvent):
-                        function_call_output += str(item)
+                        if isinstance(item, CustomEvent):
+                            function_call_output += str(item)
 
                     # Yield the event itself to bubble it up
                     yield item
@@ -1436,7 +1436,7 @@ class Model(ABC):
         current_function_call_count: int = 0,
         function_call_limit: Optional[int] = None,
         skip_pause_check: bool = False,
-    ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent, CustomEvent]]:
+    ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         # Additional messages from function calls that will be added to the function call results
         if additional_input is None:
             additional_input = []
@@ -1626,8 +1626,8 @@ class Model(ABC):
                                 yield ModelResponse(content=item.content)
                                 continue
 
-                        elif isinstance(item, CustomEvent):
-                            function_call_output += str(item)
+                            if isinstance(item, CustomEvent):
+                                function_call_output += str(item)
 
                         # Yield the event itself to bubble it up
                         yield item

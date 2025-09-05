@@ -38,7 +38,6 @@ from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.agent import (
-    CustomEvent,
     RunEvent,
     RunInput,
     RunOutput,
@@ -3072,7 +3071,7 @@ class Agent:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
         workflow_context: Optional[Dict] = None,
-    ) -> Iterator[Union[RunOutputEvent, CustomEvent]]:
+    ) -> Iterator[RunOutputEvent]:
         self.model = cast(Model, self.model)
 
         reasoning_state = {
@@ -3148,7 +3147,7 @@ class Agent:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         stream_intermediate_steps: bool = False,
         workflow_context: Optional[Dict] = None,
-    ) -> AsyncIterator[Union[RunOutputEvent, CustomEvent]]:
+    ) -> AsyncIterator[RunOutputEvent]:
         self.model = cast(Model, self.model)
 
         reasoning_state = {
