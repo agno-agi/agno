@@ -1,7 +1,7 @@
 from functools import partial
 from uuid import uuid4
 
-from agno.utils.log import log_debug, log_exception
+from agno.utils.log import log_debug, log_exception, log_error
 
 try:
     from mcp import ClientSession
@@ -53,7 +53,7 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
                         try:
                             image_data = base64.b64decode(image_data)
                         except Exception as e:
-                            log_debug(f"Failed to decode base64 image data: {e}")
+                            log_error(f"Failed to decode base64 image data: {e}")
                             image_data = None
                     
                     img_artifact = ImageArtifact(
