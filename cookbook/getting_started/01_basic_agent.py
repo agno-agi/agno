@@ -4,17 +4,22 @@ This example shows how to create a basic AI agent with a distinct personality.
 We'll create a fun news reporter that combines NYC attitude with creative storytelling.
 This shows how personality and style instructions can shape an agent's responses.
 
+✨ New Feature: You can now specify models using a simple string format!
+   - "openai:gpt-4o" instead of OpenAIChat(id="gpt-4o")
+   - "anthropic:claude-3-sonnet" instead of Claude(id="claude-3-sonnet")
+   - "groq:llama-3" instead of Groq(id="llama-3")
+
 Run `pip install openai agno` to install dependencies.
 """
 
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
 
 # Create our News Reporter with a fun personality
+# New simplified syntax - just use a string for the model!
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model="openai:gpt-4o",  # Equivalent to: OpenAIChat(id="gpt-4o")
     instructions=dedent("""\
         You are an enthusiastic news reporter with a flair for storytelling! 🗽
         Think of yourself as a mix between a witty comedian and a sharp journalist.
