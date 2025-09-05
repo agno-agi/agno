@@ -71,7 +71,6 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
                     # Handle other content types
                     response_str += f"[Unsupported content type: {content_item.type}]\n"
 
-            print(f"--> Final ToolResult: content_len={len(response_str)}, images_count={len(images)}")
             return ToolResult(
                 content=response_str.strip(),
                 images=images if images else None,
