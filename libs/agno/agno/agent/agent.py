@@ -30,7 +30,7 @@ from pydantic import BaseModel
 from agno.db.base import BaseDb, SessionType, UserMemory
 from agno.exceptions import ModelProviderError, RunCancelledException, StopAgentRun
 from agno.knowledge.knowledge import Knowledge
-from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
+from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact, FileArtifact
 from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.message import Message, MessageReferences
@@ -1073,13 +1073,13 @@ class Agent:
         # Initialize the Agent
         self.initialize_agent(debug_mode=debug_mode)
 
-        image_artifacts, video_artifacts, audio_artifacts = self._convert_media_to_artifacts(
-            images=images, videos=videos, audios=audio
+        image_artifacts, video_artifacts, audio_artifacts, file_artifacts = self._convert_media_to_artifacts(
+            images=images, videos=videos, audios=audio, files=files
         )
 
         # Create RunInput to capture the original user input
         run_input = RunInput(
-            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
+            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=file_artifacts
         )
 
         # Read existing session from database
@@ -2996,6 +2996,10 @@ class Agent:
             for audio in model_response.audios:
                 self._add_audio(audio, run_response)  # Generated audio go to run_response.audio
 
+        if model_response.files is not None:
+            for file in model_response.files:
+                self._add_file(file, run_response)  # Generated files go to run_response.files
+
     def _update_run_response(self, model_response: ModelResponse, run_response: RunOutput, run_messages: RunMessages):
         # Handle structured outputs
         if self.output_schema is not None and model_response.parsed is not None:
@@ -3400,6 +3404,10 @@ class Agent:
                 if model_response_event.audios is not None:
                     for audio in model_response_event.audios:
                         self._add_audio(audio, run_response)
+
+                if model_response_event.files is not None:
+                    for file in model_response_event.files:
+                        self._add_file(file, run_response)
 
                 reasoning_step: Optional[ReasoningStep] = None
 
@@ -5679,6 +5687,13 @@ class Agent:
             run_response.audio = []
         run_response.audio.append(audio)
 
+    def _add_file(self, file: FileArtifact, run_response: RunOutput) -> None:
+        """Add file to both the agent's stateful storage and the current run response"""
+        # Add to run response
+        if run_response.files is None:
+            run_response.files = []
+        run_response.files.append(file)
+
     ###########################################################################
     # Reasoning
     ###########################################################################
@@ -7161,11 +7176,10 @@ class Agent:
         images: Optional[Sequence[Image]] = None,
         videos: Optional[Sequence[Video]] = None,
         audios: Optional[Sequence[Audio]] = None,
+        files: Optional[Sequence[File]] = None,
     ) -> tuple:
         """Convert raw Image/Video/Audio objects to ImageArtifact/VideoArtifact/AudioArtifact objects."""
         from uuid import uuid4
-
-        from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
 
         image_artifacts = None
         if images:
@@ -7212,7 +7226,18 @@ class Agent:
                     log_warning(f"Error creating AudioArtifact: {e}")
                     continue
 
-        return image_artifacts, video_artifacts, audio_artifacts
+        file_artifacts = None
+        if files:
+            file_artifacts = []
+            for file in files:
+                try:
+                    artifact_id = file.id if hasattr(file, "id") and file.id else str(uuid4())
+                    file_artifacts.append(FileArtifact(id=artifact_id, content=file.content))
+                except Exception as e:
+                    log_warning(f"Error creating FileArtifact: {e}")
+                    continue
+
+        return image_artifacts, video_artifacts, audio_artifacts, file_artifacts
 
     def cli_app(
         self,

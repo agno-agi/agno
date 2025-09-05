@@ -21,7 +21,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.exceptions import AgentRunException
-from agno.media import Audio, AudioArtifact, AudioResponse, Image, ImageArtifact, Video, VideoArtifact
+from agno.media import Audio, AudioArtifact, AudioResponse, Image, ImageArtifact, Video, VideoArtifact, File, FileArtifact
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
@@ -46,6 +46,7 @@ class MessageData:
     response_audio: Optional[AudioResponse] = None
     response_image: Optional[ImageArtifact] = None
     response_video: Optional[VideoArtifact] = None
+    response_file: Optional[FileArtifact] = None
 
     # Data from the provider that we might need on subsequent messages
     response_provider_data: Optional[Dict[str, Any]] = None
@@ -266,6 +267,11 @@ class Model(ABC):
                                 model_response.videos = []
                             model_response.videos.extend(function_call_response.videos)
 
+                        if function_call_response.files is not None:
+                            if model_response.files is None:
+                                model_response.files = []
+                            model_response.files.extend(function_call_response.files)
+
                         if (
                             function_call_response.event
                             in [
@@ -293,7 +299,7 @@ class Model(ABC):
                     messages=messages, function_call_results=function_call_results, **model_response.extra or {}
                 )
 
-                if any(msg.images or msg.videos or msg.audio for msg in function_call_results):
+                if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
                     # Handle function call media
                     self._handle_function_call_media(messages=messages, function_call_results=function_call_results)
 
@@ -510,6 +516,8 @@ class Model(ABC):
             model_response.images = [assistant_message.image_output]
         if assistant_message.video_output is not None:
             model_response.videos = [assistant_message.video_output]
+        if assistant_message.files is not None:
+            model_response.files = [assistant_message.file_output]
         if provider_response.extra is not None:
             if model_response.extra is None:
                 model_response.extra = {}
@@ -614,6 +622,10 @@ class Model(ABC):
         if provider_response.audios is not None:
             if provider_response.audios:
                 assistant_message.audio_output = provider_response.audios[-1]  # Taking last (most recent) audio
+
+        if provider_response.files is not None:
+            if provider_response.files:
+                assistant_message.file_output = provider_response.files[-1]  # Taking last (most recent) file
 
         # Add redacted thinking content to assistant message
         if provider_response.redacted_reasoning_content is not None:
@@ -1248,6 +1260,8 @@ class Model(ABC):
                     function_execution_result.videos = tool_result.videos
                 if tool_result.audios:
                     function_execution_result.audios = tool_result.audios
+                if tool_result.files:
+                    function_execution_result.files = tool_result.files
             else:
                 function_call_output = str(function_execution_result.result) if function_execution_result.result else ""
 
@@ -1281,6 +1295,7 @@ class Model(ABC):
             images=function_execution_result.images,
             videos=function_execution_result.videos,
             audios=function_execution_result.audios,
+            files=function_execution_result.files,
         )
 
         # Add function call to function call results
@@ -1733,6 +1748,7 @@ class Model(ABC):
         all_images: List[Image] = []
         all_videos: List[Video] = []
         all_audio: List[Audio] = []
+        all_files: List[File] = []
 
         for result_message in function_call_results:
             if result_message.images:
@@ -1748,15 +1764,20 @@ class Model(ABC):
                 all_audio.extend(result_message.audio)
                 result_message.audio = None
 
+            if result_message.files:
+                all_files.extend(result_message.files)
+                result_message.files = None
+
         # If we have media artifacts, add a follow-up "user" message instead of a "tool"
         # message with the media artifacts which throws error for some models
-        if all_images or all_videos or all_audio:
+        if all_images or all_videos or all_audio or all_files:
             media_message = Message(
                 role="user",
                 content="Take note of the following content",
                 images=all_images if all_images else None,
                 videos=all_videos if all_videos else None,
                 audio=all_audio if all_audio else None,
+                files=all_files if all_files else None,
             )
             messages.append(media_message)
 

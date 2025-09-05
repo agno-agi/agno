@@ -3,7 +3,7 @@ from enum import Enum
 from time import time
 from typing import Any, Dict, List, Optional
 
-from agno.media import AudioArtifact, AudioResponse, ImageArtifact, VideoArtifact
+from agno.media import AudioArtifact, AudioResponse, FileArtifact, ImageArtifact, VideoArtifact
 from agno.models.message import Citations
 from agno.models.metrics import Metrics
 from agno.tools.function import UserInputField
@@ -93,6 +93,7 @@ class ModelResponse:
     images: Optional[List[ImageArtifact]] = None
     videos: Optional[List[VideoArtifact]] = None
     audios: Optional[List[AudioArtifact]] = None
+    files: Optional[List[FileArtifact]] = None
 
     # Model tool calls
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)

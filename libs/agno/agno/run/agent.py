@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 
 from pydantic import BaseModel
 
-from agno.media import AudioArtifact, AudioResponse, File, ImageArtifact, VideoArtifact
+from agno.media import AudioArtifact, AudioResponse, File, ImageArtifact, VideoArtifact, FileArtifact
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ToolExecution
@@ -309,7 +309,7 @@ class RunInput:
     images: Optional[Sequence[ImageArtifact]] = None
     videos: Optional[Sequence[VideoArtifact]] = None
     audios: Optional[Sequence[AudioArtifact]] = None
-    files: Optional[Sequence[File]] = None
+    files: Optional[Sequence[FileArtifact]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary representation"""
@@ -357,7 +357,7 @@ class RunInput:
 
         files = None
         if data.get("files"):
-            files = [File.model_validate(file_data) for file_data in data["files"]]
+            files = [FileArtifact.model_validate(file_data) for file_data in data["files"]]
 
         return cls(input_content=data.get("input_content"), images=images, videos=videos, audios=audios, files=files)
 
@@ -392,6 +392,7 @@ class RunOutput:
     images: Optional[List[ImageArtifact]] = None  # Images attached to the response
     videos: Optional[List[VideoArtifact]] = None  # Videos attached to the response
     audio: Optional[List[AudioArtifact]] = None  # Audio attached to the response
+    files: Optional[List[FileArtifact]] = None  # Files attached to the response
     response_audio: Optional[AudioResponse] = None  # Model audio response
 
     # Input media and messages from user
@@ -446,6 +447,7 @@ class RunOutput:
                 "images",
                 "videos",
                 "audio",
+                "files",
                 "response_audio",
                 "input",
                 "citations",
@@ -507,6 +509,14 @@ class RunOutput:
                     _dict["audio"].append(aud.to_dict())
                 else:
                     _dict["audio"].append(aud)
+
+        if self.files is not None:
+            _dict["files"] = []
+            for file in self.files:
+                if isinstance(file, FileArtifact):
+                    _dict["files"].append(file.to_dict())
+                else:
+                    _dict["files"].append(file)
 
         if self.response_audio is not None:
             if isinstance(self.response_audio, AudioResponse):
@@ -573,6 +583,9 @@ class RunOutput:
         audio = data.pop("audio", [])
         audio = [AudioArtifact.model_validate(audio) for audio in audio] if audio else None
 
+        files = data.pop("files", [])
+        files = [File.model_validate(file) for file in files] if files else None
+
         response_audio = data.pop("response_audio", None)
         response_audio = AudioResponse.model_validate(response_audio) if response_audio else None
 
@@ -610,6 +623,7 @@ class RunOutput:
             images=images,
             audio=audio,
             videos=videos,
+            files=files,
             response_audio=response_audio,
             input=input_obj,
             events=events,

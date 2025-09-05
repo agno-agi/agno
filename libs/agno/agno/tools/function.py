@@ -8,7 +8,7 @@ from packaging.version import Version
 from pydantic import BaseModel, Field, validate_call
 
 from agno.exceptions import AgentRunException
-from agno.media import Audio, AudioArtifact, File, Image, ImageArtifact, Video, VideoArtifact
+from agno.media import Audio, AudioArtifact, File, Image, ImageArtifact, Video, VideoArtifact, FileArtifact
 from agno.utils.log import log_debug, log_error, log_exception, log_warning
 
 T = TypeVar("T")
@@ -485,7 +485,7 @@ class FunctionExecutionResult(BaseModel):
     images: Optional[List[ImageArtifact]] = None
     videos: Optional[List[VideoArtifact]] = None
     audios: Optional[List[AudioArtifact]] = None
-
+    files: Optional[List[FileArtifact]] = None
 
 class FunctionCall(BaseModel):
     """Model for Function Calls"""
@@ -965,3 +965,4 @@ class ToolResult(BaseModel):
     images: Optional[List[ImageArtifact]] = None
     videos: Optional[List[VideoArtifact]] = None
     audios: Optional[List[AudioArtifact]] = None
+    files: Optional[List[FileArtifact]] = None  

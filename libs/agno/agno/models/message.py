@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from agno.media import Audio, AudioArtifact, AudioResponse, File, Image, ImageArtifact, Video, VideoArtifact
+from agno.media import Audio, AudioArtifact, AudioResponse, File, FileArtifact, Image, ImageArtifact, Video, VideoArtifact
 from agno.models.metrics import Metrics
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -74,6 +74,7 @@ class Message(BaseModel):
     audio_output: Optional[Union[AudioResponse, AudioArtifact]] = None
     image_output: Optional[ImageArtifact] = None
     video_output: Optional[VideoArtifact] = None
+    file_output: Optional[FileArtifact] = None
 
     # The thinking content from the model
     redacted_reasoning_content: Optional[str] = None
@@ -152,6 +153,8 @@ class Message(BaseModel):
             message_dict["audio"] = [aud.to_dict() for aud in self.audio]
         if self.videos:
             message_dict["videos"] = [vid.to_dict() for vid in self.videos]
+        if self.files:
+            message_dict["files"] = [file.to_dict() for file in self.files]
         if self.audio_output:
             message_dict["audio_output"] = self.audio_output.to_dict()
 
@@ -248,7 +251,7 @@ class Message(BaseModel):
             _logger(f"Audio Files added: {len(self.audio)}")
         if self.files:
             _logger(f"Files added: {len(self.files)}")
-
+    
         metrics_header = " TOOL METRICS " if self.role == "tool" else " METRICS "
         if metrics and self.metrics is not None and self.metrics != Metrics():
             _logger(metrics_header, center=True, symbol="*")
