@@ -1,5 +1,5 @@
 streamlit
-agno==2.0.0a1
+agno==2.0.0rc1
 anthropic
 google-genai
 mcp
