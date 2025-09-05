@@ -46,10 +46,20 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
                     response_str += content_item.text + "\n"
                 elif isinstance(content_item, ImageContent):
                     # Handle image content if present
+                    image_data = getattr(content_item, "data", None)
+                    
+                    if image_data and isinstance(image_data, str):
+                        import base64
+                        try:
+                            image_data = base64.b64decode(image_data)
+                        except Exception as e:
+                            log_debug(f"Failed to decode base64 image data: {e}")
+                            image_data = None
+                    
                     img_artifact = ImageArtifact(
                         id=str(uuid4()),
                         url=getattr(content_item, "url", None),
-                        content=getattr(content_item, "data", None),
+                        content=image_data,
                         mime_type=getattr(content_item, "mimeType", "image/png"),
                     )
                     images.append(img_artifact)
@@ -61,6 +71,7 @@ def get_entrypoint_for_tool(tool: MCPTool, session: ClientSession):
                     # Handle other content types
                     response_str += f"[Unsupported content type: {content_item.type}]\n"
 
+            print(f"--> Final ToolResult: content_len={len(response_str)}, images_count={len(images)}")
             return ToolResult(
                 content=response_str.strip(),
                 images=images if images else None,
