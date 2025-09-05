@@ -1,9 +1,9 @@
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import HTTPException
 
 from agno.agent.agent import Agent
-from agno.db.base import BaseDb
+from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.accuracy import AccuracyEval
 from agno.eval.performance import PerformanceEval
 from agno.eval.reliability import ReliabilityEval
@@ -14,7 +14,7 @@ from agno.team.team import Team
 
 async def run_accuracy_eval(
     eval_run_input: EvalRunInput,
-    db: BaseDb,
+    db: Union[BaseDb, AsyncBaseDb],
     agent: Optional[Agent] = None,
     team: Optional[Team] = None,
     default_model: Optional[Model] = None,
@@ -52,7 +52,7 @@ async def run_accuracy_eval(
 
 async def run_performance_eval(
     eval_run_input: EvalRunInput,
-    db: BaseDb,
+    db: Union[BaseDb, AsyncBaseDb],
     agent: Optional[Agent] = None,
     team: Optional[Team] = None,
     default_model: Optional[Model] = None,
@@ -109,7 +109,7 @@ async def run_performance_eval(
 
 async def run_reliability_eval(
     eval_run_input: EvalRunInput,
-    db: BaseDb,
+    db: Union[BaseDb, AsyncBaseDb],
     agent: Optional[Agent] = None,
     team: Optional[Team] = None,
     default_model: Optional[Model] = None,

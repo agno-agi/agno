@@ -1,7 +1,7 @@
 """Router for MCP interface providing Model Context Protocol endpoints."""
 
 import logging
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, List, Optional, cast
 from uuid import uuid4
 
 from fastmcp import FastMCP
@@ -9,7 +9,7 @@ from fastmcp.server.http import (
     StarletteWithLifespan,
 )
 
-from agno.db.base import SessionType
+from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.schemas import UserMemory
 from agno.os.routers.memory.schemas import (
     UserMemorySchema,
@@ -105,14 +105,25 @@ def get_mcp_server(
         sort_order: str = "desc",
     ):
         db = get_db(os.dbs, db_id)
-        sessions = db.get_sessions(
-            session_type=SessionType.AGENT,
-            component_id=agent_id,
-            user_id=user_id,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            deserialize=False,
-        )
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            sessions = await db.get_sessions(
+                session_type=SessionType.AGENT,
+                component_id=agent_id,
+                user_id=user_id,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                deserialize=False,
+            )
+        else:
+            sessions = db.get_sessions(
+                session_type=SessionType.AGENT,
+                component_id=agent_id,
+                user_id=user_id,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                deserialize=False,
+            )
 
         return {
             "data": [SessionSchema.from_dict(session) for session in sessions],  # type: ignore
@@ -127,14 +138,25 @@ def get_mcp_server(
         sort_order: str = "desc",
     ):
         db = get_db(os.dbs, db_id)
-        sessions = db.get_sessions(
-            session_type=SessionType.TEAM,
-            component_id=team_id,
-            user_id=user_id,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            deserialize=False,
-        )
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            sessions = await db.get_sessions(
+                session_type=SessionType.TEAM,
+                component_id=team_id,
+                user_id=user_id,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                deserialize=False,
+            )
+        else:
+            sessions = db.get_sessions(
+                session_type=SessionType.TEAM,
+                component_id=team_id,
+                user_id=user_id,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                deserialize=False,
+            )
 
         return {
             "data": sessions,  # type: ignore
@@ -171,12 +193,21 @@ def get_mcp_server(
         db_id: Optional[str] = None,
     ):
         db = get_db(os.dbs, db_id)
-        user_memories = db.get_user_memories(
-            user_id=user_id,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            deserialize=False,
-        )
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            user_memories = await db.get_user_memories(
+                user_id=user_id,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                deserialize=False,
+            )
+        else:
+            user_memories = db.get_user_memories(
+                user_id=user_id,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                deserialize=False,
+            )
         return {
             "data": user_memories,  # type: ignore
         }
@@ -189,14 +220,25 @@ def get_mcp_server(
         user_id: str,
     ) -> UserMemorySchema:
         db = get_db(os.dbs, db_id)
-        user_memory = db.upsert_user_memory(
-            memory=UserMemory(
-                memory_id=memory_id,
-                memory=memory,
-                user_id=user_id,
-            ),
-            deserialize=False,
-        )
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            user_memory = await db.upsert_user_memory(
+                memory=UserMemory(
+                    memory_id=memory_id,
+                    memory=memory,
+                    user_id=user_id,
+                ),
+                deserialize=False,
+            )
+        else:
+            user_memory = db.upsert_user_memory(
+                memory=UserMemory(
+                    memory_id=memory_id,
+                    memory=memory,
+                    user_id=user_id,
+                ),
+                deserialize=False,
+            )
         if not user_memory:
             raise Exception("Failed to update memory")
 
@@ -208,7 +250,11 @@ def get_mcp_server(
         memory_id: str,
     ) -> None:
         db = get_db(os.dbs, db_id)
-        db.delete_user_memory(memory_id=memory_id)
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            await db.delete_user_memory(memory_id=memory_id)
+        else:
+            db.delete_user_memory(memory_id=memory_id)
 
     # Knowledge Management Tools
     @mcp.tool(name="get_content", description="Get paginated list of knowledge content", tags=["knowledge"])  # type: ignore

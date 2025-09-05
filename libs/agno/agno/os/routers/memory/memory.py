@@ -1,12 +1,12 @@
 import logging
 import math
-from typing import List, Optional
+from typing import List, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import Depends, HTTPException, Path, Query
 from fastapi.routing import APIRouter
 
-from agno.db.base import BaseDb
+from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas import UserMemory
 from agno.os.auth import get_authentication_dependency
 from agno.os.routers.memory.schemas import (
@@ -22,27 +22,43 @@ from agno.os.utils import get_db
 logger = logging.getLogger(__name__)
 
 
-def get_memory_router(dbs: dict[str, BaseDb], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs) -> APIRouter:
+def get_memory_router(
+    dbs: dict[str, Union[BaseDb, AsyncBaseDb]], settings: AgnoAPISettings = AgnoAPISettings(), **kwargs
+) -> APIRouter:
     router = APIRouter(dependencies=[Depends(get_authentication_dependency(settings))], tags=["Memory"])
     return attach_routes(router=router, dbs=dbs)
 
 
-def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
+def attach_routes(router: APIRouter, dbs: dict[str, Union[BaseDb, AsyncBaseDb]]) -> APIRouter:
     @router.post("/memories", response_model=UserMemorySchema, status_code=200, operation_id="create_memory")
     async def create_memory(
         payload: UserMemoryCreateSchema,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> UserMemorySchema:
         db = get_db(dbs, db_id)
-        user_memory = db.upsert_user_memory(
-            memory=UserMemory(
-                memory_id=str(uuid4()),
-                memory=payload.memory,
-                topics=payload.topics or [],
-                user_id=payload.user_id,
-            ),
-            deserialize=False,
-        )
+
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            user_memory = await db.upsert_user_memory(
+                memory=UserMemory(
+                    memory_id=str(uuid4()),
+                    memory=payload.memory,
+                    topics=payload.topics or [],
+                    user_id=payload.user_id,
+                ),
+                deserialize=False,
+            )
+        else:
+            user_memory = db.upsert_user_memory(
+                memory=UserMemory(
+                    memory_id=str(uuid4()),
+                    memory=payload.memory,
+                    topics=payload.topics or [],
+                    user_id=payload.user_id,
+                ),
+                deserialize=False,
+            )
+
         if not user_memory:
             raise HTTPException(status_code=500, detail="Failed to create memory")
 
@@ -53,7 +69,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         memory_id: str = Path(), db_id: Optional[str] = Query(default=None, description="The ID of the database to use")
     ) -> None:
         db = get_db(dbs, db_id)
-        db.delete_user_memory(memory_id=memory_id)
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            await db.delete_user_memory(memory_id=memory_id)
+        else:
+            db.delete_user_memory(memory_id=memory_id)
 
     @router.delete("/memories", status_code=204, operation_id="delete_memories")
     async def delete_memories(
@@ -61,7 +81,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> None:
         db = get_db(dbs, db_id)
-        db.delete_user_memories(memory_ids=request.memory_ids)
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            await db.delete_user_memories(memory_ids=request.memory_ids)
+        else:
+            db.delete_user_memories(memory_ids=request.memory_ids)
 
     @router.get(
         "/memories", response_model=PaginatedResponse[UserMemorySchema], status_code=200, operation_id="get_memories"
@@ -79,18 +103,35 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> PaginatedResponse[UserMemorySchema]:
         db = get_db(dbs, db_id)
-        user_memories, total_count = db.get_user_memories(
-            limit=limit,
-            page=page,
-            user_id=user_id,
-            agent_id=agent_id,
-            team_id=team_id,
-            topics=topics,
-            search_content=search_content,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            deserialize=False,
-        )
+
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            user_memories, total_count = await db.get_user_memories(
+                limit=limit,
+                page=page,
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                topics=topics,
+                search_content=search_content,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                deserialize=False,
+            )
+        else:
+            user_memories, total_count = db.get_user_memories(  # type: ignore
+                limit=limit,
+                page=page,
+                user_id=user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                topics=topics,
+                search_content=search_content,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                deserialize=False,
+            )
+
         return PaginatedResponse(
             data=[UserMemorySchema.from_dict(user_memory) for user_memory in user_memories],  # type: ignore
             meta=PaginationInfo(
@@ -107,7 +148,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> UserMemorySchema:
         db = get_db(dbs, db_id)
-        user_memory = db.get_user_memory(memory_id=memory_id, deserialize=False)
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            user_memory = await db.get_user_memory(memory_id=memory_id, deserialize=False)
+        else:
+            user_memory = db.get_user_memory(memory_id=memory_id, deserialize=False)
         if not user_memory:
             raise HTTPException(status_code=404, detail=f"Memory with ID {memory_id} not found")
 
@@ -118,7 +163,11 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> List[str]:
         db = get_db(dbs, db_id)
-        return db.get_all_memory_topics()
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            return await db.get_all_memory_topics()
+        else:
+            return db.get_all_memory_topics()
 
     @router.patch(
         "/memories/{memory_id}", response_model=UserMemorySchema, status_code=200, operation_id="update_memory"
@@ -129,15 +178,27 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> UserMemorySchema:
         db = get_db(dbs, db_id)
-        user_memory = db.upsert_user_memory(
-            memory=UserMemory(
-                memory_id=memory_id,
-                memory=payload.memory,
-                topics=payload.topics or [],
-                user_id=payload.user_id,
-            ),
-            deserialize=False,
-        )
+        if isinstance(db, AsyncBaseDb):
+            db = cast(AsyncBaseDb, db)
+            user_memory = await db.upsert_user_memory(
+                memory=UserMemory(
+                    memory_id=memory_id,
+                    memory=payload.memory,
+                    topics=payload.topics or [],
+                    user_id=payload.user_id,
+                ),
+                deserialize=False,
+            )
+        else:
+            user_memory = db.upsert_user_memory(
+                memory=UserMemory(
+                    memory_id=memory_id,
+                    memory=payload.memory,
+                    topics=payload.topics or [],
+                    user_id=payload.user_id,
+                ),
+                deserialize=False,
+            )
         if not user_memory:
             raise HTTPException(status_code=500, detail="Failed to update memory")
 
@@ -156,10 +217,17 @@ def attach_routes(router: APIRouter, dbs: dict[str, BaseDb]) -> APIRouter:
     ) -> PaginatedResponse[UserStatsSchema]:
         db = get_db(dbs, db_id)
         try:
-            user_stats, total_count = db.get_user_memory_stats(
-                limit=limit,
-                page=page,
-            )
+            if isinstance(db, AsyncBaseDb):
+                db = cast(AsyncBaseDb, db)
+                user_stats, total_count = await db.get_user_memory_stats(
+                    limit=limit,
+                    page=page,
+                )
+            else:
+                user_stats, total_count = db.get_user_memory_stats(
+                    limit=limit,
+                    page=page,
+                )
             return PaginatedResponse(
                 data=[UserStatsSchema.from_dict(stats) for stats in user_stats],
                 meta=PaginationInfo(

@@ -185,7 +185,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         status_code=200,
         operation_id="get_content",
     )
-    def get_content(
+    async def get_content(
         limit: Optional[int] = Query(default=20, description="Number of content entries to return"),
         page: Optional[int] = Query(default=1, description="Page number"),
         sort_by: Optional[str] = Query(default="created_at", description="Field to sort by"),
@@ -193,7 +193,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> PaginatedResponse[ContentResponseSchema]:
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
-        contents, count = knowledge.get_content(limit=limit, page=page, sort_by=sort_by, sort_order=sort_order)
+        contents, count = await knowledge.aget_content(limit=limit, page=page, sort_by=sort_by, sort_order=sort_order)
 
         return PaginatedResponse(
             data=[
@@ -227,13 +227,13 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         status_code=200,
         operation_id="get_content_by_id",
     )
-    def get_content_by_id(
+    async def get_content_by_id(
         content_id: str,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> ContentResponseSchema:
         log_info(f"Getting content by id: {content_id}")
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
-        content = knowledge.get_content_by_id(content_id=content_id)
+        content = await knowledge.aget_content_by_id(content_id=content_id)
         if not content:
             raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
         response = ContentResponseSchema.from_dict(
@@ -260,12 +260,12 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         response_model_exclude_none=True,
         operation_id="delete_content_by_id",
     )
-    def delete_content_by_id(
+    async def delete_content_by_id(
         content_id: str,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> ContentResponseSchema:
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
-        knowledge.remove_content_by_id(content_id=content_id)
+        await knowledge.aremove_content_by_id(content_id=content_id)
         log_info(f"Deleting content by id: {content_id}")
 
         return ContentResponseSchema(
@@ -273,12 +273,12 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         )
 
     @router.delete("/knowledge/content", status_code=200, operation_id="delete_all_content")
-    def delete_all_content(
+    async def delete_all_content(
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ):
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
         log_info("Deleting all content")
-        knowledge.remove_all_content()
+        await knowledge.aremove_all_content()
         return "success"
 
     @router.get(
@@ -287,13 +287,13 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Knowledge]) -> AP
         response_model=ContentStatusResponse,
         operation_id="get_content_status",
     )
-    def get_content_status(
+    async def get_content_status(
         content_id: str,
         db_id: Optional[str] = Query(default=None, description="The ID of the database to use"),
     ) -> ContentStatusResponse:
         log_info(f"Getting content status: {content_id}")
         knowledge = get_knowledge_instance_by_db_id(knowledge_instances, db_id)
-        knowledge_status, status_message = knowledge.get_content_status(content_id=content_id)
+        knowledge_status, status_message = await knowledge.aget_content_status(content_id=content_id)
 
         # Handle the case where content is not found
         if knowledge_status is None:

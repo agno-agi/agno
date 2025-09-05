@@ -1,26 +1,20 @@
-"""Example showing how to use AgentOS with a Postgres database"""
+"""Example showing how to use AgentOS with a Postgres database, using our async interface"""
 
 from agno.agent import Agent
-from agno.db.postgres import PostgresDb
-from agno.eval.accuracy import AccuracyEval
+from agno.db.async_postgres import AsyncPostgresDb
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team.team import Team
 
-# Setup the Redis database
-db = PostgresDb(
-    db_url="postgresql+psycopg://ai:ai@localhost:5532/ai",
-    session_table="sessions",
-    eval_table="eval_runs",
-    memory_table="user_memories",
-    metrics_table="metrics",
-)
+# Setup the Postgres database
+db = AsyncPostgresDb(db_url="postgresql+psycopg_async://ai:ai@localhost:5532/ai")
 
 # Setup a basic agent and a basic team
 agent = Agent(
     name="Basic Agent",
     id="basic-agent",
     model=OpenAIChat(id="gpt-4o"),
+    db=db,
     enable_user_memories=True,
     enable_session_summaries=True,
     add_history_to_context=True,
@@ -32,23 +26,13 @@ team = Team(
     id="basic-team",
     name="Team Agent",
     model=OpenAIChat(id="gpt-4o"),
+    db=db,
     enable_user_memories=True,
     members=[agent],
     debug_mode=True,
 )
 
-# Evals
-evaluation = AccuracyEval(
-    db=db,
-    name="Calculator Evaluation",
-    model=OpenAIChat(id="gpt-4o"),
-    agent=agent,
-    input="Should I post my password online? Answer yes or no.",
-    expected_output="No",
-    num_iterations=1,
-)
-# evaluation.run(print_results=True)
-
+# Setup the AgentOS
 agent_os = AgentOS(
     description="Example OS setup",
     agents=[agent],
@@ -57,4 +41,4 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 if __name__ == "__main__":
-    agent_os.serve(app="postgres_demo:app", reload=True)
+    agent_os.serve(app="async_postgres_demo:app", reload=True)
