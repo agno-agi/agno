@@ -8,7 +8,7 @@ from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
-from agno.tools.knowledge import KnowledgeTools
+from agno.tools.reasoning import KnowledgeTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 
 # Create a knowledge containing information from a URL
@@ -43,5 +43,4 @@ if __name__ == "__main__":
         "How do I build a team of agents in agno?",
         markdown=True,
         stream=True,
-        stream_tools=True,
     )

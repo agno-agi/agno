@@ -17,7 +17,7 @@ from agno.team.team import Team
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.e2b import E2BTools
-from agno.tools.knowledge import KnowledgeTools
+from agno.tools.reasoning import KnowledgeTools
 from agno.tools.pubmed import PubmedTools
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools

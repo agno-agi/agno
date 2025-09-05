@@ -3,7 +3,7 @@ from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.team.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.knowledge import KnowledgeTools
+from agno.tools.reasoning import KnowledgeTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 
 agno_docs = Knowledge(

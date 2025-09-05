@@ -12,7 +12,7 @@ from agno.agent import Agent
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
-from agno.tools.knowledge import KnowledgeTools
+from agno.tools.reasoning import KnowledgeTools
 from agno.vectordb.lancedb import LanceDb, SearchType
 
 # Create a knowledge containing information from a URL
@@ -47,7 +47,7 @@ agent = Agent(
     ],
     instructions=dedent("""\
         You are an expert problem-solving assistant with strong analytical skills! 🧠
-        Use the knowledge tools to organize your thoughts, search for information, 
+        Use the knowledge tools to organize your thoughts, search for information,
         and analyze results step-by-step.
         \
     """),
@@ -90,7 +90,7 @@ streaming_agent = Agent(
     ],
     instructions=dedent("""\
         You are an expert problem-solving assistant with strong analytical skills! 🧠
-        Use the knowledge tools to organize your thoughts, search for information, 
+        Use the knowledge tools to organize your thoughts, search for information,
         and analyze results step-by-step.
         \
     """),

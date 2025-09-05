@@ -7,7 +7,7 @@ from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
 from agno.team import Team
 from agno.tools.duckduckgo import DuckDuckGoTools
-from agno.tools.knowledge import KnowledgeTools
+from agno.tools.reasoning import KnowledgeTools
 from agno.tools.reasoning import ReasoningTools
 from agno.tools.yfinance import YFinanceTools
 from agno.vectordb.lancedb import LanceDb, SearchType

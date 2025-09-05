@@ -26,7 +26,7 @@ from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.file import FileTools
 from agno.tools.github import GithubTools
-from agno.tools.knowledge import KnowledgeTools
+from agno.tools.reasoning import KnowledgeTools
 from agno.tools.pubmed import PubmedTools
 from agno.tools.python import PythonTools
 from agno.tools.reasoning import ReasoningTools
