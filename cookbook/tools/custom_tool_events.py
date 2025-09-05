@@ -1,32 +1,49 @@
 """This example demonstrate how to yield custom events from a custom tool."""
 
 import asyncio
+from dataclasses import dataclass
+from typing import Optional
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.run.base import CustomEvent
+from agno.run.agent import CustomEvent
 from agno.tools import tool
 
 
-# Make sure to set show_result=True for our tool events to be shown.
+# Our custom event, extending the CustomEvent class.
+@dataclass
+class CustomerProfileEvent(CustomEvent):
+    """CustomEvent for customer profile."""
+
+    customer_name: Optional[str] = None
+    customer_email: Optional[str] = None
+    customer_phone: Optional[str] = None
+
+
+# Our custom tool. Make sure to set show_result=True for our tool events to be shown.
 @tool(show_result=True)
-async def custom_tool():
+async def get_customer_profile():
     """Example custom tool that simply yields a custom event."""
 
-    yield CustomEvent(data={"foo": "bar"})
+    yield CustomerProfileEvent(
+        customer_name="John Doe",
+        customer_email="john.doe@example.com",
+        customer_phone="1234567890",
+    )
 
 
-# Setup an Agent and pass our custom tool.
+# Setup an Agent with our custom tool.
 agent = Agent(
     model=OpenAIChat(id="gpt-4o"),
-    tools=[custom_tool],
+    tools=[get_customer_profile],
+    instructions="Your task is to retrieve customer profiles for the user.",
 )
 
 
 async def run_agent():
     # Running the Agent: it should call our custom tool and yield the custom event.
     async for event in agent.arun(
-        "Call the tool you are equipped with. We want to see the events it yields.",
+        "Hello, can you get me the customer profile for customer with ID 123?",
         stream=True,
     ):
         if isinstance(event, CustomEvent):

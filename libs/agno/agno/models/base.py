@@ -25,8 +25,7 @@ from agno.media import Audio, AudioArtifact, AudioResponse, Image, ImageArtifact
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
-from agno.run.agent import RunContentEvent, RunOutput, RunOutputEvent
-from agno.run.base import CustomEvent
+from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
@@ -1224,16 +1223,16 @@ class Model(ABC):
                         if function_call.function.show_result:
                             yield ModelResponse(content=item.content)
 
+                    elif isinstance(item, CustomEvent):
+                        function_call_output += str(item)
+
                     # Yield the event itself to bubble it up
                     yield item
 
                 else:
                     function_call_output += str(item)
                     if function_call.function.show_result:
-                        if isinstance(item, CustomEvent):
-                            yield item
-                        else:
-                            yield ModelResponse(content=str(item))
+                        yield ModelResponse(content=str(item))
         else:
             from agno.tools.function import ToolResult
 
@@ -1626,6 +1625,10 @@ class Model(ABC):
                             if function_call.function.show_result:
                                 yield ModelResponse(content=item.content)
                                 continue
+
+                        elif isinstance(item, CustomEvent):
+                            function_call_output += str(item)
+
                         # Yield the event itself to bubble it up
                         yield item
 
@@ -1633,10 +1636,7 @@ class Model(ABC):
                     else:
                         function_call_output += str(item)
                         if function_call.function.show_result:
-                            if isinstance(item, CustomEvent):
-                                yield item
-                            else:
-                                yield ModelResponse(content=str(item))
+                            yield ModelResponse(content=str(item))
             else:
                 function_call_output = str(function_call.result)
                 if function_call.function.show_result:

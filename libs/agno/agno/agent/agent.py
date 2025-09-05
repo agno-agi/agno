@@ -38,12 +38,13 @@ from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run.agent import (
+    CustomEvent,
     RunEvent,
     RunInput,
     RunOutput,
     RunOutputEvent,
 )
-from agno.run.base import CustomEvent, RunStatus
+from agno.run.base import RunStatus
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
@@ -3095,19 +3096,16 @@ class Agent:
             stream_model_response=stream_model_response,
             run_response=run_response,
         ):
-            if isinstance(model_response_event, ModelResponse):
-                yield from self._handle_model_response_chunk(
-                    session=session,
-                    run_response=run_response,
-                    model_response=model_response,
-                    model_response_event=model_response_event,
-                    reasoning_state=reasoning_state,
-                    parse_structured_output=self.should_parse_structured_output,
-                    stream_intermediate_steps=stream_intermediate_steps,
-                    workflow_context=workflow_context,
-                )
-            elif isinstance(model_response_event, CustomEvent):
-                yield model_response_event
+            yield from self._handle_model_response_chunk(
+                session=session,
+                run_response=run_response,
+                model_response=model_response,
+                model_response_event=model_response_event,
+                reasoning_state=reasoning_state,
+                parse_structured_output=self.should_parse_structured_output,
+                stream_intermediate_steps=stream_intermediate_steps,
+                workflow_context=workflow_context,
+            )
 
         # Determine reasoning completed
         if stream_intermediate_steps and reasoning_state["reasoning_started"]:
@@ -3176,20 +3174,17 @@ class Agent:
         )  # type: ignore
 
         async for model_response_event in model_response_stream:  # type: ignore
-            if isinstance(model_response_event, ModelResponse):
-                for event in self._handle_model_response_chunk(
-                    session=session,
-                    run_response=run_response,
-                    model_response=model_response,
-                    model_response_event=model_response_event,
-                    reasoning_state=reasoning_state,
-                    parse_structured_output=self.should_parse_structured_output,
-                    stream_intermediate_steps=stream_intermediate_steps,
-                    workflow_context=workflow_context,
-                ):
-                    yield event
-            elif isinstance(model_response_event, CustomEvent):
-                yield model_response_event
+            for event in self._handle_model_response_chunk(
+                session=session,
+                run_response=run_response,
+                model_response=model_response,
+                model_response_event=model_response_event,
+                reasoning_state=reasoning_state,
+                parse_structured_output=self.should_parse_structured_output,
+                stream_intermediate_steps=stream_intermediate_steps,
+                workflow_context=workflow_context,
+            ):
+                yield event
 
         if stream_intermediate_steps and reasoning_state["reasoning_started"]:
             all_reasoning_steps: List[ReasoningStep] = []

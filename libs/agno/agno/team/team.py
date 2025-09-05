@@ -1978,19 +1978,16 @@ class Team:
             tool_call_limit=self.tool_call_limit,
             stream_model_response=stream_model_response,
         ):
-            if isinstance(model_response_event, ModelResponse):
-                yield from self._handle_model_response_chunk(
-                    session=session,
-                    run_response=run_response,
-                    full_model_response=full_model_response,
-                    model_response_event=model_response_event,
-                    reasoning_state=reasoning_state,
-                    stream_intermediate_steps=stream_intermediate_steps,
-                    parse_structured_output=self.should_parse_structured_output,
-                    workflow_context=workflow_context,
-                )
-            elif isinstance(model_response_event, CustomEvent):
-                yield model_response_event
+            yield from self._handle_model_response_chunk(
+                session=session,
+                run_response=run_response,
+                full_model_response=full_model_response,
+                model_response_event=model_response_event,
+                reasoning_state=reasoning_state,
+                stream_intermediate_steps=stream_intermediate_steps,
+                parse_structured_output=self.should_parse_structured_output,
+                workflow_context=workflow_context,
+            )
 
         # 3. Update TeamRunOutput
         run_response.created_at = full_model_response.created_at
@@ -2062,20 +2059,17 @@ class Team:
             stream_model_response=stream_model_response,
         )  # type: ignore
         async for model_response_event in model_stream:
-            if isinstance(model_response_event, ModelResponse):
-                for event in self._handle_model_response_chunk(
-                    session=session,
-                    run_response=run_response,
-                    full_model_response=full_model_response,
-                    model_response_event=model_response_event,
-                    reasoning_state=reasoning_state,
-                    stream_intermediate_steps=stream_intermediate_steps,
-                    parse_structured_output=self.should_parse_structured_output,
-                    workflow_context=workflow_context,
-                ):
-                    yield event
-            elif isinstance(model_response_event, CustomEvent):
-                yield model_response_event
+            for event in self._handle_model_response_chunk(
+                session=session,
+                run_response=run_response,
+                full_model_response=full_model_response,
+                model_response_event=model_response_event,
+                reasoning_state=reasoning_state,
+                stream_intermediate_steps=stream_intermediate_steps,
+                parse_structured_output=self.should_parse_structured_output,
+                workflow_context=workflow_context,
+            ):
+                yield event
 
         # Handle structured outputs
         if (self.output_schema is not None) and not self.use_json_mode and (full_model_response.parsed is not None):
