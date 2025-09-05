@@ -13,7 +13,7 @@ from agno.tools.calculator import CalculatorTools
 def factorial():
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
-        tools=[CalculatorTools(factorial=True)],
+        tools=[CalculatorTools()],
     )
     response: RunOutput = agent.run("What is 10!?")
     evaluation = ReliabilityEval(

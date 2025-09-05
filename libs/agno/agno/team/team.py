@@ -145,9 +145,9 @@ class Team:
     session_id: Optional[str] = None
     # Session state (stored in the database to persist across runs)
     session_state: Optional[Dict[str, Any]] = None
-    # If True, the team can update the session state
+    # Set to True to add the session_state to the context
     add_session_state_to_context: bool = False
-    # If True, the team can update the session state
+    # Set to True to give the team tools to update the session_state dynamically
     enable_agentic_state: bool = False
     # If True, cache the current Team session in memory for faster access
     cache_session: bool = False

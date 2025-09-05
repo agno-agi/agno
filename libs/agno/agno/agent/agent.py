@@ -129,10 +129,10 @@ class Agent:
     session_id: Optional[str] = None
     # Default session state (stored in the database to persist across runs)
     session_state: Optional[Dict[str, Any]] = None
-    # If True, the agent can update the session state
-    enable_agentic_state: bool = False
-    # If True, add the session state to the user prompt
+    # Set to True to add the session_state to the context
     add_session_state_to_context: bool = False
+    # Set to True to give the agent tools to update the session_state dynamically
+    enable_agentic_state: bool = False
     # If True, cache the current Agent session in memory for faster access
     cache_session: bool = False
 
