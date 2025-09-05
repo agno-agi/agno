@@ -1389,7 +1389,7 @@ class Model(ABC):
     async def arun_function_call(
         self,
         function_call: FunctionCall,
-    ) -> Tuple[Union[bool, AgentRunException], Timer, FunctionCall, Optional[Dict[str, Any]], FunctionExecutionResult]:
+    ) -> Tuple[Union[bool, AgentRunException], Timer, FunctionCall, FunctionExecutionResult]:
         """Run a single function call and return its success status, timer, and the FunctionCall object."""
         from inspect import isasyncgenfunction, iscoroutine, iscoroutinefunction
 
@@ -1423,7 +1423,7 @@ class Model(ABC):
             raise e
 
         function_call_timer.stop()
-        return success, function_call_timer, function_call, result.updated_session_state, result
+        return success, function_call_timer, function_call, result
 
     async def arun_function_calls(
         self,
@@ -1569,7 +1569,9 @@ class Model(ABC):
                 raise result
 
             # Unpack result
-            function_call_success, function_call_timer, function_call, updated_session_state, function_execution_result = result
+            function_call_success, function_call_timer, function_call, function_execution_result = result
+
+            updated_session_state = function_execution_result.updated_session_state
 
             # Handle AgentRunException
             if isinstance(function_call_success, AgentRunException):
