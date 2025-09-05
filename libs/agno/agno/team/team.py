@@ -51,7 +51,7 @@ from agno.run.cancel import (
     register_run,
 )
 from agno.run.messages import RunMessages
-from agno.run.team import TeamRunEvent, TeamRunOutput, TeamRunOutputEvent
+from agno.run.team import TeamRunEvent, TeamRunInput, TeamRunOutput, TeamRunOutputEvent
 from agno.session import SessionSummaryManager, TeamSession
 from agno.tools import Toolkit
 from agno.tools.function import Function
@@ -234,6 +234,11 @@ class Team:
     # If True, read the team history
     read_team_history: bool = False
 
+    # If False, media (images, videos, audio, files) is only available to tools and not sent to the LLM
+    send_media_to_model: bool = True
+    # If True, store media in run output
+    store_media: bool = True
+
     # --- Team Tools ---
     # A list of tools provided to the Model.
     # Tools are functions the model may generate JSON inputs for.
@@ -381,6 +386,8 @@ class Team:
         get_member_information_tool: bool = False,
         search_knowledge: bool = True,
         read_team_history: bool = False,
+        store_media: bool = True,
+        send_media_to_model: bool = True,
         tools: Optional[List[Union[Toolkit, Callable, Function, Dict]]] = None,
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -470,6 +477,9 @@ class Team:
         self.get_member_information_tool = get_member_information_tool
         self.search_knowledge = search_knowledge
         self.read_team_history = read_team_history
+
+        self.store_media = store_media
+        self.send_media_to_model = send_media_to_model
 
         self.tools = tools
         self.tool_choice = tool_choice
@@ -812,6 +822,11 @@ class Team:
         #  Update TeamRunOutput
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
 
+        if self.store_media:
+            self._store_media(run_response, model_response)
+        else:
+            self._scrub_media_from_run_output(run_response)
+
         # 4. Add the RunOutput to Team Session
         session.upsert_run(run_response=run_response)
 
@@ -1090,6 +1105,15 @@ class Team:
         # Initialize Team
         self.initialize_team(debug_mode=debug_mode)
 
+        image_artifacts, video_artifacts, audio_artifacts = self._convert_media_to_artifacts(
+            images=images, videos=videos, audios=audio
+        )
+
+        # Create RunInput to capture the original user input
+        run_input = TeamRunInput(
+            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
+        )
+
         # Read existing session from database
         team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=team_session)
@@ -1163,6 +1187,7 @@ class Team:
             team_id=self.id,
             team_name=self.name,
             metadata=metadata,
+            input=run_input,
         )
 
         run_response.model = self.model.id if self.model is not None else None
@@ -1311,7 +1336,6 @@ class Team:
         session: TeamSession,
         user_id: Optional[str] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
-        workflow_context: Optional[Dict] = None,
     ) -> TeamRunOutput:
         """Run the Team and return the response.
 
@@ -1357,6 +1381,11 @@ class Team:
 
         #  Update TeamRunOutput
         self._update_run_response(model_response=model_response, run_response=run_response, run_messages=run_messages)
+
+        if self.store_media:
+            self._store_media(run_response, model_response)
+        else:
+            self._scrub_media_from_run_output(run_response)
 
         # 3. Add the run to memory
         session.upsert_run(run_response=run_response)
@@ -1634,6 +1663,15 @@ class Team:
         # Initialize Team
         self.initialize_team(debug_mode=debug_mode)
 
+        image_artifacts, video_artifacts, audio_artifacts = self._convert_media_to_artifacts(
+            images=images, videos=videos, audios=audio
+        )
+
+        # Create RunInput to capture the original user input
+        run_input = TeamRunInput(
+            input_content=input, images=image_artifacts, videos=video_artifacts, audios=audio_artifacts, files=files
+        )
+
         team_session = self._read_or_create_session(session_id=session_id, user_id=user_id)
         self._update_metadata(session=team_session)
 
@@ -1706,6 +1744,7 @@ class Team:
             team_id=self.id,
             team_name=self.name,
             metadata=metadata,
+            input=run_input,
         )
 
         run_response.model = self.model.id if self.model is not None else None
@@ -1837,6 +1876,21 @@ class Team:
 
             raise Exception(f"Failed after {num_attempts} attempts.")
 
+    def _store_media(self, run_response: TeamRunOutput, model_response: ModelResponse):
+        """Store media from model response in run_response for persistence"""
+        # Handle generated media fields from ModelResponse (generated media)
+        if model_response.images is not None:
+            for image in model_response.images:
+                self._add_image(image, run_response)  # Generated images go to run_response.images
+
+        if model_response.videos is not None:
+            for video in model_response.videos:
+                self._add_video(video, run_response)  # Generated videos go to run_response.videos
+
+        if model_response.audios is not None:
+            for audio in model_response.audios:
+                self._add_audio(audio, run_response)  # Generated audio go to run_response.audio
+
     def _update_run_response(
         self, model_response: ModelResponse, run_response: TeamRunOutput, run_messages: RunMessages
     ):
@@ -1870,19 +1924,6 @@ class Team:
                 run_response.tools = model_response.tool_executions
             else:
                 run_response.tools.extend(model_response.tool_executions)
-
-        # Handle unified media fields from ModelResponse
-        if model_response.images is not None:
-            for image in model_response.images:
-                self._add_image(image, run_response)
-
-        if model_response.videos is not None:
-            for video in model_response.videos:
-                self._add_video(video, run_response)
-
-        if model_response.audios is not None:
-            for audio in model_response.audios:
-                self._add_audio(audio, run_response)
 
         # Update the run_response audio with the model response audio
         if model_response.audio is not None:
@@ -2969,6 +3010,106 @@ class Team:
             except Exception as e:
                 log_warning(f"Failed to convert response to JSON: {e}")
 
+    def _scrub_media_from_run_output(self, run_response: TeamRunOutput) -> None:
+        """
+        Completely remove all media from RunOutput when store_media=False.
+        This includes media in input, output artifacts, and all messages.
+        """
+        # 1. Scrub RunInput media
+        if run_response.input is not None:
+            run_response.input.images = []
+            run_response.input.videos = []
+            run_response.input.audios = []
+            run_response.input.files = []
+
+        # 2. RunOutput artifact media are skipped since we don't store them when store_media=False
+
+        # 3. Scrub media from all messages
+        if run_response.messages:
+            for message in run_response.messages:
+                self._scrub_media_from_message(message)
+
+        # 4. Scrub media from additional_input messages if any
+        if run_response.additional_input:
+            for message in run_response.additional_input:
+                self._scrub_media_from_message(message)
+
+        # 5. Scrub media from reasoning_messages if any
+        if run_response.reasoning_messages:
+            for message in run_response.reasoning_messages:
+                self._scrub_media_from_message(message)
+
+    def _scrub_media_from_message(self, message: Message) -> None:
+        """Remove all media from a Message object."""
+        # Input media
+        message.images = None
+        message.videos = None
+        message.audio = None
+        message.files = None
+
+        # Output media
+        message.audio_output = None
+        message.image_output = None
+        message.video_output = None
+
+    def _convert_media_to_artifacts(
+        self,
+        images: Optional[Sequence[Image]] = None,
+        videos: Optional[Sequence[Video]] = None,
+        audios: Optional[Sequence[Audio]] = None,
+    ) -> tuple:
+        """Convert raw Image/Video/Audio objects to ImageArtifact/VideoArtifact/AudioArtifact objects."""
+        from uuid import uuid4
+
+        from agno.media import AudioArtifact, ImageArtifact, VideoArtifact
+
+        image_artifacts = None
+        if images:
+            image_artifacts = []
+            for img in images:
+                try:
+                    artifact_id = img.id if hasattr(img, "id") and img.id else str(uuid4())
+
+                    if img.url:
+                        image_artifacts.append(ImageArtifact(id=artifact_id, url=img.url))
+                    elif img.content:
+                        image_artifacts.append(ImageArtifact(id=artifact_id, content=img.content))
+                except Exception as e:
+                    log_warning(f"Error creating ImageArtifact: {e}")
+                    continue
+
+        video_artifacts = None
+        if videos:
+            video_artifacts = []
+            for vid in videos:
+                try:
+                    artifact_id = vid.id if hasattr(vid, "id") and vid.id else str(uuid4())
+
+                    if vid.url:
+                        video_artifacts.append(VideoArtifact(id=artifact_id, url=vid.url))
+                    elif vid.content:
+                        video_artifacts.append(VideoArtifact(id=artifact_id, content=vid.content))
+                except Exception as e:
+                    log_warning(f"Error creating VideoArtifact: {e}")
+                    continue
+
+        audio_artifacts = None
+        if audios:
+            audio_artifacts = []
+            for aud in audios:
+                try:
+                    artifact_id = aud.id if hasattr(aud, "id") and aud.id else str(uuid4())
+
+                    if aud.url:
+                        audio_artifacts.append(AudioArtifact(id=artifact_id, url=aud.url))
+                    elif aud.content:
+                        audio_artifacts.append(AudioArtifact(id=artifact_id, content=aud.content))
+                except Exception as e:
+                    log_warning(f"Error creating AudioArtifact: {e}")
+                    continue
+
+        return image_artifacts, video_artifacts, audio_artifacts
+
     def cli_app(
         self,
         input: Optional[str] = None,
@@ -3638,6 +3779,209 @@ class Team:
             except Exception as e:
                 log_warning(f"Failed to resolve context for '{key}': {e}")
 
+    def _collect_joint_images(
+        self,
+        run_input: Optional[TeamRunInput] = None,
+        session: Optional[TeamSession] = None,
+    ) -> Optional[Sequence[Image]]:
+        """Collect images from input, session history, and current run response."""
+        joint_images = []
+
+        # 1. Add images from current input
+        if run_input and run_input.images:
+            for artifact in run_input.images:
+                try:
+                    if artifact.url:
+                        joint_images.append(Image(url=artifact.url))
+                    elif artifact.content:
+                        joint_images.append(Image(content=artifact.content))
+                except Exception as e:
+                    log_warning(f"Error converting ImageArtifact to Image: {e}")
+                    continue
+            log_debug(f"Added {len(run_input.images)} input images to joint list")
+
+        # 2. Add images from session history (from both input and generated sources)
+        try:
+            if session and session.runs:
+                for historical_run in session.runs:
+                    # Add generated images from previous runs
+                    if historical_run.images:
+                        for artifact in historical_run.images:
+                            try:
+                                if artifact.url:
+                                    joint_images.append(Image(url=artifact.url))
+                                elif artifact.content:
+                                    joint_images.append(Image(content=artifact.content))
+                            except Exception as e:
+                                log_warning(f"Error converting historical ImageArtifact to Image: {e}")
+                                continue
+                        log_debug(
+                            f"Added {len(historical_run.images)} generated images from historical run {historical_run.run_id}"
+                        )
+
+                    # Add input images from previous runs
+                    if historical_run.input and historical_run.input.images:
+                        for artifact in historical_run.input.images:
+                            try:
+                                if artifact.url:
+                                    joint_images.append(Image(url=artifact.url))
+                                elif artifact.content:
+                                    joint_images.append(Image(content=artifact.content))
+                            except Exception as e:
+                                log_warning(f"Error converting input ImageArtifact to Image: {e}")
+                                continue
+                        log_debug(
+                            f"Added {len(historical_run.input.images)} input images from historical run {historical_run.run_id}"
+                        )
+        except Exception as e:
+            log_debug(f"Could not access session history for images: {e}")
+
+        if joint_images:
+            log_debug(f"Images Available to Model: {len(joint_images)} images")
+        return joint_images if joint_images else None
+
+    def _collect_joint_videos(
+        self,
+        run_input: Optional[TeamRunInput] = None,
+        session: Optional[TeamSession] = None,
+    ) -> Optional[Sequence[Video]]:
+        """Collect videos from input, session history, and current run response."""
+        joint_videos = []
+
+        # 1. Add videos from current input
+        if run_input and run_input.videos:
+            for artifact in run_input.videos:
+                try:
+                    if artifact.url:
+                        joint_videos.append(Video(url=artifact.url))
+                    elif artifact.content:
+                        joint_videos.append(Video(content=artifact.content))
+                except Exception as e:
+                    log_warning(f"Error converting VideoArtifact to Video: {e}")
+                    continue
+            log_debug(f"Added {len(run_input.videos)} input videos to joint list")
+
+        # 2. Add videos from session history (from both input and generated sources)
+        try:
+            if session and session.runs:
+                for historical_run in session.runs:
+                    # Add generated videos from previous runs
+                    if historical_run.videos:
+                        for artifact in historical_run.videos:
+                            try:
+                                if artifact.url:
+                                    joint_videos.append(Video(url=artifact.url))
+                                elif artifact.content:
+                                    joint_videos.append(Video(content=artifact.content))
+                            except Exception as e:
+                                log_warning(f"Error converting historical VideoArtifact to Video: {e}")
+                                continue
+                        log_debug(
+                            f"Added {len(historical_run.videos)} generated videos from historical run {historical_run.run_id}"
+                        )
+
+                    # Add input videos from previous runs
+                    if historical_run.input and historical_run.input.videos:
+                        for artifact in historical_run.input.videos:
+                            try:
+                                if artifact.url:
+                                    joint_videos.append(Video(url=artifact.url))
+                                elif artifact.content:
+                                    joint_videos.append(Video(content=artifact.content))
+                            except Exception as e:
+                                log_warning(f"Error converting input VideoArtifact to Video: {e}")
+                                continue
+                        log_debug(
+                            f"Added {len(historical_run.input.videos)} input videos from historical run {historical_run.run_id}"
+                        )
+        except Exception as e:
+            log_debug(f"Could not access session history for videos: {e}")
+
+        if joint_videos:
+            log_debug(f"Videos Available to Model: {len(joint_videos)} videos")
+        return joint_videos if joint_videos else None
+
+    def _collect_joint_audios(
+        self,
+        run_input: Optional[TeamRunInput] = None,
+        session: Optional[TeamSession] = None,
+    ) -> Optional[Sequence[Audio]]:
+        """Collect audios from input, session history, and current run response."""
+        joint_audios = []
+
+        # 1. Add audios from current input
+        if run_input and run_input.audios:
+            for artifact in run_input.audios:
+                try:
+                    if artifact.url:
+                        joint_audios.append(Audio(url=artifact.url))
+                    elif artifact.base64_audio:
+                        joint_audios.append(Audio(content=artifact.base64_audio))
+                except Exception as e:
+                    log_warning(f"Error converting AudioArtifact to Audio: {e}")
+                    continue
+            log_debug(f"Added {len(run_input.audios)} input audios to joint list")
+
+        # 2. Add audios from session history (from both input and generated sources)
+        try:
+            if session and session.runs:
+                for historical_run in session.runs:
+                    # Add generated audios from previous runs
+                    if historical_run.audio:
+                        for artifact in historical_run.audio:
+                            try:
+                                if artifact.url:
+                                    joint_audios.append(Audio(url=artifact.url))
+                                elif artifact.base64_audio:
+                                    joint_audios.append(Audio(content=artifact.base64_audio))
+                            except Exception as e:
+                                log_warning(f"Error converting historical AudioArtifact to Audio: {e}")
+                                continue
+                        log_debug(
+                            f"Added {len(historical_run.audio)} generated audios from historical run {historical_run.run_id}"
+                        )
+
+                    # Add input audios from previous runs
+                    if historical_run.input and historical_run.input.audios:
+                        for artifact in historical_run.input.audios:
+                            try:
+                                if artifact.url:
+                                    joint_audios.append(Audio(url=artifact.url))
+                                elif artifact.base64_audio:
+                                    joint_audios.append(Audio(content=artifact.base64_audio))
+                            except Exception as e:
+                                log_warning(f"Error converting input AudioArtifact to Audio: {e}")
+                                continue
+                        log_debug(
+                            f"Added {len(historical_run.input.audios)} input audios from historical run {historical_run.run_id}"
+                        )
+        except Exception as e:
+            log_debug(f"Could not access session history for audios: {e}")
+
+        if joint_audios:
+            log_debug(f"Audios Available to Model: {len(joint_audios)} audios")
+        return joint_audios if joint_audios else None
+
+    def _collect_joint_files(
+        self,
+        run_input: Optional[TeamRunInput] = None,
+    ) -> Optional[Sequence[File]]:
+        """Collect files from input and session history."""
+        from agno.utils.log import log_debug
+
+        joint_files: List[File] = []
+
+        # 1. Add files from current input
+        if run_input and run_input.files:
+            joint_files.extend(run_input.files)
+
+        # TODO: Files aren't stored in session history yet and dont have a FileArtifact
+
+        if joint_files:
+            log_debug(f"Files Available to Model: {len(joint_files)} files")
+
+        return joint_files if joint_files else None
+
     def determine_tools_for_model(
         self,
         model: Model,
@@ -3871,6 +4215,29 @@ class Team:
                     log_debug(f"Added tool {func.name}")
                 except Exception as e:
                     log_warning(f"Could not add tool {tool}: {e}")
+
+        if self._functions_for_model:
+            from inspect import signature
+
+            # Check if any functions need media before collecting
+            needs_media = any(
+                any(param in signature(func.entrypoint).parameters for param in ["images", "videos", "audios", "files"])
+                for func in self._functions_for_model.values()
+                if func.entrypoint is not None
+            )
+
+            if needs_media:
+                # Only collect media if functions actually need them
+                joint_images = self._collect_joint_images(run_response.input, session)
+                joint_files = self._collect_joint_files(run_response.input)
+                joint_audios = self._collect_joint_audios(run_response.input, session)
+                joint_videos = self._collect_joint_videos(run_response.input, session)
+
+                for func in self._functions_for_model.values():
+                    func._images = joint_images
+                    func._files = joint_files
+                    func._audios = joint_audios
+                    func._videos = joint_videos
 
     def get_members_system_message_content(self, indent: int = 0) -> str:
         system_message_content = ""
@@ -4363,10 +4730,10 @@ class Team:
                 return Message(
                     role="user",
                     content="",
-                    images=images,
-                    audio=audio,
-                    videos=videos,
-                    files=files,
+                    images=None if not self.send_media_to_model else images,
+                    audio=None if not self.send_media_to_model else audio,
+                    videos=None if not self.send_media_to_model else videos,
+                    files=None if not self.send_media_to_model else files,
                     **kwargs,
                 )
             else:
@@ -4387,10 +4754,10 @@ class Team:
                 return Message(
                     role="user",
                     content=input_content,
-                    images=images,
-                    audio=audio,
-                    videos=videos,
-                    files=files,
+                    images=None if not self.send_media_to_model else images,
+                    audio=None if not self.send_media_to_model else audio,
+                    videos=None if not self.send_media_to_model else videos,
+                    files=None if not self.send_media_to_model else files,
                     **kwargs,
                 )
 
@@ -4479,10 +4846,10 @@ class Team:
                 return Message(
                     role="user",
                     content=user_msg_content,
-                    audio=audio,
-                    images=images,
-                    videos=videos,
-                    files=files,
+                    images=None if not self.send_media_to_model else images,
+                    audio=None if not self.send_media_to_model else audio,
+                    videos=None if not self.send_media_to_model else videos,
+                    files=None if not self.send_media_to_model else files,
                     **kwargs,
                 )
 

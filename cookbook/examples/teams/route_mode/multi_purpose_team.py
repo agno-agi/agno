@@ -22,9 +22,7 @@ finance_agent = Agent(
     name="Finance Agent",
     role="Get financial data",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[
-        YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True)
-    ],
+    tools=[YFinanceTools()],
     instructions=["Use tables to display data"],
 )
 
@@ -77,25 +75,14 @@ calculator_agent = Agent(
     name="Calculator Agent",
     model=OpenAIChat(id="gpt-4o"),
     role="Calculate",
-    tools=[
-        CalculatorTools(
-            add=True,
-            subtract=True,
-            multiply=True,
-            divide=True,
-            exponentiate=True,
-            factorial=True,
-            is_prime=True,
-            square_root=True,
-        )
-    ],
+    tools=[CalculatorTools()],
     markdown=True,
 )
 
 calculator_writer_team = Team(
     name="Calculator Writer Team",
     mode="coordinate",
-    model=OpenAIChat("gpt-4.5-preview"),
+    model=OpenAIChat("gpt-4o"),
     members=[calculator_agent, writer_agent],
     instructions=[
         "You are a team of two agents. The calculator agent and the writer agent.",

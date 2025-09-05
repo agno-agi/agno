@@ -100,7 +100,7 @@ def main():
     print("1. Testing initial image upload and analysis...")
 
     # Create sample image
-    sample_image = Image(content=create_sample_image_content())
+    sample_image = Image(id="test_image_1", content=create_sample_image_content())
 
     response1 = agent.run(
         input="I've uploaded an image. Please count how many images are available and analyze them.",
