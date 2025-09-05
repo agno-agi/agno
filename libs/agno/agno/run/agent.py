@@ -229,7 +229,7 @@ class OutputModelResponseCompletedEvent(BaseAgentRunEvent):
 
 
 @dataclass
-class CustomEvent(BaseRunOutputEvent):
+class CustomEvent(BaseAgentRunEvent):
     event: str = RunEvent.custom_event.value
 
 
