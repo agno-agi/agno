@@ -1568,7 +1568,7 @@ class Model(ABC):
                 log_error(f"Error during function call: {result}")
                 raise result
 
-            # Unpack result (now includes FunctionExecutionResult)
+            # Unpack result
             function_call_success, function_call_timer, function_call, updated_session_state, function_execution_result = result
 
             # Handle AgentRunException
@@ -1630,15 +1630,12 @@ class Model(ABC):
                         if function_call.function.show_result:
                             yield ModelResponse(content=str(item))
             else:
-                # Handle ToolResult objects (this is the key fix!)
                 from agno.tools.function import ToolResult
 
                 if isinstance(function_execution_result.result, ToolResult):
-                    # Extract content and media from ToolResult
                     tool_result = function_execution_result.result
                     function_call_output = tool_result.content
 
-                    # Transfer media from ToolResult to FunctionExecutionResult
                     if tool_result.images:
                         function_execution_result.images = tool_result.images
                     if tool_result.videos:
@@ -1651,7 +1648,7 @@ class Model(ABC):
                 if function_call.function.show_result:
                     yield ModelResponse(content=function_call_output)
 
-            # Create and yield function call result (now with FunctionExecutionResult)
+            # Create and yield function call result
             function_call_result = self.create_function_call_result(
                 function_call, 
                 success=function_call_success, 
