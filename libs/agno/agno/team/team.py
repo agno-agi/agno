@@ -2059,7 +2059,7 @@ class Team:
             stream_model_response=stream_model_response,
         )  # type: ignore
         async for model_response_event in model_stream:
-            for chunk in self._handle_model_response_chunk(
+            for event in self._handle_model_response_chunk(
                 session=session,
                 run_response=run_response,
                 full_model_response=full_model_response,
@@ -2069,7 +2069,7 @@ class Team:
                 parse_structured_output=self.should_parse_structured_output,
                 workflow_context=workflow_context,
             ):
-                yield chunk
+                yield event
 
         # Handle structured outputs
         if (self.output_schema is not None) and not self.use_json_mode and (full_model_response.parsed is not None):

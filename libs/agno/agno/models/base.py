@@ -25,7 +25,7 @@ from agno.media import Audio, AudioArtifact, AudioResponse, Image, ImageArtifact
 from agno.models.message import Citations, Message
 from agno.models.metrics import Metrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
-from agno.run.agent import RunContentEvent, RunOutput, RunOutputEvent
+from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
 from agno.run.team import TeamRunOutputEvent
 from agno.tools.function import Function, FunctionCall, FunctionExecutionResult, UserInputField
@@ -1223,6 +1223,9 @@ class Model(ABC):
                         if function_call.function.show_result:
                             yield ModelResponse(content=item.content)
 
+                        if isinstance(item, CustomEvent):
+                            function_call_output += str(item)
+
                     # Yield the event itself to bubble it up
                     yield item
 
@@ -1625,8 +1628,13 @@ class Model(ABC):
                                 yield ModelResponse(content=item.content)
                                 continue
 
+                            if isinstance(item, CustomEvent):
+                                function_call_output += str(item)
+
                         # Yield the event itself to bubble it up
                         yield item
+
+                    # Yield custom events emitted by the tool
                     else:
                         function_call_output += str(item)
                         if function_call.function.show_result:
