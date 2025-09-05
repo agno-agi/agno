@@ -1,7 +1,7 @@
 from agno.agent import Agent
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIChat
-from agno.run.team import IntermediateRunResponseContentEvent, RunResponseContentEvent
+from agno.run.team import IntermediateRunContentEvent, RunContentEvent
 from agno.team import Team
 
 agent = Agent(
@@ -9,7 +9,6 @@ agent = Agent(
     description="You are an expert on national parks and provide concise guides.",
     output_model=OpenAIChat(id="gpt-4o"),
     telemetry=False,
-    monitoring=False,
 )
 
 team = Team(
@@ -20,7 +19,6 @@ team = Team(
     description="You are an expert on national parks and provide concise guides.",
     stream_intermediate_steps=True,
     telemetry=False,
-    monitoring=False,
 )
 
 
@@ -49,47 +47,48 @@ def test_team_with_output_model_stream():
     response = team.run("Tell me about Yosemite National Park.", stream=True)
     run_response_content_event: bool = False
     intermediate_run_response_content_event: bool = False
+    final_response = None
+
     for event in response:
         print(event)
         print(type(event))
-        if isinstance(event, RunResponseContentEvent):
+        if isinstance(event, RunContentEvent):
             run_response_content_event = True
             assert isinstance(event.content, str)
-        if isinstance(event, IntermediateRunResponseContentEvent):
+            final_response = event  # Capture the final content event
+        if isinstance(event, IntermediateRunContentEvent):
             intermediate_run_response_content_event = True
             assert isinstance(event.content, str)
 
     assert run_response_content_event
     assert intermediate_run_response_content_event
 
-    assert team.run_response.content is not None
-    assert isinstance(team.run_response.content, str)
-    assert len(team.run_response.content) > 0
-    assert team.run_response.messages is not None
-    assert len(team.run_response.messages) > 0
-
-    assert team.run_response.content == team.run_response.messages[-1].content
+    # Validate the final response content from the last event
+    if final_response:
+        assert final_response.content is not None
+        assert isinstance(final_response.content, str)
+        assert len(final_response.content) > 0
 
 
 async def test_team_with_output_model_stream_async():
-    response = await team.arun("Tell me about Yosemite National Park.", stream=True)
     run_response_content_event: bool = False
     intermediate_run_response_content_event: bool = False
-    async for event in response:
-        if isinstance(event, RunResponseContentEvent):
+    final_response = None
+
+    async for event in team.arun("Tell me about Yosemite National Park.", stream=True):
+        if isinstance(event, RunContentEvent):
             run_response_content_event = True
             assert isinstance(event.content, str)
-        if isinstance(event, IntermediateRunResponseContentEvent):
+            final_response = event  # Capture the final content event
+        if isinstance(event, IntermediateRunContentEvent):
             intermediate_run_response_content_event = True
             assert isinstance(event.content, str)
 
     assert run_response_content_event
     assert intermediate_run_response_content_event
 
-    assert team.run_response.content is not None
-    assert isinstance(team.run_response.content, str)
-    assert len(team.run_response.content) > 0
-    assert team.run_response.messages is not None
-    assert len(team.run_response.messages) > 0
-
-    assert team.run_response.content == team.run_response.messages[-1].content
+    # Validate the final response content from the last event
+    if final_response:
+        assert final_response.content is not None
+        assert isinstance(final_response.content, str)
+        assert len(final_response.content) > 0

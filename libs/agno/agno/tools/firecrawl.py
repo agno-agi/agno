@@ -25,26 +25,32 @@ class CustomJSONEncoder(json.JSONEncoder):
 class FirecrawlTools(Toolkit):
     """
     Firecrawl is a tool for scraping and crawling websites.
+
     Args:
         api_key (Optional[str]): The API key to use for the Firecrawl app.
+        enable_scrape (bool): Enable website scraping functionality. Default is True.
+        enable_crawl (bool): Enable website crawling functionality. Default is False.
+        enable_mapping (bool): Enable website mapping functionality. Default is False.
+        enable_search (bool): Enable web search functionality. Default is False.
+        all (bool): Enable all tools. Overrides individual flags when True. Default is False.
         formats (Optional[List[str]]): The formats to use for the Firecrawl app.
         limit (int): The maximum number of pages to crawl.
-        scrape (bool): Whether to scrape the website.
-        crawl (bool): Whether to crawl the website.
-        mapping (bool): Whether to map the website.
+        poll_interval (int): Polling interval for crawl operations.
+        search_params (Optional[Dict[str, Any]]): Parameters for search operations.
         api_url (Optional[str]): The API URL to use for the Firecrawl app.
     """
 
     def __init__(
         self,
         api_key: Optional[str] = None,
+        enable_scrape: bool = True,
+        enable_crawl: bool = False,
+        enable_mapping: bool = False,
+        enable_search: bool = False,
+        all: bool = False,
         formats: Optional[List[str]] = None,
         limit: int = 10,
         poll_interval: int = 30,
-        scrape: bool = True,
-        crawl: bool = False,
-        mapping: bool = False,
-        search: bool = False,
         search_params: Optional[Dict[str, Any]] = None,
         api_url: Optional[str] = "https://api.firecrawl.dev",
         **kwargs,
@@ -59,21 +65,14 @@ class FirecrawlTools(Toolkit):
         self.app: FirecrawlApp = FirecrawlApp(api_key=self.api_key, api_url=api_url)
         self.search_params = search_params
 
-        # Start with scrape by default. But if crawl is set, then set scrape to False.
-        if crawl:
-            scrape = False
-            mapping = False
-        elif not scrape:
-            crawl = True
-
         tools: List[Any] = []
-        if scrape:
+        if all or enable_scrape:
             tools.append(self.scrape_website)
-        if crawl:
+        if all or enable_crawl:
             tools.append(self.crawl_website)
-        if mapping:
+        if all or enable_mapping:
             tools.append(self.map_website)
-        if search:
+        if all or enable_search:
             tools.append(self.search)
 
         super().__init__(name="firecrawl_tools", tools=tools, **kwargs)

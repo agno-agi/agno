@@ -7,22 +7,22 @@ from agno.models.openai.like import OpenAILike
 
 
 @dataclass
-class AIMLApi(OpenAILike):
+class AIMLAPI(OpenAILike):
     """
-    A class for using models hosted on AIMLApi.
+    A class for using models hosted on AIMLAPI.
 
     Attributes:
         id (str): The model id. Defaults to "gpt-4o-mini".
-        name (str): The model name. Defaults to "AIMLApi".
-        provider (str): The provider name. Defaults to "AIMLApi".
+        name (str): The model name. Defaults to "AIMLAPI".
+        provider (str): The provider name. Defaults to "AIMLAPI".
         api_key (Optional[str]): The API key.
         base_url (str): The base URL. Defaults to "https://api.aimlapi.com/v1".
         max_tokens (int): The maximum number of tokens. Defaults to 4096.
     """
 
     id: str = "gpt-4o-mini"
-    name: str = "AIMLApi"
-    provider: str = "AIMLApi"
+    name: str = "AIMLAPI"
+    provider: str = "AIMLAPI"
 
     api_key: Optional[str] = getenv("AIMLAPI_API_KEY")
     base_url: str = "https://api.aimlapi.com/v1"

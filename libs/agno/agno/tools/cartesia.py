@@ -8,6 +8,7 @@ from agno.agent import Agent
 from agno.media import AudioArtifact
 from agno.team.team import Team
 from agno.tools import Toolkit
+from agno.tools.function import ToolResult
 from agno.utils.log import log_debug, log_error, log_info
 
 try:
@@ -22,9 +23,10 @@ class CartesiaTools(Toolkit):
         api_key: Optional[str] = None,
         model_id: str = "sonic-2",
         default_voice_id: str = "78ab82d5-25be-4f7d-82b3-7ad64e5b85b2",
-        text_to_speech_enabled: bool = True,
-        list_voices_enabled: bool = True,
-        voice_localize_enabled: bool = False,
+        enable_text_to_speech: bool = True,
+        enable_list_voices: bool = True,
+        enable_localize_voice: bool = False,
+        all: bool = False,
         **kwargs,
     ):
         self.api_key = api_key or getenv("CARTESIA_API_KEY")
@@ -37,11 +39,11 @@ class CartesiaTools(Toolkit):
         self.default_voice_id = default_voice_id
 
         tools: List[Any] = []
-        if voice_localize_enabled:
+        if all or enable_localize_voice:
             tools.append(self.localize_voice)
-        if text_to_speech_enabled:
+        if all or enable_text_to_speech:
             tools.append(self.text_to_speech)
-        if list_voices_enabled:
+        if all or enable_list_voices:
             tools.append(self.list_voices)
 
         super().__init__(name="cartesia_tools", tools=tools, **kwargs)
@@ -131,15 +133,15 @@ class CartesiaTools(Toolkit):
         agent: Union[Agent, Team],
         transcript: str,
         voice_id: Optional[str] = None,
-    ) -> str:
+    ) -> ToolResult:
         """
-        Convert text to speechß.
+        Convert text to speech.
         Args:
             transcript: The text to convert to speech
             voice_id (optional): The ID of the voice to use for the text-to-speech. If None, uses the default voice ID configured in the tool. Defaults to None.
 
         Returns:
-            str: Success or error message.
+            ToolResult: A ToolResult containing the generated audio or error message.
         """
 
         try:
@@ -170,15 +172,18 @@ class CartesiaTools(Toolkit):
             audio_data = b"".join(chunk for chunk in audio_iterator)
             base64_audio = b64encode(audio_data).decode("utf-8")
 
-            artifact = AudioArtifact(
+            # Create AudioArtifact
+            audio_artifact = AudioArtifact(
                 id=str(uuid4()),
                 base64_audio=base64_audio,
                 mime_type=mime_type,  # Hardcoded to audio/mpeg
             )
-            agent.add_audio(artifact)
 
-            return "Audio generated and attached successfully."
+            return ToolResult(
+                content="Audio generated and attached successfully.",
+                audios=[audio_artifact],
+            )
 
         except Exception as e:
             log_error(f"Error generating speech with Cartesia: {e}", exc_info=True)
-            return f"Error generating speech: {e}"
+            return ToolResult(content=f"Error generating speech: {e}")

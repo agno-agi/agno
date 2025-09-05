@@ -1,6 +1,6 @@
 from textwrap import dedent
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.ibm import WatsonX
 from agno.tools.reasoning import ReasoningTools
 
@@ -56,9 +56,8 @@ reasoning_agent = Agent(
         - Address value considerations
         \
     """),
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
     stream_intermediate_steps=True,
-    show_tool_calls=True,
     markdown=True,
 )
 

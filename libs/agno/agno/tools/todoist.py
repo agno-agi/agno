@@ -1,5 +1,5 @@
 import json
-import os
+from os import getenv
 from typing import Any, Dict, List, Optional
 
 from agno.tools import Toolkit
@@ -17,48 +17,28 @@ class TodoistTools(Toolkit):
     def __init__(
         self,
         api_token: Optional[str] = None,
-        create_task: bool = True,
-        get_task: bool = True,
-        update_task: bool = True,
-        close_task: bool = True,
-        delete_task: bool = True,
-        get_active_tasks: bool = True,
-        get_projects: bool = True,
         **kwargs,
     ):
         """Initialize the Todoist toolkit.
 
         Args:
             api_token: Optional Todoist API token. If not provided, will look for TODOIST_API_TOKEN env var
-            create_task: Whether to register the create_task function
-            get_task: Whether to register the get_task function
-            update_task: Whether to register the update_task function
-            close_task: Whether to register the close_task function
-            delete_task: Whether to register the delete_task function
-            get_active_tasks: Whether to register the get_active_tasks function
-            get_projects: Whether to register the get_projects function
         """
-        self.api_token = api_token or os.getenv("TODOIST_API_TOKEN")
+        self.api_token = api_token or getenv("TODOIST_API_TOKEN")
         if not self.api_token:
             raise ValueError("TODOIST_API_TOKEN not set. Please set the TODOIST_API_TOKEN environment variable.")
 
         self.api = TodoistAPI(self.api_token)
 
-        tools: List[Any] = []
-        if create_task:
-            tools.append(self.create_task)
-        if get_task:
-            tools.append(self.get_task)
-        if update_task:
-            tools.append(self.update_task)
-        if close_task:
-            tools.append(self.close_task)
-        if delete_task:
-            tools.append(self.delete_task)
-        if get_active_tasks:
-            tools.append(self.get_active_tasks)
-        if get_projects:
-            tools.append(self.get_projects)
+        tools: List[Any] = [
+            self.create_task,
+            self.get_task,
+            self.update_task,
+            self.close_task,
+            self.delete_task,
+            self.get_active_tasks,
+            self.get_projects,
+        ]
 
         super().__init__(name="todoist", tools=tools, **kwargs)
 

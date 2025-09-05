@@ -64,7 +64,6 @@ def tool(
     strict: Optional[bool] = None,
     instructions: Optional[str] = None,
     add_instructions: bool = True,
-    sanitize_arguments: Optional[bool] = None,
     show_result: Optional[bool] = None,
     stop_after_tool_call: Optional[bool] = None,
     requires_confirmation: Optional[bool] = None,
@@ -91,7 +90,6 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         name: Optional[str] - Override for the function name
         description: Optional[str] - Override for the function description
         strict: Optional[bool] - Flag for strict parameter checking
-        sanitize_arguments: Optional[bool] - If True, arguments are sanitized before passing to function (Deprecated)
         instructions: Optional[str] - Instructions for using the tool
         add_instructions: bool - If True, add instructions to the system message
         show_result: Optional[bool] - If True, shows the result after function call
@@ -131,7 +129,6 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             "strict",
             "instructions",
             "add_instructions",
-            "sanitize_arguments",
             "show_result",
             "stop_after_tool_call",
             "requires_confirmation",
@@ -248,6 +245,12 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
                 and v is not None
             },
         }
+
+        # Automatically set show_result=True if stop_after_tool_call=True (unless explicitly set to False)
+        if kwargs.get("stop_after_tool_call") is True:
+            if "show_result" not in kwargs or kwargs.get("show_result") is None:
+                tool_config["show_result"] = True
+
         return Function(**tool_config)
 
     # Handle both @tool and @tool() cases

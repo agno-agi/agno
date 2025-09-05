@@ -1,5 +1,5 @@
 import json
-import os
+from os import getenv
 from typing import Any, List, Optional, cast
 
 from agno.tools import Toolkit
@@ -18,12 +18,17 @@ class JiraTools(Toolkit):
         username: Optional[str] = None,
         password: Optional[str] = None,
         token: Optional[str] = None,
+        enable_get_issue: bool = True,
+        enable_create_issue: bool = True,
+        enable_search_issues: bool = True,
+        enable_add_comment: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        self.server_url = server_url or os.getenv("JIRA_SERVER_URL")
-        self.username = username or os.getenv("JIRA_USERNAME")
-        self.password = password or os.getenv("JIRA_PASSWORD")
-        self.token = token or os.getenv("JIRA_TOKEN")
+        self.server_url = server_url or getenv("JIRA_SERVER_URL")
+        self.username = username or getenv("JIRA_USERNAME")
+        self.password = password or getenv("JIRA_PASSWORD")
+        self.token = token or getenv("JIRA_TOKEN")
 
         if not self.server_url:
             raise ValueError("JIRA server URL not provided.")
@@ -42,10 +47,14 @@ class JiraTools(Toolkit):
             self.jira = JIRA(server=self.server_url)
 
         tools: List[Any] = []
-        tools.append(self.get_issue)
-        tools.append(self.create_issue)
-        tools.append(self.search_issues)
-        tools.append(self.add_comment)
+        if enable_get_issue or all:
+            tools.append(self.get_issue)
+        if enable_create_issue or all:
+            tools.append(self.create_issue)
+        if enable_search_issues or all:
+            tools.append(self.search_issues)
+        if enable_add_comment or all:
+            tools.append(self.add_comment)
 
         super().__init__(name="jira_tools", tools=tools, **kwargs)
 

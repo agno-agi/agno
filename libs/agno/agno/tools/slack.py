@@ -1,8 +1,8 @@
 import json
-import os
+from os import getenv
 from typing import Any, Dict, List, Optional
 
-from agno.tools.toolkit import Toolkit
+from agno.tools import Toolkit
 from agno.utils.log import logger
 
 try:
@@ -16,25 +16,26 @@ class SlackTools(Toolkit):
     def __init__(
         self,
         token: Optional[str] = None,
-        send_message: bool = True,
-        send_message_thread: bool = True,
-        list_channels: bool = True,
-        get_channel_history: bool = True,
+        enable_send_message: bool = True,
+        enable_send_message_thread: bool = True,
+        enable_list_channels: bool = True,
+        enable_get_channel_history: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        self.token: Optional[str] = token or os.getenv("SLACK_TOKEN")
+        self.token: Optional[str] = token or getenv("SLACK_TOKEN")
         if self.token is None or self.token == "":
             raise ValueError("SLACK_TOKEN is not set")
         self.client = WebClient(token=self.token)
 
         tools: List[Any] = []
-        if send_message:
+        if enable_send_message or all:
             tools.append(self.send_message)
-        if send_message_thread:
+        if enable_send_message_thread or all:
             tools.append(self.send_message_thread)
-        if list_channels:
+        if enable_list_channels or all:
             tools.append(self.list_channels)
-        if get_channel_history:
+        if enable_get_channel_history or all:
             tools.append(self.get_channel_history)
 
         super().__init__(name="slack", tools=tools, **kwargs)

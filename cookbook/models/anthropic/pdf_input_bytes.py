@@ -25,6 +25,6 @@ agent.print_response(
         ),
     ],
 )
-
+run_response = agent.get_last_run_output()
 print("Citations:")
-print(agent.run_response.citations)
+print(run_response.citations)

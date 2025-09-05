@@ -33,10 +33,10 @@ def test_init_with_selective_tools():
     """Test initialization with only selected tools."""
     with patch.dict("os.environ", {"OPENWEATHER_API_KEY": "test_api_key"}):
         tools = OpenWeatherTools(
-            current_weather=True,
-            forecast=False,
-            air_pollution=True,
-            geocoding=False,
+            enable_current_weather=True,
+            enable_forecast=False,
+            enable_air_pollution=True,
+            enable_geocoding=False,
         )
 
         assert "get_current_weather" in [func.name for func in tools.functions.values()]

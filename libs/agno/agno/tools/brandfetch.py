@@ -28,9 +28,11 @@ class BrandfetchTools(Toolkit):
 
     client_id: str - your Brandfetch Client ID
 
-    async_tools: bool = True - if True, will use async tools, if False, will use sync tools
-    brand: bool = False - if True, will use brand api, if False, will not use brand api
-    search: bool = False - if True, will use brand search api, if False, will not use brand search api
+    all: bool - if True, will use all tools
+    enable_search_by_identifier: bool - if True, will use search by identifier
+    enable_search_by_brand: bool - if True, will use search by brand
+    enable_asearch_by_identifier: bool - if True, will use async search by identifier
+    enable_asearch_by_brand: bool - if True, will use async search by brand
     """
 
     def __init__(
@@ -39,29 +41,30 @@ class BrandfetchTools(Toolkit):
         client_id: Optional[str] = None,
         base_url: str = "https://api.brandfetch.io/v2",
         timeout: Optional[float] = 20.0,
+        enable_search_by_identifier: bool = True,
+        enable_search_by_brand: bool = False,
+        all: bool = False,
         async_tools: bool = False,
-        brand: bool = True,
-        search: bool = False,
         **kwargs,
     ):
         self.api_key = api_key or getenv("BRANDFETCH_API_KEY")
         self.client_id = client_id or getenv("BRANDFETCH_CLIENT_ID")
         self.base_url = base_url
         self.timeout = httpx.Timeout(timeout)
-        self.async_tools = async_tools
         self.search_url = f"{self.base_url}/search"
         self.brand_url = f"{self.base_url}/brands"
 
         tools: list[Any] = []
-        if self.async_tools:
-            if brand:
+        # Backward-compat mapping: prefer new enable_* flags, but honor legacy toggles
+        if async_tools:
+            if all or enable_search_by_identifier:
                 tools.append(self.asearch_by_identifier)
-            if search:
+            if all or enable_search_by_brand:
                 tools.append(self.asearch_by_brand)
         else:
-            if brand:
+            if all or enable_search_by_identifier:
                 tools.append(self.search_by_identifier)
-            if search:
+            if all or enable_search_by_brand:
                 tools.append(self.search_by_brand)
         name = kwargs.pop("name", "brandfetch_tools")
         super().__init__(name=name, tools=tools, **kwargs)

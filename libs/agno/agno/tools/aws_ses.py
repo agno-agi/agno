@@ -15,8 +15,14 @@ class AWSSESTool(Toolkit):
         sender_email: Optional[str] = None,
         sender_name: Optional[str] = None,
         region_name: str = "us-east-1",
+        enable_send_email: bool = True,
+        all: bool = False,
+        **kwargs,
     ):
-        super().__init__(name="aws_ses_tool", tools=[self.send_email])
+        tools = []
+        if all or enable_send_email:
+            tools.append(self.send_email)
+        super().__init__(name="aws_ses_tool", tools=tools, **kwargs)
         self.client = boto3.client("ses", region_name=region_name)
         self.sender_email = sender_email
         self.sender_name = sender_name

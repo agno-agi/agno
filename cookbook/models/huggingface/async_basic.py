@@ -4,9 +4,7 @@ from agno.agent import Agent
 from agno.models.huggingface import HuggingFace
 
 agent = Agent(
-    model=HuggingFace(
-        id="mistralai/Mistral-7B-Instruct-v0.2", max_tokens=4096, temperature=0
-    ),
+    model=HuggingFace(id="openai/gpt-oss-120b", max_tokens=4096, temperature=0),
 )
 asyncio.run(
     agent.aprint_response(

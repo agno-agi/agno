@@ -1,18 +1,24 @@
 import json
 from typing import List, Optional
 
-from agno.document import Document
-from agno.knowledge.wikipedia import WikipediaKnowledgeBase
+from agno.knowledge.document import Document
+from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.reader.wikipedia_reader import WikipediaReader
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info
 
 
 class WikipediaTools(Toolkit):
-    def __init__(self, knowledge_base: Optional[WikipediaKnowledgeBase] = None, **kwargs):
+    def __init__(
+        self,
+        knowledge: Optional[Knowledge] = None,
+        all: bool = False,
+        **kwargs,
+    ):
         tools = []
 
-        self.knowledge_base: Optional[WikipediaKnowledgeBase] = knowledge_base
-        if self.knowledge_base is not None and isinstance(self.knowledge_base, WikipediaKnowledgeBase):
+        self.knowledge: Optional[Knowledge] = knowledge
+        if self.knowledge is not None and isinstance(self.knowledge, Knowledge):
             tools.append(self.search_wikipedia_and_update_knowledge_base)
         else:
             tools.append(self.search_wikipedia)  # type: ignore
@@ -28,15 +34,16 @@ class WikipediaTools(Toolkit):
         :return: Relevant documents from Wikipedia knowledge base.
         """
 
-        if self.knowledge_base is None:
-            return "Knowledge base not provided"
+        if self.knowledge is None:
+            return "Knowledge not provided"
 
-        log_debug(f"Adding to knowledge base: {topic}")
-        self.knowledge_base.topics.append(topic)
-        log_debug("Loading knowledge base.")
-        self.knowledge_base.load(recreate=False)
-        log_debug(f"Searching knowledge base: {topic}")
-        relevant_docs: List[Document] = self.knowledge_base.search(query=topic)
+        log_debug(f"Adding to knowledge: {topic}")
+        self.knowledge.add_content(
+            topics=[topic],
+            reader=WikipediaReader(),
+        )
+        log_debug(f"Searching knowledge: {topic}")
+        relevant_docs: List[Document] = self.knowledge.search(query=topic)
         return json.dumps([doc.to_dict() for doc in relevant_docs])
 
     def search_wikipedia(self, query: str) -> str:

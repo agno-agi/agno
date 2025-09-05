@@ -24,10 +24,10 @@ async def main():
     agent = Agent(
         model=OpenAIChat(),
         tools=[zep_tools],
-        context={
+        dependencies={
             "memory": lambda: zep_tools.get_zep_memory(memory_type="context"),
         },
-        add_context=True,
+        add_dependencies_to_context=True,
     )
 
     # Interact with the Agent
@@ -39,7 +39,7 @@ async def main():
     time.sleep(10)
 
     # Refresh the context
-    agent.context["memory"] = await zep_tools.get_zep_memory(memory_type="context")
+    agent.dependencies["memory"] = await zep_tools.get_zep_memory(memory_type="context")
 
     # Ask the Agent about the user
     await agent.aprint_response("What do you know about me?")

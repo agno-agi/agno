@@ -2,27 +2,22 @@ import pytest
 from google.genai import types
 from pydantic import BaseModel, Field
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
+from agno.db.sqlite import SqliteDb
 from agno.exceptions import ModelProviderError
-from agno.memory.agent import AgentMemory
-from agno.memory.classifier import MemoryClassifier
-from agno.memory.db.sqlite import SqliteMemoryDb
-from agno.memory.manager import MemoryManager
-from agno.memory.summarizer import MemorySummarizer
 from agno.models.google import Gemini
-from agno.storage.sqlite import SqliteStorage
-from agno.tools.duckduckgo import DuckDuckGoTools
 
 
-def _assert_metrics(response: RunResponse):
-    input_tokens = response.metrics.get("input_tokens", [])
-    output_tokens = response.metrics.get("output_tokens", [])
-    total_tokens = response.metrics.get("total_tokens", [])
+def _assert_metrics(response: RunOutput):
+    assert response.metrics is not None
+    input_tokens = response.metrics.input_tokens
+    output_tokens = response.metrics.output_tokens
+    total_tokens = response.metrics.total_tokens
 
-    assert sum(input_tokens) > 0
-    assert sum(output_tokens) > 0
-    assert sum(total_tokens) > 0
-    assert sum(total_tokens) == sum(input_tokens) + sum(output_tokens)
+    assert input_tokens > 0
+    assert output_tokens > 0
+    assert total_tokens > 0
+    assert total_tokens == input_tokens + output_tokens
 
 
 def test_basic():
@@ -32,13 +27,12 @@ def test_basic():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # Print the response in the terminal
-    response: RunResponse = agent.run("Share a 2 sentence horror story")
+    response: RunOutput = agent.run("Share a 2 sentence horror story")
 
-    assert response.content is not None
+    assert response.content is not None and response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
 
@@ -46,9 +40,7 @@ def test_basic():
 
 
 def test_basic_stream():
-    agent = Agent(
-        model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, markdown=True, telemetry=False, monitoring=False
-    )
+    agent = Agent(model=Gemini(id="gemini-1.5-flash"), exponential_backoff=True, markdown=True, telemetry=False)
 
     response_stream = agent.run("Share a 2 sentence horror story", stream=True)
 
@@ -60,8 +52,6 @@ def test_basic_stream():
     for response in responses:
         assert response.content is not None
 
-    _assert_metrics(agent.run_response)
-
 
 @pytest.mark.asyncio
 async def test_async_basic():
@@ -71,12 +61,11 @@ async def test_async_basic():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = await agent.arun("Share a 2 sentence horror story")
 
-    assert response.content is not None
+    assert response.content is not None and response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
     _assert_metrics(response)
@@ -90,15 +79,10 @@ async def test_async_basic_stream():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
-    response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
-
-    async for response in response_stream:
+    async for response in agent.arun("Share a 2 sentence horror story", stream=True):
         assert response.content is not None
-
-    _assert_metrics(agent.run_response)
 
 
 def test_exception_handling():
@@ -108,7 +92,6 @@ def test_exception_handling():
         delay_between_retries=5,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # Print the response in the terminal
@@ -122,14 +105,13 @@ def test_exception_handling():
 
 def test_with_memory():
     agent = Agent(
+        db=SqliteDb(db_file="tmp/test_with_memory.db"),
         model=Gemini(id="gemini-1.5-flash"),
         exponential_backoff=True,
         delay_between_retries=5,
-        add_history_to_messages=True,
-        num_history_responses=5,
+        add_history_to_context=True,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     # First interaction
@@ -138,6 +120,7 @@ def test_with_memory():
 
     # Second interaction should remember the name
     response2 = agent.run("What's my name?")
+    assert response2.content is not None
     assert "John Smith" in response2.content
 
     # Verify memories were created
@@ -147,41 +130,6 @@ def test_with_memory():
 
     # Test metrics structure and types
     _assert_metrics(response2)
-
-
-def test_persistent_memory():
-    agent = Agent(
-        model=Gemini(id="gemini-1.5-flash"),
-        exponential_backoff=True,
-        delay_between_retries=5,
-        tools=[DuckDuckGoTools(cache_results=True)],
-        markdown=True,
-        telemetry=False,
-        monitoring=False,
-        instructions=[
-            "You can search the internet with DuckDuckGo.",
-        ],
-        storage=SqliteStorage(table_name="chat_agent", db_file="tmp/agent_storage.db"),
-        # Adds the current date and time to the instructions
-        add_datetime_to_instructions=True,
-        # Adds the history of the conversation to the messages
-        add_history_to_messages=True,
-        # Number of history responses to add to the messages
-        num_history_responses=15,
-        memory=AgentMemory(
-            db=SqliteMemoryDb(db_file="tmp/agent_memory.db"),
-            create_user_memories=True,
-            create_session_summary=True,  # troublesome
-            update_user_memories_after_run=True,
-            update_session_summary_after_run=True,
-            classifier=MemoryClassifier(model=Gemini(id="gemini-1.5-flash")),
-            summarizer=MemorySummarizer(model=Gemini(id="gemini-1.5-flash")),
-            manager=MemoryManager(model=Gemini(id="gemini-1.5-flash")),
-        ),
-    )
-
-    response = agent.run("What is current news in France?")
-    assert response.content is not None
 
 
 def test_structured_output():
@@ -194,9 +142,8 @@ def test_structured_output():
         model=Gemini(id="gemini-1.5-flash"),
         exponential_backoff=True,
         delay_between_retries=5,
-        response_model=MovieScript,
+        output_schema=MovieScript,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -218,10 +165,9 @@ def test_json_response_mode():
         model=Gemini(id="gemini-1.5-flash"),
         exponential_backoff=True,
         delay_between_retries=5,
-        response_model=MovieScript,
+        output_schema=MovieScript,
         use_json_mode=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Create a movie about time travel")
@@ -238,18 +184,25 @@ def test_history():
         model=Gemini(id="gemini-1.5-flash"),
         exponential_backoff=True,
         delay_between_retries=5,
-        storage=SqliteStorage(table_name="agent_sessions", db_file="tmp/agent_storage.db"),
-        add_history_to_messages=True,
+        db=SqliteDb(db_file="tmp/google/test_basic.db"),
+        add_history_to_context=True,
         telemetry=False,
-        monitoring=False,
     )
-    agent.run("Hello")
-    assert len(agent.run_response.messages) == 2
-    agent.run("Hello 2")
-    assert len(agent.run_response.messages) == 4
+    run_output = agent.run("Hello")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 2
+    run_output = agent.run("Hello 2")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 4
+    run_output = agent.run("Hello 3")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 6
+    run_output = agent.run("Hello 4")
+    assert run_output.messages is not None
+    assert len(run_output.messages) == 8
 
 
-@pytest.mark.skip("Need to update credentials for this to work")
+@pytest.mark.skip(reason="Missing VertexAI credentials in Github Actions")
 def test_custom_client_params():
     generation_config = types.GenerateContentConfig(
         temperature=0,
@@ -281,18 +234,16 @@ def test_custom_client_params():
         ),
     ]
 
-    # simple agent
+    # Simple agent
     agent = Agent(
         model=Gemini(
-            id="gemini-1.5-flash",
+            id="gemini-2.0-flash",
             vertexai=True,
-            location="us-central1",
             generation_config=generation_config,
             safety_settings=safety_settings,
         ),
         exponential_backoff=True,
         delay_between_retries=5,
         telemetry=False,
-        monitoring=False,
     )
     agent.print_response("what is the best ice cream?", stream=True)

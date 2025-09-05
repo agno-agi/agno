@@ -14,35 +14,22 @@ class Searxng(Toolkit):
         host: str,
         engines: List[str] = [],
         fixed_max_results: Optional[int] = None,
-        images: bool = False,
-        it: bool = False,
-        map: bool = False,
-        music: bool = False,
-        news: bool = False,
-        science: bool = False,
-        videos: bool = False,
         **kwargs,
     ):
         self.host = host
         self.engines = engines
         self.fixed_max_results = fixed_max_results
 
-        tools: List[Any] = []
-        tools.append(self.search)
-        if images:
-            tools.append(self.image_search)
-        if it:
-            tools.append(self.it_search)
-        if map:
-            tools.append(self.map_search)
-        if music:
-            tools.append(self.music_search)
-        if news:
-            tools.append(self.news_search)
-        if science:
-            tools.append(self.science_search)
-        if videos:
-            tools.append(self.video_search)
+        tools: List[Any] = [
+            self.search,
+            self.image_search,
+            self.it_search,
+            self.map_search,
+            self.music_search,
+            self.news_search,
+            self.science_search,
+            self.video_search,
+        ]
 
         super().__init__(name="searxng", tools=tools, **kwargs)
 

@@ -135,19 +135,19 @@ def _normalize_generic(schema: Dict[str, Any]) -> Dict[str, Any]:
     return schema
 
 
-def get_response_schema_for_provider(response_model: Type[BaseModel], provider: str) -> Dict[str, Any]:
+def get_response_schema_for_provider(output_schema: Type[BaseModel], provider: str) -> Dict[str, Any]:
     """
     Get a properly formatted response schema for a specific model provider.
 
     Args:
-        response_model: Pydantic BaseModel class
+        output_schema: Pydantic BaseModel class
         provider: Model provider name
 
     Returns:
         Dict[str, Any]: Provider-specific schema
     """
     # Generate the base schema
-    base_schema = response_model.model_json_schema()
+    base_schema = output_schema.model_json_schema()
 
     # Normalize for the specific provider
     return normalize_schema_for_provider(base_schema, provider)

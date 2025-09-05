@@ -12,9 +12,34 @@ except ImportError:
 
 
 class ValyuTools(Toolkit):
+    """
+    Valyu is a toolkit for academic and web search capabilities.
+
+    Args:
+        api_key (Optional[str]): Valyu API key. Retrieved from VALYU_API_KEY env variable if not provided.
+        enable_academic_search (bool): Enable academic sources search functionality. Default is True.
+        enable_web_search (bool): Enable web search functionality. Default is True.
+        enable_paper_search (bool): Enable search within paper functionality. Default is True.
+        all (bool): Enable all tools. Overrides individual flags when True. Default is False.
+        text_length (int): Maximum length of text content per result. Default is 1000.
+        max_results (int): Maximum number of results to return. Default is 10.
+        relevance_threshold (float): Minimum relevance score for results. Default is 0.5.
+        content_category (Optional[str]): Content category for filtering.
+        search_start_date (Optional[str]): Start date for search filtering (YYYY-MM-DD).
+        search_end_date (Optional[str]): End date for search filtering (YYYY-MM-DD).
+        search_domains (Optional[List[str]]): List of domains to search within.
+        sources (Optional[List[str]]): List of specific sources to search.
+        max_price (float): Maximum price for API calls. Default is 30.0.
+        tool_call_mode (bool): Enable tool call mode. Default is False.
+    """
+
     def __init__(
         self,
         api_key: Optional[str] = None,
+        enable_academic_search: bool = True,
+        enable_web_search: bool = True,
+        enable_paper_search: bool = True,
+        all: bool = False,
         text_length: int = 1000,
         max_results: int = 10,
         relevance_threshold: float = 0.5,
@@ -43,11 +68,15 @@ class ValyuTools(Toolkit):
         self.sources = sources
         self.tool_call_mode = tool_call_mode
 
-        super().__init__(
-            name="valyu_search",
-            tools=[self.search_academic_sources, self.search_web, self.search_within_paper],
-            **kwargs,
-        )
+        tools: List[Any] = []
+        if all or enable_academic_search:
+            tools.append(self.search_academic_sources)
+        if all or enable_web_search:
+            tools.append(self.search_web)
+        if all or enable_paper_search:
+            tools.append(self.search_within_paper)
+
+        super().__init__(name="valyu_search", tools=tools, **kwargs)
 
     def _parse_results(self, results: List[Any]) -> str:
         parsed_results = []

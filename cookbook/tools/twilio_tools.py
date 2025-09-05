@@ -19,6 +19,7 @@ Usage:
 """
 
 
+# Example 1: Enable specific Twilio functions
 agent = Agent(
     name="Twilio Agent",
     instructions=[
@@ -29,8 +30,35 @@ agent = Agent(
         """
     ],
     model=OpenAIChat(id="gpt-4o"),
-    tools=[TwilioTools()],
-    show_tool_calls=True,
+    tools=[
+        TwilioTools(
+            enable_send_sms=True,
+            enable_get_call_details=True,
+            enable_list_messages=True,
+        )
+    ],
+    markdown=True,
+)
+
+# Example 2: Enable all Twilio functions
+agent_all = Agent(
+    name="Twilio Agent All",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[TwilioTools(all=True)],
+    markdown=True,
+)
+
+# Example 3: Enable only SMS functionality
+sms_agent = Agent(
+    name="SMS Agent",
+    model=OpenAIChat(id="gpt-4o"),
+    tools=[
+        TwilioTools(
+            enable_send_sms=True,
+            enable_get_call_details=False,
+            enable_list_messages=False,
+        )
+    ],
     markdown=True,
 )
 

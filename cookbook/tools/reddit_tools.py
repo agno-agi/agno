@@ -34,7 +34,6 @@ agent = Agent(
         "When analyzing subreddits, provide relevant statistics and trends",
     ],
     tools=[RedditTools()],
-    show_tool_calls=True,
 )
 
 agent.print_response("What are the top 5 posts on r/SAAS this week ?", stream=True)

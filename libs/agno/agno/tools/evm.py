@@ -21,6 +21,8 @@ class EvmTools(Toolkit):
         self,
         private_key: Optional[str] = None,
         rpc_url: Optional[str] = None,
+        enable_send_transaction: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         """Initialize EVM tools for blockchain interactions.
@@ -50,7 +52,11 @@ class EvmTools(Toolkit):
         self.account: "LocalAccount" = self.web3_client.eth.account.from_key(self.private_key)
         log_debug(f"Your wallet address is: {self.account.address}")
 
-        super().__init__(name="evm_tools", tools=[self.send_transaction], **kwargs)
+        tools = []
+        if all or enable_send_transaction:
+            tools.append(self.send_transaction)
+
+        super().__init__(name="evm_tools", tools=tools, **kwargs)
 
     def get_max_priority_fee_per_gas(self) -> int:
         """Get the max priority fee per gas for the transaction.

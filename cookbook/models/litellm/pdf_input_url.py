@@ -5,7 +5,7 @@ from agno.models.litellm import LiteLLM
 agent = Agent(
     model=LiteLLM(id="gpt-4o"),
     markdown=True,
-    add_history_to_messages=True,
+    add_history_to_context=True,
 )
 
 agent.print_response(

@@ -52,7 +52,6 @@ agent = Agent(
             allow_update=True,
         )
     ],
-    show_tool_calls=True,
     instructions=[
         """
     You are a scheduling assistant.
@@ -64,7 +63,7 @@ agent = Agent(
         - find available time slots for scheduling
     """
     ],
-    add_datetime_to_instructions=True,
+    add_datetime_to_context=True,
 )
 
 # Example 1: List calendar events

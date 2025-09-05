@@ -40,11 +40,12 @@ class ZepTools(Toolkit):
         user_id: Optional[str] = None,
         api_key: Optional[str] = None,
         ignore_assistant_messages: bool = False,
-        add_zep_message: bool = True,
-        get_zep_memory: bool = True,
-        search_zep_memory: bool = True,
+        enable_add_zep_message: bool = True,
+        enable_get_zep_memory: bool = True,
+        enable_search_zep_memory: bool = True,
         instructions: Optional[str] = None,
         add_instructions: bool = False,
+        all: bool = False,
         **kwargs,
     ):
         self._api_key = api_key or getenv("ZEP_API_KEY")
@@ -71,11 +72,11 @@ class ZepTools(Toolkit):
         self.initialize()
 
         tools: List[Any] = []
-        if add_zep_message:
+        if enable_add_zep_message or all:
             tools.append(self.add_zep_message)
-        if get_zep_memory:
+        if enable_get_zep_memory or all:
             tools.append(self.get_zep_memory)
-        if search_zep_memory:
+        if enable_search_zep_memory or all:
             tools.append(self.search_zep_memory)
 
         super().__init__(
@@ -118,7 +119,7 @@ class ZepTools(Toolkit):
 
             # Create session associated with the user
             try:
-                self.zep_client.thread.create(thread_id=self.session_id, user_id=self.user_id)
+                self.zep_client.thread.create(thread_id=self.session_id, user_id=self.user_id)  # type: ignore
                 log_debug(f"Created session {self.session_id} for user {self.user_id}")
             except Exception as e:
                 log_debug(f"Session may already exist: {e}")
@@ -150,6 +151,7 @@ class ZepTools(Toolkit):
             zep_message = ZepMessage(
                 role=role,
                 content=content,
+                role_type=role,
             )
 
             # Prepare ignore_roles if needed
@@ -358,6 +360,7 @@ class ZepAsyncTools(Toolkit):
             zep_message = ZepMessage(
                 role=role,
                 content=content,
+                role_type=role,
             )
 
             # Prepare ignore_roles if needed

@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from agno.tools import Toolkit
@@ -17,11 +18,6 @@ class DuckDbTools(Toolkit):
         init_commands: Optional[List] = None,
         read_only: bool = False,
         config: Optional[dict] = None,
-        run_queries: bool = True,
-        inspect_queries: bool = False,
-        create_tables: bool = True,
-        summarize_tables: bool = True,
-        export_tables: bool = False,
         **kwargs,
     ):
         self.db_path: Optional[str] = db_path
@@ -30,26 +26,21 @@ class DuckDbTools(Toolkit):
         self._connection: Optional[duckdb.DuckDBPyConnection] = connection
         self.init_commands: Optional[List] = init_commands
 
-        tools: List[Any] = []
-        tools.append(self.show_tables)
-        tools.append(self.describe_table)
-        if inspect_queries:
-            tools.append(self.inspect_query)
-        if run_queries:
-            tools.append(self.run_query)
-        if create_tables:
-            tools.append(self.create_table_from_path)
-        if summarize_tables:
-            tools.append(self.summarize_table)
-        if export_tables:
-            tools.append(self.export_table_to_path)
-
-        tools.append(self.load_local_path_to_table)
-        tools.append(self.load_local_csv_to_table)
-        tools.append(self.load_s3_path_to_table)
-        tools.append(self.load_s3_csv_to_table)
-        tools.append(self.create_fts_index)
-        tools.append(self.full_text_search)
+        tools: List[Any] = [
+            self.show_tables,
+            self.describe_table,
+            self.inspect_query,
+            self.run_query,
+            self.create_table_from_path,
+            self.summarize_table,
+            self.export_table_to_path,
+            self.load_local_path_to_table,
+            self.load_local_csv_to_table,
+            self.load_s3_path_to_table,
+            self.load_s3_csv_to_table,
+            self.create_fts_index,
+            self.full_text_search,
+        ]
 
         super().__init__(name="duckdb_tools", tools=tools, **kwargs)
 
@@ -177,12 +168,10 @@ class DuckDbTools(Toolkit):
         :param path: Path to get the table name from
         :return: Table name
         """
-        import os
-
         # Get the file name from the path
-        file_name = path.split("/")[-1]
+        path_obj = Path(path)
         # Get the file name without extension from the path
-        table, extension = os.path.splitext(file_name)
+        table = path_obj.stem
         # If the table isn't a valid SQL identifier, we'll need to use something else
         table = table.replace("-", "_").replace(".", "_").replace(" ", "_").replace("/", "_")
 
@@ -246,15 +235,13 @@ class DuckDbTools(Toolkit):
         :param table: Optional table name to use
         :return: Table name, SQL statement used to load the file
         """
-        import os
-
         log_debug(f"Loading {path} into duckdb")
 
         if table is None:
-            # Get the file name from the s3 path
-            file_name = path.split("/")[-1]
-            # Get the file name without extension from the s3 path
-            table, extension = os.path.splitext(file_name)
+            # Get the file name from the path
+            path_obj = Path(path)
+            # Get the file name without extension from the path
+            table = path_obj.stem
             # If the table isn't a valid SQL identifier, we'll need to use something else
             table = table.replace("-", "_").replace(".", "_").replace(" ", "_").replace("/", "_")
 
@@ -274,15 +261,13 @@ class DuckDbTools(Toolkit):
         :param delimiter: Optional delimiter to use
         :return: Table name, SQL statement used to load the file
         """
-        import os
-
         log_debug(f"Loading {path} into duckdb")
 
         if table is None:
-            # Get the file name from the s3 path
-            file_name = path.split("/")[-1]
-            # Get the file name without extension from the s3 path
-            table, extension = os.path.splitext(file_name)
+            # Get the file name from the path
+            path_obj = Path(path)
+            # Get the file name without extension from the path
+            table = path_obj.stem
             # If the table isn't a valid SQL identifier, we'll need to use something else
             table = table.replace("-", "_").replace(".", "_").replace(" ", "_").replace("/", "_")
 
@@ -305,15 +290,13 @@ class DuckDbTools(Toolkit):
         :param table: Optional table name to use
         :return: Table name, SQL statement used to load the file
         """
-        import os
-
         log_debug(f"Loading {path} into duckdb")
 
         if table is None:
-            # Get the file name from the s3 path
-            file_name = path.split("/")[-1]
-            # Get the file name without extension from the s3 path
-            table, extension = os.path.splitext(file_name)
+            # Get the file name from the path
+            path_obj = Path(path)
+            # Get the file name without extension from the path
+            table = path_obj.stem
             # If the table isn't a valid SQL identifier, we'll need to use something else
             table = table.replace("-", "_").replace(".", "_").replace(" ", "_").replace("/", "_")
 
@@ -332,15 +315,13 @@ class DuckDbTools(Toolkit):
         :param table: Optional table name to use
         :return: Table name, SQL statement used to load the file
         """
-        import os
-
         log_debug(f"Loading {path} into duckdb")
 
         if table is None:
-            # Get the file name from the s3 path
-            file_name = path.split("/")[-1]
-            # Get the file name without extension from the s3 path
-            table, extension = os.path.splitext(file_name)
+            # Get the file name from the path
+            path_obj = Path(path)
+            # Get the file name without extension from the path
+            table = path_obj.stem
             # If the table isn't a valid SQL identifier, we'll need to use something else
             table = table.replace("-", "_").replace(".", "_").replace(" ", "_").replace("/", "_")
 

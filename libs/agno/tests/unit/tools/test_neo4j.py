@@ -154,7 +154,13 @@ def test_initialization_default_database():
 def test_initialization_selective_tools():
     with patch("neo4j.GraphDatabase.driver") as _:
         tools = Neo4jTools(
-            "uri", "user", "password", list_labels=True, list_relationships=False, get_schema=False, run_cypher=True
+            "uri",
+            "user",
+            "password",
+            enable_list_labels=True,
+            enable_list_relationships=False,
+            enable_get_schema=False,
+            enable_run_cypher=True,
         )
 
         # Check that only selected tools are registered

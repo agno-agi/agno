@@ -26,10 +26,10 @@ def is_openai_reasoning_model(reasoning_model: Model) -> bool:
 
 
 def get_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
-    from agno.run.response import RunResponse
+    from agno.run.agent import RunOutput
 
     try:
-        reasoning_agent_response: RunResponse = reasoning_agent.run(messages=messages)
+        reasoning_agent_response: RunOutput = reasoning_agent.run(messages=messages)
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return None
@@ -52,7 +52,7 @@ def get_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> O
 
 
 async def aget_openai_reasoning(reasoning_agent: "Agent", messages: List[Message]) -> Optional[Message]:  # type: ignore  # noqa: F821
-    from agno.run.response import RunResponse
+    from agno.run.agent import RunOutput
 
     # Update system message role to "system"
     for message in messages:
@@ -60,7 +60,7 @@ async def aget_openai_reasoning(reasoning_agent: "Agent", messages: List[Message
             message.role = "system"
 
     try:
-        reasoning_agent_response: RunResponse = await reasoning_agent.arun(messages=messages)
+        reasoning_agent_response: RunOutput = await reasoning_agent.arun(messages=messages)
     except Exception as e:
         logger.warning(f"Reasoning error: {e}")
         return None

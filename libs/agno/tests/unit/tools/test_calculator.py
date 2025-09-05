@@ -11,28 +11,19 @@ from agno.tools.calculator import CalculatorTools
 @pytest.fixture
 def calculator_tools():
     """Create a CalculatorTools instance with all operations enabled."""
-    return CalculatorTools(enable_all=True)
+    return CalculatorTools()
 
 
 @pytest.fixture
 def basic_calculator_tools():
     """Create a CalculatorTools instance with only basic operations."""
-    return CalculatorTools()
+    return CalculatorTools(include_tools=["add", "subtract", "multiply", "divide"])
 
 
 def test_initialization_with_selective_operations():
     """Test initialization with only selected operations."""
     # Only enable specific operations
-    tools = CalculatorTools(
-        add=True,
-        subtract=True,
-        multiply=False,
-        divide=False,
-        exponentiate=True,
-        factorial=False,
-        is_prime=True,
-        square_root=False,
-    )
+    tools = CalculatorTools(include_tools=["add", "subtract", "exponentiate", "is_prime"])
 
     # Check which functions are registered
     function_names = [func.name for func in tools.functions.values()]
@@ -49,7 +40,7 @@ def test_initialization_with_selective_operations():
 
 def test_initialization_with_all_operations():
     """Test initialization with all operations enabled."""
-    tools = CalculatorTools(enable_all=True)
+    tools = CalculatorTools()
 
     function_names = [func.name for func in tools.functions.values()]
 

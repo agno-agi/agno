@@ -6,19 +6,20 @@ from agno.models.ibm import WatsonX
 
 
 def test_image_input():
-    agent = Agent(model=WatsonX(id="meta-llama/llama-3-2-11b-vision-instruct"), telemetry=False, monitoring=False)
+    agent = Agent(model=WatsonX(id="meta-llama/llama-3-2-11b-vision-instruct"), telemetry=False)
 
     response = agent.run(
         "Tell me about this image.",
         images=[Image(url="https://upload.wikimedia.org/wikipedia/commons/0/0c/GoldenGateBridge-001.jpg")],
     )
 
+    assert response.content is not None
     assert "golden" in response.content.lower()
     assert "bridge" in response.content.lower()
 
 
 def test_image_input_bytes():
-    agent = Agent(model=WatsonX(id="meta-llama/llama-3-2-11b-vision-instruct"), telemetry=False, monitoring=False)
+    agent = Agent(model=WatsonX(id="meta-llama/llama-3-2-11b-vision-instruct"), telemetry=False)
 
     image_path = Path(__file__).parent.parent.parent.joinpath("sample_image.jpg")
 
@@ -30,5 +31,6 @@ def test_image_input_bytes():
         images=[Image(content=image_bytes)],
     )
 
+    assert response.content is not None
     assert "golden" in response.content.lower()
     assert "bridge" in response.content.lower()

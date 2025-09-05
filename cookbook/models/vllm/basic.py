@@ -1,8 +1,8 @@
-from agno.agent import Agent, RunResponse
-from agno.models.vllm import vLLM
+from agno.agent import Agent
+from agno.models.vllm import VLLM
 
 agent = Agent(
-    model=vLLM(id="Qwen/Qwen2.5-7B-Instruct", top_k=20, enable_thinking=False),
+    model=VLLM(id="Qwen/Qwen2.5-7B-Instruct", top_k=20, enable_thinking=False),
     markdown=True,
 )
 

@@ -5,7 +5,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from agno.document.reader.pdf_reader import (
+from agno.knowledge.reader.pdf_reader import (
     PDFImageReader,
     PDFReader,
     PDFUrlImageReader,

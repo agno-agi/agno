@@ -24,6 +24,11 @@ class BrowserbaseTools(Toolkit):
         api_key: Optional[str] = None,
         project_id: Optional[str] = None,
         base_url: Optional[str] = None,
+        enable_navigate_to: bool = True,
+        enable_screenshot: bool = True,
+        enable_get_page_content: bool = True,
+        enable_close_session: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         """Initialize BrowserbaseTools.
@@ -61,10 +66,14 @@ class BrowserbaseTools(Toolkit):
         self._connect_url = None
 
         tools: List[Any] = []
-        tools.append(self.navigate_to)
-        tools.append(self.screenshot)
-        tools.append(self.get_page_content)
-        tools.append(self.close_session)
+        if all or enable_navigate_to:
+            tools.append(self.navigate_to)
+        if all or enable_screenshot:
+            tools.append(self.screenshot)
+        if all or enable_get_page_content:
+            tools.append(self.get_page_content)
+        if all or enable_close_session:
+            tools.append(self.close_session)
 
         super().__init__(name="browserbase_tools", tools=tools, **kwargs)
 

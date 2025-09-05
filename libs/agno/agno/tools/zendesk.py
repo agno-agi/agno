@@ -23,6 +23,8 @@ class ZendeskTools(Toolkit):
         username: Optional[str] = None,
         password: Optional[str] = None,
         company_name: Optional[str] = None,
+        enable_search_zendesk: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         """
@@ -33,16 +35,19 @@ class ZendeskTools(Toolkit):
         username (str): The username for Zendesk API authentication.
         password (str): The password for Zendesk API authentication.
         company_name (str): The company name to form the base URL for API requests.
+        enable_search_zendesk (bool): Whether to enable the search functionality.
+        all (bool): Enable all functions.
         """
         self.username = username or getenv("ZENDESK_USERNAME")
-        self.password = password or getenv("ZENDESK_PW")
+        self.password = password or getenv("ZENDESK_PASSWORD")
         self.company_name = company_name or getenv("ZENDESK_COMPANY_NAME")
 
         if not self.username or not self.password or not self.company_name:
             logger.error("Username, password, or company name not provided.")
 
         tools: List[Any] = []
-        tools.append(self.search_zendesk)
+        if all or enable_search_zendesk:
+            tools.append(self.search_zendesk)
 
         super().__init__(name="zendesk_tools", tools=tools, **kwargs)
 

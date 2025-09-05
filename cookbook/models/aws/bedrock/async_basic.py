@@ -1,6 +1,6 @@
 import asyncio
 
-from agno.agent import Agent, RunResponse  # noqa
+from agno.agent import Agent, RunOutput  # noqa
 from agno.models.aws import AwsBedrock
 
 agent = Agent(model=AwsBedrock(id="mistral.mistral-small-2402-v1:0"), markdown=True)

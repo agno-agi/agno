@@ -15,12 +15,12 @@ def test_tool_use():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
     assert "TSLA" in response.content
@@ -32,7 +32,6 @@ def test_tool_use_stream():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response_stream = agent.run("What is the current price of TSLA?", stream=True, stream_intermediate_steps=True)
@@ -44,8 +43,8 @@ def test_tool_use_stream():
         responses.append(chunk)
 
         # Check for ToolCallStartedEvent or ToolCallCompletedEvent
-        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
-            if chunk.tool.tool_name:
+        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:  # type: ignore
+            if chunk.tool.tool_name:  # type: ignore
                 tool_call_seen = True
 
     assert len(responses) > 0
@@ -60,12 +59,12 @@ async def test_async_tool_use():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = await agent.arun("What is the current price of TSLA?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages if msg.role == "assistant")
     assert response.content is not None
     assert "TSLA" in response.content
@@ -78,42 +77,47 @@ async def test_async_tool_use_stream():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
-    response_stream = await agent.arun(
-        "What is the current price of TSLA?", stream=True, stream_intermediate_steps=True
-    )
-
-    responses = []
-    tool_call_seen = False
-
-    async for chunk in response_stream:
-        responses.append(chunk)
-
-        # Check for ToolCallStartedEvent or ToolCallCompletedEvent
-        if chunk.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(chunk, "tool") and chunk.tool:
-            if chunk.tool.tool_name:
+    async for response in agent.arun(
+        "What is the current price of TSLA?",
+        stream=True,
+        stream_intermediate_steps=True,
+    ):
+        if response.event in ["ToolCallStarted", "ToolCallCompleted"] and hasattr(response, "tool") and response.tool:  # type: ignore
+            if response.tool.tool_name:  # type: ignore
                 tool_call_seen = True
+            if response.content is not None and "TSLA" in response.content:
+                keyword_seen_in_response = True
 
-    assert len(responses) > 0
+    # Asserting we found tool responses in the response stream
     assert tool_call_seen, "No tool calls observed in stream"
-    assert any("TSLA" in r.content for r in responses if r.content)
+
+    # Asserting we found the expected keyword in the response stream -> proving the correct tool was called
+    assert keyword_seen_in_response, "Keyword not found in response"
 
 
 def test_tool_use_tool_call_limit():
     agent = Agent(
         model=Claude(id="claude-3-5-haiku-20241022"),
-        tools=[YFinanceTools(company_news=True, cache_results=True)],
+        tools=[
+            YFinanceTools(
+                include_tools=[
+                    "get_current_stock_price",
+                    "get_company_news",
+                ],
+                cache_results=True,
+            )
+        ],
         tool_call_limit=1,
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("Find me the current price of TSLA, then after that find me the latest news about Tesla.")
 
     # Verify tool usage, should only call the first tool
+    assert response.tools is not None
     assert len(response.tools) == 1
     assert response.tools[0].tool_name == "get_current_stock_price"
     assert response.tools[0].tool_args == {"symbol": "TSLA"}
@@ -127,12 +131,12 @@ def test_tool_use_with_content():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA? What does the ticker stand for?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
     assert "TSLA" in response.content
@@ -145,12 +149,12 @@ def test_parallel_tool_calls():
         tools=[YFinanceTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA and AAPL?")
 
     # Verify tool usage
+    assert response.messages is not None
     tool_calls = []
     for msg in response.messages:
         if msg.tool_calls:
@@ -166,12 +170,12 @@ def test_multiple_tool_calls():
         tools=[YFinanceTools(cache_results=True), DuckDuckGoTools(cache_results=True)],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the current price of TSLA and what is the latest news about it?")
 
     # Verify tool usage
+    assert response.messages is not None
     tool_calls = []
     for msg in response.messages:
         if msg.tool_calls:
@@ -193,12 +197,12 @@ def test_tool_call_custom_tool_no_parameters():
         tools=[get_the_weather_in_tokyo],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the weather in Tokyo?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
     assert "Tokyo" in response.content
@@ -222,12 +226,12 @@ def test_tool_call_custom_tool_optional_parameters():
         tools=[get_the_weather],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run("What is the weather in Paris?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
     assert "70" in response.content
@@ -249,7 +253,6 @@ def test_tool_call_pydantic_parameters():
         tools=[research_topic],
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run(
@@ -268,7 +271,6 @@ def test_tool_call_list_parameters():
         instructions="Use a single tool call if possible",
         markdown=True,
         telemetry=False,
-        monitoring=False,
     )
 
     response = agent.run(
@@ -276,6 +278,7 @@ def test_tool_call_list_parameters():
     )
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     tool_calls = []
     for msg in response.messages:

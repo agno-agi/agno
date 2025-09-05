@@ -19,11 +19,15 @@ class ExaTools(Toolkit):
     functionalities to perform categorized searches and retrieve structured results.
 
     Args:
+        enable_search (bool): Enable search functionality. Default is True.
+        enable_get_contents (bool): Enable get contents functionality. Default is True.
+        enable_find_similar (bool): Enable find similar functionality. Default is True.
+        enable_answer (bool): Enable answer generation. Default is True.
+        enable_research (bool): Enable research tool functionality. Default is False.
+        all (bool): Enable all tools. Overrides individual flags when True. Default is False.
         text (bool): Retrieve text content from results. Default is True.
         text_length_limit (int): Max length of text content per result. Default is 1000.
         highlights (bool): Include highlighted snippets. Default is True.
-        answer (bool): Enable answer generation. Default is True.
-        research (bool): Enable research tool functionality. Default is True.
         api_key (Optional[str]): Exa API key. Retrieved from `EXA_API_KEY` env variable if not provided.
         num_results (Optional[int]): Default number of search results. Overrides individual searches if set.
         start_crawl_date (Optional[str]): Include results crawled on/after this date (`YYYY-MM-DD`).
@@ -42,11 +46,12 @@ class ExaTools(Toolkit):
 
     def __init__(
         self,
-        search: bool = True,
-        get_contents: bool = True,
-        find_similar: bool = True,
-        answer: bool = True,
-        research: bool = False,
+        enable_search: bool = True,
+        enable_get_contents: bool = True,
+        enable_find_similar: bool = True,
+        enable_answer: bool = True,
+        enable_research: bool = False,
+        all: bool = False,
         text: bool = True,
         text_length_limit: int = 1000,
         highlights: bool = True,
@@ -96,15 +101,15 @@ class ExaTools(Toolkit):
         self.research_model: Literal["exa-research", "exa-research-pro"] = research_model
 
         tools: List[Any] = []
-        if search:
+        if all or enable_search:
             tools.append(self.search_exa)
-        if get_contents:
+        if all or enable_get_contents:
             tools.append(self.get_contents)
-        if find_similar:
+        if all or enable_find_similar:
             tools.append(self.find_similar)
-        if answer:
+        if all or enable_answer:
             tools.append(self.exa_answer)
-        if research:
+        if all or enable_research:
             tools.append(self.research)
 
         super().__init__(name="exa", tools=tools, **kwargs)
@@ -353,14 +358,14 @@ class ExaTools(Toolkit):
             else:
                 task_kwargs["output_infer_schema"] = True
 
-            task_result = self._execute_with_timeout(self.exa.research.create_task, **task_kwargs)
+            task_result = self._execute_with_timeout(self.exa.research.create_task, **task_kwargs)  # type: ignore
             task_id = task_result.id
 
             if self.show_results:
                 log_info(f"Research task created with ID: {task_id}")
 
             # Step 2: Poll until complete (using default polling settings)
-            task = self.exa.research.poll_task(task_id)
+            task = self.exa.research.poll_task(task_id)  # type: ignore
 
             # Step 3: Format and return results
             result: Dict[str, Any] = {"data": task.data, "citations": {}}

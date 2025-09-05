@@ -12,7 +12,6 @@ from agno.tools.valyu import ValyuTools
 
 agent = Agent(
     tools=[ValyuTools()],
-    show_tool_calls=True,
     markdown=True,
 )
 

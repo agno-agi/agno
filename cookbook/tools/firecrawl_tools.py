@@ -11,8 +11,11 @@ from agno.agent import Agent
 from agno.tools.firecrawl import FirecrawlTools
 
 agent = Agent(
-    tools=[FirecrawlTools(scrape=False, crawl=True, search=True, poll_interval=2)],
-    show_tool_calls=True,
+    tools=[
+        FirecrawlTools(
+            enable_scrape=False, enable_crawl=True, enable_search=True, poll_interval=2
+        )
+    ],
     markdown=True,
 )
 

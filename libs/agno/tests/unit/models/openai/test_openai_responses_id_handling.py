@@ -1,6 +1,5 @@
 from typing import Any, Dict, List, Optional
 
-from agno.models.base import MessageData
 from agno.models.message import Message
 from agno.models.openai.responses import OpenAIResponses
 from agno.models.response import ModelResponse
@@ -114,7 +113,7 @@ def test_parse_provider_response_maps_ids():
         error=None,
     )
 
-    mr: ModelResponse = model.parse_provider_response(fake_resp)  # type: ignore[arg-type]
+    mr: ModelResponse = model._parse_provider_response(fake_resp)  # type: ignore[arg-type]
 
     assert mr.tool_calls is not None and len(mr.tool_calls) == 1
     tc = mr.tool_calls[0]
@@ -126,23 +125,28 @@ def test_parse_provider_response_maps_ids():
 def test_process_stream_response_builds_tool_calls():
     model = OpenAIResponses(id="gpt-4.1-mini")
     assistant_message = Message(role="assistant")
-    stream_data = MessageData()
 
     # Simulate function_call added and then completed
     added = _FakeStreamEvent(
         type="response.output_item.added",
         item=_FakeStreamItem(_id="fc_abc123", call_id="call_def456", name="execute", arguments="{}"),
     )
-    mr, tool_use = model._process_stream_response(added, assistant_message, stream_data, {})
-    assert mr is None
+    mr, tool_use = model._parse_provider_response_delta(added, assistant_message, {})  # type: ignore[arg-type]
+    assert mr is not None
+    assert mr.role is None
+    assert mr.content is None
+    assert mr.tool_calls == []
 
     # Optional: simulate args delta
     delta_ev = _FakeStreamEvent(type="response.function_call_arguments.delta", delta='{"k":1}')
-    mr, tool_use = model._process_stream_response(delta_ev, assistant_message, stream_data, tool_use)
-    assert mr is None
+    mr, tool_use = model._parse_provider_response_delta(delta_ev, assistant_message, tool_use)  # type: ignore[arg-type]
+    assert mr is not None
+    assert mr.role is None
+    assert mr.content is None
+    assert mr.tool_calls == []
 
     done = _FakeStreamEvent(type="response.output_item.done")
-    mr, tool_use = model._process_stream_response(done, assistant_message, stream_data, tool_use)
+    mr, tool_use = model._parse_provider_response_delta(done, assistant_message, tool_use)  # type: ignore[arg-type]
 
     assert mr is not None
     assert mr.tool_calls is not None and len(mr.tool_calls) == 1

@@ -5,11 +5,10 @@ import tempfile
 import pytest
 
 from agno.agent import Agent
-from agno.memory.v2.memory import Memory
+from agno.db.json import JsonDb
 from agno.models.anthropic import Claude
 from agno.models.message import Message
-from agno.run.response import RunResponse
-from agno.storage.json import JsonStorage
+from agno.run.agent import RunOutput
 from agno.tools.yfinance import YFinanceTools
 
 
@@ -22,7 +21,6 @@ def _get_thinking_agent(**kwargs):
         ),
         "markdown": True,
         "telemetry": False,
-        "monitoring": False,
     }
     default_config.update(kwargs)
     return Agent(**default_config)
@@ -38,7 +36,6 @@ def _get_interleaved_thinking_agent(**kwargs):
         ),
         "markdown": True,
         "telemetry": False,
-        "monitoring": False,
     }
     default_config.update(kwargs)
     return Agent(**default_config)
@@ -46,13 +43,14 @@ def _get_interleaved_thinking_agent(**kwargs):
 
 def test_thinking():
     agent = _get_thinking_agent()
-    response: RunResponse = agent.run("Share a 2 sentence horror story")
+    response: RunOutput = agent.run("Share a 2 sentence horror story")
 
     assert response.content is not None
-    assert response.thinking is not None
+    assert response.reasoning_content is not None
+    assert response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
-    assert response.messages[2].thinking is not None
+    assert response.messages[2].reasoning_content is not None if response.messages is not None else False
 
 
 def test_thinking_stream():
@@ -65,42 +63,37 @@ def test_thinking_stream():
     responses = list(response_stream)
     assert len(responses) > 0
     for response in responses:
-        assert response.content is not None or response.thinking is not None
+        assert response.content is not None or response.reasoning_content is not None  # type: ignore
 
 
 @pytest.mark.asyncio
 async def test_async_thinking():
     agent = _get_thinking_agent()
-    response: RunResponse = await agent.arun("Share a 2 sentence horror story")
+    response: RunOutput = await agent.arun("Share a 2 sentence horror story")
 
     assert response.content is not None
-    assert response.thinking is not None
+    assert response.reasoning_content is not None
+    assert response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
-    assert response.messages[2].thinking is not None
+    assert response.messages[2].reasoning_content is not None if response.messages is not None else False
 
 
 @pytest.mark.asyncio
 async def test_async_thinking_stream():
     agent = _get_thinking_agent()
-    response_stream = await agent.arun("Share a 2 sentence horror story", stream=True)
 
-    # Verify it's an async iterator
-    assert hasattr(response_stream, "__aiter__")
-
-    responses = [response async for response in response_stream]
-    assert len(responses) > 0
-    for response in responses:
-        assert response.content is not None or response.thinking is not None
+    async for response in agent.arun("Share a 2 sentence horror story", stream=True):
+        assert response.content is not None or response.reasoning_content is not None  # type: ignore
 
 
-def test_redacted_thinking():
+def test_redacted_reasoning_content():
     agent = _get_thinking_agent()
     # Testing string from anthropic
     response = agent.run(
-        "ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB"
+        "ANTHROPIC_MAGIC_STRING_TRIGGER_redacted_reasoning_content_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB"
     )
-    assert response.thinking is not None
+    assert response.reasoning_content is not None
 
 
 def test_thinking_with_tool_calls():
@@ -108,26 +101,29 @@ def test_thinking_with_tool_calls():
 
     response = agent.run("What is the current price of TSLA?")
 
-    # Verify tool usage and thinking
+    # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
     assert "TSLA" in response.content
 
 
-def test_redacted_thinking_with_tool_calls():
+def test_redacted_reasoning_content_with_tool_calls():
     agent = _get_thinking_agent(
         tools=[YFinanceTools(cache_results=True)],
-        add_history_to_messages=True,
+        add_history_to_context=True,
+        markdown=True,
     )
 
     # Put a redacted thinking message in the history
     agent.run(
-        "ANTHROPIC_MAGIC_STRING_TRIGGER_REDACTED_THINKING_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB"
+        "ANTHROPIC_MAGIC_STRING_TRIGGER_redacted_reasoning_content_46C9A13E193C177646C7398A98432ECCCE4C1253D5E2D82641AC0E52CC2876CB"
     )
 
     response = agent.run("What is the current price of TSLA?")
 
     # Verify tool usage
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
     assert "TSLA" in response.content
@@ -138,7 +134,7 @@ def test_thinking_message_serialization():
     message = Message(
         role="assistant",
         content="The answer is 42.",
-        thinking="I need to think about the meaning of life. After careful consideration, 42 seems right.",
+        reasoning_content="I need to think about the meaning of life. After careful consideration, 42 seems right.",
         provider_data={"signature": "thinking_sig_xyz789"},
     )
 
@@ -146,9 +142,9 @@ def test_thinking_message_serialization():
     message_dict = message.to_dict()
 
     # Verify thinking content is in the serialized data
-    assert "thinking" in message_dict
+    assert "reasoning_content" in message_dict
     assert (
-        message_dict["thinking"]
+        message_dict["reasoning_content"]
         == "I need to think about the meaning of life. After careful consideration, 42 seems right."
     )
 
@@ -163,20 +159,18 @@ async def test_thinking_with_storage():
     with tempfile.TemporaryDirectory() as storage_dir:
         agent = Agent(
             model=Claude(id="claude-3-7-sonnet-20250219", thinking={"type": "enabled", "budget_tokens": 1024}),
-            storage=JsonStorage(dir_path=storage_dir),
-            memory=Memory(),
+            db=JsonDb(db_path=storage_dir, session_table="test_session"),
             user_id="test_user",
             session_id="test_session",
             telemetry=False,
-            monitoring=False,
         )
 
         # Ask a question that should trigger thinking
         response = await agent.arun("What is 25 * 47?", stream=False)
 
         # Verify response has thinking content
-        assert response.thinking is not None
-        assert len(response.thinking) > 0
+        assert response.reasoning_content is not None
+        assert len(response.reasoning_content) > 0
 
         # Read the storage files to verify thinking was persisted
         session_files = [f for f in os.listdir(storage_dir) if f.endswith(".json")]
@@ -188,13 +182,12 @@ async def test_thinking_with_storage():
                     session_data = json.load(f)
 
                 # Check messages in this session
-                if "memory" in session_data and session_data["memory"] and "runs" in session_data["memory"]:
-                    for run in session_data["memory"]["runs"]:
-                        if "messages" in run:
-                            for message in run["messages"]:
-                                if message.get("role") == "assistant" and message.get("thinking"):
-                                    thinking_persisted = True
-                                    break
+                if session_data and session_data[0] and session_data[0]["runs"]:
+                    for run in session_data[0]["runs"]:
+                        for message in run["messages"]:
+                            if message.get("role") == "assistant" and message.get("reasoning_content"):
+                                thinking_persisted = True
+                                break
                         if thinking_persisted:
                             break
                 break
@@ -208,47 +201,42 @@ async def test_thinking_with_streaming_storage():
     with tempfile.TemporaryDirectory() as storage_dir:
         agent = Agent(
             model=Claude(id="claude-3-7-sonnet-20250219", thinking={"type": "enabled", "budget_tokens": 1024}),
-            storage=JsonStorage(dir_path=storage_dir),
-            memory=Memory(),
+            db=JsonDb(db_path=storage_dir, session_table="test_session_stream"),
             user_id="test_user_stream",
             session_id="test_session_stream",
             telemetry=False,
-            monitoring=False,
         )
 
-        # Run with streaming
-        stream_response = await agent.arun("What is 15 + 27?", stream=True)
-
         final_response = None
-        async for chunk in stream_response:
-            if hasattr(chunk, "thinking") and chunk.thinking:
+        async for chunk in agent.arun("What is 15 + 27?", stream=True):
+            if hasattr(chunk, "reasoning_content") and chunk.reasoning_content:  # type: ignore
                 final_response = chunk
 
         # Verify we got thinking content
         assert final_response is not None
-        assert final_response.thinking is not None
+        assert hasattr(final_response, "reasoning_content") and final_response.reasoning_content is not None  # type: ignore
 
         # Verify storage contains the thinking content
         session_files = [f for f in os.listdir(storage_dir) if f.endswith(".json")]
 
-        thinking_found = False
+        thinking_persisted = False
         for session_file in session_files:
             if session_file == "test_session_stream.json":
                 with open(os.path.join(storage_dir, session_file), "r") as f:
                     session_data = json.load(f)
 
-                if "memory" in session_data and session_data["memory"] and "runs" in session_data["memory"]:
-                    for run in session_data["memory"]["runs"]:
-                        if "messages" in run:
-                            for message in run["messages"]:
-                                if message.get("role") == "assistant" and message.get("thinking"):
-                                    thinking_found = True
-                                    break
-                        if thinking_found:
+                # Check messages in this session
+                if session_data and session_data[0] and session_data[0]["runs"]:
+                    for run in session_data[0]["runs"]:
+                        for message in run["messages"]:
+                            if message.get("role") == "assistant" and message.get("reasoning_content"):
+                                thinking_persisted = True
+                                break
+                        if thinking_persisted:
                             break
                 break
 
-        assert thinking_found, "Thinking content from streaming should be stored"
+        assert thinking_persisted, "Thinking content from streaming should be stored"
 
 
 # ============================================================================
@@ -259,13 +247,14 @@ async def test_thinking_with_streaming_storage():
 def test_interleaved_thinking():
     """Test basic interleaved thinking functionality with Claude 4."""
     agent = _get_interleaved_thinking_agent()
-    response: RunResponse = agent.run("What's 25 × 17? Think through it step by step.")
+    response: RunOutput = agent.run("What's 25 × 17? Think through it step by step.")
 
     assert response.content is not None
-    assert response.thinking is not None
+    assert response.reasoning_content is not None
+    assert response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
-    assert response.messages[2].thinking is not None
+    assert response.messages[2].reasoning_content is not None
 
 
 def test_interleaved_thinking_stream():
@@ -281,7 +270,7 @@ def test_interleaved_thinking_stream():
 
     # Should have both content and thinking in the responses
     has_content = any(r.content is not None for r in responses)
-    has_thinking = any(r.thinking is not None for r in responses)
+    has_thinking = any(r.reasoning_content is not None for r in responses)  # type: ignore
 
     assert has_content, "Should have content in responses"
     assert has_thinking, "Should have thinking in responses"
@@ -291,30 +280,30 @@ def test_interleaved_thinking_stream():
 async def test_async_interleaved_thinking():
     """Test async interleaved thinking."""
     agent = _get_interleaved_thinking_agent()
-    response: RunResponse = await agent.arun("Calculate 15 × 23 and explain your reasoning.")
+    response: RunOutput = await agent.arun("Calculate 15 × 23 and explain your reasoning.")
 
     assert response.content is not None
-    assert response.thinking is not None
+    assert response.reasoning_content is not None
+    assert response.messages is not None
     assert len(response.messages) == 3
     assert [m.role for m in response.messages] == ["system", "user", "assistant"]
-    assert response.messages[2].thinking is not None
+    assert response.messages[2].reasoning_content is not None
 
 
 @pytest.mark.asyncio
 async def test_async_interleaved_thinking_stream():
     """Test async streaming with interleaved thinking."""
     agent = _get_interleaved_thinking_agent()
-    response_stream = await agent.arun("What's 37 × 19? Break it down step by step.", stream=True)
 
-    # Verify it's an async iterator
-    assert hasattr(response_stream, "__aiter__")
+    responses = []
+    async for response in agent.arun("What's 37 × 19? Break it down step by step.", stream=True):
+        responses.append(response)
 
-    responses = [response async for response in response_stream]
     assert len(responses) > 0
 
     # Should have both content and thinking in the responses
     has_content = any(r.content is not None for r in responses)
-    has_thinking = any(r.thinking is not None for r in responses)
+    has_thinking = any(r.reasoning_content is not None for r in responses)
 
     assert has_content, "Should have content in responses"
     assert has_thinking, "Should have thinking in responses"
@@ -327,9 +316,10 @@ def test_interleaved_thinking_with_tools():
     response = agent.run("What is the current price of AAPL? Think about why someone might want this information.")
 
     # Verify tool usage and thinking
+    assert response.messages is not None
     assert any(msg.tool_calls for msg in response.messages)
     assert response.content is not None
-    assert response.thinking is not None
+    assert response.reasoning_content is not None
     assert "AAPL" in response.content
 
 
@@ -343,20 +333,18 @@ async def test_interleaved_thinking_with_storage():
                 thinking={"type": "enabled", "budget_tokens": 2048},
                 default_headers={"anthropic-beta": "interleaved-thinking-2025-05-14"},
             ),
-            storage=JsonStorage(dir_path=storage_dir),
-            memory=Memory(),
+            db=JsonDb(db_path=storage_dir, session_table="test_session_interleaved"),
             user_id="test_user_interleaved",
             session_id="test_session_interleaved",
             telemetry=False,
-            monitoring=False,
         )
 
         # Ask a question that should trigger interleaved thinking
         response = await agent.arun("Calculate 144 ÷ 12 and show your thought process.", stream=False)
 
         # Verify response has thinking content
-        assert response.thinking is not None
-        assert len(response.thinking) > 0
+        assert response.reasoning_content is not None
+        assert len(response.reasoning_content) > 0
 
         # Read the storage files to verify thinking was persisted
         session_files = [f for f in os.listdir(storage_dir) if f.endswith(".json")]
@@ -368,13 +356,12 @@ async def test_interleaved_thinking_with_storage():
                     session_data = json.load(f)
 
                 # Check messages in this session
-                if "memory" in session_data and session_data["memory"] and "runs" in session_data["memory"]:
-                    for run in session_data["memory"]["runs"]:
-                        if "messages" in run:
-                            for message in run["messages"]:
-                                if message.get("role") == "assistant" and message.get("thinking"):
-                                    thinking_persisted = True
-                                    break
+                if session_data and session_data[0] and session_data[0]["runs"]:
+                    for run in session_data[0]["runs"]:
+                        for message in run["messages"]:
+                            if message.get("role") == "assistant" and message.get("reasoning_content"):
+                                thinking_persisted = True
+                                break
                         if thinking_persisted:
                             break
                 break
@@ -392,47 +379,42 @@ async def test_interleaved_thinking_streaming_with_storage():
                 thinking={"type": "enabled", "budget_tokens": 2048},
                 default_headers={"anthropic-beta": "interleaved-thinking-2025-05-14"},
             ),
-            storage=JsonStorage(dir_path=storage_dir),
-            memory=Memory(),
+            db=JsonDb(db_path=storage_dir, session_table="test_session_interleaved_stream"),
             user_id="test_user_interleaved_stream",
             session_id="test_session_interleaved_stream",
             telemetry=False,
-            monitoring=False,
         )
 
-        # Run with streaming
-        stream_response = await agent.arun("What is 84 ÷ 7? Think through the division process.", stream=True)
-
         final_response = None
-        async for chunk in stream_response:
-            if hasattr(chunk, "thinking") and chunk.thinking:
+        async for chunk in agent.arun("What is 84 ÷ 7? Think through the division process.", stream=True):
+            if hasattr(chunk, "reasoning_content") and chunk.reasoning_content:  # type: ignore
                 final_response = chunk
 
         # Verify we got thinking content
         assert final_response is not None
-        assert final_response.thinking is not None
+        assert hasattr(final_response, "reasoning_content") and final_response.reasoning_content is not None  # type: ignore
 
         # Verify storage contains the thinking content
         session_files = [f for f in os.listdir(storage_dir) if f.endswith(".json")]
 
-        thinking_found = False
+        thinking_persisted = False
         for session_file in session_files:
             if session_file == "test_session_interleaved_stream.json":
                 with open(os.path.join(storage_dir, session_file), "r") as f:
                     session_data = json.load(f)
 
-                if "memory" in session_data and session_data["memory"] and "runs" in session_data["memory"]:
-                    for run in session_data["memory"]["runs"]:
-                        if "messages" in run:
-                            for message in run["messages"]:
-                                if message.get("role") == "assistant" and message.get("thinking"):
-                                    thinking_found = True
-                                    break
-                        if thinking_found:
+                # Check messages in this session
+                if session_data and session_data[0] and session_data[0]["runs"]:
+                    for run in session_data[0]["runs"]:
+                        for message in run["messages"]:
+                            if message.get("role") == "assistant" and message.get("reasoning_content"):
+                                thinking_persisted = True
+                                break
+                        if thinking_persisted:
                             break
                 break
 
-        assert thinking_found, "Interleaved thinking content from streaming should be stored"
+        assert thinking_persisted, "Interleaved thinking content from streaming should be stored"
 
 
 def test_interleaved_thinking_vs_regular_thinking():
@@ -446,17 +428,17 @@ def test_interleaved_thinking_vs_regular_thinking():
     interleaved_response = interleaved_agent.run("What is 5 × 6?")
 
     # Both should have thinking content
-    assert regular_response.thinking is not None
-    assert interleaved_response.thinking is not None
+    assert regular_response.reasoning_content is not None
+    assert interleaved_response.reasoning_content is not None
 
     # Both should have content
     assert regular_response.content is not None
     assert interleaved_response.content is not None
 
     # Verify the models are different
-    assert regular_agent.model.id == "claude-3-7-sonnet-20250219"
-    assert interleaved_agent.model.id == "claude-sonnet-4-20250514"
+    assert regular_agent.model.id == "claude-3-7-sonnet-20250219"  # type: ignore
+    assert interleaved_agent.model.id == "claude-sonnet-4-20250514"  # type: ignore
 
     # Verify the headers are different
-    assert not hasattr(regular_agent.model, "default_headers") or regular_agent.model.default_headers is None
-    assert interleaved_agent.model.default_headers == {"anthropic-beta": "interleaved-thinking-2025-05-14"}
+    assert not hasattr(regular_agent.model, "default_headers") or regular_agent.model.default_headers is None  # type: ignore
+    assert interleaved_agent.model.default_headers == {"anthropic-beta": "interleaved-thinking-2025-05-14"}  # type: ignore

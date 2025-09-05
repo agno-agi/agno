@@ -77,7 +77,7 @@ def test_init_with_custom_values():
         headers={"X-Custom-Header": "custom_value"},
         verify_ssl=False,
         timeout=60,
-        make_request=False,
+        enable_make_request=False,
     )
 
     assert tools.base_url == "https://dog.ceo/api"

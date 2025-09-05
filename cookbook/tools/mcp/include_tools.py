@@ -30,7 +30,6 @@ async def run_agent(message: str) -> None:
                 - Use the read_file tool to read the contents of a file
                 - Be concise and focus on relevant information\
             """),
-            show_tool_calls=True,
             markdown=True,
         )
         await agent.aprint_response(message, stream=True)

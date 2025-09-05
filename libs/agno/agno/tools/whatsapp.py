@@ -1,4 +1,4 @@
-import os
+from os import getenv
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -30,25 +30,21 @@ class WhatsAppTools(Toolkit):
             async_mode: Whether to use async methods (default: False)
         """
         # Core credentials
-        self.access_token = access_token or os.getenv("WHATSAPP_ACCESS_TOKEN") or os.getenv("WHATSAPP_ACCESS_TOKEN")
+        self.access_token = access_token or getenv("WHATSAPP_ACCESS_TOKEN")
         if not self.access_token:
             logger.error("WHATSAPP_ACCESS_TOKEN not set. Please set the WHATSAPP_ACCESS_TOKEN environment variable.")
 
-        self.phone_number_id = (
-            phone_number_id or os.getenv("WHATSAPP_PHONE_NUMBER_ID") or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
-        )
+        self.phone_number_id = phone_number_id or getenv("WHATSAPP_PHONE_NUMBER_ID")
         if not self.phone_number_id:
             logger.error(
                 "WHATSAPP_PHONE_NUMBER_ID not set. Please set the WHATSAPP_PHONE_NUMBER_ID environment variable."
             )
 
         # Optional default recipient
-        self.default_recipient = (
-            recipient_waid or os.getenv("WHATSAPP_RECIPIENT_WAID") or os.getenv("WHATSAPP_RECIPIENT_WAID")
-        )
+        self.default_recipient = recipient_waid or getenv("WHATSAPP_RECIPIENT_WAID")
 
         # API version and mode
-        self.version = version or os.getenv("WHATSAPP_VERSION") or os.getenv("WHATSAPP_VERSION", "v22.0")
+        self.version = version or getenv("WHATSAPP_VERSION", "v22.0")
         self.async_mode = async_mode
 
         tools: List[Any] = []

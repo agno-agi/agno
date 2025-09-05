@@ -2,7 +2,7 @@ from typing import List
 
 from agno.agent import Agent
 from agno.models.lmstudio import LMStudio
-from agno.run.response import RunResponse
+from agno.run.agent import RunOutput
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -30,9 +30,9 @@ class MovieScript(BaseModel):
 structured_output_agent = Agent(
     model=LMStudio(id="qwen2.5-7b-instruct-1m"),
     description="You write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 # Run the agent synchronously
-structured_output_response: RunResponse = structured_output_agent.run("New York")
+structured_output_response: RunOutput = structured_output_agent.run("New York")
 pprint(structured_output_response.content)

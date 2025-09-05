@@ -58,10 +58,6 @@ except ImportError:
 class DockerTools(Toolkit):
     def __init__(
         self,
-        enable_container_management: bool = True,
-        enable_image_management: bool = True,
-        enable_volume_management: bool = False,
-        enable_network_management: bool = False,
         **kwargs,
     ):
         self._check_docker_availability()
@@ -80,44 +76,36 @@ class DockerTools(Toolkit):
         except Exception as e:
             logger.error(f"Error connecting to Docker: {e}")
 
-        tools: List[Any] = []
-        if enable_container_management:
-            tools.extend(
-                [
-                    self.list_containers,
-                    self.start_container,
-                    self.stop_container,
-                    self.remove_container,
-                    self.get_container_logs,
-                    self.inspect_container,
-                    self.run_container,
-                    self.exec_in_container,
-                ]
-            )
-        if enable_image_management:
-            tools.extend(
-                [
-                    self.list_images,
-                    self.pull_image,
-                    self.remove_image,
-                    self.build_image,
-                    self.tag_image,
-                    self.inspect_image,
-                ]
-            )
-        if enable_volume_management:
-            tools.extend([self.list_volumes, self.create_volume, self.remove_volume, self.inspect_volume])
-        if enable_network_management:
-            tools.extend(
-                [
-                    self.list_networks,
-                    self.create_network,
-                    self.remove_network,
-                    self.inspect_network,
-                    self.connect_container_to_network,
-                    self.disconnect_container_from_network,
-                ]
-            )
+        tools: List[Any] = [
+            # Container management
+            self.list_containers,
+            self.start_container,
+            self.stop_container,
+            self.remove_container,
+            self.get_container_logs,
+            self.inspect_container,
+            self.run_container,
+            self.exec_in_container,
+            # Image management
+            self.list_images,
+            self.pull_image,
+            self.remove_image,
+            self.build_image,
+            self.tag_image,
+            self.inspect_image,
+            # Volume management
+            self.list_volumes,
+            self.create_volume,
+            self.remove_volume,
+            self.inspect_volume,
+            # Network management
+            self.list_networks,
+            self.create_network,
+            self.remove_network,
+            self.inspect_network,
+            self.connect_container_to_network,
+            self.disconnect_container_from_network,
+        ]
 
         super().__init__(name="docker_tools", tools=tools, **kwargs)
 

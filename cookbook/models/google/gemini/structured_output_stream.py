@@ -32,7 +32,7 @@ class MovieScript(BaseModel):
 structured_output_agent = Agent(
     model=Gemini(id="gemini-2.0-flash-001"),
     description="You write movie scripts.",
-    response_model=MovieScript,
+    output_schema=MovieScript,
 )
 
 structured_output_agent.print_response(

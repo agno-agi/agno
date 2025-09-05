@@ -59,10 +59,10 @@ def test_init_with_selective_tools():
     """Test initialization with only selected tools."""
     with patch.dict("os.environ", {"EXA_API_KEY": "test_key"}):
         tools = ExaTools(
-            search=True,
-            get_contents=False,
-            find_similar=True,
-            answer=False,
+            enable_search=True,
+            enable_get_contents=False,
+            enable_find_similar=True,
+            enable_answer=False,
         )
 
         assert "search_exa" in [func.name for func in tools.functions.values()]
@@ -286,7 +286,7 @@ def test_exa_answer_with_model_selection(exa_tools, mock_exa_client):
 def test_init_with_research_tool():
     """Test initialization with research tool enabled."""
     with patch.dict("os.environ", {"EXA_API_KEY": "test_key"}):
-        tools = ExaTools(research=True)
+        tools = ExaTools(enable_research=True)
 
         assert "research" in [func.name for func in tools.functions.values()]
 

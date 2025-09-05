@@ -11,29 +11,12 @@ class FinancialDatasetsTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        enable_financial_statements: bool = True,
-        enable_company_info: bool = True,
-        enable_market_data: bool = True,
-        enable_ownership_data: bool = True,
-        enable_news: bool = True,
-        enable_sec_filings: bool = True,
-        enable_crypto: bool = True,
-        enable_search: bool = True,
         **kwargs,
     ):
-        """
-        Initialize the Financial Datasets Tools with feature flags.
+        """Initialize the Financial Datasets Tools.
 
         Args:
             api_key: API key for Financial Datasets API (optional, can be set via environment variable)
-            enable_financial_statements: Enable financial statement related functions (income statements, balance sheets, etc.)
-            enable_company_info: Enable company information related functions
-            enable_market_data: Enable market data related functions (stock prices, earnings, metrics)
-            enable_ownership_data: Enable ownership data related functions (insider trades, institutional ownership)
-            enable_news: Enable news related functions
-            enable_sec_filings: Enable SEC filings related functions
-            enable_crypto: Enable cryptocurrency related functions
-            enable_search: Enable search related functions
         """
 
         self.api_key: Optional[str] = api_key or getenv("FINANCIAL_DATASETS_API_KEY")
@@ -44,32 +27,30 @@ class FinancialDatasetsTools(Toolkit):
 
         self.base_url = "https://api.financialdatasets.ai"
 
-        tools: List[Any] = []
-
-        if enable_financial_statements:
-            tools.extend(
-                [
-                    self.get_income_statements,
-                    self.get_balance_sheets,
-                    self.get_cash_flow_statements,
-                    self.get_segmented_financials,
-                    self.get_financial_metrics,
-                ]
-            )
-        if enable_company_info:
-            tools.append(self.get_company_info)
-        if enable_market_data:
-            tools.extend([self.get_stock_prices, self.get_earnings])
-        if enable_ownership_data:
-            tools.extend([self.get_insider_trades, self.get_institutional_ownership])
-        if enable_news:
-            tools.append(self.get_news)
-        if enable_sec_filings:
-            tools.append(self.get_sec_filings)
-        if enable_crypto:
-            tools.append(self.get_crypto_prices)
-        if enable_search:
-            tools.append(self.search_tickers)
+        tools: List[Any] = [
+            # Financial statements
+            self.get_income_statements,
+            self.get_balance_sheets,
+            self.get_cash_flow_statements,
+            self.get_segmented_financials,
+            self.get_financial_metrics,
+            # Company info
+            self.get_company_info,
+            # Market data
+            self.get_stock_prices,
+            self.get_earnings,
+            # Ownership data
+            self.get_insider_trades,
+            self.get_institutional_ownership,
+            # News
+            self.get_news,
+            # SEC filings
+            self.get_sec_filings,
+            # Crypto
+            self.get_crypto_prices,
+            # Search
+            self.search_tickers,
+        ]
 
         super().__init__(name="financial_datasets_tools", tools=tools, **kwargs)
 
