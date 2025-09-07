@@ -89,7 +89,6 @@ research_team = Team(
     enable_user_memories=True,
     add_datetime_to_context=True,
     markdown=True,
-    enable_agentic_context=True,
 )
 
 # Setting up and running an eval for our agent

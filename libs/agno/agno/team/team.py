@@ -221,8 +221,6 @@ class Team:
     references_format: Literal["json", "yaml"] = "json"
 
     # --- Tools ---
-    # If True, enable the team agent to update the team context and automatically send the team context to the members
-    enable_agentic_context: bool = False
     # If True, send all previous member interactions to members
     share_member_interactions: bool = False
     # If True, add a tool to get information about the team members
@@ -381,7 +379,6 @@ class Team:
         update_knowledge: bool = False,
         knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
-        enable_agentic_context: bool = False,
         share_member_interactions: bool = False,
         get_member_information_tool: bool = False,
         search_knowledge: bool = True,
@@ -472,7 +469,6 @@ class Team:
         self.knowledge_retriever = knowledge_retriever
         self.references_format = references_format
 
-        self.enable_agentic_context = enable_agentic_context
         self.share_member_interactions = share_member_interactions
         self.get_member_information_tool = get_member_information_tool
         self.search_knowledge = search_knowledge

@@ -119,7 +119,6 @@ research_team = Team(
     enable_user_memories=True,
     add_datetime_to_context=True,
     markdown=True,
-    enable_agentic_context=True,
     db=db,
 )
 
@@ -160,7 +159,6 @@ financial_news_team = Team(
     ],
     add_datetime_to_context=True,
     markdown=True,
-    enable_agentic_context=True,
     show_members_responses=True,
     db=db,
     enable_user_memories=True,

@@ -35,7 +35,7 @@ team_leader = Team(
     tools=[ReasoningTools(add_instructions=True)],
     markdown=True,
     show_members_responses=True,
-    enable_agentic_context=True,
+
 )
 
 team_leader.print_response(

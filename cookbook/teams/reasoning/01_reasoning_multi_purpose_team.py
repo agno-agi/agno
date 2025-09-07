@@ -186,7 +186,7 @@ agent_team = Team(
     ],
     markdown=True,
     show_members_responses=True,
-    enable_agentic_context=True,
+
     share_member_interactions=True,
 )
 
